@@ -22,7 +22,7 @@
 
 The selected target is:
 
-`/Users/chris/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-25a9791c-7f3d-4946-8979-a52eac917485.png`
+`~/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-25a9791c-7f3d-4946-8979-a52eac917485.png`
 
 Only the radial component is a target. The implementation uses native AppKit/SwiftUI materials and real SF Symbols; the backdrop and sample window are presentation context and the bitmap is not shipped.
 

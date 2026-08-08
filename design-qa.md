@@ -11,9 +11,9 @@ Symbols; none of the reference bitmaps ship in the app.
 
 | Mode | Selected reference | Production interpretation |
 | --- | --- | --- |
-| Compact | `/Users/chris/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-7fb111da-4124-4c4c-abf1-7953993318dd.png` | Overlapping-window app glyph, fine separator, and one minimal screen/workspace signal per connected display with an understated interaction dot. |
-| Medium | `/Users/chris/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-09568ad4-ea56-4145-a09d-8353103d561c.png` | Separate app glyph and equal-height neutral/accent display chips at native status-bar scale. |
-| Full | `/Users/chris/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-5564e2b4-2327-4c72-b632-9425513eabf4.png` | A visibly distinct app-menu target followed by lightweight display groups, explicit workspace buttons, quiet secondary-active outlines, and a strong interaction-active fill. |
+| Compact | `~/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-7fb111da-4124-4c4c-abf1-7953993318dd.png` | Overlapping-window app glyph, fine separator, and one minimal screen/workspace signal per connected display with an understated interaction dot. |
+| Medium | `~/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-09568ad4-ea56-4145-a09d-8353103d561c.png` | Separate app glyph and equal-height neutral/accent display chips at native status-bar scale. |
+| Full | `~/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-5564e2b4-2327-4c72-b632-9425513eabf4.png` | A visibly distinct app-menu target followed by lightweight display groups, explicit workspace buttons, quiet secondary-active outlines, and a strong interaction-active fill. |
 
 ## Offscreen production renders
 
@@ -23,9 +23,9 @@ register global shortcuts, launch `WindowManager.app`, or touch live windows.
 
 | Mode | Native canvas | Production render | Same-height reference comparison |
 | --- | --- | --- | --- |
-| Compact | 97 x 32 pt | `/Users/chris/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-menu-bar-compact.png` | `/Users/chris/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-menu-bar-compact-comparison.png` |
-| Medium | 137 x 32 pt | `/Users/chris/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-menu-bar-medium.png` | `/Users/chris/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-menu-bar-medium-comparison.png` |
-| Full | 246 x 32 pt | `/Users/chris/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-menu-bar-full.png` | `/Users/chris/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-menu-bar-full-comparison.png` |
+| Compact | 97 x 32 pt | `~/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-menu-bar-compact.png` | `~/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-menu-bar-compact-comparison.png` |
+| Medium | 137 x 32 pt | `~/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-menu-bar-medium.png` | `~/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-menu-bar-medium-comparison.png` |
+| Full | 246 x 32 pt | `~/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-menu-bar-full.png` | `~/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-menu-bar-full-comparison.png` |
 
 The source artwork is 1942 x 809 px. Each comparison isolates its status component and normalises
 both sides to 64 px high, avoiding a false match to the reference wallpaper or neighbouring system
@@ -78,7 +78,7 @@ final result: passed
 
 This QA covers the native Workspaces Settings destination selected from:
 
-`/Users/chris/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-e7c1b478-3926-4973-926b-bea55692b682.png`
+`~/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-e7c1b478-3926-4973-926b-bea55692b682.png`
 
 The reference supplies the master-list-plus-inspector hierarchy. WindowManager uses the real
 profile-backed workspace/display/layout models, native SwiftUI/AppKit controls and SF Symbols; the
@@ -93,9 +93,9 @@ borderless AppKit window for one bounded SwiftUI update cycle. That realizes nat
 Accessibility, global hotkeys, iCloud, login-item services, or the normal app. The fixture renders
 at 1440 x 1024 points and 2x Retina scale.
 
-- Final production preview: `/Users/chris/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-settings-workspaces.png`
-- Same-canvas selected-reference comparison: `/Users/chris/Developer/window-manager/.build/settings-redesign-previews/window-manager-settings-comparison.png`
-- Accessibility text-size render: `/Users/chris/Developer/window-manager/.build/settings-redesign-previews/window-manager-settings-workspaces-accessibility-text.png`
+- Final production preview: `~/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-settings-workspaces.png`
+- Same-canvas selected-reference comparison: `.build/settings-redesign-previews/window-manager-settings-comparison.png`
+- Accessibility text-size render: `.build/settings-redesign-previews/window-manager-settings-workspaces-accessibility-text.png`
 
 The representative state is Independent Displays, **Writing** selected, **Studio Display** as its
 abstract Home Display role, and **Accordion** with 16-point visible-edge padding.
@@ -157,7 +157,7 @@ native materials, and SF Symbols; the reference bitmap is not included in the ap
 
 ## Reference mapping
 
-- Selected target: `/Users/chris/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-25a9791c-7f3d-4946-8979-a52eac917485.png`
+- Selected target: `~/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-25a9791c-7f3d-4946-8979-a52eac917485.png`
 - Stable centre: cancel zone plus current selection/preview.
 - Inner ring: equal full-circle top-level wedges with a clear selected state and disclosure marks.
 - Outer ring: generated children around the same centre, with quieter unselected treatment and a
@@ -171,10 +171,10 @@ scale from the genuinely non-hosted test bundle. It does not construct `AppDeleg
 Accessibility, install hotkeys/event taps, contact iCloud, start login services, or launch
 `WindowManager.app`.
 
-- Place: `/Users/chris/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-radial-place.png`
-- Move to Space: `/Users/chris/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-radial-move-to-space.png`
-- Profiles: `/Users/chris/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-radial-profiles.png`
-- Final same-canvas reference comparison: `/Users/chris/Developer/window-manager/.build/radial-comparison-final.png`
+- Place: `~/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-radial-place.png`
+- Move to Space: `~/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-radial-move-to-space.png`
+- Profiles: `~/Documents/Codex/2026-08-07/realtime-voice-chat/outputs/window-manager-radial-profiles.png`
+- Final same-canvas reference comparison: `.build/radial-comparison-final.png`
 
 ## Comparison findings
 

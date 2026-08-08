@@ -5,7 +5,7 @@
 Implementation contract for the selected native macOS Settings redesign. The selected visual
 reference is:
 
-`/Users/chris/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-e7c1b478-3926-4973-926b-bea55692b682.png`
+`~/.codex/generated_images/019fddc3-fa00-7de2-a467-ce7e3a81ba80/exec-e7c1b478-3926-4973-926b-bea55692b682.png`
 
 The reference is design evidence only. WindowManager uses native SwiftUI/AppKit controls, materials,
 typography, and SF Symbols; the bitmap is not shipped.
