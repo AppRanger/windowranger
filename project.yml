@@ -1,0 +1,71 @@
+name: WindowManager
+options:
+  bundleIdPrefix: com.chris
+  deploymentTarget:
+    macOS: "14.0"
+  generateEmptyDirectories: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+targets:
+  WindowManager:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chris.WindowManager
+        PRODUCT_NAME: WindowManager
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 44NAD22AK6
+        INFOPLIST_FILE: Sources/App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/App/WindowManager.entitlements
+        ENABLE_APP_SANDBOX: NO
+        GENERATE_INFOPLIST_FILE: NO
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+    dependencies:
+      - sdk: ApplicationServices.framework
+      - sdk: Carbon.framework
+      - sdk: ServiceManagement.framework
+  WindowManagerTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+      - path: Sources
+        excludes:
+          - App
+    dependencies:
+      - sdk: ApplicationServices.framework
+      - sdk: Carbon.framework
+      - sdk: ServiceManagement.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.chris.WindowManagerTests
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: ""
+        # These are deliberately empty: unit tests must run in xctest, never in the production
+        # menu-bar executable, because AppDelegate starts window management and permission UI.
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
+schemes:
+  WindowManager:
+    build:
+      targets:
+        # The non-hosted unit tests compile shared Sources directly. Keeping the app out of the
+        # Test build graph prevents xcodebuild test from creating/registering another app bundle.
+        WindowManager: [run, profile, analyze, archive]
+        WindowManagerTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      macroExpansion: WindowManagerTests
+      targets:
+        - WindowManagerTests
+    archive:
+      config: Release
