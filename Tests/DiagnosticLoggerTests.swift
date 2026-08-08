@@ -106,7 +106,7 @@ final class DiagnosticLoggerTests: XCTestCase {
                 "document-name": "Secret.docx",
                 "source-url": "https://private.example/path",
                 "typed-content": "password-like text",
-                "safe-path-shaped-value": "<local-artifact>",
+                "safe-path-shaped-value": "/Users/example/private/file",
                 "bundle": "com.example.SafeApp",
             ]
         )
@@ -115,7 +115,7 @@ final class DiagnosticLoggerTests: XCTestCase {
         XCTAssertFalse(sink.text.contains("Secret.docx"))
         XCTAssertFalse(sink.text.contains("private.example"))
         XCTAssertFalse(sink.text.contains("password-like"))
-        XCTAssertFalse(sink.text.contains("<local-artifact>"))
+        XCTAssertFalse(sink.text.contains("/Users/example"))
         XCTAssertTrue(sink.text.contains("com.example.SafeApp"))
         XCTAssertTrue(sink.text.contains("[redacted]"))
     }

@@ -84,5 +84,16 @@ diagnostic excerpt for any mismatch rather than inferring from an Accessibility 
 - Focused recovery persistence tests: passed.
 - Focused shortcut, recorder, Settings, and command-wheel tests: passed.
 - Compiler static analysis of the non-hosted target: passed with no source findings.
-- Full non-hosted suite, signed Debug/Release builds, process isolation, signature, Release boundary,
-  LaunchServices, and repository hygiene: recorded at the final milestone checkpoint.
+- Test-isolation guard: passed; the Test action has no app dependency, host, or macro-expansion target.
+- Complete non-hosted suite: **340 tests passed, 0 failures**. A later path-sanitization-only
+  fixture edit also passed all 27 focused diagnostics tests.
+- Canonical Debug: signed Apple Development build, `com.chris.WindowManager`, team `44NAD22AK6`,
+  arm64. Canonical Release: same identity/team, universal `x86_64 arm64`.
+- Release binary contains none of the checked Debug-only diagnostics menu/file/admission strings.
+- The pre-existing system process (PID 709) and user Debug process (PID 46862) were unchanged after
+  testing and builds; no Run action was used.
+- LaunchServices contains only the canonical Xcode Debug and Release registrations for this bundle
+  identifier. No temporary or workspace-local registration was created.
+- Repository scan found no tracked build products, result bundles, logs, `.DS_Store`, secrets, or
+  personal absolute home paths after sanitizing older design-QA provenance. Ignored `.build` and
+  `DerivedData` directories remain local only.

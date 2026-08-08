@@ -94,8 +94,8 @@ Accessibility, global hotkeys, iCloud, login-item services, or the normal app. T
 at 1440 x 1024 points and 2x Retina scale.
 
 - Final production preview: `<local-artifact>`
-- Same-canvas selected-reference comparison: `<local-artifact>`
-- Accessibility text-size render: `<local-artifact>`
+- Same-canvas selected-reference comparison: `.build/settings-redesign-previews/window-manager-settings-comparison.png`
+- Accessibility text-size render: `.build/settings-redesign-previews/window-manager-settings-workspaces-accessibility-text.png`
 
 The representative state is Independent Displays, **Writing** selected, **Studio Display** as its
 abstract Home Display role, and **Accordion** with 16-point visible-edge padding.
@@ -174,7 +174,7 @@ Accessibility, install hotkeys/event taps, contact iCloud, start login services,
 - Place: `<local-artifact>`
 - Move to Space: `<local-artifact>`
 - Profiles: `<local-artifact>`
-- Final same-canvas reference comparison: `<local-artifact>`
+- Final same-canvas reference comparison: `.build/radial-comparison-final.png`
 
 ## Comparison findings
 
