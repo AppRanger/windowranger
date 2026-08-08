@@ -1,6 +1,20 @@
-# Window Manager
+# WindowManager
 
-A small, native macOS virtual-workspace manager built around one workflow rather than a general-purpose command language.
+> **Pre-release:** WindowManager is a provisional internal/project name. The app is under active
+> development, has not been packaged or published, and still has live-validation work outstanding.
+
+A small, native macOS virtual-workspace manager built around one workflow rather than a
+general-purpose command language.
+
+## Project documentation
+
+- [Architecture](ARCHITECTURE.md)
+- [Contributing safely](CONTRIBUTING.md)
+- [Permissions and privacy](docs/permissions-and-privacy.md)
+- [Security reporting status](SECURITY.md)
+- [Pre-release checklist](docs/release-checklist.md)
+- [Third-party reference notices](THIRD_PARTY_NOTICES.md)
+- [MIT license](LICENSE)
 
 ## Current feature set
 
