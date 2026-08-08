@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 final class MenuBarPresentationTests: XCTestCase {
@@ -277,6 +278,53 @@ final class MenuBarPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testStableStatusContentTransitionsRemoveAndRestoreOnlyExplicitWorkspaceButtons() {
+        let medium = independentSnapshot(displays: [mainDisplay, externalDisplay])
+        let full = medium.replacingMode(.full)
+        let compact = medium.replacingMode(.compact)
+        var actions: [MenuBarHitTarget] = []
+        let content = MenuBarStatusContentView(
+            snapshot: full,
+            availableWidth: 620,
+            workspaceAction: { actions.append($0) }
+        )
+        let originalIdentity = ObjectIdentifier(content)
+
+        layout(content)
+        let fullButtons = workspaceButtons(in: content)
+        XCTAssertEqual(Set(fullButtons.map(\.title)), Set(["1", "Writing", "9"]))
+        XCTAssertNil(content.hitTest(NSPoint(x: 2, y: content.bounds.midY)))
+        for button in fullButtons {
+            let point = content.convert(
+                NSPoint(x: button.bounds.midX, y: button.bounds.midY),
+                from: button
+            )
+            XCTAssertTrue(content.hitTest(point) === button)
+        }
+
+        content.configure(snapshot: medium, availableWidth: 620, workspaceAction: { actions.append($0) })
+        layout(content)
+        XCTAssertEqual(ObjectIdentifier(content), originalIdentity)
+        XCTAssertTrue(workspaceButtons(in: content).isEmpty)
+        XCTAssertNil(content.hitTest(NSPoint(x: content.bounds.midX, y: content.bounds.midY)))
+
+        content.configure(snapshot: full, availableWidth: 620, workspaceAction: { actions.append($0) })
+        layout(content)
+        let restoredButtons = workspaceButtons(in: content)
+        XCTAssertEqual(restoredButtons.count, 3)
+        restoredButtons.first(where: { $0.title == "Writing" })?.performClick(nil)
+        XCTAssertEqual(actions, [
+            .workspace(workspaceID: workspace2.id, displayIdentifier: mainDisplay.identifier),
+        ])
+
+        content.configure(snapshot: compact, availableWidth: 620, workspaceAction: { actions.append($0) })
+        layout(content)
+        XCTAssertEqual(ObjectIdentifier(content), originalIdentity)
+        XCTAssertTrue(workspaceButtons(in: content).isEmpty)
+        XCTAssertNil(content.hitTest(NSPoint(x: content.bounds.midX, y: content.bounds.midY)))
+    }
+
+    @MainActor
     func testRapidModelUpdatesReplaceStateWithoutRetainingStaleDisplayOrder() {
         let model = MenuBarStateModel(
             workspaces: [workspace1, workspace2, workspace3],
@@ -371,6 +419,21 @@ final class MenuBarPresentationTests: XCTestCase {
                 workspace3.id: externalDisplay.identifier,
             ]
         )
+    }
+
+    @MainActor
+    private func layout(_ view: NSView) {
+        view.frame = CGRect(origin: .zero, size: view.intrinsicContentSize)
+        view.layoutSubtreeIfNeeded()
+    }
+
+    @MainActor
+    private func workspaceButtons(in view: NSView) -> [NSButton] {
+        view.subviews.flatMap { child -> [NSButton] in
+            let nested = workspaceButtons(in: child)
+            if let button = child as? NSButton { return [button] + nested }
+            return nested
+        }
     }
 }
 

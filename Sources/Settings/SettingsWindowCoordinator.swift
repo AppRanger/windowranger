@@ -3,6 +3,28 @@ import CoreGraphics
 import Foundation
 import SwiftUI
 
+@MainActor
+enum SettingsWindowOpener {
+    static func open(
+        category: SettingsCategory?,
+        preferPointerDisplay: Bool,
+        navigation: SettingsNavigationModel,
+        engine: WorkspaceEngine,
+        coordinator: SettingsWindowCoordinator,
+        openSettings: @escaping @MainActor () -> Void
+    ) {
+        if let category { navigation.select(category) }
+        let preferredDisplayIdentifier = preferPointerDisplay
+            ? SettingsWindowCoordinator.pointerDisplayIdentifierForCurrentMouseEvent()
+            : nil
+        engine.settingsSurfaceContext(
+            preferredDisplayIdentifier: preferredDisplayIdentifier
+        ) { context in
+            coordinator.requestOpen(context: context, openSettings: openSettings)
+        }
+    }
+}
+
 /// The virtual-workspace/display destination captured at the moment the user asks for Settings.
 /// This is deliberately independent from tracked third-party windows: Settings is an app-owned
 /// utility with a small, explicit lifecycle rather than a participant in discovery or persistence.

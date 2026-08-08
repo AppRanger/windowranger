@@ -2,7 +2,10 @@
 
 ## Scope
 
-This QA covers only WindowManager's native status components. Wallpaper, neighbouring macOS status items, clock content, and the generated images' presentation scaling are context rather than product assets. Production uses AppKit, SwiftUI, and real SF Symbols; none of the reference bitmaps ship in the app.
+This QA covers only WindowManager's native status component. Wallpaper, neighbouring macOS status
+items, the clock, and the generated images' presentation scaling are context rather than app assets.
+Production uses one persistent AppKit status item, a shared production content view, and real SF
+Symbols; none of the reference bitmaps ship in the app.
 
 ## Reference mapping
 
@@ -10,25 +13,60 @@ This QA covers only WindowManager's native status components. Wallpaper, neighbo
 | --- | --- | --- |
 | Compact | `<local-artifact>` | Overlapping-window app glyph, fine separator, and one minimal screen/workspace signal per connected display with an understated interaction dot. |
 | Medium | `<local-artifact>` | Separate app glyph and equal-height neutral/accent display chips at native status-bar scale. |
-| Full | `<local-artifact>` | Separate app/menu item plus lightweight display groups, explicit workspace buttons, quiet secondary-active outline, and strong interaction-active fill. |
+| Full | `<local-artifact>` | A visibly distinct app-menu target followed by lightweight display groups, explicit workspace buttons, quiet secondary-active outlines, and a strong interaction-active fill. |
 
 ## Offscreen production renders
 
-The opt-in non-hosted fixture in `Tests/MenuBarVisualSnapshotTests.swift` rendered the real production SwiftUI primary view and AppKit Full strip at 2x scale. It does not construct `AppDelegate`, start Accessibility, register global shortcuts, launch `WindowManager.app`, or touch live windows.
+`Tests/MenuBarVisualSnapshotTests.swift` renders the same production content view used by the live
+status item at Retina scale. The fixture does not construct `AppDelegate`, start Accessibility,
+register global shortcuts, launch `WindowManager.app`, or touch live windows.
 
-- Compact: `<local-artifact>`
-- Medium: `<local-artifact>`
-- Full: `<local-artifact>`
+| Mode | Native canvas | Production render | Same-height reference comparison |
+| --- | --- | --- | --- |
+| Compact | 97 x 32 pt | `<local-artifact>` | `<local-artifact>` |
+| Medium | 137 x 32 pt | `<local-artifact>` | `<local-artifact>` |
+| Full | 246 x 32 pt | `<local-artifact>` | `<local-artifact>` |
 
-## Comparison findings
+The source artwork is 1942 x 809 px. Each comparison isolates its status component and normalises
+both sides to 64 px high, avoiding a false match to the reference wallpaper or neighbouring system
+icons.
 
-- **Spacing and scale:** 18-point production components, compact radii, fine separators, and restrained inter-group spacing match the reference hierarchy without imitating neighbouring system items.
-- **Iconography:** `rectangle.on.rectangle`, `laptopcomputer`, `display`, and `display.2` provide native, semantically accurate symbols. Using a laptop symbol for the built-in panel is an intentional semantic improvement over repeating a generic monitor.
-- **Active state:** Medium's interaction chip and Full's interaction workspace use a strong control-accent fill. A non-interaction display's active workspace uses a quiet accent outline. Compact uses a small dot below the signal rather than notification-badge styling.
-- **Ownership:** Display ownership is legible through symbols and grouping. Independent mode renders every connected display; Unified renders one combined group.
-- **Pressure and names:** long labels are bounded visually but complete in tooltips and VoiceOver. Deterministic compaction/overflow retains every connected display's active workspace.
-- **Interaction safety:** the Compact and Medium surface is one menu-opening target. Full's app item remains separate; only explicit workspace buttons carry switch actions.
-- **Iteration:** the first comparison exposed an inline Compact dot and a less reference-like app glyph. The final pass moved the dot beneath each signal and selected the native overlapping-rectangle symbol. No P0, P1, or P2 mismatch remains in the scoped component.
+## Iteration history
+
+1. **Live-build finding (P0/P1):** Full used a second AppKit status item beside SwiftUI
+   `MenuBarExtra`. macOS could reverse their order, synchronous presentation changes published back
+   into an active SwiftUI update, and removing/recreating the Full item disconnected status scenes.
+   The separate hit regions also left room for the historical workspace-P collision.
+2. **Structural fix:** Compact, Medium, and Full now reconfigure one persistent AppKit status item on
+   the next main-loop turn. Full places its app-menu target and workspace strip inside that same
+   component. The root hit test admits only explicit workspace buttons; all other pixels route to
+   the status item's menu.
+3. **Visual pass (P2):** the first repaired render had signals that were too small/faint and used the
+   wrong Full app glyph. The final token pass strengthened display ownership, placed Compact labels
+   inside their screen symbols, used the grouped-grid Full glyph, and retained native menu-bar
+   density.
+
+## Final fidelity review
+
+- **Typography:** native San Francisco text at 11-11.5 pt with compact semibold workspace labels;
+  long names truncate in the component while tooltips and VoiceOver expose the complete value.
+- **Spacing:** an 18 pt visual component height, compact radii, fine separators, and restrained gaps
+  reproduce the reference hierarchy within a normal 32 pt status-bar canvas.
+- **Colour/material:** semantic label colours and the user's control accent provide native
+  light/dark/high-contrast behaviour; there are no copied gradients, shadows, or theme assets.
+- **Assets:** `rectangle.on.rectangle`, `rectangle.split.2x2`, `laptopcomputer`, `display`, and
+  `display.2` are real SF Symbols. No generated bitmap is embedded in the product.
+- **State/ownership:** Independent mode shows each connected display's state; Unified mode shows one
+  combined-display state. Compact uses a restrained interaction dot, Medium an accent chip, and Full
+  an accent workspace control.
+- **Interaction:** clicking the app glyph, a Compact signal, a Medium chip, a Full display symbol, or
+  Full background opens the app menu. Only an explicit Full workspace button dispatches a workspace
+  switch, and the button carries a typed workspace/display target rather than a reused status tag.
+- **Remaining difference (P3):** the selected mockups use presentation-scale shadows and generous
+  surrounding space. Production deliberately obeys the real macOS status-bar height and native
+  material behaviour rather than reproducing those contextual effects.
+
+No scoped P0, P1, or P2 mismatch remains.
 
 final result: passed
 

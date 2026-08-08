@@ -59,19 +59,21 @@ final class MenuBarVisualSnapshotTests: XCTestCase {
         let assignments = Dictionary(uniqueKeysWithValues: workspaces.enumerated().map {
             ($0.element.id, $0.offset < 3 ? builtIn.identifier : external.identifier)
         })
-        let state = WorkspaceEngineState(
-            currentWorkspaceID: workspaces[5].id,
-            activeWorkspaceIDs: [workspaces[1].id, workspaces[5].id],
-            previousWorkspaceID: nil,
-            managedWindowCount: 6,
-            accessibilityGranted: true,
-            activeWorkspaceIDByDisplay: [
-                builtIn.identifier: workspaces[1].id,
-                external.identifier: workspaces[5].id,
-            ]
-        )
         return MenuBarPresentationMode.allCases.map { mode in
-            MenuBarPresentationResolver.resolve(
+            let builtInActive = mode == .full ? workspaces[1].id : workspaces[0].id
+            let interaction = mode == .compact ? builtInActive : workspaces[5].id
+            let state = WorkspaceEngineState(
+                currentWorkspaceID: interaction,
+                activeWorkspaceIDs: [builtInActive, workspaces[5].id],
+                previousWorkspaceID: nil,
+                managedWindowCount: 6,
+                accessibilityGranted: true,
+                activeWorkspaceIDByDisplay: [
+                    builtIn.identifier: builtInActive,
+                    external.identifier: workspaces[5].id,
+                ]
+            )
+            return MenuBarPresentationResolver.resolve(
                 mode: mode,
                 displayMode: .independent,
                 state: state,
@@ -128,16 +130,8 @@ private struct MenuBarSnapshotCanvas: View {
     let snapshot: MenuBarPresentationSnapshot
 
     var body: some View {
-        HStack(spacing: 5) {
-            MenuBarPrimaryStatusView(snapshot: snapshot)
-            if snapshot.mode == .full {
-                Rectangle()
-                    .fill(.white.opacity(0.20))
-                    .frame(width: 0.5, height: MenuBarVisualTokens.separatorHeight)
-                MenuBarFullStripRepresentable(snapshot: snapshot, availableWidth: 620)
-                    .fixedSize()
-            }
-        }
+        MenuBarStatusContentRepresentable(snapshot: snapshot, availableWidth: 620)
+            .fixedSize()
         .foregroundStyle(.white)
         .padding(.horizontal, 8)
         .padding(.vertical, 7)

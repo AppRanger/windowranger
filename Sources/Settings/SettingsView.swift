@@ -232,7 +232,7 @@ private struct GeneralSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if store.menuBarPresentationMode == .full {
-                    Text("The app icon remains a separate menu target. Only explicit workspace buttons switch; display symbols and group backgrounds are informational. Labels compact and overflow is disclosed when menu-bar space is tight.")
+                    Text("The app icon remains a distinct menu target inside one stable status component. Only explicit workspace buttons switch; display symbols and group backgrounds open the menu. Labels compact and overflow is disclosed when menu-bar space is tight.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {

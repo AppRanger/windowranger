@@ -481,7 +481,7 @@ private final class CommandFeedbackPanel: NSPanel {
 }
 
 @MainActor
-final class WorkspaceStatusBarController: NSObject {
+final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     static var verboseDiagnosticsMenuEnabled: Bool {
         #if DEBUG
         true
@@ -490,70 +490,297 @@ final class WorkspaceStatusBarController: NSObject {
         #endif
     }
 
-    private let workspaceStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let appMenu = NSMenu()
     private let engine: WorkspaceEngine
     private let stateModel: MenuBarStateModel
+    private let settingsStore: SettingsStore
+    private let settingsNavigation: SettingsNavigationModel
+    private let settingsWindowCoordinator: SettingsWindowCoordinator
+    private let diagnostics: DiagnosticLogger
+    private var presentationMode: MenuBarPresentationMode
+    private var contentView: MenuBarStatusContentView?
+    private var lastSnapshot: MenuBarPresentationSnapshot?
     private var isInvalidated = false
 
     init(
         engine: WorkspaceEngine,
-        stateModel: MenuBarStateModel
+        stateModel: MenuBarStateModel,
+        settingsStore: SettingsStore,
+        settingsNavigation: SettingsNavigationModel,
+        settingsWindowCoordinator: SettingsWindowCoordinator,
+        diagnostics: DiagnosticLogger,
+        initialMode: MenuBarPresentationMode
     ) {
         self.engine = engine
         self.stateModel = stateModel
+        self.settingsStore = settingsStore
+        self.settingsNavigation = settingsNavigation
+        self.settingsWindowCoordinator = settingsWindowCoordinator
+        self.diagnostics = diagnostics
+        presentationMode = initialMode
         super.init()
-        workspaceStatusItem.autosaveName = "com.chris.WindowManager.workspace-strip"
-        rebuild()
+        statusItem.autosaveName = "com.chris.WindowManager.primary-status"
+        appMenu.autoenablesItems = false
+        appMenu.delegate = self
+        statusItem.menu = appMenu
+        rebuildMenu()
+        rebuild(force: true)
     }
 
-    func rebuild() {
+    func setPresentationMode(_ mode: MenuBarPresentationMode) {
         guard !isInvalidated else { return }
-        guard let statusButton = workspaceStatusItem.button else { return }
-        statusButton.subviews.forEach { $0.removeFromSuperview() }
+        guard presentationMode != mode else {
+            rebuild()
+            return
+        }
+        presentationMode = mode
+        rebuild(force: true)
+    }
+
+    func rebuild(force: Bool = false) {
+        guard !isInvalidated else { return }
+        guard let statusButton = statusItem.button else { return }
+        let snapshot = stateModel.presentation(for: presentationMode)
+        guard force || snapshot != lastSnapshot else { return }
+        lastSnapshot = snapshot
+
         statusButton.title = ""
         statusButton.image = nil
         statusButton.target = nil
         statusButton.action = nil
-        let snapshot = stateModel.presentation(for: .full)
+        statusButton.tag = 0
+
         let availableWidth = MenuBarPressurePolicy.defaultBudget(
             for: NSScreen.main?.visibleFrame.width
         )
-        let strip = MenuBarFullStripView(
-            snapshot: snapshot,
-            availableWidth: availableWidth
-        ) { [weak self] target in
+        let workspaceAction: (MenuBarHitTarget) -> Void = { [weak self] target in
             self?.handle(target)
         }
-        let layout = strip.layout
-        let overflow = layout.overflowSummary.map { " \($0)" } ?? ""
-        statusButton.toolTip = "WindowManager workspaces — use the separate app icon to open the menu.\(overflow)"
-        statusButton.setAccessibilityLabel("WindowManager workspace buttons")
-        statusButton.addSubview(strip)
-        NSLayoutConstraint.activate([
-            strip.leadingAnchor.constraint(equalTo: statusButton.leadingAnchor),
-            strip.trailingAnchor.constraint(equalTo: statusButton.trailingAnchor),
-            strip.centerYAnchor.constraint(equalTo: statusButton.centerYAnchor),
-        ])
-        strip.layoutSubtreeIfNeeded()
-        workspaceStatusItem.length = max(28, strip.fittingSize.width)
+        let content: MenuBarStatusContentView
+        if let existing = contentView {
+            existing.configure(
+                snapshot: snapshot,
+                availableWidth: availableWidth,
+                workspaceAction: workspaceAction
+            )
+            content = existing
+        } else {
+            content = MenuBarStatusContentView(
+                snapshot: snapshot,
+                availableWidth: availableWidth,
+                workspaceAction: workspaceAction
+            )
+            contentView = content
+            statusButton.addSubview(content)
+            NSLayoutConstraint.activate([
+                content.leadingAnchor.constraint(equalTo: statusButton.leadingAnchor),
+                content.trailingAnchor.constraint(equalTo: statusButton.trailingAnchor),
+                content.centerYAnchor.constraint(equalTo: statusButton.centerYAnchor),
+            ])
+        }
+        let width = max(24, content.intrinsicContentSize.width)
+        statusItem.length = width
+        statusButton.toolTip = snapshot.primaryTooltip
+        statusButton.setAccessibilityLabel(snapshot.primaryAccessibilityLabel)
+        statusButton.setAccessibilityHelp(
+            presentationMode == .full
+                ? "Opens the WindowManager menu. Only the labelled workspace buttons switch workspaces."
+                : "Opens the WindowManager menu."
+        )
+        content.layoutSubtreeIfNeeded()
     }
 
     func invalidate() {
         guard !isInvalidated else { return }
         isInvalidated = true
-        NSStatusBar.system.removeStatusItem(workspaceStatusItem)
+        appMenu.delegate = nil
+        statusItem.menu = nil
+        contentView?.removeFromSuperview()
+        contentView = nil
+        NSStatusBar.system.removeStatusItem(statusItem)
     }
 
     private func handle(_ target: MenuBarHitTarget) {
-        guard case let .switchWorkspace(workspaceID, _) = MenuBarInteractionRouter.action(
-            for: target
-        ) else { return }
-        engine.switchToWorkspace(workspaceID)
+        switch MenuBarInteractionRouter.action(for: target) {
+        case .openMenu:
+            statusItem.button?.performClick(nil)
+        case let .switchWorkspace(workspaceID, _):
+            engine.switchToWorkspace(workspaceID)
+        }
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        rebuildMenu()
+    }
+
+    private func rebuildMenu() {
+        appMenu.removeAllItems()
+
+        let profile = disabledMenuItem(title: "Profile: \(settingsStore.activeProfile.name)")
+        profile.image = symbol("person.crop.rectangle.stack")
+        appMenu.addItem(profile)
+        appMenu.addItem(disabledMenuItem(title: settingsStore.activeProfileSelectionReason.title))
+
+        let switchProfile = NSMenuItem(title: "Switch Profile", action: nil, keyEquivalent: "")
+        switchProfile.image = symbol("arrow.triangle.2.circlepath")
+        let profilesMenu = NSMenu(title: "Switch Profile")
+        profilesMenu.autoenablesItems = false
+        for candidate in settingsStore.profiles {
+            let item = actionMenuItem(
+                title: candidate.name,
+                action: #selector(selectProfile(_:))
+            )
+            item.representedObject = candidate.id.uuidString
+            item.state = candidate.id == settingsStore.activeProfileID ? .on : .off
+            profilesMenu.addItem(item)
+        }
+        switchProfile.submenu = profilesMenu
+        appMenu.addItem(switchProfile)
+
+        if settingsStore.manualPinnedProfileID != nil {
+            let resume = actionMenuItem(
+                title: "Resume Automatic",
+                action: #selector(resumeAutomaticProfileSelection)
+            )
+            resume.image = symbol("arrow.triangle.2.circlepath")
+            appMenu.addItem(resume)
+        }
+
+        if presentationMode == .full {
+            let snapshot = stateModel.presentation(for: .full)
+            let layout = MenuBarPressurePolicy.layout(
+                displays: snapshot.displays,
+                availableWidth: MenuBarPressurePolicy.defaultBudget(
+                    for: NSScreen.main?.visibleFrame.width
+                )
+            )
+            if let overflowSummary = layout.overflowSummary {
+                appMenu.addItem(disabledMenuItem(title: "Menu bar overflow: \(overflowSummary)"))
+            }
+        }
+
+        appMenu.addItem(.separator())
+        let profileSettings = actionMenuItem(
+            title: "Profile Settings…",
+            action: #selector(openProfileSettings)
+        )
+        profileSettings.image = symbol("person.crop.rectangle.stack")
+        appMenu.addItem(profileSettings)
+
+        let settings = actionMenuItem(
+            title: "Settings…",
+            action: #selector(openSettings)
+        )
+        settings.keyEquivalent = ","
+        settings.keyEquivalentModifierMask = [.command]
+        settings.image = symbol("gearshape")
+        appMenu.addItem(settings)
+
+        let wheelSettings = actionMenuItem(
+            title: "Command Wheel Settings…",
+            action: #selector(openCommandWheelSettings)
+        )
+        wheelSettings.image = symbol("circle.hexagongrid")
+        appMenu.addItem(wheelSettings)
+
+        #if DEBUG
+        appMenu.addItem(.separator())
+        appMenu.addItem(disabledMenuItem(title: "WindowManager Debug"))
+        appMenu.addItem(actionMenuItem(
+            title: "Copy Recent Diagnostics",
+            action: #selector(copyRecentDiagnostics)
+        ))
+        let reveal = actionMenuItem(
+            title: "Reveal Diagnostics File",
+            action: #selector(revealDiagnosticsFile)
+        )
+        reveal.isEnabled = diagnostics.fileURL != nil
+        appMenu.addItem(reveal)
+        #endif
+
+        appMenu.addItem(.separator())
+        let quit = actionMenuItem(
+            title: "Quit WindowManager",
+            action: #selector(quitWindowManager)
+        )
+        quit.keyEquivalent = "q"
+        quit.keyEquivalentModifierMask = [.command]
+        appMenu.addItem(quit)
+    }
+
+    private func actionMenuItem(title: String, action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.isEnabled = true
+        return item
+    }
+
+    private func disabledMenuItem(title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
+    private func symbol(_ name: String) -> NSImage? {
+        NSImage(systemSymbolName: name, accessibilityDescription: nil)
+    }
+
+    @objc private func selectProfile(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let profileID = UUID(uuidString: raw)
+        else { return }
+        settingsStore.selectProfile(profileID)
+    }
+
+    @objc private func resumeAutomaticProfileSelection() {
+        settingsStore.resumeAutomaticProfileSelection()
+    }
+
+    @objc private func openProfileSettings() {
+        openSettingsPane(.profiles)
+    }
+
+    @objc private func openSettings() {
+        openSettingsPane(nil)
+    }
+
+    @objc private func openCommandWheelSettings() {
+        openSettingsPane(.radialMenu)
+    }
+
+    private func openSettingsPane(_ category: SettingsCategory?) {
+        SettingsWindowOpener.open(
+            category: category,
+            preferPointerDisplay: true,
+            navigation: settingsNavigation,
+            engine: engine,
+            coordinator: settingsWindowCoordinator,
+            openSettings: {
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            }
+        )
+    }
+
+    #if DEBUG
+    @objc private func copyRecentDiagnostics() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(diagnostics.recentDiagnosticsText(), forType: .string)
+    }
+
+    @objc private func revealDiagnosticsFile() {
+        guard let fileURL = diagnostics.fileURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+    }
+    #endif
+
+    @objc private func quitWindowManager() {
+        NSApp.terminate(nil)
     }
 
     deinit {
         if !isInvalidated {
-            NSStatusBar.system.removeStatusItem(workspaceStatusItem)
+            NSStatusBar.system.removeStatusItem(statusItem)
         }
     }
 }

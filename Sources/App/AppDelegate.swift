@@ -78,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
     private var preparedForTermination = false
     private var isShortcutRecording = false
+    private var pendingMenuBarPresentationUpdate: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -121,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         registerHotKeys()
         engine.start()
-        updateWorkspaceStripPresentation()
+        updateMenuBarPresentation()
 
         settingsStore.$workspaces
             .dropFirst()
@@ -284,15 +285,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsStore.$menuBarPresentationMode
             .dropFirst()
             .removeDuplicates()
-            .sink { [weak self] _ in
-                guard let self else { return }
-                self.menuBarState.updateConfiguration(
-                    workspaces: self.settingsStore.workspaces,
-                    displayMode: self.settingsStore.multiDisplayMode,
-                    connectedDisplays: self.settingsStore.connectedDisplays,
-                    workspaceDisplayAssignments: self.settingsStore.workspaceDisplayAssignments
-                )
-                self.updateWorkspaceStripPresentation()
+            .sink { [weak self] mode in
+                self?.scheduleMenuBarPresentationUpdate(mode)
             }
             .store(in: &cancellables)
 
@@ -339,6 +333,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func prepareForTerminationIfNeeded() {
         guard !preparedForTermination else { return }
         preparedForTermination = true
+        pendingMenuBarPresentationUpdate?.cancel()
+        pendingMenuBarPresentationUpdate = nil
         radialMenuTriggerController.cancel(reason: "application-terminating")
         commandFeedbackPresenter.shutdown()
         settingsWindowCoordinator.shutdown()
@@ -378,25 +374,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func updateWorkspaceStripPresentation() {
+    private func scheduleMenuBarPresentationUpdate(_ mode: MenuBarPresentationMode) {
+        // A segmented Picker publishes while SwiftUI is updating its view hierarchy. Coalescing on
+        // the next main-loop turn avoids re-entrant view publication and guarantees rapid changes
+        // finish on the newest requested presentation without removing the NSStatusItem.
+        pendingMenuBarPresentationUpdate?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingMenuBarPresentationUpdate = nil
+            self.workspaceStatusBarController?.setPresentationMode(mode)
+        }
+        pendingMenuBarPresentationUpdate = work
+        DispatchQueue.main.async(execute: work)
+    }
+
+    private func updateMenuBarPresentation() {
         menuBarState.updateConfiguration(
             workspaces: settingsStore.workspaces,
             displayMode: settingsStore.multiDisplayMode,
             connectedDisplays: settingsStore.connectedDisplays,
             workspaceDisplayAssignments: settingsStore.workspaceDisplayAssignments
         )
-        if settingsStore.menuBarPresentationMode.primaryLabelDescriptor.showsWorkspaceStrip {
-            if workspaceStatusBarController == nil {
-                workspaceStatusBarController = WorkspaceStatusBarController(
-                    engine: engine,
-                    stateModel: menuBarState
-                )
-            } else {
-                workspaceStatusBarController?.rebuild()
-            }
+        if workspaceStatusBarController == nil {
+            workspaceStatusBarController = WorkspaceStatusBarController(
+                engine: engine,
+                stateModel: menuBarState,
+                settingsStore: settingsStore,
+                settingsNavigation: settingsNavigation,
+                settingsWindowCoordinator: settingsWindowCoordinator,
+                diagnostics: diagnostics,
+                initialMode: settingsStore.menuBarPresentationMode
+            )
         } else {
-            workspaceStatusBarController?.invalidate()
-            workspaceStatusBarController = nil
+            workspaceStatusBarController?.setPresentationMode(
+                settingsStore.menuBarPresentationMode
+            )
         }
     }
 }
