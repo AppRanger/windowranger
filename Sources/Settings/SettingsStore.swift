@@ -319,6 +319,7 @@ final class SettingsStore: ObservableObject {
     var undockedProfileID: UUID? { localProfileState.undockedProfileID }
     var exactProfileTriggers: [ExactProfileTrigger] { localProfileState.exactTriggers }
     var roleBindings: [UUID: WorkspaceDisplayPin] { localProfileState.roleBindings }
+    var profileTransferDiagnosticLogger: DiagnosticLogger { diagnostics }
 
     var workspaceDisplayPins: [UUID: WorkspaceDisplayPin] {
         Dictionary(uniqueKeysWithValues: activeProfile.workspaceRoleAssignments.compactMap {
@@ -394,6 +395,60 @@ final class SettingsStore: ObservableObject {
             evaluateAutomaticProfileSelection(source: "profile-deleted")
         }
         return true
+    }
+
+    @discardableResult
+    func applyProfileImport(
+        _ plan: ProfileImportPlan,
+        undoManager: UndoManager? = nil
+    ) -> ProfileImportApplyResult {
+        guard profiles == plan.destinationSnapshot else {
+            diagnostics.log(
+                category: "profile-transfer",
+                event: "import-apply-rejected",
+                fields: ["reason": "stale-preview"]
+            )
+            return .stalePreview
+        }
+        guard !plan.importedProfiles.isEmpty else { return .invalidPlan }
+
+        let existingIDs = Set(profiles.flatMap { profile in
+            [profile.id] + profile.workspaces.map(\.id) + profile.displayRoles.map(\.id)
+        })
+        let importedIDs = plan.importedProfiles.flatMap { profile in
+            [profile.id] + profile.workspaces.map(\.id) + profile.displayRoles.map(\.id)
+        }
+        guard Set(importedIDs).count == importedIDs.count,
+              Set(importedIDs).isDisjoint(with: existingIDs),
+              plan.importedProfiles.allSatisfy({ $0.normalized() == $0 })
+        else {
+            diagnostics.log(
+                category: "profile-transfer",
+                event: "import-apply-rejected",
+                fields: ["reason": "invalid-plan"]
+            )
+            return .invalidPlan
+        }
+
+        profiles += plan.importedProfiles
+        persistProfileLibrary()
+        let importedProfiles = plan.importedProfiles
+        undoManager?.registerUndo(withTarget: self) { store in
+            store.removeImportedProfilesIfSafe(importedProfiles)
+        }
+        undoManager?.setActionName(
+            importedProfiles.count == 1 ? "Import Profile" : "Import Profiles"
+        )
+        diagnostics.log(
+            category: "profile-transfer",
+            event: "import-applied",
+            fields: [
+                "version": String(plan.formatVersion),
+                "profile-count": String(importedProfiles.count),
+                "profile-ids": importedProfiles.map { Self.shortIdentifier($0.id) }.joined(separator: ","),
+            ]
+        )
+        return .applied(profileCount: importedProfiles.count)
     }
 
     func setDefaultProfile(_ profileID: UUID) {
@@ -978,6 +1033,38 @@ final class SettingsStore: ObservableObject {
         persistLocalProfileState()
         activateProfile(clone.id, reason: .manualPin, source: "profile-created")
         return clone.id
+    }
+
+    private func removeImportedProfilesIfSafe(_ importedProfiles: [WindowManagerProfile]) {
+        let importedProfileIDs = Set(importedProfiles.map(\.id))
+        let importedRoleIDs = Set(importedProfiles.flatMap { $0.displayRoles.map(\.id) })
+        guard !importedProfileIDs.contains(activeProfileID),
+              localProfileState.manualPinnedProfileID.map({ !importedProfileIDs.contains($0) }) ?? true,
+              !importedProfileIDs.contains(localProfileState.defaultProfileID),
+              localProfileState.dockedProfileID.map({ !importedProfileIDs.contains($0) }) ?? true,
+              localProfileState.undockedProfileID.map({ !importedProfileIDs.contains($0) }) ?? true,
+              localProfileState.exactTriggers.allSatisfy({ !importedProfileIDs.contains($0.profileID) }),
+              localProfileState.runtimeWorkspaceStates.keys.allSatisfy({ !importedProfileIDs.contains($0) }),
+              localProfileState.roleBindings.keys.allSatisfy({ !importedRoleIDs.contains($0) }),
+              importedProfiles.allSatisfy({ imported in
+                  profiles.first(where: { $0.id == imported.id }) == imported
+              })
+        else {
+            diagnostics.log(
+                category: "profile-transfer",
+                event: "import-undo-skipped",
+                fields: ["reason": "profile-used-or-modified"]
+            )
+            return
+        }
+
+        profiles.removeAll { importedProfileIDs.contains($0.id) }
+        persistProfileLibrary()
+        diagnostics.log(
+            category: "profile-transfer",
+            event: "import-undone",
+            fields: ["profile-count": String(importedProfiles.count)]
+        )
     }
 
     private func setGenericProfile(_ profileID: UUID?, docked: Bool) {

@@ -88,6 +88,11 @@ remain local. `WorkspaceStateStore` writes the current WindowServer-bound sessio
 cache directory using an atomic replacement. A changed WindowServer session invalidates exact window
 IDs rather than guessing.
 
+Portable profile transfer serializes only reusable profile definitions into a separately versioned
+JSON transport document. Import validates the complete document, remaps every internal identity,
+previews deterministic additive names, and performs one profile-library mutation without activation.
+The transport file never becomes a second authoritative configuration source.
+
 ## Displays and recovery
 
 Synced profiles refer to abstract roles; local fingerprints resolve them conservatively. A missing

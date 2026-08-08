@@ -312,7 +312,18 @@ private struct GeneralSettingsView: View {
 
 private struct ProfilesSettingsView: View {
     @ObservedObject var store: SettingsStore
+    @Environment(\.undoManager) private var undoManager
+    @StateObject private var transferCoordinator: ProfileTransferCoordinator
     @State private var pendingProfileDeletion: UUID?
+    @State private var pendingProfileImport: ProfileImportPlan?
+    @State private var transferNotice: ProfileTransferNotice?
+
+    init(store: SettingsStore) {
+        self.store = store
+        _transferCoordinator = StateObject(wrappedValue: ProfileTransferCoordinator(
+            diagnostics: store.profileTransferDiagnosticLogger
+        ))
+    }
 
     var body: some View {
         Form {
@@ -374,6 +385,45 @@ private struct ProfilesSettingsView: View {
                     _ = store.createProfileFromCurrentConfiguration()
                 }
                 Text("Profiles sync workspace definitions and order, workspace keys and layouts, display mode and abstract roles, workspace-to-role assignments, and the complete app-rule collection. They never contain open-window identities, membership, frames, or focus.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Transfer reusable profiles") {
+                HStack {
+                    Button("Export All Profiles…", systemImage: "square.and.arrow.up") {
+                        Task {
+                            do {
+                                if try await transferCoordinator.exportProfiles(store.profiles) {
+                                    transferNotice = ProfileTransferNotice(
+                                        title: "Profiles Exported",
+                                        message: "The portable file contains reusable profile definitions only."
+                                    )
+                                }
+                            } catch {
+                                transferNotice = ProfileTransferNotice(
+                                    title: "Could Not Export Profiles",
+                                    message: error.localizedDescription
+                                )
+                            }
+                        }
+                    }
+                    Button("Import Profiles…", systemImage: "square.and.arrow.down") {
+                        Task {
+                            do {
+                                pendingProfileImport = try await transferCoordinator.prepareImport(
+                                    existingProfiles: store.profiles
+                                )
+                            } catch {
+                                transferNotice = ProfileTransferNotice(
+                                    title: "Could Not Import Profiles",
+                                    message: error.localizedDescription
+                                )
+                            }
+                        }
+                    }
+                }
+                Text("Export includes synced reusable definitions. Import previews and adds fresh copies; it never activates them or transfers this Mac's triggers, current selection, physical monitor bindings, runtime workspaces, or open windows.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -499,6 +549,41 @@ private struct ProfilesSettingsView: View {
         } message: {
             Text("The synced definition will be removed. Local default, trigger, runtime, and display-role references are cleaned up safely.")
         }
+        .sheet(item: $pendingProfileImport) { plan in
+            ProfileImportPreviewView(
+                plan: plan,
+                cancel: { pendingProfileImport = nil },
+                confirm: {
+                    switch store.applyProfileImport(plan, undoManager: undoManager) {
+                    case let .applied(profileCount):
+                        pendingProfileImport = nil
+                        transferNotice = ProfileTransferNotice(
+                            title: profileCount == 1 ? "Profile Imported" : "Profiles Imported",
+                            message: "Added \(profileCount) reusable \(profileCount == 1 ? "profile" : "profiles") without changing the active profile or this Mac's bindings."
+                        )
+                    case .stalePreview:
+                        pendingProfileImport = nil
+                        transferNotice = ProfileTransferNotice(
+                            title: "Profiles Changed",
+                            message: "The profile library changed after this preview. Choose the file again to create a fresh preview."
+                        )
+                    case .invalidPlan:
+                        pendingProfileImport = nil
+                        transferNotice = ProfileTransferNotice(
+                            title: "Import Was Not Applied",
+                            message: "The preview is no longer safe to apply. No profiles were changed."
+                        )
+                    }
+                }
+            )
+        }
+        .alert(item: $transferNotice) { notice in
+            Alert(
+                title: Text(notice.title),
+                message: Text(notice.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
     }
 
     @ViewBuilder
@@ -538,6 +623,75 @@ private struct ProfilesSettingsView: View {
         case nil:
             "Unbound on this Mac; workspaces using this role fall back safely without changing the synced profile."
         }
+    }
+}
+
+private struct ProfileTransferNotice: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
+}
+
+private struct ProfileImportPreviewView: View {
+    let plan: ProfileImportPlan
+    let cancel: () -> Void
+    let confirm: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Import Profiles")
+                    .font(.title2.weight(.semibold))
+                Text("Review the reusable definitions before adding them.")
+                    .foregroundStyle(.secondary)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(plan.summaries) { summary in
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: "person.crop.rectangle.stack")
+                                .foregroundStyle(.tint)
+                                .frame(width: 22)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(summary.resultingName).fontWeight(.medium)
+                                if summary.sourceName != summary.resultingName {
+                                    Text("Imported from “\(summary.sourceName)”")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text("\(summary.workspaceCount) workspaces · \(summary.displayRoleCount) display roles · \(summary.appRuleCount) app rules")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(10)
+                        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+            .frame(minHeight: 160, maxHeight: 360)
+
+            Label(
+                "Imported profiles are added with fresh identities. They are not activated, assigned to triggers, or bound to this Mac's monitors.",
+                systemImage: "checkmark.shield"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: cancel)
+                    .keyboardShortcut(.cancelAction)
+                Button(plan.summaries.count == 1 ? "Add Profile" : "Add Profiles", action: confirm)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 520, idealWidth: 600)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Profile import preview")
     }
 }
 
