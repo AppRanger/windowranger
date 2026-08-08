@@ -141,6 +141,10 @@ final class SettingsStore: ObservableObject {
         didSet { persistHotKeyConfiguration() }
     }
 
+    /// Runtime-only registration failures belong to this process and Mac. They are never persisted
+    /// into profile/global preferences or synchronized through iCloud.
+    @Published private(set) var hotKeyRuntimeIssues: [HotKeyRuntimeIssue] = []
+
     @Published var menuBarPresentationMode: MenuBarPresentationMode {
         didSet { persistMenuBarPresentationMode() }
     }
@@ -854,6 +858,14 @@ final class SettingsStore: ObservableObject {
         hotKeyConfiguration = updated
     }
 
+    func resetShortcuts(_ actions: Set<ConfigurableHotKeyAction>) {
+        guard !actions.isEmpty else { return }
+        var updated = hotKeyConfiguration
+        for action in actions { updated.reset(action) }
+        guard updated != hotKeyConfiguration else { return }
+        hotKeyConfiguration = updated
+    }
+
     func updateRadialWheelDefinition(
         actionName: String = "Edit Command Wheel",
         undoManager: UndoManager? = nil,
@@ -902,6 +914,11 @@ final class SettingsStore: ObservableObject {
         var updated = hotKeyConfiguration
         updated.resetAll()
         hotKeyConfiguration = updated
+    }
+
+    func setHotKeyRuntimeIssues(_ issues: [HotKeyRuntimeIssue]) {
+        guard hotKeyRuntimeIssues != issues else { return }
+        hotKeyRuntimeIssues = issues
     }
 
     func recordActiveWorkspaceState(_ state: WorkspaceEngineState) {

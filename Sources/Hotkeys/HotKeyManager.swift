@@ -2,6 +2,282 @@ import AppKit
 import Carbon
 import Foundation
 
+struct ShortcutBindingOwner: Hashable, Sendable, Identifiable {
+    enum Kind: String, Hashable, Sendable {
+        case globalCommand
+        case commandWheel
+        case workspaceSwitch
+        case workspaceMove
+    }
+
+    let id: String
+    let title: String
+    let kind: Kind
+    let configurableAction: ConfigurableHotKeyAction?
+    let workspaceID: UUID?
+
+    static func global(_ action: ConfigurableHotKeyAction) -> ShortcutBindingOwner {
+        ShortcutBindingOwner(
+            id: "global:\(action.rawValue)",
+            title: action.title,
+            kind: action == .commandWheel ? .commandWheel : .globalCommand,
+            configurableAction: action,
+            workspaceID: nil
+        )
+    }
+
+    static func workspaceSwitch(_ workspace: WorkspaceDefinition) -> ShortcutBindingOwner {
+        ShortcutBindingOwner(
+            id: "workspace:\(workspace.id.uuidString):switch",
+            title: "Switch to workspace \(workspace.name)",
+            kind: .workspaceSwitch,
+            configurableAction: nil,
+            workspaceID: workspace.id
+        )
+    }
+
+    static func workspaceMove(_ workspace: WorkspaceDefinition) -> ShortcutBindingOwner {
+        ShortcutBindingOwner(
+            id: "workspace:\(workspace.id.uuidString):move",
+            title: "Move window to workspace \(workspace.name)",
+            kind: .workspaceMove,
+            configurableAction: nil,
+            workspaceID: workspace.id
+        )
+    }
+}
+
+struct ShortcutBindingDefinition: Equatable, Sendable {
+    let owner: ShortcutBindingOwner
+    let chord: HotKeyChord
+}
+
+struct ShortcutConfigurationIssue: Equatable, Sendable, Identifiable {
+    enum Kind: String, Equatable, Sendable {
+        case invalid
+        case duplicate
+    }
+
+    let kind: Kind
+    let chord: HotKeyChord?
+    let owners: [ShortcutBindingOwner]
+    let reason: String
+
+    var id: String {
+        let ownerIDs = owners.map(\.id).sorted().joined(separator: ",")
+        let chordID = chord.map { "\($0.keyCode):\($0.modifiers)" } ?? "none"
+        return "\(kind.rawValue):\(chordID):\(ownerIDs)"
+    }
+
+    var message: String {
+        let names = Self.joinedTitles(owners.map(\.title))
+        switch kind {
+        case .invalid:
+            return "\(names) cannot use \(chord?.title ?? "that workspace key"): \(reason)"
+        case .duplicate:
+            return "\(names) all use \(chord?.title ?? "the same shortcut"). No command owns this shortcut until it is repaired."
+        }
+    }
+
+    private static func joinedTitles(_ titles: [String]) -> String {
+        switch titles.count {
+        case 0: return "This command"
+        case 1: return titles[0]
+        case 2: return "\(titles[0]) and \(titles[1])"
+        default: return titles.dropLast().joined(separator: ", ") + ", and " + titles.last!
+        }
+    }
+}
+
+struct ShortcutConfigurationReport: Equatable, Sendable {
+    let eligibleBindings: [ShortcutBindingDefinition]
+    let issues: [ShortcutConfigurationIssue]
+
+    func issues(for owner: ShortcutBindingOwner) -> [ShortcutConfigurationIssue] {
+        issues.filter { $0.owners.contains(owner) }
+    }
+
+    func issues(for action: ConfigurableHotKeyAction) -> [ShortcutConfigurationIssue] {
+        issues(for: .global(action))
+    }
+
+    func issues(forWorkspace workspaceID: UUID) -> [ShortcutConfigurationIssue] {
+        issues.filter { issue in issue.owners.contains { $0.workspaceID == workspaceID } }
+    }
+}
+
+enum ShortcutConflictModel {
+    static let modifierOnlyKeyCodes: Set<UInt32> = [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
+    static let supportedModifierMask = UInt32(controlKey | optionKey | shiftKey | cmdKey)
+    static let requiredModifierMask = UInt32(controlKey | optionKey | cmdKey)
+
+    static func evaluate(
+        configuration: HotKeyConfiguration,
+        workspaces: [WorkspaceDefinition],
+        includeCommandWheel: Bool = true
+    ) -> ShortcutConfigurationReport {
+        var validBindings: [ShortcutBindingDefinition] = []
+        var issues: [ShortcutConfigurationIssue] = []
+
+        for workspace in workspaces {
+            let owners = [
+                ShortcutBindingOwner.workspaceSwitch(workspace),
+                ShortcutBindingOwner.workspaceMove(workspace),
+            ]
+            guard let keyCode = HotKeyManager.keyCodes[workspace.key.lowercased()] else {
+                issues.append(contentsOf: owners.map { owner in
+                    ShortcutConfigurationIssue(
+                        kind: .invalid,
+                        chord: nil,
+                        owners: [owner],
+                        reason: "choose one supported workspace key in Workspaces settings."
+                    )
+                })
+                continue
+            }
+            validBindings.append(ShortcutBindingDefinition(
+                owner: owners[0],
+                chord: HotKeyChord(
+                    keyCode: keyCode,
+                    modifiers: UInt32(controlKey | optionKey)
+                )
+            ))
+            validBindings.append(ShortcutBindingDefinition(
+                owner: owners[1],
+                chord: HotKeyChord(
+                    keyCode: keyCode,
+                    modifiers: UInt32(optionKey | cmdKey)
+                )
+            ))
+        }
+
+        for action in ConfigurableHotKeyAction.allCases where includeCommandWheel || action != .commandWheel {
+            let binding = ShortcutBindingDefinition(
+                owner: .global(action),
+                chord: configuration.chord(for: action)
+            )
+            if let reason = validationMessage(binding.chord) {
+                issues.append(ShortcutConfigurationIssue(
+                    kind: .invalid,
+                    chord: binding.chord,
+                    owners: [binding.owner],
+                    reason: reason
+                ))
+            } else {
+                validBindings.append(binding)
+            }
+        }
+
+        let grouped = Dictionary(grouping: validBindings, by: \.chord)
+        let duplicateChords = Set(grouped.compactMap { chord, bindings in
+            bindings.count > 1 ? chord : nil
+        })
+        for chord in duplicateChords.sorted(by: chordSort) {
+            let owners = grouped[chord, default: []].map(\.owner).sorted { $0.id < $1.id }
+            issues.append(ShortcutConfigurationIssue(
+                kind: .duplicate,
+                chord: chord,
+                owners: owners,
+                reason: "choose a unique shortcut for each command."
+            ))
+        }
+
+        return ShortcutConfigurationReport(
+            eligibleBindings: validBindings.filter { !duplicateChords.contains($0.chord) },
+            issues: issues.sorted { $0.id < $1.id }
+        )
+    }
+
+    static func validationMessage(_ chord: HotKeyChord) -> String? {
+        guard chord.keyCode <= 127, !modifierOnlyKeyCodes.contains(chord.keyCode) else {
+            return "the saved key is not supported by WindowManager's global shortcut recorder."
+        }
+        guard chord.modifiers & ~supportedModifierMask == 0 else {
+            return "the saved modifier combination is not supported."
+        }
+        guard chord.modifiers & requiredModifierMask != 0 else {
+            return "use Control, Option, or Command so normal typing is never captured globally."
+        }
+        return nil
+    }
+
+    private static func chordSort(_ lhs: HotKeyChord, _ rhs: HotKeyChord) -> Bool {
+        lhs.modifiers == rhs.modifiers ? lhs.keyCode < rhs.keyCode : lhs.modifiers < rhs.modifiers
+    }
+}
+
+struct HotKeyRegistrationToken: Hashable, Sendable {
+    let id: UUID
+
+    init(id: UUID = UUID()) { self.id = id }
+}
+
+struct HotKeyRegistrationFailure: Error, Equatable, Sendable {
+    let status: OSStatus
+}
+
+protocol GlobalHotKeyRegistrationService: AnyObject {
+    func register(
+        chord: HotKeyChord,
+        identifier: UInt32
+    ) -> Result<HotKeyRegistrationToken, HotKeyRegistrationFailure>
+    func unregister(_ token: HotKeyRegistrationToken) -> OSStatus
+}
+
+final class CarbonGlobalHotKeyRegistrationService: GlobalHotKeyRegistrationService {
+    private var references: [HotKeyRegistrationToken: EventHotKeyRef] = [:]
+
+    func register(
+        chord: HotKeyChord,
+        identifier: UInt32
+    ) -> Result<HotKeyRegistrationToken, HotKeyRegistrationFailure> {
+        let hotKeyID = EventHotKeyID(signature: OSType(0x574D4752), id: identifier) // WMGR
+        var reference: EventHotKeyRef?
+        let status = RegisterEventHotKey(
+            chord.keyCode,
+            chord.modifiers,
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &reference
+        )
+        guard status == noErr, let reference else {
+            return .failure(HotKeyRegistrationFailure(status: status))
+        }
+        let token = HotKeyRegistrationToken()
+        references[token] = reference
+        return .success(token)
+    }
+
+    func unregister(_ token: HotKeyRegistrationToken) -> OSStatus {
+        guard let reference = references.removeValue(forKey: token) else { return noErr }
+        return UnregisterEventHotKey(reference)
+    }
+}
+
+struct HotKeyRuntimeIssue: Equatable, Sendable, Identifiable {
+    let owner: ShortcutBindingOwner
+    let chord: HotKeyChord
+    let status: OSStatus
+
+    var id: String { owner.id }
+    var message: String {
+        "macOS could not register \(chord.title) for \(owner.title) (status \(status)). Another app may own it; choose a different shortcut or reset this command."
+    }
+}
+
+struct HotKeyRegistrationReport: Equatable, Sendable {
+    let configurationIssues: [ShortcutConfigurationIssue]
+    let runtimeIssues: [HotKeyRuntimeIssue]
+    let registeredOwners: [ShortcutBindingOwner]
+
+    static let empty = HotKeyRegistrationReport(
+        configurationIssues: [],
+        runtimeIssues: [],
+        registeredOwners: []
+    )
+}
+
 final class HotKeyManager {
     private enum Action {
         case command(WindowManagerCommand)
@@ -18,19 +294,23 @@ final class HotKeyManager {
     private let dispatcher: WindowManagerCommandDispatcher
     private let diagnostics: DiagnosticLogger
     private let radialMenuTrigger: (RadialMenuTriggerInputEvent) -> Void
+    private let registrationService: GlobalHotKeyRegistrationService
     private var eventHandler: EventHandlerRef?
-    private var hotKeys: [EventHotKeyRef] = []
+    private var hotKeys: [(token: HotKeyRegistrationToken, binding: ShortcutBindingDefinition)] = []
     private var actions: [UInt32: Action] = [:]
-    private var registeredChords = Set<HotKeyChord>()
 
     init(
         dispatcher: WindowManagerCommandDispatcher,
         diagnostics: DiagnosticLogger = .disabled,
-        radialMenuTrigger: @escaping (RadialMenuTriggerInputEvent) -> Void = { _ in }
+        radialMenuTrigger: @escaping (RadialMenuTriggerInputEvent) -> Void = { _ in },
+        registrationService: GlobalHotKeyRegistrationService = CarbonGlobalHotKeyRegistrationService(),
+        installsEventHandler: Bool = true
     ) {
         self.dispatcher = dispatcher
         self.diagnostics = diagnostics
         self.radialMenuTrigger = radialMenuTrigger
+        self.registrationService = registrationService
+        guard installsEventHandler else { return }
         var eventTypes = [
             EventTypeSpec(
                 eventClass: OSType(kEventClassKeyboard),
@@ -68,41 +348,42 @@ final class HotKeyManager {
         workspaces: [WorkspaceDefinition],
         hotKeyConfiguration: HotKeyConfiguration = HotKeyConfiguration(),
         radialMenuEnabled: Bool = false
-    ) {
+    ) -> HotKeyRegistrationReport {
         unregisterAll()
+        let configuration = ShortcutConflictModel.evaluate(
+            configuration: hotKeyConfiguration,
+            workspaces: workspaces,
+            includeCommandWheel: radialMenuEnabled
+        )
+        for issue in configuration.issues {
+            diagnostics.log(
+                category: "hotkey",
+                event: "registration-skipped",
+                fields: [
+                    "reason": issue.kind.rawValue,
+                    "owners": issue.owners.map(\.id).joined(separator: ","),
+                    "chord": issue.chord?.title ?? "none",
+                ]
+            )
+        }
+
         var identifier: UInt32 = 1
-
-        for workspace in workspaces {
-            guard let keyCode = Self.keyCodes[workspace.key.lowercased()] else { continue }
-            add(
-                id: &identifier,
-                chord: HotKeyChord(keyCode: keyCode, modifiers: UInt32(controlKey | optionKey)),
-                action: .command(.switchWorkspace(workspace.id))
-            )
-            add(
-                id: &identifier,
-                chord: HotKeyChord(keyCode: keyCode, modifiers: UInt32(optionKey | cmdKey)),
-                action: .command(.moveFocusedWindow(workspace.id))
-            )
-        }
-
-        for action in ConfigurableHotKeyAction.allCases {
-            if action == .commandWheel {
-                if radialMenuEnabled {
-                    add(
-                        id: &identifier,
-                        chord: hotKeyConfiguration.chord(for: action),
-                        action: .radialMenu
-                    )
-                }
-            } else if let command = action.command {
-                add(
-                    id: &identifier,
-                    chord: hotKeyConfiguration.chord(for: action),
-                    action: .command(command)
-                )
+        var runtimeIssues: [HotKeyRuntimeIssue] = []
+        var registeredOwners: [ShortcutBindingOwner] = []
+        for binding in configuration.eligibleBindings {
+            guard let action = action(for: binding.owner) else { continue }
+            if let issue = add(id: identifier, binding: binding, action: action) {
+                runtimeIssues.append(issue)
+            } else {
+                registeredOwners.append(binding.owner)
             }
+            identifier += 1
         }
+        return HotKeyRegistrationReport(
+            configurationIssues: configuration.issues,
+            runtimeIssues: runtimeIssues,
+            registeredOwners: registeredOwners
+        )
     }
 
     static func configurableShortcutConflict(
@@ -111,26 +392,22 @@ final class HotKeyManager {
         configuration: HotKeyConfiguration,
         workspaces: [WorkspaceDefinition]
     ) -> String? {
-        if let validation = shortcutValidationMessage(chord) { return validation }
-        if let other = ConfigurableHotKeyAction.allCases.first(where: {
-            $0 != action && configuration.chord(for: $0) == chord
-        }) {
-            return "That shortcut is already used by \(other.title)."
-        }
-        return workspaceShortcutConflict(chord, workspaces: workspaces)
+        var proposed = configuration
+        proposed.setChord(chord, for: action)
+        return ShortcutConflictModel.evaluate(
+            configuration: proposed,
+            workspaces: workspaces
+        ).issues(for: action).first?.message
     }
 
     static func shortcutValidationMessage(_ chord: HotKeyChord) -> String? {
-        let required = UInt32(controlKey | optionKey | cmdKey)
-        guard chord.modifiers & required != 0 else {
-            return "Use Control, Option, or Command so normal typing is never captured globally."
-        }
-        return nil
+        ShortcutConflictModel.validationMessage(chord)
     }
 
     static func recordedChord(from event: NSEvent) -> HotKeyChord? {
-        let modifierOnlyKeyCodes: Set<UInt16> = [54, 55, 56, 57, 58, 59, 60, 61, 62, 63]
-        guard !modifierOnlyKeyCodes.contains(event.keyCode) else { return nil }
+        guard !ShortcutConflictModel.modifierOnlyKeyCodes.contains(UInt32(event.keyCode)) else {
+            return nil
+        }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         var modifiers: UInt32 = 0
         if flags.contains(.control) { modifiers |= UInt32(controlKey) }
@@ -140,60 +417,64 @@ final class HotKeyManager {
         return HotKeyChord(keyCode: UInt32(event.keyCode), modifiers: modifiers)
     }
 
-    private static func workspaceShortcutConflict(
-        _ chord: HotKeyChord,
-        workspaces: [WorkspaceDefinition]
-    ) -> String? {
-        for workspace in workspaces {
-            guard let keyCode = keyCodes[workspace.key.lowercased()] else { continue }
-            if chord == HotKeyChord(keyCode: keyCode, modifiers: UInt32(controlKey | optionKey)) {
-                return "That shortcut switches to workspace \(workspace.name)."
-            }
-            if chord == HotKeyChord(keyCode: keyCode, modifiers: UInt32(optionKey | cmdKey)) {
-                return "That shortcut moves a window to workspace \(workspace.name)."
-            }
+    private func action(for owner: ShortcutBindingOwner) -> Action? {
+        switch owner.kind {
+        case .commandWheel:
+            return .radialMenu
+        case .globalCommand:
+            return owner.configurableAction?.command.map(Action.command)
+        case .workspaceSwitch:
+            return owner.workspaceID.map { .command(.switchWorkspace($0)) }
+        case .workspaceMove:
+            return owner.workspaceID.map { .command(.moveFocusedWindow($0)) }
         }
-        return nil
     }
 
-    private func add(id: inout UInt32, chord: HotKeyChord, action: Action) {
-        guard registeredChords.insert(chord).inserted else {
-            diagnostics.log(
-                category: "hotkey",
-                event: "registration-skipped",
-                fields: action.diagnosticFields.merging(["reason": "internal-conflict"]) { _, new in new }
-            )
-            id += 1
-            return
-        }
-        let hotKeyID = EventHotKeyID(signature: OSType(0x574D4752), id: id) // WMGR
-        var reference: EventHotKeyRef?
-        let result = RegisterEventHotKey(
-            chord.keyCode,
-            chord.modifiers,
-            hotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &reference
-        )
-        if result == noErr, let reference {
-            hotKeys.append(reference)
+    private func add(
+        id: UInt32,
+        binding: ShortcutBindingDefinition,
+        action: Action
+    ) -> HotKeyRuntimeIssue? {
+        switch registrationService.register(chord: binding.chord, identifier: id) {
+        case let .success(token):
+            hotKeys.append((token, binding))
             actions[id] = action
-        } else {
+            return nil
+        case let .failure(failure):
             diagnostics.log(
                 category: "hotkey",
                 event: "registration-failed",
-                fields: action.diagnosticFields.merging(["status": String(result)]) { _, new in new }
+                fields: action.diagnosticFields.merging([
+                    "owner": binding.owner.id,
+                    "chord": binding.chord.title,
+                    "status": String(failure.status),
+                ]) { _, new in new }
+            )
+            return HotKeyRuntimeIssue(
+                owner: binding.owner,
+                chord: binding.chord,
+                status: failure.status
             )
         }
-        id += 1
     }
 
     private func unregisterAll() {
-        for hotKey in hotKeys { UnregisterEventHotKey(hotKey) }
+        for hotKey in hotKeys {
+            let status = registrationService.unregister(hotKey.token)
+            if status != noErr {
+                diagnostics.log(
+                    category: "hotkey",
+                    event: "unregistration-failed",
+                    fields: [
+                        "owner": hotKey.binding.owner.id,
+                        "chord": hotKey.binding.chord.title,
+                        "status": String(status),
+                    ]
+                )
+            }
+        }
         hotKeys.removeAll()
         actions.removeAll()
-        registeredChords.removeAll()
     }
 
     private func handle(event: EventRef) -> OSStatus {

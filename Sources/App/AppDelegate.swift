@@ -345,11 +345,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func registerHotKeys() {
         guard !isShortcutRecording else { return }
-        hotKeyManager.register(
+        let report = hotKeyManager.register(
             workspaces: settingsStore.workspaces,
             hotKeyConfiguration: settingsStore.hotKeyConfiguration,
             radialMenuEnabled: settingsStore.radialMenuEnabled
         )
+        settingsStore.setHotKeyRuntimeIssues(report.runtimeIssues)
     }
 
     func shortcutRecordingStateDidChange(_ isRecording: Bool) {
@@ -358,6 +359,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if isRecording {
             radialMenuTriggerController.cancel(reason: "shortcut-recording-began")
             hotKeyManager.suspendRegistration()
+            settingsStore.setHotKeyRuntimeIssues([])
         } else {
             registerHotKeys()
         }
