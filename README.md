@@ -15,6 +15,7 @@ general-purpose command language.
 - [Pre-release checklist](docs/release-checklist.md)
 - [Portable profile transfer design](docs/profile-transfer-design.md)
 - [Future workspace systems decision brief](docs/future-workspace-systems-decisions.md)
+- [2026-08-08 code review](docs/code-review-2026-08-08.md)
 - [Third-party reference notices](THIRD_PARTY_NOTICES.md)
 - [MIT license](LICENSE)
 
@@ -63,8 +64,10 @@ derived workspace switch/move chord. Settings names all commands in a collision 
 conflicting chord unowned until it is repaired; it never silently lets the first command win. If
 macOS rejects an otherwise unique global registration (for example because another app owns it),
 only that command is skipped and its recorder shows the failure. Other valid shortcuts remain
-registered. Recording temporarily unregisters the app's bindings and restores them as one clean
-generation when recording ends.
+registered. If the shared event handler itself cannot be installed, registration fails closed rather
+than reporting shortcuts that cannot dispatch. Recording temporarily unregisters the app's bindings
+and restores them as one clean generation when recording ends; a rare failed OS unregistration is
+kept retryable while its old action is made inert immediately.
 
 ## Build
 
@@ -231,6 +234,11 @@ WindowServer session and never becomes synced profile configuration.
 ## Current behaviour and limits
 
 Window membership, original positions, per-window floating overrides, and the active workspace are saved locally in `~/Library/Caches/com.chris.WindowManager/workspace-state.json` for the active profile. On a normal quit, the state is saved before every managed window is made visible again. On the next launch, exact window-ID and app-bundle matches are returned only when the saved profile and WindowServer session remain valid; the previously active workspace is shown, and inactive workspaces are parked again.
+
+Recovery-state replacement is atomic and private to the user. A failed write remains retryable, an
+externally removed cache file is recreated on the next persistence tick even when workspace state has
+not changed, and corrupt, oversized, wrong-version, or wrong-WindowServer-session data is ignored
+rather than trusted.
 
 Window IDs are only trusted inside the same WindowServer session. After logout, reboot, or a WindowServer restart, stale assignments are ignored rather than guessed. If a crash or Xcode Stop leaves a window parked, the continuously saved state normally reconstructs it on the next launch; an unmatched parked window is instead recovered to the main display.
 
