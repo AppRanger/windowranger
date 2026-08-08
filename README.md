@@ -14,6 +14,7 @@ general-purpose command language.
 - [Security reporting status](SECURITY.md)
 - [Pre-release checklist](docs/release-checklist.md)
 - [Portable profile transfer design](docs/profile-transfer-design.md)
+- [Future workspace systems decision brief](docs/future-workspace-systems-decisions.md)
 - [Third-party reference notices](THIRD_PARTY_NOTICES.md)
 - [MIT license](LICENSE)
 
