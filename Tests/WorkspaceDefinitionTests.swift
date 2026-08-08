@@ -1893,6 +1893,67 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertEqual(permissions?.intValue, 0o600)
     }
 
+    func testWorkspaceStateRetriesAnUnchangedStateAfterWriteFailure() {
+        let fileAccess = TestWorkspaceStateFileAccess()
+        fileAccess.remainingWriteFailures = 1
+        let workspace = WorkspaceDefinition.defaults[0]
+        let state = PersistedWorkspaceState(
+            version: PersistedWorkspaceState.currentVersion,
+            windowServerSession: "retry-session",
+            activeWorkspaceID: workspace.id,
+            windows: [:]
+        )
+        let store = WorkspaceStateStore(
+            fileURL: URL(fileURLWithPath: "/virtual/workspace-state.json"),
+            sessionProvider: { "retry-session" },
+            fileAccess: fileAccess
+        )
+
+        store.save(state, waitForCompletion: true)
+        XCTAssertEqual(fileAccess.writeAttemptCount, 1)
+        XCTAssertFalse(fileAccess.hasData)
+
+        store.save(state, waitForCompletion: true)
+        XCTAssertEqual(fileAccess.writeAttemptCount, 2)
+        XCTAssertEqual(store.load(), state)
+    }
+
+    func testWorkspaceStateRecreatesAnExternallyRemovedUnchangedFile() {
+        let fileAccess = TestWorkspaceStateFileAccess()
+        let workspace = WorkspaceDefinition.defaults[0]
+        let state = PersistedWorkspaceState(
+            version: PersistedWorkspaceState.currentVersion,
+            windowServerSession: "recreate-session",
+            activeWorkspaceID: workspace.id,
+            windows: [:]
+        )
+        let store = WorkspaceStateStore(
+            fileURL: URL(fileURLWithPath: "/virtual/workspace-state.json"),
+            sessionProvider: { "recreate-session" },
+            fileAccess: fileAccess
+        )
+
+        store.save(state, waitForCompletion: true)
+        fileAccess.removeData()
+        store.save(state, waitForCompletion: true)
+
+        XCTAssertEqual(fileAccess.writeAttemptCount, 2)
+        XCTAssertEqual(store.load(), state)
+    }
+
+    func testWorkspaceStateRejectsOversizedDataBeforeReadingIt() {
+        let fileAccess = TestWorkspaceStateFileAccess()
+        fileAccess.seed(Data(repeating: 0x20, count: WorkspaceStateStore.maximumStateFileBytes + 1))
+        let store = WorkspaceStateStore(
+            fileURL: URL(fileURLWithPath: "/virtual/workspace-state.json"),
+            sessionProvider: { "oversized-session" },
+            fileAccess: fileAccess
+        )
+
+        XCTAssertNil(store.load())
+        XCTAssertEqual(fileAccess.readCount, 0)
+    }
+
     func testWorkspaceStateIsIgnoredAfterWindowServerChanges() {
         let fileURL = temporaryStateURL()
         defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
@@ -1964,5 +2025,73 @@ final class WorkspaceDefinitionTests: XCTestCase {
                 name: "External"
             ),
         ]
+    }
+}
+
+private final class TestWorkspaceStateFileAccess: WorkspaceStateFileAccess, @unchecked Sendable {
+    private enum Failure: Error { case simulatedWrite, missingData }
+
+    private let lock = NSLock()
+    private var data: Data?
+    private var writeAttempts = 0
+    private var reads = 0
+    var remainingWriteFailures = 0
+
+    var writeAttemptCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return writeAttempts
+    }
+
+    var readCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return reads
+    }
+
+    var hasData: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return data != nil
+    }
+
+    func seed(_ data: Data) {
+        lock.lock()
+        self.data = data
+        lock.unlock()
+    }
+
+    func removeData() {
+        lock.lock()
+        data = nil
+        lock.unlock()
+    }
+
+    func fileExists(at url: URL) -> Bool { hasData }
+
+    func fileSize(at url: URL) throws -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let data else { throw Failure.missingData }
+        return data.count
+    }
+
+    func read(from url: URL) throws -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        reads += 1
+        guard let data else { throw Failure.missingData }
+        return data
+    }
+
+    func write(_ data: Data, to url: URL) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        writeAttempts += 1
+        if remainingWriteFailures > 0 {
+            remainingWriteFailures -= 1
+            throw Failure.simulatedWrite
+        }
+        self.data = data
     }
 }

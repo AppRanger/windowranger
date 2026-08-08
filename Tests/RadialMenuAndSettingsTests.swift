@@ -1253,6 +1253,64 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(service.unregistrations.count, countAfterFirstSuspend)
     }
 
+    func testFailedUnregistrationIsRetriedWithoutReusingItsEventIdentifier() {
+        let service = TestGlobalHotKeyRegistrationService()
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { _, _ in },
+            registrationService: service,
+            installsEventHandler: false
+        )
+        let first = manager.register(
+            workspaces: [],
+            hotKeyConfiguration: HotKeyConfiguration(),
+            radialMenuEnabled: false
+        )
+        XCTAssertFalse(first.registeredOwners.isEmpty)
+        let firstRegistrations = service.registrations
+        let retained = firstRegistrations[0]
+        service.unregistrationFailures[retained.token] = -9_877
+
+        _ = manager.register(
+            workspaces: [],
+            hotKeyConfiguration: HotKeyConfiguration(),
+            radialMenuEnabled: false
+        )
+
+        let replacementIdentifiers = Set(
+            service.registrations.dropFirst(firstRegistrations.count).map(\.identifier)
+        )
+        XCTAssertFalse(replacementIdentifiers.contains(retained.identifier))
+        XCTAssertEqual(service.unregistrations.filter { $0 == retained.token }.count, 1)
+
+        service.unregistrationFailures.removeValue(forKey: retained.token)
+        manager.suspendRegistration()
+        XCTAssertEqual(service.unregistrations.filter { $0 == retained.token }.count, 2)
+    }
+
+    func testEventHandlerInstallationFailureRegistersNoSystemHotKeys() {
+        let sink = MemoryDiagnosticSink()
+        let logger = DiagnosticLogger(buildMode: .debug, sink: sink)
+        let service = TestGlobalHotKeyRegistrationService()
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { _, _ in },
+            diagnostics: logger,
+            registrationService: service,
+            eventHandlerInstaller: { _, _ in -9_876 }
+        )
+
+        let report = manager.register(
+            workspaces: [],
+            hotKeyConfiguration: HotKeyConfiguration(),
+            radialMenuEnabled: false
+        )
+
+        XCTAssertTrue(service.registrations.isEmpty)
+        XCTAssertTrue(report.registeredOwners.isEmpty)
+        XCTAssertEqual(report.runtimeIssues.count, ConfigurableHotKeyAction.allCases.count - 1)
+        XCTAssertTrue(report.runtimeIssues.allSatisfy { $0.status == -9_876 })
+        XCTAssertTrue(sink.text.contains("event-handler-installation-failed"))
+    }
+
     func testRegistrationNeverLetsFirstDuplicateSilentlyOwnTheChord() {
         var configuration = HotKeyConfiguration()
         configuration.setChord(
@@ -1686,6 +1744,7 @@ private final class TestGlobalHotKeyRegistrationService: GlobalHotKeyRegistratio
     }
 
     var failures: [HotKeyChord: OSStatus] = [:]
+    var unregistrationFailures: [HotKeyRegistrationToken: OSStatus] = [:]
     private(set) var registrations: [Registration] = []
     private(set) var unregistrations: [HotKeyRegistrationToken] = []
 
@@ -1703,7 +1762,7 @@ private final class TestGlobalHotKeyRegistrationService: GlobalHotKeyRegistratio
 
     func unregister(_ token: HotKeyRegistrationToken) -> OSStatus {
         unregistrations.append(token)
-        return noErr
+        return unregistrationFailures[token] ?? noErr
     }
 }
 
