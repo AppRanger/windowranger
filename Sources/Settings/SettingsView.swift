@@ -843,6 +843,19 @@ struct WorkspaceSettingsView: View {
                         .foregroundStyle(.orange)
                 }
 
+                ForEach(shortcutConfigurationReport.issues(forWorkspace: workspace.id)) { issue in
+                    Label(issue.message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel("Shortcut conflict. \(issue.message)")
+                }
+                ForEach(store.hotKeyRuntimeIssues.filter { $0.owner.workspaceID == workspace.id }) { issue in
+                    Label(issue.message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel("Shortcut registration failed. \(issue.message)")
+                }
+
                 LabeledContent("Switch to \(workspace.name)") {
                     WorkspaceShortcutCaps(keys: ["⌃", "⌥", workspace.key.uppercased()])
                 }
@@ -1057,8 +1070,16 @@ struct WorkspaceSettingsView: View {
     private var hasIdentityConflict: Bool {
         store.workspaces.contains { workspace in
             workspace.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                workspace.key.isEmpty || isDuplicateName(workspace) || isDuplicateKey(workspace)
+                workspace.key.isEmpty || isDuplicateName(workspace) || isDuplicateKey(workspace) ||
+                !shortcutConfigurationReport.issues(forWorkspace: workspace.id).isEmpty
         }
+    }
+
+    private var shortcutConfigurationReport: ShortcutConfigurationReport {
+        ShortcutConflictModel.evaluate(
+            configuration: store.hotKeyConfiguration,
+            workspaces: store.workspaces
+        )
     }
 
     private func isDuplicateName(_ workspace: WorkspaceDefinition) -> Bool {
@@ -1412,11 +1433,47 @@ private struct ShortcutSettingsView: View {
     @State private var eventMonitor: Any?
     @State private var conflictMessage: String?
 
+    private var configurationReport: ShortcutConfigurationReport {
+        ShortcutConflictModel.evaluate(
+            configuration: store.hotKeyConfiguration,
+            workspaces: store.workspaces
+        )
+    }
+
+    private var conflictingCustomActions: Set<ConfigurableHotKeyAction> {
+        Set(configurationReport.issues.flatMap(\.owners).compactMap(\.configurableAction).filter {
+            !store.hotKeyConfiguration.isUsingDefault(for: $0)
+        })
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Select a global command shortcut to record a replacement. Workspace keys and their derived switch/move shortcuts are configured in Workspaces.")
                     .foregroundStyle(.secondary)
+                if !configurationReport.issues.isEmpty || !store.hotKeyRuntimeIssues.isEmpty {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Label(
+                            "Some shortcuts need attention",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.headline)
+                        .foregroundStyle(.orange)
+                        Text("Conflicting shortcuts are not registered for either command. A macOS registration failure affects only that command; other valid shortcuts remain available.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Reset Conflicting Custom Shortcuts") {
+                            finishRecording()
+                            store.resetShortcuts(conflictingCustomActions)
+                        }
+                        .disabled(conflictingCustomActions.isEmpty)
+                        Text("If both commands use built-in defaults, record a different global shortcut here or change the affected workspace key in Workspaces.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(12)
+                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                }
                 Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 12) {
                     GridRow {
                         Text("Action").bold()
@@ -1466,7 +1523,25 @@ private struct ShortcutSettingsView: View {
     private func shortcutRow(_ action: ConfigurableHotKeyAction) -> some View {
         let chord = store.hotKeyConfiguration.chord(for: action)
         return GridRow {
-            Text(action.title)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(action.title)
+                ForEach(configurationReport.issues(for: action)) { issue in
+                    Label(issue.message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel("Shortcut conflict. \(issue.message)")
+                }
+                ForEach(store.hotKeyRuntimeIssues.filter {
+                    $0.owner.configurableAction == action
+                }) { issue in
+                    Label(issue.message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel("Shortcut registration failed. \(issue.message)")
+                }
+            }
             Button {
                 beginRecording(action)
             } label: {
@@ -1555,6 +1630,10 @@ private struct RadialMenuSettingsView: View {
         )
     }
 
+    private var runtimeIssue: HotKeyRuntimeIssue? {
+        store.hotKeyRuntimeIssues.first { $0.owner.configurableAction == .commandWheel }
+    }
+
     var body: some View {
         Form {
             Section("Activation") {
@@ -1583,6 +1662,12 @@ private struct RadialMenuSettingsView: View {
                 if let conflict = conflictMessage ?? storedConflict {
                     Label(conflict, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
+                }
+                if let runtimeIssue {
+                    Label(runtimeIssue.message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel("Shortcut registration failed. \(runtimeIssue.message)")
                 }
                 Picker("Activation style", selection: $store.radialMenuActivationStyle) {
                     ForEach(RadialMenuActivationStyle.allCases) { style in

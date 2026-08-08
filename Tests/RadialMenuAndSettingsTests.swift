@@ -1159,6 +1159,169 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         ))
     }
 
+    func testAuthoritativeShortcutModelNamesEveryCollidingOwnerAndSkipsBoth() {
+        var configuration = HotKeyConfiguration()
+        configuration.setChord(
+            configuration.chord(for: .nextWindow),
+            for: .previousWindow
+        )
+        let bracketWorkspace = WorkspaceDefinition(name: "Bracket", key: "[", layout: .none)
+        let report = ShortcutConflictModel.evaluate(
+            configuration: configuration,
+            workspaces: [bracketWorkspace]
+        )
+
+        let globalIssue = try! XCTUnwrap(report.issues(for: .previousWindow).first)
+        XCTAssertEqual(globalIssue.kind, .duplicate)
+        XCTAssertTrue(globalIssue.message.contains("Previous window"))
+        XCTAssertTrue(globalIssue.message.contains("Next window"))
+        XCTAssertFalse(report.eligibleBindings.contains {
+            $0.owner.configurableAction == .previousWindow ||
+                $0.owner.configurableAction == .nextWindow
+        })
+
+        let workspaceIssues = report.issues(forWorkspace: bracketWorkspace.id)
+        XCTAssertTrue(workspaceIssues.contains {
+            $0.message.contains("Switch to workspace Bracket") &&
+                $0.message.contains("Previous workspace")
+        })
+        XCTAssertFalse(report.eligibleBindings.contains {
+            $0.owner.workspaceID == bracketWorkspace.id && $0.owner.kind == .workspaceSwitch
+        })
+        XCTAssertTrue(report.eligibleBindings.contains {
+            $0.owner.workspaceID == bracketWorkspace.id && $0.owner.kind == .workspaceMove
+        })
+    }
+
+    func testShortcutModelRejectsUnsupportedSavedKeysAndModifierCombinations() {
+        var configuration = HotKeyConfiguration()
+        configuration.setChord(
+            HotKeyChord(keyCode: 999, modifiers: UInt32(controlKey)),
+            for: .previousWindow
+        )
+        configuration.setChord(
+            HotKeyChord(keyCode: 8, modifiers: UInt32(shiftKey)),
+            for: .nextWindow
+        )
+        let report = ShortcutConflictModel.evaluate(
+            configuration: configuration,
+            workspaces: [WorkspaceDefinition(name: "Unsupported", key: "", layout: .none)]
+        )
+
+        XCTAssertEqual(report.issues(for: .previousWindow).first?.kind, .invalid)
+        XCTAssertTrue(report.issues(for: .previousWindow).first?.message.contains("not supported") == true)
+        XCTAssertEqual(report.issues(for: .nextWindow).first?.kind, .invalid)
+        XCTAssertEqual(report.issues.filter { $0.chord == nil }.count, 2)
+    }
+
+    func testInjectedRegistrationFailureIsIsolatedAndReplacementUnregistersEveryOldToken() {
+        let service = TestGlobalHotKeyRegistrationService()
+        let failingChord = ConfigurableHotKeyAction.nextWindow.defaultChord
+        service.failures[failingChord] = -9_878
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { _, _ in },
+            registrationService: service,
+            installsEventHandler: false
+        )
+
+        let first = manager.register(
+            workspaces: [],
+            hotKeyConfiguration: HotKeyConfiguration(),
+            radialMenuEnabled: true
+        )
+        XCTAssertEqual(first.runtimeIssues.map(\.owner.configurableAction), [.nextWindow])
+        XCTAssertFalse(first.registeredOwners.contains { $0.configurableAction == .nextWindow })
+        XCTAssertTrue(first.registeredOwners.contains { $0.configurableAction == .previousWindow })
+        let firstTokens = Set(service.registrations.map(\.token))
+        XCTAssertEqual(firstTokens.count, ConfigurableHotKeyAction.allCases.count - 1)
+
+        service.failures.removeAll()
+        let second = manager.register(
+            workspaces: [],
+            hotKeyConfiguration: HotKeyConfiguration(),
+            radialMenuEnabled: true
+        )
+        XCTAssertEqual(Set(service.unregistrations), firstTokens)
+        XCTAssertTrue(second.runtimeIssues.isEmpty)
+        XCTAssertEqual(second.registeredOwners.count, ConfigurableHotKeyAction.allCases.count)
+
+        let replacementTokens = Set(service.registrations.suffix(second.registeredOwners.count).map(\.token))
+        manager.suspendRegistration()
+        XCTAssertTrue(replacementTokens.isSubset(of: Set(service.unregistrations)))
+        let countAfterFirstSuspend = service.unregistrations.count
+        manager.suspendRegistration()
+        XCTAssertEqual(service.unregistrations.count, countAfterFirstSuspend)
+    }
+
+    func testRegistrationNeverLetsFirstDuplicateSilentlyOwnTheChord() {
+        var configuration = HotKeyConfiguration()
+        configuration.setChord(
+            configuration.chord(for: .nextWindow),
+            for: .previousWindow
+        )
+        let service = TestGlobalHotKeyRegistrationService()
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { _, _ in },
+            registrationService: service,
+            installsEventHandler: false
+        )
+
+        let report = manager.register(
+            workspaces: [],
+            hotKeyConfiguration: configuration,
+            radialMenuEnabled: false
+        )
+
+        XCTAssertFalse(report.registeredOwners.contains { $0.configurableAction == .previousWindow })
+        XCTAssertFalse(report.registeredOwners.contains { $0.configurableAction == .nextWindow })
+        XCTAssertFalse(service.registrations.contains { $0.chord == ConfigurableHotKeyAction.nextWindow.defaultChord })
+    }
+
+    func testShortcutRegistrationDiagnosticsUseSafeOwnerIDsAndStatus() {
+        let sink = MemoryDiagnosticSink()
+        let logger = DiagnosticLogger(buildMode: .debug, sink: sink)
+        let service = TestGlobalHotKeyRegistrationService()
+        service.failures[ConfigurableHotKeyAction.nextWindow.defaultChord] = -9_878
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { _, _ in },
+            diagnostics: logger,
+            registrationService: service,
+            installsEventHandler: false
+        )
+
+        _ = manager.register(workspaces: [], radialMenuEnabled: false)
+
+        XCTAssertTrue(sink.text.contains("registration-failed"))
+        XCTAssertTrue(sink.text.contains("global:nextWindow"))
+        XCTAssertTrue(sink.text.contains("-9878"))
+        XCTAssertFalse(sink.text.contains("window-title"))
+    }
+
+    @MainActor
+    func testRuntimeShortcutFailuresRemainLocalAndAreNotPersisted() {
+        let defaults = isolatedDefaults()
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let first = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        first.setHotKeyRuntimeIssues([HotKeyRuntimeIssue(
+            owner: .global(.nextWindow),
+            chord: .init(keyCode: 30, modifiers: UInt32(optionKey)),
+            status: -9_878
+        )])
+        XCTAssertEqual(first.hotKeyRuntimeIssues.count, 1)
+
+        let restored = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertTrue(restored.hotKeyRuntimeIssues.isEmpty)
+        XCTAssertNil(defaults.object(forKey: "hotKeyRuntimeIssues"))
+    }
+
     func testShortcutRecorderConvertsNativeEventToCarbonChord() {
         let event = NSEvent.keyEvent(
             with: .keyDown,
@@ -1513,6 +1676,35 @@ private final class TestSettingsWindowSurface: SettingsWindowSurface {
     }
 
     func restoreOrdinaryLifecycle() { restoreCount += 1 }
+}
+
+private final class TestGlobalHotKeyRegistrationService: GlobalHotKeyRegistrationService {
+    struct Registration {
+        let chord: HotKeyChord
+        let identifier: UInt32
+        let token: HotKeyRegistrationToken
+    }
+
+    var failures: [HotKeyChord: OSStatus] = [:]
+    private(set) var registrations: [Registration] = []
+    private(set) var unregistrations: [HotKeyRegistrationToken] = []
+
+    func register(
+        chord: HotKeyChord,
+        identifier: UInt32
+    ) -> Result<HotKeyRegistrationToken, HotKeyRegistrationFailure> {
+        if let status = failures[chord] {
+            return .failure(HotKeyRegistrationFailure(status: status))
+        }
+        let token = HotKeyRegistrationToken()
+        registrations.append(Registration(chord: chord, identifier: identifier, token: token))
+        return .success(token)
+    }
+
+    func unregister(_ token: HotKeyRegistrationToken) -> OSStatus {
+        unregistrations.append(token)
+        return noErr
+    }
 }
 
 private extension CGRect {

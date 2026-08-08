@@ -41,6 +41,14 @@ Default shortcuts:
 | Move current workspace to next display | Option-Shift-Tab |
 | Open contextual command wheel | Control-Option-Space (configurable) |
 
+Shortcut validation has one shared model for global commands, the command-wheel trigger, and every
+derived workspace switch/move chord. Settings names all commands in a collision and leaves the
+conflicting chord unowned until it is repaired; it never silently lets the first command win. If
+macOS rejects an otherwise unique global registration (for example because another app owns it),
+only that command is skipped and its recorder shows the failure. Other valid shortcuts remain
+registered. Recording temporarily unregisters the app's bindings and restores them as one clean
+generation when recording ends.
+
 ## Build
 
 Generate the Xcode project:
