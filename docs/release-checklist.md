@@ -40,7 +40,8 @@ packaging or distribution; those remain held until product and release decisions
 - [ ] Workspace switch/move/focus/reorder/resize across same-app windows and multiple displays.
 - [ ] Freeform, Tiled and Accordion with floating/dialog/rule-excluded/keep-on-all windows.
 - [ ] Ignored panels/popups, minimized/full-screen windows and apps that reject AX frame writes.
-- [ ] Profile conversion/switching/triggers/iCloud sync and future profile import/export.
+- [ ] Profile conversion/switching/triggers/iCloud sync and additive profile import/export preview,
+      cancellation, invalid-file rejection, and safe Undo.
 - [ ] Menu-bar Compact/Medium/Full pressure, notch, long names and VoiceOver.
 - [ ] Command wheel Press/Hold, keyboard/pointer, edge clamping and stale-context cancellation.
 - [ ] Settings search, workspace inspector, import panels, Undo, current-display routing and scaling.

@@ -13,6 +13,7 @@ general-purpose command language.
 - [Permissions and privacy](docs/permissions-and-privacy.md)
 - [Security reporting status](SECURITY.md)
 - [Pre-release checklist](docs/release-checklist.md)
+- [Portable profile transfer design](docs/profile-transfer-design.md)
 - [Third-party reference notices](THIRD_PARTY_NOTICES.md)
 - [MIT license](LICENSE)
 
@@ -22,6 +23,7 @@ general-purpose command language.
 - A standard menu from the primary app item with Settings and a graceful Quit command; the primary item never switches workspaces.
 - Virtual workspaces that remember window membership and the active workspace across app restarts.
 - Named reusable profiles with local manual/automatic selection, dock and exact-topology triggers, synced abstract display roles, and per-Mac monitor bindings.
+- Previewed portable JSON profile export/import that adds fresh reusable definitions without transferring or changing this Mac's active profile, triggers, monitor bindings, runtime workspaces, or open windows.
 - Switching parks windows from inactive workspaces at the edge of the desktop and restores their previous frames when returning.
 - Workspace switches restore the destination before parking the source, touch only those two workspaces, issue position-only Accessibility writes, and suppress participating apps' own move animation for the duration of each batch.
 - Global shortcuts matching the current AeroSpace configuration.

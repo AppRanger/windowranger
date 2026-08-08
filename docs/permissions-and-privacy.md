@@ -31,6 +31,10 @@ names/keys/order/layout geometry, abstract display-role names and typed app rule
 identifiers. They do not contain open window IDs, titles, frames, focus, monitor serials/fingerprints,
 the active profile or automatic trigger assignments.
 
+An explicitly requested profile export contains the same reusable definition boundary in a local
+JSON file chosen by the user. Import is additive and does not read or write physical monitor
+identities, runtime workspace/window state, permissions, diagnostics, or the active profile.
+
 The active/manual profile selection, display-topology triggers, runtime workspace state, physical
 monitor fingerprints and role bindings remain local to each Mac. iCloud can be disabled in Settings;
 the app does not claim an independent cloud service or analytics backend.
