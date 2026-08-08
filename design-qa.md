@@ -72,6 +72,81 @@ final result: passed
 
 ---
 
+# Workspace Settings Design QA
+
+## Scope and reference
+
+This QA covers the native Workspaces Settings destination selected from:
+
+`<local-artifact>`
+
+The reference supplies the master-list-plus-inspector hierarchy. WindowManager uses the real
+profile-backed workspace/display/layout models, native SwiftUI/AppKit controls and SF Symbols; the
+bitmap and its illustrative unsupported Window behavior toggles are not included in the product.
+The complete information and persistence contract is in `docs/workspace-settings-design.md`.
+
+## Offscreen production render
+
+`WorkspaceSettingsVisualSnapshotTests` hosts the production `SettingsView` in a non-ordered,
+borderless AppKit window for one bounded SwiftUI update cycle. That realizes native
+`NavigationSplitView` and `List` descendants without starting `AppDelegate`, the workspace engine,
+Accessibility, global hotkeys, iCloud, login-item services, or the normal app. The fixture renders
+at 1440 x 1024 points and 2x Retina scale.
+
+- Final production preview: `<local-artifact>`
+- Same-canvas selected-reference comparison: `<local-artifact>`
+- Accessibility text-size render: `<local-artifact>`
+
+The representative state is Independent Displays, **Writing** selected, **Studio Display** as its
+abstract Home Display role, and **Accordion** with 16-point visible-edge padding.
+
+## Iteration history
+
+1. **Information architecture (P0):** the previous Workspaces, Displays, Layouts, and
+   workspace-shortcut controls were scattered across four destinations. Workspaces now owns one
+   reorderable master list and one selected-workspace inspector; physical role bindings remain in
+   Profiles and global commands remain in Shortcuts.
+2. **Offscreen-layout correction (fixture P0):** a detached hosting view did not realize virtualized
+   AppKit lists, while the first full-window capture did not allow SwiftUI's update cycle to settle.
+   The final fixture uses a non-ordered borderless window, a bounded main-run-loop update, and the
+   AppKit-supported view cache path. Selected table rows are marked emphasized only in the fixture
+   so the reference comparison represents an active Settings window without activating or showing
+   the test process.
+3. **Proportion and polish pass (P1/P2):** the first complete render made the Settings sidebar too
+   narrow and the workspace master too wide. Final column targets are a 260-point sidebar, a
+   roughly 385–420-point master, and a flexible inspector. The workspace key editor now suppresses
+   its redundant field label, every row exposes full VoiceOver ownership, and long explanatory copy
+   wraps without clipping.
+
+## Final fidelity review
+
+- **Hierarchy:** the far-left searchable Settings sidebar remains stable; page-level display mode,
+  workspace rows and CRUD occupy the centre; identity, General, layout-specific controls and Repair
+  occupy the inspector. Selection remains UUID-based across reorder/profile refresh.
+- **Controls:** native Lists, Forms, segmented Pickers, TextFields, Steppers, buttons, context menus,
+  drag-and-drop and Undo are used. Freeform hides automatic geometry; Tiled shows orientation,
+  inner gaps and outer padding; Accordion shows orientation and visible-edge padding.
+- **Typography and spacing:** system type, materials and grouped-form spacing preserve authentic
+  macOS density. The production render is intentionally a little denser than the generated image's
+  enlarged presentation typography.
+- **Colour and assets:** semantic materials/control accent and real SF Symbols support light/dark,
+  Increased Contrast and inactive-window states. No bitmap, handcrafted SVG, copied product icon,
+  or fake behavior control is shipped.
+- **Accessibility:** rows expose complete names, Home Display ownership, layout and key even when
+  visual text truncates. Drag reorder has context-menu and named VoiceOver Move Up/Down actions; an
+  accessibility text-size render exercises the full hierarchy through native layout and rasterization.
+- **Intentional differences (P3):** the generated reference contains an ellipsis menu, custom
+  per-workspace colours/icons, and three Window behavior toggles that the product does not support.
+  They are omitted rather than presented as dead or misleading controls. Offscreen segmented
+  controls retain AppKit's inactive-window shading; the live focused Settings window uses the
+  user's normal control accent.
+
+No scoped P0, P1, or P2 mismatch remains.
+
+final result: passed
+
+---
+
 # Contextual Radial Menu Design QA
 
 ## Scope

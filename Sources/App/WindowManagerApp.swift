@@ -16,7 +16,10 @@ struct WindowManagerApp: App {
                 shortcutRecordingStateChanged: appDelegate.shortcutRecordingStateDidChange
             )
         }
-        .defaultSize(width: 920, height: 650)
+        .defaultSize(
+            width: SettingsWindowMetrics.defaultSize.width,
+            height: SettingsWindowMetrics.defaultSize.height
+        )
         .windowResizability(.contentMinSize)
         .commands {
             WindowManagerSettingsCommands(

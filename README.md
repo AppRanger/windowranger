@@ -11,7 +11,7 @@ A small, native macOS virtual-workspace manager built around one workflow rather
 - Switching parks windows from inactive workspaces at the edge of the desktop and restores their previous frames when returning.
 - Workspace switches restore the destination before parking the source, touch only those two workspaces, issue position-only Accessibility writes, and suppress participating apps' own move animation for the duration of each batch.
 - Global shortcuts matching the current AeroSpace configuration.
-- Native sidebar-based, searchable Settings for profiles, workspaces, displays, layouts, app rules, shortcuts, the command wheel, permissions, startup, recovery, and iCloud sync.
+- Native sidebar-based, searchable Settings with one consolidated Workspaces master list and inspector for workspace identity, display mode/home, layout geometry, derived shortcuts, reset, and recovery.
 - Two multiple-display modes: unified switching across all displays, or independent active workspaces assigned per display.
 - Workspace-local window focus cycling with `Option-[` and `Option-]`, wrapping without selecting parked windows.
 - Automatic workspace following when a managed window is focused through the Dock or another macOS route.
@@ -75,6 +75,12 @@ views. It runs in the same non-hosted test bundle and does not start the app or 
 ./scripts/render-menu-bar-previews.sh /path/to/output-directory
 ```
 
+The selected three-column Workspaces Settings screen has the same isolated production-render path:
+
+```sh
+./scripts/render-settings-preview.sh /path/to/output-directory
+```
+
 The current selected-reference review and durable output paths are recorded in `design-qa.md`.
 
 The scheme runs as **Debug** from Xcode and archives as **Release**. Both configurations keep the
@@ -128,6 +134,23 @@ On the first profile-capable launch, the existing private installation's reusabl
 backed up, converted into **Current Setup**, saved in the new profile format, and decoded back for
 verification before the old settings keys and backup are removed. Profile-backed storage is then the
 sole configuration authority.
+
+## Workspace Settings
+
+Workspaces is the single place for workspace-specific configuration. The normal Settings sidebar
+stays on the left, a reorderable workspace master list sits in the centre, and the selected
+workspace's inspector fills the right. The page owns Unified versus Independent Displays, workspace
+names/order/keys, abstract Home Display roles, Freeform/Tiled/Accordion choice, orientation, Tiled
+gaps and screen padding, Accordion visible-edge padding, and both reusable-setting reset and live
+window recovery. Profiles remains separate for reusable profile management and this Mac's physical
+monitor bindings; Shortcuts remains separate for global commands.
+
+Each workspace key produces read-only summaries of the exact derived commands: Control-Option-key
+switches to it and Option-Command-key sends the focused window there. Add and Duplicate resolve a
+unique name and supported key automatically. Drag reorder, context-menu and VoiceOver Move Up/Down,
+safe deletion, native Undo for **Reset This Workspace**, and **Restore WindowManager Defaults** all
+use the same profile-backed storage path. Saved or deep-linked legacy Displays and Layouts panes now
+open the corresponding Workspaces inspector instead of leaving a stale destination.
 
 ## Contextual command wheel
 

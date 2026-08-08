@@ -712,6 +712,220 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(model.highlightedSettingID, "radial-shortcut")
     }
 
+    @MainActor
+    func testLegacyDisplayAndLayoutDestinationsMigrateToWorkspaces() {
+        for legacy in [SettingsCategory.displays, .layouts] {
+            let defaults = isolatedDefaults()
+            defaults.set(legacy.rawValue, forKey: "settings.selectedCategory.v1")
+            let model = SettingsNavigationModel(defaults: defaults, includeDebug: false)
+
+            XCTAssertEqual(model.selectedCategory, .workspaces)
+            XCTAssertEqual(defaults.string(forKey: "settings.selectedCategory.v1"), "workspaces")
+            model.select(legacy)
+            XCTAssertEqual(model.selectedCategory, .workspaces)
+        }
+        let available = SettingsCatalog.availableCategories(includeDebug: false)
+        XCTAssertTrue(available.contains(.workspaces))
+        XCTAssertFalse(available.contains(.displays))
+        XCTAssertFalse(available.contains(.layouts))
+    }
+
+    func testWorkspaceSearchRoutesConfigurationAndDynamicIdentityToWorkspaces() {
+        for query in [
+            "Independent Displays", "home display", "orientation", "inner gaps",
+            "accordion padding", "reset this workspace", "workspace shortcuts",
+        ] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .workspaces,
+                "Expected Workspaces routing for \(query)"
+            )
+        }
+
+        let dynamic = SettingsCatalog.search(
+            "Writing",
+            includeDebug: false,
+            workspaces: [WorkspaceDefinition(name: "Writing", key: "w", layout: .accordion)]
+        ).first { $0.workspaceID != nil }
+        XCTAssertEqual(dynamic?.title, "Writing")
+        XCTAssertEqual(dynamic?.category, .workspaces)
+        XCTAssertNotNil(dynamic?.workspaceID)
+    }
+
+    func testWorkspaceSelectionSurvivesReorderAndChoosesNearestAfterDelete() {
+        let ids = [workspaceA.id, workspaceB.id, workspaceC.id]
+        XCTAssertEqual(
+            WorkspaceSettingsSelectionPolicy.reconciled(
+                current: workspaceB.id,
+                preferred: nil,
+                workspaceIDs: [workspaceC.id, workspaceB.id, workspaceA.id]
+            ),
+            workspaceB.id
+        )
+        XCTAssertEqual(
+            WorkspaceSettingsSelectionPolicy.selectionAfterDeleting(workspaceB.id, from: ids),
+            workspaceC.id
+        )
+        XCTAssertEqual(
+            WorkspaceSettingsSelectionPolicy.reconciled(
+                current: workspaceB.id,
+                preferred: workspaceC.id,
+                workspaceIDs: ids
+            ),
+            workspaceC.id
+        )
+        XCTAssertEqual(
+            WorkspaceSettingsSelectionPolicy.reconciled(
+                current: UUID(),
+                preferred: UUID(),
+                workspaceIDs: ids
+            ),
+            workspaceA.id
+        )
+    }
+
+    @MainActor
+    func testWorkspaceDeepLinkTracksExactSelectionAndClearsStaleWorkspaceFocus() {
+        let model = SettingsNavigationModel(defaults: isolatedDefaults(), includeDebug: false)
+        let workspace = WorkspaceDefinition(name: "Writing", key: "w", layout: .accordion)
+        let result = try! XCTUnwrap(SettingsCatalog.search(
+            "Writing",
+            includeDebug: false,
+            workspaces: [workspace]
+        ).first { $0.workspaceID == workspace.id })
+
+        model.select(result)
+        XCTAssertEqual(model.selectedCategory, .workspaces)
+        XCTAssertEqual(model.requestedWorkspaceID, workspace.id)
+
+        model.select(.shortcuts)
+        XCTAssertEqual(model.selectedCategory, .shortcuts)
+        XCTAssertNil(model.requestedWorkspaceID)
+    }
+
+    func testWorkspaceRowAccessibilityExposesFullIdentityAndOwnership() {
+        let workspace = WorkspaceDefinition(name: "Long-form Writing", key: "w", layout: .accordion)
+        XCTAssertEqual(
+            WorkspaceSettingsAccessibility.rowLabel(
+                workspace: workspace,
+                displayRoleName: "Studio Display"
+            ),
+            "Long-form Writing, Home Display Studio Display, Accordion layout, workspace key W"
+        )
+    }
+
+    func testWorkspaceInspectorShowsOnlyLayoutSpecificControls() {
+        XCTAssertEqual(
+            WorkspaceInspectorControlVisibility(layout: .none),
+            WorkspaceInspectorControlVisibility(
+                showsFreeformExplanation: true,
+                showsOrientation: false,
+                showsTiledGeometry: false,
+                showsAccordionPadding: false
+            )
+        )
+        XCTAssertEqual(
+            WorkspaceInspectorControlVisibility(layout: .tiled),
+            WorkspaceInspectorControlVisibility(
+                showsFreeformExplanation: false,
+                showsOrientation: true,
+                showsTiledGeometry: true,
+                showsAccordionPadding: false
+            )
+        )
+        XCTAssertEqual(
+            WorkspaceInspectorControlVisibility(layout: .accordion),
+            WorkspaceInspectorControlVisibility(
+                showsFreeformExplanation: false,
+                showsOrientation: true,
+                showsTiledGeometry: false,
+                showsAccordionPadding: true
+            )
+        )
+    }
+
+    func testWorkspaceSettingsWindowHasRoomForSidebarListAndInspector() {
+        XCTAssertEqual(SettingsWindowMetrics.minimumSize, CGSize(width: 1120, height: 680))
+        XCTAssertEqual(SettingsWindowMetrics.defaultSize, CGSize(width: 1280, height: 780))
+        XCTAssertGreaterThan(SettingsWindowMetrics.defaultSize.width, SettingsWindowMetrics.minimumSize.width)
+        XCTAssertGreaterThan(SettingsWindowMetrics.defaultSize.height, SettingsWindowMetrics.minimumSize.height)
+    }
+
+    @MainActor
+    func testWorkspaceAddDuplicateReorderAndDeletePreserveReusableConfiguration() {
+        let defaults = isolatedDefaults()
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        store.workspaces = [workspaceA, workspaceB, workspaceC]
+        let roleID = store.activeProfile.displayRoles[0].id
+        store.assignWorkspace(workspaceB.id, toRole: roleID)
+
+        let duplicateID = try! XCTUnwrap(store.duplicateWorkspace(id: workspaceB.id))
+        let duplicate = try! XCTUnwrap(store.workspaces.first { $0.id == duplicateID })
+        XCTAssertEqual(duplicate.layout, workspaceB.layout)
+        XCTAssertEqual(duplicate.layoutConfiguration, workspaceB.layoutConfiguration)
+        XCTAssertNotEqual(duplicate.name.lowercased(), workspaceB.name.lowercased())
+        XCTAssertNotEqual(duplicate.key.lowercased(), workspaceB.key.lowercased())
+        XCTAssertEqual(store.roleID(for: duplicateID), roleID)
+
+        store.moveWorkspace(id: duplicateID, before: workspaceA.id)
+        XCTAssertEqual(store.workspaces.first?.id, duplicateID)
+        store.moveWorkspaces(fromOffsets: IndexSet(integer: 0), toOffset: store.workspaces.count)
+        XCTAssertEqual(store.workspaces.last?.id, duplicateID)
+
+        store.removeWorkspace(id: duplicateID)
+        XCTAssertFalse(store.workspaces.contains { $0.id == duplicateID })
+        let addedID = store.addWorkspace()
+        let added = try! XCTUnwrap(store.workspaces.first { $0.id == addedID })
+        XCTAssertFalse(added.name.isEmpty)
+        XCTAssertFalse(added.key.isEmpty)
+        XCTAssertEqual(Set(store.workspaces.map { $0.name.lowercased() }).count, store.workspaces.count)
+        XCTAssertEqual(Set(store.workspaces.map { $0.key.lowercased() }).count, store.workspaces.count)
+    }
+
+    @MainActor
+    func testWorkspaceHomeLayoutAndResetPersistInProfileWithNativeUndo() {
+        let defaults = isolatedDefaults()
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        store.workspaces = [workspaceA, workspaceB]
+        let secondRole = store.addDisplayRole(name: "Studio Display")
+        store.assignWorkspace(workspaceB.id, toRole: secondRole)
+        store.setLayout(.accordion, for: workspaceB.id)
+        var configuration = store.layoutConfiguration(for: workspaceB.id)
+        configuration.orientation = .vertical
+        configuration.accordionPadding = 175
+        store.setLayoutConfiguration(configuration, for: workspaceB.id)
+
+        XCTAssertEqual(store.roleID(for: workspaceB.id), secondRole)
+        XCTAssertEqual(store.activeProfile.workspaceRoleAssignments[workspaceB.id], secondRole)
+        XCTAssertEqual(store.activeProfile.workspaces.first { $0.id == workspaceB.id }?.layout, .accordion)
+
+        let undo = UndoManager()
+        store.resetWorkspaceSettings(workspaceB.id, undoManager: undo)
+        let reset = try! XCTUnwrap(store.workspaces.first { $0.id == workspaceB.id })
+        XCTAssertEqual(reset.layout, .none)
+        XCTAssertEqual(reset.layoutConfiguration, .aeroSpaceUserDefaults)
+        XCTAssertEqual(reset.name, workspaceB.name)
+        XCTAssertEqual(reset.key, workspaceB.key)
+        XCTAssertEqual(store.roleID(for: workspaceB.id), secondRole)
+        XCTAssertTrue(undo.canUndo)
+
+        undo.undo()
+        let restored = try! XCTUnwrap(store.workspaces.first { $0.id == workspaceB.id })
+        XCTAssertEqual(restored.layout, .accordion)
+        XCTAssertEqual(restored.layoutConfiguration?.orientation, .vertical)
+        XCTAssertEqual(restored.layoutConfiguration?.accordionPadding, 175)
+    }
+
     func testReleaseSearchNeverExposesDebugOnlyControls() {
         XCTAssertTrue(SettingsCatalog.search("logs", includeDebug: false).isEmpty)
         XCTAssertFalse(SettingsCatalog.search("logs", includeDebug: true).isEmpty)

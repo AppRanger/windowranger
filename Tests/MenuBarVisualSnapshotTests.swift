@@ -121,6 +121,202 @@ final class MenuBarVisualSnapshotTests: XCTestCase {
     }
 }
 
+/// Opt-in native Settings fixture. It renders the production Settings hierarchy in an offscreen
+/// AppKit host without constructing AppDelegate, starting WorkspaceEngine, contacting iCloud,
+/// requesting Accessibility, registering hotkeys, or ordering a window onto the user's desktop.
+final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
+    private static let snapshotSize = CGSize(width: 1_440, height: 1_024)
+
+    @MainActor
+    func testOffscreenProductionWorkspaceSettings() throws {
+        let defaultsSuite = "WindowManagerTests.SettingsSnapshot.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsSuite))
+        defaults.removePersistentDomain(forName: defaultsSuite)
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+
+        let displays = [
+            DisplaySnapshot(
+                identifier: "fixture-built-in",
+                bounds: CGRect(x: 0, y: 0, width: 1_512, height: 982),
+                isMain: true,
+                isBuiltIn: true,
+                name: "Built-in Display"
+            ),
+            DisplaySnapshot(
+                identifier: "fixture-studio",
+                bounds: CGRect(x: -1_920, y: 0, width: 1_920, height: 1_080),
+                isMain: false,
+                name: "Studio Display"
+            ),
+        ]
+        let focus = workspace("60000000-0000-0000-0000-000000000001", "Focus", "f", .tiled)
+        var writing = workspace("60000000-0000-0000-0000-000000000002", "Writing", "w", .accordion)
+        writing.layoutConfiguration = WorkspaceLayoutConfiguration(
+            orientation: .automatic,
+            accordionPadding: 16,
+            gaps: .aeroSpaceUserDefaults
+        )
+        let chat = workspace("60000000-0000-0000-0000-000000000003", "Chat", "c", .tiled)
+        let review = workspace("60000000-0000-0000-0000-000000000004", "Review", "r", .none)
+        let workspaces = [focus, writing, chat, review]
+
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { displays },
+            isPortableMacProvider: { true },
+            diagnostics: .disabled
+        )
+        store.workspaces = workspaces
+        store.multiDisplayMode = .independent
+        let roleID = store.activeProfile.displayRoles[0].id
+        store.renameDisplayRole(roleID, to: "Studio Display")
+        workspaces.forEach { store.assignWorkspace($0.id, toRole: roleID) }
+
+        let stateURL = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "WindowManager-SettingsSnapshot-\(UUID().uuidString).json"
+        )
+        defer { try? FileManager.default.removeItem(at: stateURL) }
+        let engine = WorkspaceEngine(
+            workspaces: workspaces,
+            profileID: store.activeProfileID,
+            displayMode: .independent,
+            stateStore: WorkspaceStateStore(fileURL: stateURL, sessionProvider: { "fixture" }),
+            diagnostics: .disabled
+        )
+        let navigation = SettingsNavigationModel(defaults: defaults, includeDebug: false)
+        navigation.selectWorkspace(writing.id)
+        let coordinator = SettingsWindowCoordinator(
+            diagnostics: .disabled,
+            displayProvider: { [] },
+            applicationActivator: {}
+        )
+        let view = SettingsView(
+            store: store,
+            engine: engine,
+            navigation: navigation,
+            windowCoordinator: coordinator,
+            diagnostics: .disabled,
+            shortcutRecordingStateChanged: { _ in }
+        )
+        .frame(width: Self.snapshotSize.width, height: Self.snapshotSize.height)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, .light)
+        .environment(\.controlActiveState, .key)
+
+        XCTAssertEqual(store.multiDisplayMode, .independent)
+        XCTAssertEqual(navigation.requestedWorkspaceID, writing.id)
+        XCTAssertEqual(store.workspaces.first { $0.id == writing.id }?.layout, .accordion)
+
+        guard let outputPath = ProcessInfo.processInfo.environment[
+            "WINDOWMANAGER_SETTINGS_SNAPSHOT_DIR"
+        ], !outputPath.isEmpty else { return }
+
+        let data = try renderRetinaPNG(
+            view,
+            size: Self.snapshotSize
+        )
+        XCTAssertGreaterThan(data.count, 25_000)
+        let outputDirectory = URL(fileURLWithPath: outputPath, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: outputDirectory,
+            withIntermediateDirectories: true
+        )
+        try data.write(
+            to: outputDirectory.appendingPathComponent("window-manager-settings-workspaces.png"),
+            options: .atomic
+        )
+
+        let largeTextSize = CGSize(width: 1_180, height: 900)
+        let largeTextData = try renderRetinaPNG(
+            WorkspaceSettingsView(
+                store: store,
+                engine: engine,
+                initiallySelectedWorkspaceID: writing.id
+            )
+            .frame(width: largeTextSize.width, height: largeTextSize.height)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, .light)
+            .environment(\.controlActiveState, .key)
+            .environment(\.dynamicTypeSize, .accessibility2),
+            size: largeTextSize
+        )
+        try largeTextData.write(
+            to: outputDirectory.appendingPathComponent(
+                "window-manager-settings-workspaces-accessibility-text.png"
+            ),
+            options: .atomic
+        )
+        XCTAssertGreaterThan(largeTextData.count, 25_000)
+    }
+
+    private func workspace(
+        _ id: String,
+        _ name: String,
+        _ key: String,
+        _ layout: WorkspaceLayout
+    ) -> WorkspaceDefinition {
+        WorkspaceDefinition(id: UUID(uuidString: id)!, name: name, key: key, layout: layout)
+    }
+
+    @MainActor
+    private func renderRetinaPNG<V: View>(_ view: V, size: CGSize) throws -> Data {
+        let renderedView = NSHostingView(rootView: view)
+        renderedView.appearance = NSAppearance(named: .aqua)
+        renderedView.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(
+            contentRect: renderedView.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .aqua)
+        window.contentView = renderedView
+        renderedView.layoutSubtreeIfNeeded()
+        // SwiftUI Lists and NavigationSplitView virtualize their AppKit descendants. A bounded
+        // genuine update cycle realizes those descendants without ever ordering this window.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        renderedView.layoutSubtreeIfNeeded()
+        emphasizeSelectedControls(in: renderedView)
+        renderedView.displayIfNeeded()
+        XCTAssertEqual(renderedView.bounds.size.width, size.width, accuracy: 1)
+        XCTAssertEqual(renderedView.bounds.size.height, size.height, accuracy: 1)
+
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(size.width * 2),
+            pixelsHigh: Int(size.height * 2),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            throw SnapshotError.couldNotAllocateBitmap
+        }
+        bitmap.size = size
+        renderedView.cacheDisplay(in: renderedView.bounds, to: bitmap)
+        window.close()
+        guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw SnapshotError.couldNotEncodePNG
+        }
+        return png
+    }
+
+    private func emphasizeSelectedControls(in view: NSView) {
+        if let row = view as? NSTableRowView, row.isSelected {
+            row.isEmphasized = true
+        }
+        if let segmented = view as? NSSegmentedControl {
+            segmented.selectedSegmentBezelColor = .controlAccentColor
+        }
+        view.subviews.forEach(emphasizeSelectedControls)
+    }
+}
+
 private enum SnapshotError: Error {
     case couldNotAllocateBitmap
     case couldNotEncodePNG
