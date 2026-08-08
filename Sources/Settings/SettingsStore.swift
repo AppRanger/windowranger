@@ -16,6 +16,47 @@ extension NSUbiquitousKeyValueStore: UbiquitousKeyValueStoring {
     var notificationObject: AnyObject { self }
 }
 
+enum WorkspaceIdentityPolicy {
+    static let keyCandidates = Array("1234567890abcdefghijklmnopqrstuvwxyz-=[]\\").map(String.init)
+
+    static func sanitizedKey(_ proposed: String) -> String {
+        guard let character = proposed.lowercased().first else { return "" }
+        let key = String(character)
+        return HotKeyManager.keyCodes[key] == nil ? "" : key
+    }
+
+    static func uniqueName(
+        _ proposed: String,
+        existing: [String]
+    ) -> String {
+        let trimmed = proposed.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = trimmed.isEmpty ? "Workspace" : trimmed
+        let used = Set(existing.map { $0.lowercased() })
+        guard used.contains(base.lowercased()) else { return base }
+        let copy = "\(base) Copy"
+        guard used.contains(copy.lowercased()) else { return copy }
+        var suffix = 2
+        while used.contains("\(copy) \(suffix)".lowercased()) { suffix += 1 }
+        return "\(copy) \(suffix)"
+    }
+
+    static func uniqueKey(
+        preferred: String,
+        name: String,
+        existing: [String]
+    ) -> String {
+        let used = Set(existing.map { $0.lowercased() }.filter { !$0.isEmpty })
+        var candidates: [String] = []
+        let preferred = sanitizedKey(preferred)
+        if !preferred.isEmpty { candidates.append(preferred) }
+        candidates.append(contentsOf: name.lowercased().map(String.init).filter {
+            HotKeyManager.keyCodes[$0] != nil
+        })
+        candidates.append(contentsOf: keyCandidates)
+        return candidates.first { !used.contains($0) } ?? ""
+    }
+}
+
 @MainActor
 final class SettingsStore: ObservableObject {
     private enum Keys {
@@ -578,14 +619,49 @@ final class SettingsStore: ObservableObject {
 
     // MARK: - Existing profile-owned setting operations
 
-    func addWorkspace() {
-        let existing = Set(workspaces.map { $0.name })
-        let name = (1...99).map(String.init).first { !existing.contains($0) } ?? "New"
-        let workspace = WorkspaceDefinition(name: name, key: name.lowercased())
+    @discardableResult
+    func addWorkspace() -> UUID {
+        let name = WorkspaceIdentityPolicy.uniqueName(
+            "New Workspace",
+            existing: workspaces.map(\.name)
+        )
+        let key = WorkspaceIdentityPolicy.uniqueKey(
+            preferred: name,
+            name: name,
+            existing: workspaces.map(\.key)
+        )
+        let workspace = WorkspaceDefinition(name: name, key: key)
         workspaces.append(workspace)
         if let roleID = activeProfile.displayRoles.first?.id {
             assignWorkspace(workspace.id, toRole: roleID)
         }
+        return workspace.id
+    }
+
+    @discardableResult
+    func duplicateWorkspace(id: UUID) -> UUID? {
+        guard let sourceIndex = workspaces.firstIndex(where: { $0.id == id }) else { return nil }
+        let source = workspaces[sourceIndex]
+        let name = WorkspaceIdentityPolicy.uniqueName(
+            source.name,
+            existing: workspaces.map(\.name)
+        )
+        let key = WorkspaceIdentityPolicy.uniqueKey(
+            preferred: source.key,
+            name: name,
+            existing: workspaces.map(\.key)
+        )
+        let duplicate = WorkspaceDefinition(
+            name: name,
+            key: key,
+            layout: source.layout,
+            layoutConfiguration: source.layoutConfiguration
+        )
+        workspaces.insert(duplicate, at: sourceIndex + 1)
+        if let roleID = roleID(for: source.id) ?? activeProfile.displayRoles.first?.id {
+            assignWorkspace(duplicate.id, toRole: roleID)
+        }
+        return duplicate.id
     }
 
     func removeWorkspace(id: UUID) {
@@ -615,9 +691,68 @@ final class SettingsStore: ObservableObject {
         workspaces.swapAt(index, destination)
     }
 
+    func moveWorkspace(id: UUID, before targetID: UUID) {
+        guard id != targetID,
+              let sourceIndex = workspaces.firstIndex(where: { $0.id == id }),
+              workspaces.contains(where: { $0.id == targetID })
+        else { return }
+        var reordered = workspaces
+        let moving = reordered.remove(at: sourceIndex)
+        guard let targetIndex = reordered.firstIndex(where: { $0.id == targetID }) else { return }
+        reordered.insert(moving, at: targetIndex)
+        guard reordered != workspaces else { return }
+        workspaces = reordered
+    }
+
+    func moveWorkspaces(fromOffsets source: IndexSet, toOffset destination: Int) {
+        let indices = source.sorted().filter { workspaces.indices.contains($0) }
+        guard !indices.isEmpty else { return }
+        let moving = indices.map { workspaces[$0] }
+        var remaining = workspaces.enumerated().filter { !source.contains($0.offset) }.map(\.element)
+        let removedBeforeDestination = indices.filter { $0 < destination }.count
+        let insertion = min(
+            max(0, destination - removedBeforeDestination),
+            remaining.count
+        )
+        remaining.insert(contentsOf: moving, at: insertion)
+        guard remaining != workspaces else { return }
+        workspaces = remaining
+    }
+
+    func setWorkspaceName(_ proposedName: String, for workspaceID: UUID) {
+        guard let index = workspaces.firstIndex(where: { $0.id == workspaceID }) else { return }
+        guard workspaces[index].name != proposedName else { return }
+        workspaces[index].name = proposedName
+    }
+
+    func setWorkspaceKey(_ proposedKey: String, for workspaceID: UUID) {
+        guard let index = workspaces.firstIndex(where: { $0.id == workspaceID }) else { return }
+        let key = WorkspaceIdentityPolicy.sanitizedKey(proposedKey)
+        guard workspaces[index].key != key else { return }
+        workspaces[index].key = key
+    }
+
+    func resetWorkspaceSettings(_ workspaceID: UUID, undoManager: UndoManager?) {
+        guard let workspace = workspaces.first(where: { $0.id == workspaceID }) else { return }
+        var reset = workspace
+        reset.layout = .none
+        reset.layoutConfiguration = .aeroSpaceUserDefaults
+        setWorkspaceDefinition(
+            reset,
+            actionName: "Reset Workspace",
+            undoManager: undoManager
+        )
+    }
+
     func resetToWindowManagerDefaults() {
         let replacements = WorkspaceDefinition.defaults.map {
-            WorkspaceDefinition(name: $0.name, key: $0.key, layout: $0.layout)
+            WorkspaceDefinition(
+                id: $0.id,
+                name: $0.name,
+                key: $0.key,
+                layout: $0.layout,
+                layoutConfiguration: $0.layoutConfiguration
+            )
         }
         workspaces = replacements
         if let roleID = activeProfile.displayRoles.first?.id {
@@ -657,6 +792,25 @@ final class SettingsStore: ObservableObject {
         let clamped = configuration.clamped()
         guard workspaces[index].layoutConfiguration != clamped else { return }
         workspaces[index].layoutConfiguration = clamped
+    }
+
+    private func setWorkspaceDefinition(
+        _ definition: WorkspaceDefinition,
+        actionName: String,
+        undoManager: UndoManager?
+    ) {
+        guard let index = workspaces.firstIndex(where: { $0.id == definition.id }) else { return }
+        let previous = workspaces[index]
+        guard previous != definition else { return }
+        undoManager?.registerUndo(withTarget: self) { [weak undoManager] store in
+            store.setWorkspaceDefinition(
+                previous,
+                actionName: actionName,
+                undoManager: undoManager
+            )
+        }
+        undoManager?.setActionName(actionName)
+        workspaces[index] = definition
     }
 
     func useCurrentLayoutDefaults(for workspaceID: UUID) {

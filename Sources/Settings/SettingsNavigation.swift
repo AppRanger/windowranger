@@ -41,6 +41,16 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
         case .diagnostics: "waveform.path.ecg"
         }
     }
+
+    /// Displays and Layouts were separate destinations before workspace configuration was
+    /// consolidated. Keep their raw values decodable for saved selection/deep links, but route
+    /// both to the single Workspaces inspector.
+    var canonicalDestination: SettingsCategory {
+        switch self {
+        case .displays, .layouts: .workspaces
+        default: self
+        }
+    }
 }
 
 struct SettingsSearchEntry: Identifiable, Equatable, Sendable {
@@ -50,6 +60,7 @@ struct SettingsSearchEntry: Identifiable, Equatable, Sendable {
     let description: String
     let synonyms: [String]
     let debugOnly: Bool
+    let workspaceID: UUID?
 
     init(
         id: String,
@@ -57,7 +68,8 @@ struct SettingsSearchEntry: Identifiable, Equatable, Sendable {
         title: String,
         description: String,
         synonyms: [String] = [],
-        debugOnly: Bool = false
+        debugOnly: Bool = false,
+        workspaceID: UUID? = nil
     ) {
         self.id = id
         self.category = category
@@ -65,6 +77,7 @@ struct SettingsSearchEntry: Identifiable, Equatable, Sendable {
         self.description = description
         self.synonyms = synonyms
         self.debugOnly = debugOnly
+        self.workspaceID = workspaceID
     }
 
     func matches(_ query: String) -> Bool {
@@ -100,21 +113,22 @@ enum SettingsCatalog {
         SettingsSearchEntry(id: "profiles-display-roles", category: .profiles, title: "Display role bindings", description: "Bind synced abstract display roles to this Mac's conservative monitor identities.", synonyms: ["monitor fingerprint", "local display", "primary display", "PRF-04", "PRF-05"]),
         SettingsSearchEntry(id: "workspace-names", category: .workspaces, title: "Workspace names and keys", description: "Add, remove, rename, reorder, and assign shortcut keys to virtual workspaces.", synonyms: ["spaces", "virtual desktops"]),
         SettingsSearchEntry(id: "workspace-defaults", category: .workspaces, title: SettingsCopy.restoreWindowManagerDefaultsTitle, description: "Restore WindowManager's built-in workspace names, order, keys, and layout choices.", synonyms: ["built-in defaults", "reset workspaces", "factory settings"]),
-        SettingsSearchEntry(id: "display-mode", category: .displays, title: "Unified or Independent Displays", description: "Choose whether workspace switching affects every display or one display at a time.", synonyms: ["monitor", "screen", "multi-display"]),
-        SettingsSearchEntry(id: "display-home", category: .displays, title: "Workspace display role", description: "Choose the synced abstract display role that owns each workspace in Independent Displays mode.", synonyms: ["monitor assignment", "pin workspace", "home display"]),
+        SettingsSearchEntry(id: "display-mode", category: .workspaces, title: "Unified or Independent Displays", description: "Choose whether workspace switching affects every display or one display at a time.", synonyms: ["monitor", "screen", "multi-display"]),
+        SettingsSearchEntry(id: "display-home", category: .workspaces, title: "Workspace display role", description: "Choose the synced abstract display role that owns each workspace in Independent Displays mode.", synonyms: ["monitor assignment", "pin workspace", "home display"]),
         SettingsSearchEntry(id: "display-fingerprint", category: .profiles, title: "Stable local monitor identity", description: "Bind abstract display roles on this Mac using UUID and conservative hardware fingerprints.", synonyms: ["monitor fingerprint", "serial", "vendor", "model", "MON-06"]),
-        SettingsSearchEntry(id: "workspace-layout", category: .layouts, title: "Per-workspace layout", description: "Choose Freeform, Tiled, or Accordion independently for every workspace.", synonyms: ["none", "manual frames", "no automatic layout", "tile", "stack", "accordion"]),
-        SettingsSearchEntry(id: "layout-orientation", category: .layouts, title: "Workspace layout orientation", description: "Use automatic, horizontal, or vertical window direction per workspace.", synonyms: ["portrait", "landscape", "row", "column"]),
-        SettingsSearchEntry(id: "layout-gaps", category: .layouts, title: "Inner gaps and outer screen padding", description: "Set spacing between Tiled windows and around display edges per workspace.", synonyms: ["margin", "inset", "spacing"]),
-        SettingsSearchEntry(id: "accordion-padding", category: .layouts, title: "Accordion visible edge padding", description: "Choose how much of neighbouring Accordion windows remains visible.", synonyms: ["overlap", "stack"]),
-        SettingsSearchEntry(id: "reset-workspace", category: .layouts, title: "Reset current workspace", description: "Bring its managed windows back into view and reapply its layout.", synonyms: ["repair", "recover", "offscreen", "KEY-12"]),
+        SettingsSearchEntry(id: "workspace-layout", category: .workspaces, title: "Per-workspace layout", description: "Choose Freeform, Tiled, or Accordion independently for every workspace.", synonyms: ["none", "manual frames", "no automatic layout", "tile", "stack", "accordion"]),
+        SettingsSearchEntry(id: "layout-orientation", category: .workspaces, title: "Workspace layout orientation", description: "Use automatic, horizontal, or vertical window direction per workspace.", synonyms: ["portrait", "landscape", "row", "column"]),
+        SettingsSearchEntry(id: "layout-gaps", category: .workspaces, title: "Inner gaps and outer screen padding", description: "Set spacing between Tiled windows and around display edges per workspace.", synonyms: ["margin", "inset", "spacing"]),
+        SettingsSearchEntry(id: "accordion-padding", category: .workspaces, title: "Accordion visible edge padding", description: "Choose how much of neighbouring Accordion windows remains visible.", synonyms: ["overlap", "stack"]),
+        SettingsSearchEntry(id: "workspace-reset-settings", category: .workspaces, title: "Reset this workspace", description: "Restore Freeform and WindowManager's built-in layout geometry while preserving workspace identity and display home.", synonyms: ["built-in defaults", "layout reset", "undo"]),
+        SettingsSearchEntry(id: "reset-workspace", category: .workspaces, title: "Bring active workspace windows back on screen", description: "Recover its managed windows, clear transient positioning state, and reapply its layout.", synonyms: ["repair", "recover", "offscreen", "KEY-12"]),
         SettingsSearchEntry(id: "app-assignment", category: .appRules, title: "Always open on workspace", description: "Route windows from a selected app to a chosen workspace.", synonyms: ["application routing"]),
         SettingsSearchEntry(id: "app-keep-all", category: .appRules, title: "Keep app on all workspaces", description: "Keep an app visible while switching workspaces.", synonyms: ["sticky", "every workspace"]),
         SettingsSearchEntry(id: "app-exclude-layout", category: .appRules, title: "Exclude app from layouts", description: "Keep an app out of Tiled and Accordion geometry.", synonyms: ["float app", "ignore layout"]),
         SettingsSearchEntry(id: "app-float-secondary", category: .appRules, title: "Float secondary windows", description: "Keep conservatively detected dialogs and secondary windows from distorting layouts for a selected app.", synonyms: ["dialog", "sheet", "panel", "APP-05"]),
         SettingsSearchEntry(id: "app-rule-pause", category: .appRules, title: "Pause an application rule", description: "Temporarily stop a rule without deleting its saved actions.", synonyms: ["disable", "resume", "enabled", "BST-RUL-02"]),
         SettingsSearchEntry(id: "app-rule-undo", category: .appRules, title: "Undo an application rule change", description: "Rule edits apply to managed windows immediately and can be reversed with Command-Z.", synonyms: ["revert", "bulk move", "routing", "BST-RUL-04"]),
-        SettingsSearchEntry(id: "workspace-shortcuts", category: .shortcuts, title: "Workspace shortcuts", description: "Review workspace switching and window-moving key bindings.", synonyms: ["hotkeys", "keyboard"]),
+        SettingsSearchEntry(id: "workspace-shortcuts", category: .workspaces, title: "Workspace shortcuts", description: "Edit each workspace key and review its derived switching and window-moving key bindings.", synonyms: ["hotkeys", "keyboard", "switch to", "move window to"]),
         SettingsSearchEntry(id: "shortcut-recorder", category: .shortcuts, title: "Record and reset shortcuts", description: "Rebind global WindowManager commands with conflict feedback or restore their defaults.", synonyms: ["customize hotkeys", "keyboard recorder", "key binding", "BST-UX-02"]),
         SettingsSearchEntry(id: "focus-shortcuts", category: .shortcuts, title: "Focus shortcuts", description: "Review previous and next window bindings.", synonyms: ["cycle windows"]),
         SettingsSearchEntry(id: "directional-focus", category: .shortcuts, title: "Directional window focus", description: "Focus the nearest eligible window left, down, up, or right on the interaction display.", synonyms: ["Option H J K L", "KEY-06"]),
@@ -141,13 +155,30 @@ enum SettingsCatalog {
     ]
 
     static func availableCategories(includeDebug: Bool) -> [SettingsCategory] {
-        SettingsCategory.allCases.filter { includeDebug || $0 != .diagnostics }
+        SettingsCategory.allCases.filter {
+            $0 != .displays && $0 != .layouts && (includeDebug || $0 != .diagnostics)
+        }
     }
 
-    static func search(_ query: String, includeDebug: Bool) -> [SettingsSearchEntry] {
-        entries.filter { entry in
+    static func search(
+        _ query: String,
+        includeDebug: Bool,
+        workspaces: [WorkspaceDefinition] = []
+    ) -> [SettingsSearchEntry] {
+        let staticMatches = entries.filter { entry in
             (includeDebug || !entry.debugOnly) && entry.matches(query)
         }
+        let workspaceMatches = workspaces.map { workspace in
+            SettingsSearchEntry(
+                id: "workspace-\(workspace.id.uuidString)",
+                category: .workspaces,
+                title: workspace.name,
+                description: "Workspace key \(workspace.key.uppercased()) · \(workspace.layout.title) layout.",
+                synonyms: ["workspace", "space", workspace.key, workspace.layout.title],
+                workspaceID: workspace.id
+            )
+        }.filter { $0.matches(query) }
+        return staticMatches + workspaceMatches
     }
 }
 
@@ -161,11 +192,12 @@ enum SettingsCopy {
 final class SettingsNavigationModel: ObservableObject {
     private static let selectedCategoryKey = "settings.selectedCategory.v1"
 
-    @Published var selectedCategory: SettingsCategory {
+    @Published private(set) var selectedCategory: SettingsCategory {
         didSet { defaults.set(selectedCategory.rawValue, forKey: Self.selectedCategoryKey) }
     }
     @Published var searchText = ""
     @Published var highlightedSettingID: String?
+    @Published private(set) var requestedWorkspaceID: UUID?
 
     private let defaults: UserDefaults
     let includeDebug: Bool
@@ -177,6 +209,8 @@ final class SettingsNavigationModel: ObservableObject {
         let restored = defaults.string(forKey: Self.selectedCategoryKey)
             .flatMap(SettingsCategory.init(rawValue:))
         selectedCategory = Self.resolvedSelection(restored, available: available)
+        requestedWorkspaceID = nil
+        defaults.set(selectedCategory.rawValue, forKey: Self.selectedCategoryKey)
     }
 
     var availableCategories: [SettingsCategory] {
@@ -188,23 +222,33 @@ final class SettingsNavigationModel: ObservableObject {
     }
 
     func select(_ category: SettingsCategory, highlightedSettingID: String? = nil) {
-        guard availableCategories.contains(category) else {
+        let destination = category.canonicalDestination
+        guard availableCategories.contains(destination) else {
             selectedCategory = Self.resolvedSelection(nil, available: availableCategories)
             self.highlightedSettingID = nil
+            requestedWorkspaceID = nil
             return
         }
-        selectedCategory = category
+        selectedCategory = destination
         self.highlightedSettingID = highlightedSettingID
+        if destination != .workspaces { requestedWorkspaceID = nil }
     }
 
     func select(_ result: SettingsSearchEntry) {
+        requestedWorkspaceID = result.workspaceID
         select(result.category, highlightedSettingID: result.id)
+    }
+
+    func selectWorkspace(_ workspaceID: UUID) {
+        requestedWorkspaceID = workspaceID
+        select(.workspaces)
     }
 
     func validateSelection() {
         guard availableCategories.contains(selectedCategory) else {
             selectedCategory = Self.resolvedSelection(nil, available: availableCategories)
             highlightedSettingID = nil
+            requestedWorkspaceID = nil
             return
         }
     }
@@ -213,7 +257,10 @@ final class SettingsNavigationModel: ObservableObject {
         _ requested: SettingsCategory?,
         available: [SettingsCategory]
     ) -> SettingsCategory {
-        if let requested, available.contains(requested) { return requested }
+        if let requested {
+            let destination = requested.canonicalDestination
+            if available.contains(destination) { return destination }
+        }
         if available.contains(.general) { return .general }
         return available.first ?? .general
     }
