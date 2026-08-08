@@ -250,8 +250,10 @@ final class CarbonGlobalHotKeyRegistrationService: GlobalHotKeyRegistrationServi
     }
 
     func unregister(_ token: HotKeyRegistrationToken) -> OSStatus {
-        guard let reference = references.removeValue(forKey: token) else { return noErr }
-        return UnregisterEventHotKey(reference)
+        guard let reference = references[token] else { return noErr }
+        let status = UnregisterEventHotKey(reference)
+        if status == noErr { references.removeValue(forKey: token) }
+        return status
     }
 }
 
@@ -279,6 +281,11 @@ struct HotKeyRegistrationReport: Equatable, Sendable {
 }
 
 final class HotKeyManager {
+    typealias EventHandlerInstaller = (
+        _ userData: UnsafeMutableRawPointer,
+        _ eventHandler: UnsafeMutablePointer<EventHandlerRef?>
+    ) -> OSStatus
+
     private enum Action {
         case command(WindowManagerCommand)
         case radialMenu
@@ -296,43 +303,39 @@ final class HotKeyManager {
     private let radialMenuTrigger: (RadialMenuTriggerInputEvent) -> Void
     private let registrationService: GlobalHotKeyRegistrationService
     private var eventHandler: EventHandlerRef?
-    private var hotKeys: [(token: HotKeyRegistrationToken, binding: ShortcutBindingDefinition)] = []
+    private var eventHandlerInstallationFailure: OSStatus?
+    private var hotKeys: [(
+        token: HotKeyRegistrationToken,
+        identifier: UInt32,
+        binding: ShortcutBindingDefinition
+    )] = []
     private var actions: [UInt32: Action] = [:]
+    private var nextRegistrationIdentifier: UInt32 = 1
 
     init(
         dispatcher: WindowManagerCommandDispatcher,
         diagnostics: DiagnosticLogger = .disabled,
         radialMenuTrigger: @escaping (RadialMenuTriggerInputEvent) -> Void = { _ in },
         registrationService: GlobalHotKeyRegistrationService = CarbonGlobalHotKeyRegistrationService(),
-        installsEventHandler: Bool = true
+        installsEventHandler: Bool = true,
+        eventHandlerInstaller: EventHandlerInstaller? = nil
     ) {
         self.dispatcher = dispatcher
         self.diagnostics = diagnostics
         self.radialMenuTrigger = radialMenuTrigger
         self.registrationService = registrationService
         guard installsEventHandler else { return }
-        var eventTypes = [
-            EventTypeSpec(
-                eventClass: OSType(kEventClassKeyboard),
-                eventKind: UInt32(kEventHotKeyPressed)
-            ),
-            EventTypeSpec(
-                eventClass: OSType(kEventClassKeyboard),
-                eventKind: UInt32(kEventHotKeyReleased)
-            ),
-        ]
-        InstallEventHandler(
-            GetApplicationEventTarget(),
-            { _, event, userData in
-                guard let event, let userData else { return noErr }
-                let manager = Unmanaged<HotKeyManager>.fromOpaque(userData).takeUnretainedValue()
-                return manager.handle(event: event)
-            },
-            eventTypes.count,
-            &eventTypes,
-            Unmanaged.passUnretained(self).toOpaque(),
-            &eventHandler
-        )
+        let installer = eventHandlerInstaller ?? Self.installCarbonEventHandler
+        let status = installer(Unmanaged.passUnretained(self).toOpaque(), &eventHandler)
+        if status != noErr || eventHandler == nil {
+            let failureStatus: OSStatus = status == noErr ? OSStatus(paramErr) : status
+            eventHandlerInstallationFailure = failureStatus
+            diagnostics.log(
+                category: "hotkey",
+                event: "event-handler-installation-failed",
+                fields: ["status": String(failureStatus)]
+            )
+        }
     }
 
     deinit {
@@ -367,17 +370,27 @@ final class HotKeyManager {
             )
         }
 
-        var identifier: UInt32 = 1
+        if let status = eventHandlerInstallationFailure {
+            let runtimeIssues = configuration.eligibleBindings.map {
+                HotKeyRuntimeIssue(owner: $0.owner, chord: $0.chord, status: status)
+            }
+            return HotKeyRegistrationReport(
+                configurationIssues: configuration.issues,
+                runtimeIssues: runtimeIssues,
+                registeredOwners: []
+            )
+        }
+
         var runtimeIssues: [HotKeyRuntimeIssue] = []
         var registeredOwners: [ShortcutBindingOwner] = []
         for binding in configuration.eligibleBindings {
             guard let action = action(for: binding.owner) else { continue }
+            let identifier = allocateRegistrationIdentifier()
             if let issue = add(id: identifier, binding: binding, action: action) {
                 runtimeIssues.append(issue)
             } else {
                 registeredOwners.append(binding.owner)
             }
-            identifier += 1
         }
         return HotKeyRegistrationReport(
             configurationIssues: configuration.issues,
@@ -437,7 +450,7 @@ final class HotKeyManager {
     ) -> HotKeyRuntimeIssue? {
         switch registrationService.register(chord: binding.chord, identifier: id) {
         case let .success(token):
-            hotKeys.append((token, binding))
+            hotKeys.append((token, id, binding))
             actions[id] = action
             return nil
         case let .failure(failure):
@@ -459,9 +472,15 @@ final class HotKeyManager {
     }
 
     private func unregisterAll() {
+        var failedUnregistrations: [(
+            token: HotKeyRegistrationToken,
+            identifier: UInt32,
+            binding: ShortcutBindingDefinition
+        )] = []
         for hotKey in hotKeys {
             let status = registrationService.unregister(hotKey.token)
             if status != noErr {
+                failedUnregistrations.append(hotKey)
                 diagnostics.log(
                     category: "hotkey",
                     event: "unregistration-failed",
@@ -473,8 +492,48 @@ final class HotKeyManager {
                 )
             }
         }
-        hotKeys.removeAll()
+        // A failed Carbon unregistration may still own its system chord. Keep its token so a
+        // later suspend/reconfigure can retry, but remove its action immediately so a stale event
+        // can never execute the old command. Registration identifiers are monotonic, preventing a
+        // retained stale event from being mistaken for a newly registered command.
+        hotKeys = failedUnregistrations
         actions.removeAll()
+    }
+
+    private func allocateRegistrationIdentifier() -> UInt32 {
+        let identifier = nextRegistrationIdentifier
+        nextRegistrationIdentifier &+= 1
+        if nextRegistrationIdentifier == 0 { nextRegistrationIdentifier = 1 }
+        return identifier
+    }
+
+    private static func installCarbonEventHandler(
+        userData: UnsafeMutableRawPointer,
+        eventHandler: UnsafeMutablePointer<EventHandlerRef?>
+    ) -> OSStatus {
+        var eventTypes = [
+            EventTypeSpec(
+                eventClass: OSType(kEventClassKeyboard),
+                eventKind: UInt32(kEventHotKeyPressed)
+            ),
+            EventTypeSpec(
+                eventClass: OSType(kEventClassKeyboard),
+                eventKind: UInt32(kEventHotKeyReleased)
+            ),
+        ]
+        return InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, event, callbackData in
+                guard let event, let callbackData else { return noErr }
+                let manager = Unmanaged<HotKeyManager>.fromOpaque(callbackData)
+                    .takeUnretainedValue()
+                return manager.handle(event: event)
+            },
+            eventTypes.count,
+            &eventTypes,
+            userData,
+            eventHandler
+        )
     }
 
     private func handle(event: EventRef) -> OSStatus {

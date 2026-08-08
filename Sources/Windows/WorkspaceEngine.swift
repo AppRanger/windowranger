@@ -264,21 +264,56 @@ struct PersistedWorkspaceState: Codable, Equatable, Sendable {
     }
 }
 
+protocol WorkspaceStateFileAccess: Sendable {
+    func fileExists(at url: URL) -> Bool
+    func fileSize(at url: URL) throws -> Int
+    func read(from url: URL) throws -> Data
+    func write(_ data: Data, to url: URL) throws
+}
+
+struct LocalWorkspaceStateFileAccess: WorkspaceStateFileAccess {
+    func fileExists(at url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+
+    func fileSize(at url: URL) throws -> Int {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes[.size] as? NSNumber)?.intValue ?? 0
+    }
+
+    func read(from url: URL) throws -> Data {
+        try Data(contentsOf: url)
+    }
+
+    func write(_ data: Data, to url: URL) throws {
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+}
+
 final class WorkspaceStateStore {
+    static let maximumStateFileBytes = 8 * 1_048_576
+
     let fileURL: URL
     private(set) var windowServerSession: String
 
     private let writeQueue = DispatchQueue(label: "com.chris.WindowManager.workspace-state")
     private let stateLock = NSLock()
     private var lastScheduledState: PersistedWorkspaceState?
+    private var pendingWriteStates: [PersistedWorkspaceState] = []
     private let sessionProvider: () -> String
+    private let fileAccess: any WorkspaceStateFileAccess
 
     init(
         fileURL: URL = WorkspaceStateStore.defaultFileURL,
-        sessionProvider: @escaping () -> String = WorkspaceStateStore.currentWindowServerSession
+        sessionProvider: @escaping () -> String = WorkspaceStateStore.currentWindowServerSession,
+        fileAccess: any WorkspaceStateFileAccess = LocalWorkspaceStateFileAccess()
     ) {
         self.fileURL = fileURL
         self.sessionProvider = sessionProvider
+        self.fileAccess = fileAccess
         windowServerSession = sessionProvider()
     }
 
@@ -305,7 +340,11 @@ final class WorkspaceStateStore {
 
     func load() -> PersistedWorkspaceState? {
         guard !windowServerSession.isEmpty,
-              let data = try? Data(contentsOf: fileURL),
+              fileAccess.fileExists(at: fileURL),
+              let fileSize = try? fileAccess.fileSize(at: fileURL),
+              fileSize <= Self.maximumStateFileBytes,
+              let data = try? fileAccess.read(from: fileURL),
+              data.count <= Self.maximumStateFileBytes,
               let state = try? JSONDecoder().decode(PersistedWorkspaceState.self, from: data),
               state.version == PersistedWorkspaceState.currentVersion,
               state.windowServerSession == windowServerSession
@@ -321,9 +360,14 @@ final class WorkspaceStateStore {
               state.windowServerSession == windowServerSession
         else { return }
 
+        let fileExists = fileAccess.fileExists(at: fileURL)
         stateLock.lock()
-        let isUnchanged = lastScheduledState == state
-        if !isUnchanged { lastScheduledState = state }
+        let sameWriteIsPending = pendingWriteStates.contains(state)
+        let isUnchanged = lastScheduledState == state && (fileExists || sameWriteIsPending)
+        if !isUnchanged {
+            lastScheduledState = state
+            pendingWriteStates.append(state)
+        }
         stateLock.unlock()
 
         if isUnchanged {
@@ -332,18 +376,38 @@ final class WorkspaceStateStore {
         }
 
         let url = fileURL
-        let work: @Sendable () -> Void = {
-            guard let data = try? JSONEncoder().encode(state) else { return }
-            let directory = url.deletingLastPathComponent()
-            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try? data.write(to: url, options: .atomic)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        let fileAccess = fileAccess
+        let work: @Sendable () -> Void = { [weak self] in
+            var succeeded = false
+            defer { self?.completeWrite(of: state, succeeded: succeeded) }
+            do {
+                let data = try JSONEncoder().encode(state)
+                guard data.count <= Self.maximumStateFileBytes else { return }
+                try fileAccess.write(data, to: url)
+                succeeded = true
+            } catch {
+                // Recovery persistence is best effort, but a later identical state will retry.
+            }
         }
         if waitForCompletion {
             writeQueue.sync(execute: work)
         } else {
             writeQueue.async(execute: work)
         }
+    }
+
+    private func completeWrite(of state: PersistedWorkspaceState, succeeded: Bool) {
+        stateLock.lock()
+        if let pendingIndex = pendingWriteStates.firstIndex(of: state) {
+            pendingWriteStates.remove(at: pendingIndex)
+        }
+        if !succeeded,
+           lastScheduledState == state,
+           !pendingWriteStates.contains(state) {
+            // A failed write must remain retryable on the next persistence tick.
+            lastScheduledState = nil
+        }
+        stateLock.unlock()
     }
 
     func waitForWrites() {
