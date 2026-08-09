@@ -47,7 +47,9 @@ struct SettingsView: View {
                     get: { Optional(navigation.selectedCategory) },
                     set: {
                         if let category = $0, category != navigation.selectedCategory {
-                            navigation.select(category)
+                            DispatchQueue.main.async {
+                                navigation.select(category)
+                            }
                         }
                     }
                 )) {
