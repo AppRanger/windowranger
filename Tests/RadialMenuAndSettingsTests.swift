@@ -1467,6 +1467,63 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceInspectorBindingsRemainScopedToTheirWorkspaceAfterAddingAndSwitching() {
+        let defaults = isolatedDefaults()
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        store.workspaces = [workspaceA, workspaceB]
+
+        let nameA = WorkspaceSettingsFieldBindings.name(store: store, workspaceID: workspaceA.id)
+        let keyA = WorkspaceSettingsFieldBindings.key(store: store, workspaceID: workspaceA.id)
+        let layoutA = WorkspaceSettingsFieldBindings.layout(store: store, workspaceID: workspaceA.id)
+        let addedID = store.addWorkspace()
+        let nameAdded = WorkspaceSettingsFieldBindings.name(store: store, workspaceID: addedID)
+        let keyAdded = WorkspaceSettingsFieldBindings.key(store: store, workspaceID: addedID)
+
+        XCTAssertEqual(nameA.wrappedValue, workspaceA.name)
+        XCTAssertEqual(keyA.wrappedValue, workspaceA.key.uppercased())
+        XCTAssertEqual(layoutA.wrappedValue, workspaceA.layout)
+        XCTAssertEqual(nameAdded.wrappedValue, store.workspaces.first { $0.id == addedID }?.name)
+        XCTAssertEqual(keyAdded.wrappedValue, store.workspaces.first { $0.id == addedID }?.key.uppercased())
+
+        nameAdded.wrappedValue = "Added"
+        keyAdded.wrappedValue = "z"
+        layoutA.wrappedValue = .accordion
+
+        XCTAssertEqual(store.workspaces.first { $0.id == workspaceA.id }?.name, workspaceA.name)
+        XCTAssertEqual(store.workspaces.first { $0.id == workspaceA.id }?.key, workspaceA.key)
+        XCTAssertEqual(store.workspaces.first { $0.id == workspaceA.id }?.layout, .accordion)
+        XCTAssertEqual(store.workspaces.first { $0.id == addedID }?.name, "Added")
+        XCTAssertEqual(store.workspaces.first { $0.id == addedID }?.key, "z")
+    }
+
+    @MainActor
+    func testWorkspaceIdentitySettersRejectCrossWorkspaceClashes() {
+        let defaults = isolatedDefaults()
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        store.workspaces = [workspaceA, workspaceB]
+
+        store.setWorkspaceName("  COMMS  ", for: workspaceA.id)
+        store.setWorkspaceKey("M", for: workspaceA.id)
+
+        XCTAssertEqual(store.workspaces.first { $0.id == workspaceA.id }?.name, workspaceA.name)
+        XCTAssertEqual(store.workspaces.first { $0.id == workspaceA.id }?.key, workspaceA.key)
+        XCTAssertEqual(Set(store.workspaces.map {
+            $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }).count, store.workspaces.count)
+        XCTAssertEqual(Set(store.workspaces.map { $0.key.lowercased() }).count, store.workspaces.count)
+    }
+
+    @MainActor
     func testWorkspaceAddDuplicateReorderAndDeletePreserveReusableConfiguration() {
         let defaults = isolatedDefaults()
         defaults.set(false, forKey: "iCloudSyncEnabled")
@@ -1686,6 +1743,10 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(
             SettingsCatalog.search("highlight colour", includeDebug: false).first?.id,
             "menu-bar-highlight"
+        )
+        XCTAssertEqual(
+            SettingsCatalog.search("workspace key label", includeDebug: false).first?.id,
+            "menu-bar-workspace-labels"
         )
     }
 

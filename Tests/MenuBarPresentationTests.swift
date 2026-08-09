@@ -67,6 +67,7 @@ final class MenuBarPresentationTests: XCTestCase {
         defaults.set(true, forKey: "iCloudSyncEnabled")
         let cloud = FakeUbiquitousKeyValueStore()
         cloud.set("workspace-label", forKey: "menuBarPresentationMode.v1")
+        cloud.set("key", forKey: "menuBarWorkspaceLabelMode.v1")
         cloud.set("#FF7A00", forKey: "menuBarHighlightColor.v1")
 
         let store = SettingsStore(
@@ -76,13 +77,18 @@ final class MenuBarPresentationTests: XCTestCase {
         )
 
         XCTAssertEqual(store.menuBarPresentationMode, .medium)
+        XCTAssertEqual(store.menuBarWorkspaceLabelMode, .key)
         XCTAssertEqual(store.menuBarHighlightColor.hex, "#FF7A00")
         XCTAssertEqual(cloud.string(forKey: "menuBarPresentationMode.v1"), "medium")
+        XCTAssertEqual(cloud.string(forKey: "menuBarWorkspaceLabelMode.v1"), "key")
         XCTAssertEqual(cloud.string(forKey: "menuBarHighlightColor.v1"), "#FF7A00")
         store.menuBarPresentationMode = .full
+        store.menuBarWorkspaceLabelMode = .name
         store.menuBarHighlightColor = MenuBarHighlightColor(red: 0, green: 0.5, blue: 1)
         XCTAssertEqual(defaults.string(forKey: "menuBarPresentationMode.v1"), "full")
         XCTAssertEqual(cloud.string(forKey: "menuBarPresentationMode.v1"), "full")
+        XCTAssertEqual(defaults.string(forKey: "menuBarWorkspaceLabelMode.v1"), "name")
+        XCTAssertEqual(cloud.string(forKey: "menuBarWorkspaceLabelMode.v1"), "name")
         XCTAssertEqual(defaults.string(forKey: "menuBarHighlightColor.v1"), "#0080FF")
         XCTAssertEqual(cloud.string(forKey: "menuBarHighlightColor.v1"), "#0080FF")
         XCTAssertGreaterThan(cloud.synchronizeCount, 0)
@@ -110,6 +116,58 @@ final class MenuBarPresentationTests: XCTestCase {
             connectedDisplaysProvider: { [] }
         )
         XCTAssertEqual(reader.menuBarHighlightColor.hex, "#336699")
+    }
+
+    @MainActor
+    func testMenuBarWorkspaceLabelsDefaultToNamesAndPersistLocally() {
+        let suite = "MenuBarWorkspaceLabelTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+
+        let writer = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertEqual(writer.menuBarWorkspaceLabelMode, .name)
+        XCTAssertEqual(defaults.string(forKey: "menuBarWorkspaceLabelMode.v1"), "name")
+        writer.menuBarWorkspaceLabelMode = .key
+
+        let reader = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertEqual(reader.menuBarWorkspaceLabelMode, .key)
+    }
+
+    @MainActor
+    func testWorkspaceKeyLabelsRenderWithoutReplacingFullAccessibilityNames() {
+        let snapshot = MenuBarPresentationResolver.resolve(
+            mode: .full,
+            workspaceLabelMode: .key,
+            displayMode: .unified,
+            state: engineState(current: workspace2.id, active: [workspace2.id]),
+            workspaces: [workspace1, workspace2, workspace3],
+            connectedDisplays: [mainDisplay],
+            workspaceDisplayAssignments: [:]
+        )
+        let content = MenuBarStatusContentView(
+            snapshot: snapshot,
+            availableWidth: 620,
+            workspaceAction: nil
+        )
+
+        layout(content)
+        XCTAssertEqual(Set(workspaceButtons(in: content).map(\.title)), Set(["1", "W", "9"]))
+        XCTAssertEqual(
+            snapshot.displays[0].activeWorkspaceLabel(mode: .key),
+            "W"
+        )
+        XCTAssertTrue(snapshot.primaryTooltip.contains(workspace2.name))
+        XCTAssertTrue(snapshot.primaryAccessibilityLabel.contains(workspace2.name))
+        XCTAssertEqual(MenuBarWorkspaceLabelFormatter.key(""), "—")
     }
 
     func testUnifiedModeUsesOneCombinedDisplaySignal() {

@@ -268,6 +268,15 @@ private struct GeneralSettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                Picker("Workspace Labels", selection: $store.menuBarWorkspaceLabelMode) {
+                    ForEach(MenuBarWorkspaceLabelMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text("Show each workspace's full name or its single shortcut key. Full names may still compact when menu-bar space is limited.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 ColorPicker(
                     "Highlight Colour",
                     selection: Binding(
@@ -285,6 +294,7 @@ private struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
                 MenuBarSettingsPreview(snapshot: MenuBarPresentationResolver.preview(
                     mode: store.menuBarPresentationMode,
+                    workspaceLabelMode: store.menuBarWorkspaceLabelMode,
                     displayMode: store.multiDisplayMode,
                     workspaces: store.workspaces,
                     connectedDisplays: store.connectedDisplays,
@@ -933,6 +943,36 @@ enum WorkspaceSettingsSelectionPolicy {
     }
 }
 
+@MainActor
+enum WorkspaceSettingsFieldBindings {
+    static func name(store: SettingsStore, workspaceID: UUID) -> Binding<String> {
+        Binding(
+            get: {
+                store.workspaces.first(where: { $0.id == workspaceID })?.name ?? ""
+            },
+            set: { store.setWorkspaceName($0, for: workspaceID) }
+        )
+    }
+
+    static func key(store: SettingsStore, workspaceID: UUID) -> Binding<String> {
+        Binding(
+            get: {
+                store.workspaces.first(where: { $0.id == workspaceID })?.key.uppercased() ?? ""
+            },
+            set: { store.setWorkspaceKey($0, for: workspaceID) }
+        )
+    }
+
+    static func layout(store: SettingsStore, workspaceID: UUID) -> Binding<WorkspaceLayout> {
+        Binding(
+            get: {
+                store.workspaces.first(where: { $0.id == workspaceID })?.layout ?? .none
+            },
+            set: { store.setLayout($0, for: workspaceID) }
+        )
+    }
+}
+
 struct WorkspaceInspectorControlVisibility: Equatable {
     let showsFreeformExplanation: Bool
     let showsOrientation: Bool
@@ -1147,6 +1187,7 @@ struct WorkspaceSettingsView: View {
                 Divider()
                 inspectorForm(workspace)
             }
+            .id(workspace.id)
         } else {
             ContentUnavailableView(
                 "No Workspace Selected",
@@ -1166,10 +1207,13 @@ struct WorkspaceSettingsView: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 5) {
-                TextField("Workspace name", text: Binding(
-                    get: { selectedWorkspace?.name ?? "" },
-                    set: { store.setWorkspaceName($0, for: workspace.id) }
-                ))
+                TextField(
+                    "Workspace name",
+                    text: WorkspaceSettingsFieldBindings.name(
+                        store: store,
+                        workspaceID: workspace.id
+                    )
+                )
                 .textFieldStyle(.roundedBorder)
                 .font(.title2.weight(.semibold))
                 .accessibilityLabel("Workspace name")
@@ -1196,10 +1240,13 @@ struct WorkspaceSettingsView: View {
                     .foregroundStyle(.secondary)
 
                 LabeledContent("Workspace Key") {
-                    TextField("Key", text: Binding(
-                        get: { selectedWorkspace?.key.uppercased() ?? "" },
-                        set: { store.setWorkspaceKey($0, for: workspace.id) }
-                    ))
+                    TextField(
+                        "Key",
+                        text: WorkspaceSettingsFieldBindings.key(
+                            store: store,
+                            workspaceID: workspace.id
+                        )
+                    )
                     .labelsHidden()
                     .multilineTextAlignment(.center)
                     .frame(width: 68)
@@ -1243,10 +1290,13 @@ struct WorkspaceSettingsView: View {
             }
 
             Section("Layout") {
-                Picker("Layout Style", selection: Binding(
-                    get: { selectedWorkspace?.layout ?? .none },
-                    set: { store.setLayout($0, for: workspace.id) }
-                )) {
+                Picker(
+                    "Layout Style",
+                    selection: WorkspaceSettingsFieldBindings.layout(
+                        store: store,
+                        workspaceID: workspace.id
+                    )
+                ) {
                     ForEach(WorkspaceLayout.allCases) { layout in
                         Text(layout.title).tag(layout)
                     }

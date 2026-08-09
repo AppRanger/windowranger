@@ -84,6 +84,7 @@ final class SettingsStore: ObservableObject {
         static let radialWheelDefinition = "radialWheelDefinition.v1"
         static let hotKeyConfiguration = "hotKeyConfiguration.v1"
         static let menuBarPresentationMode = "menuBarPresentationMode.v1"
+        static let menuBarWorkspaceLabelMode = "menuBarWorkspaceLabelMode.v1"
         static let menuBarHighlightColor = "menuBarHighlightColor.v1"
         static let focusFollowsMovedWindow = "focusFollowsMovedWindow.v1"
         static let automaticallyUnhideApplications = "automaticallyUnhideApplications.v1"
@@ -163,6 +164,10 @@ final class SettingsStore: ObservableObject {
 
     @Published var menuBarPresentationMode: MenuBarPresentationMode {
         didSet { persistMenuBarPresentationMode() }
+    }
+
+    @Published var menuBarWorkspaceLabelMode: MenuBarWorkspaceLabelMode {
+        didSet { persistMenuBarWorkspaceLabelMode() }
     }
 
     @Published var menuBarHighlightColor: MenuBarHighlightColor {
@@ -277,6 +282,14 @@ final class SettingsStore: ObservableObject {
         )
         menuBarPresentationMode = initialMenuBarPresentationMode
         defaults.set(initialMenuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
+        let initialMenuBarWorkspaceLabelMode = defaults.string(
+            forKey: Keys.menuBarWorkspaceLabelMode
+        ).flatMap(MenuBarWorkspaceLabelMode.init(rawValue:)) ?? .name
+        menuBarWorkspaceLabelMode = initialMenuBarWorkspaceLabelMode
+        defaults.set(
+            initialMenuBarWorkspaceLabelMode.rawValue,
+            forKey: Keys.menuBarWorkspaceLabelMode
+        )
         let initialMenuBarHighlightColor = defaults.string(forKey: Keys.menuBarHighlightColor)
             .flatMap(MenuBarHighlightColor.init(hex:)) ?? .default
         menuBarHighlightColor = initialMenuBarHighlightColor
@@ -821,6 +834,11 @@ final class SettingsStore: ObservableObject {
     func setWorkspaceName(_ proposedName: String, for workspaceID: UUID) {
         guard let index = workspaces.firstIndex(where: { $0.id == workspaceID }) else { return }
         guard workspaces[index].name != proposedName else { return }
+        let normalizedName = proposedName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalizedName.isEmpty || !workspaces.contains(where: {
+            $0.id != workspaceID &&
+                $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedName
+        }) else { return }
         workspaces[index].name = proposedName
     }
 
@@ -828,6 +846,9 @@ final class SettingsStore: ObservableObject {
         guard let index = workspaces.firstIndex(where: { $0.id == workspaceID }) else { return }
         let key = WorkspaceIdentityPolicy.sanitizedKey(proposedKey)
         guard workspaces[index].key != key else { return }
+        guard key.isEmpty || !workspaces.contains(where: {
+            $0.id != workspaceID && $0.key.caseInsensitiveCompare(key) == .orderedSame
+        }) else { return }
         workspaces[index].key = key
     }
 
@@ -1363,6 +1384,10 @@ final class SettingsStore: ObservableObject {
             ubiquitousStore.set(hotKeyData, forKey: Keys.hotKeyConfiguration)
         }
         ubiquitousStore.set(menuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
+        ubiquitousStore.set(
+            menuBarWorkspaceLabelMode.rawValue,
+            forKey: Keys.menuBarWorkspaceLabelMode
+        )
         ubiquitousStore.set(menuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
         ubiquitousStore.set(focusFollowsMovedWindow, forKey: Keys.focusFollowsMovedWindow)
         ubiquitousStore.set(
@@ -1396,6 +1421,12 @@ final class SettingsStore: ObservableObject {
         let remoteMenuBarPresentationMode = remoteMenuBarPresentationRawValue.map {
             MenuBarPresentationMode.migrated(from: $0)
         }
+        let remoteMenuBarWorkspaceLabelRawValue = ubiquitousStore.string(
+            forKey: Keys.menuBarWorkspaceLabelMode
+        )
+        let remoteMenuBarWorkspaceLabelMode = remoteMenuBarWorkspaceLabelRawValue.flatMap(
+            MenuBarWorkspaceLabelMode.init(rawValue:)
+        )
         let remoteMenuBarHighlightRawValue = ubiquitousStore.string(
             forKey: Keys.menuBarHighlightColor
         )
@@ -1429,6 +1460,12 @@ final class SettingsStore: ObservableObject {
         }
         if ubiquitousStore.string(forKey: Keys.menuBarPresentationMode) == nil {
             ubiquitousStore.set(menuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
+        }
+        if remoteMenuBarWorkspaceLabelRawValue == nil {
+            ubiquitousStore.set(
+                menuBarWorkspaceLabelMode.rawValue,
+                forKey: Keys.menuBarWorkspaceLabelMode
+            )
         }
         if remoteMenuBarHighlightRawValue == nil {
             ubiquitousStore.set(menuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
@@ -1522,6 +1559,25 @@ final class SettingsStore: ObservableObject {
                 forKey: Keys.menuBarPresentationMode
             )
         }
+        if let remoteMenuBarWorkspaceLabelMode,
+           remoteMenuBarWorkspaceLabelMode != menuBarWorkspaceLabelMode {
+            menuBarWorkspaceLabelMode = remoteMenuBarWorkspaceLabelMode
+            defaults.set(
+                remoteMenuBarWorkspaceLabelMode.rawValue,
+                forKey: Keys.menuBarWorkspaceLabelMode
+            )
+        }
+        if let remoteMenuBarWorkspaceLabelMode {
+            ubiquitousStore.set(
+                remoteMenuBarWorkspaceLabelMode.rawValue,
+                forKey: Keys.menuBarWorkspaceLabelMode
+            )
+        } else if remoteMenuBarWorkspaceLabelRawValue != nil {
+            ubiquitousStore.set(
+                menuBarWorkspaceLabelMode.rawValue,
+                forKey: Keys.menuBarWorkspaceLabelMode
+            )
+        }
         if let remoteMenuBarHighlightColor,
            remoteMenuBarHighlightColor != menuBarHighlightColor {
             menuBarHighlightColor = remoteMenuBarHighlightColor
@@ -1580,6 +1636,18 @@ final class SettingsStore: ObservableObject {
         defaults.set(menuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
         if iCloudSyncEnabled, let ubiquitousStore {
             ubiquitousStore.set(menuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
+            ubiquitousStore.synchronize()
+        }
+    }
+
+    private func persistMenuBarWorkspaceLabelMode() {
+        guard !isApplyingRemoteChange else { return }
+        defaults.set(menuBarWorkspaceLabelMode.rawValue, forKey: Keys.menuBarWorkspaceLabelMode)
+        if iCloudSyncEnabled, let ubiquitousStore {
+            ubiquitousStore.set(
+                menuBarWorkspaceLabelMode.rawValue,
+                forKey: Keys.menuBarWorkspaceLabelMode
+            )
             ubiquitousStore.synchronize()
         }
     }
