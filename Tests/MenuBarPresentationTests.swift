@@ -310,28 +310,32 @@ final class MenuBarPresentationTests: XCTestCase {
     }
 
     func testExtremePressureKeepsEveryDisplayActiveWorkspaceAndHidesInactiveItems() {
-        let displays = (0..<4).map { index in
-            DisplaySnapshot(
+        var displays: [DisplaySnapshot] = []
+        for index in 0..<4 {
+            displays.append(DisplaySnapshot(
                 identifier: "display-\(index)",
-                bounds: CGRect(x: index * 1_200, y: 0, width: 1_200, height: 800),
+                bounds: CGRect(x: CGFloat(index * 1_200), y: 0, width: 1_200, height: 800),
                 isMain: index == 0,
                 isBuiltIn: index == 0,
                 name: "Display \(index + 1)"
-            )
+            ))
         }
-        let workspaces = (0..<20).map { index in
-            WorkspaceDefinition(
+        var workspaces: [WorkspaceDefinition] = []
+        for index in 0..<20 {
+            workspaces.append(WorkspaceDefinition(
                 id: UUID(uuidString: String(format: "20000000-0000-0000-0000-%012d", index + 1))!,
                 name: "Workspace \(index + 1)",
                 key: "w\(index + 1)"
-            )
+            ))
         }
-        let assignments = Dictionary(uniqueKeysWithValues: workspaces.enumerated().map {
-            ($0.element.id, displays[$0.offset % displays.count].identifier)
-        })
-        let activeByDisplay = Dictionary(uniqueKeysWithValues: displays.enumerated().map {
-            ($0.element.identifier, workspaces[$0.offset].id)
-        })
+        var assignments: [UUID: String] = [:]
+        for (index, workspace) in workspaces.enumerated() {
+            assignments[workspace.id] = displays[index % displays.count].identifier
+        }
+        var activeByDisplay: [String: UUID] = [:]
+        for (index, display) in displays.enumerated() {
+            activeByDisplay[display.identifier] = workspaces[index].id
+        }
         let snapshot = MenuBarPresentationResolver.resolve(
             mode: .full,
             displayMode: .independent,
@@ -350,7 +354,7 @@ final class MenuBarPresentationTests: XCTestCase {
         XCTAssertGreaterThan(layout.hiddenWorkspaceCount, 0)
         XCTAssertEqual(layout.labelStyle, .compact)
         for group in layout.groups {
-            XCTAssertTrue(group.visibleWorkspaces.contains(where: \.isActive))
+            XCTAssertTrue(group.visibleWorkspaces.contains { workspace in workspace.isActive })
         }
         XCTAssertNotNil(layout.overflowSummary)
     }
