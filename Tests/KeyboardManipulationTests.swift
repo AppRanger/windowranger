@@ -9,6 +9,237 @@ final class KeyboardManipulationTests: XCTestCase {
         XCTAssertEqual(HotKeyManager.directionalMoveKeyCodes.map(\.1), [123, 125, 126, 124])
     }
 
+    func testTwoArrowGestureMapsEveryCornerInEitherOrderWithoutFirstMove() {
+        let cases: [(WindowDirection, WindowDirection, VisualPlacement)] = [
+            (.up, .left, .topLeft),
+            (.up, .right, .topRight),
+            (.down, .left, .bottomLeft),
+            (.down, .right, .bottomRight),
+        ]
+
+        for (first, second, expected) in cases {
+            for (a, b) in [(first, second), (second, first)] {
+                var machine = DirectionalMoveGestureStateMachine()
+                XCTAssertEqual(machine.handle(.pressed(a, correlationID: "gesture")), [
+                    .capture(correlationID: "gesture", firstDirection: a),
+                ])
+                XCTAssertEqual(machine.handle(.pressed(b, correlationID: "ignored-second-id")), [
+                    .commitCorner(correlationID: "gesture", placement: expected),
+                ])
+                XCTAssertFalse(machine.isIdle)
+                XCTAssertTrue(machine.handle(.released(a)).isEmpty)
+                XCTAssertTrue(machine.handle(.released(b)).isEmpty)
+                XCTAssertTrue(machine.isIdle)
+            }
+        }
+    }
+
+    func testTwoArrowGestureCommitsSingleOnReleaseOrMissingReleaseTimeoutExactlyOnce() {
+        var released = DirectionalMoveGestureStateMachine()
+        _ = released.handle(.pressed(.left, correlationID: "release"))
+        XCTAssertEqual(released.handle(.released(.left)), [
+            .commitSingle(correlationID: "release", direction: .left, reason: "key-release"),
+        ])
+        XCTAssertTrue(released.handle(.timeout(correlationID: "release")).isEmpty)
+        XCTAssertTrue(released.isIdle)
+
+        var timedOut = DirectionalMoveGestureStateMachine()
+        _ = timedOut.handle(.pressed(.right, correlationID: "timeout"))
+        XCTAssertEqual(timedOut.handle(.timeout(correlationID: "stale")), [])
+        XCTAssertEqual(timedOut.handle(.timeout(correlationID: "timeout")), [
+            .commitSingle(
+                correlationID: "timeout",
+                direction: .right,
+                reason: "missing-release-timeout"
+            ),
+        ])
+        XCTAssertTrue(timedOut.handle(.pressed(.right, correlationID: "repeat")).isEmpty)
+        XCTAssertTrue(timedOut.handle(.released(.right)).isEmpty)
+        XCTAssertTrue(timedOut.isIdle)
+    }
+
+    func testTwoArrowGestureIgnoresRepeatsAndCancelsInvalidPairsAndCompetingInput() {
+        var repeated = DirectionalMoveGestureStateMachine()
+        _ = repeated.handle(.pressed(.up, correlationID: "repeat"))
+        XCTAssertTrue(repeated.handle(.pressed(.up, correlationID: "repeat-2")).isEmpty)
+        XCTAssertEqual(repeated.handle(.pressed(.down, correlationID: "opposite")), [
+            .cancel(correlationID: "repeat", reason: "same-axis-pair"),
+        ])
+        XCTAssertTrue(repeated.handle(.pressed(.left, correlationID: "blocked")).isEmpty)
+        _ = repeated.handle(.released(.up))
+        _ = repeated.handle(.released(.down))
+        XCTAssertTrue(repeated.isIdle)
+
+        var cancelled = DirectionalMoveGestureStateMachine()
+        _ = cancelled.handle(.pressed(.left, correlationID: "cancel"))
+        XCTAssertEqual(cancelled.handle(.cancel(reason: "escape", awaitRelease: true)), [
+            .cancel(correlationID: "cancel", reason: "escape"),
+        ])
+        XCTAssertTrue(cancelled.handle(.pressed(.up, correlationID: "still-held")).isEmpty)
+        _ = cancelled.handle(.released(.left))
+        XCTAssertTrue(cancelled.isIdle)
+
+        _ = cancelled.handle(.pressed(.right, correlationID: "reconfigured"))
+        XCTAssertEqual(cancelled.handle(.cancel(reason: "reconfigured", awaitRelease: false)), [
+            .cancel(correlationID: "reconfigured", reason: "reconfigured"),
+        ])
+        XCTAssertTrue(cancelled.isIdle)
+    }
+
+    func testDirectionalMoveShortcutFamilyRequiresMatchingConflictFreeBindings() throws {
+        let defaults = HotKeyConfiguration()
+        let defaultReport = ShortcutConflictModel.evaluate(configuration: defaults, workspaces: [])
+        let family = try XCTUnwrap(try? DirectionalMoveChordFamily.resolve(
+            configuration: defaults,
+            report: defaultReport
+        ).get())
+        XCTAssertEqual(family.modifiers, UInt32(controlKey | optionKey))
+        XCTAssertEqual(family.direction(for: 126), .up)
+        XCTAssertEqual(family.direction(for: 124), .right)
+
+        var mismatched = defaults
+        mismatched.setChord(
+            HotKeyChord(keyCode: 124, modifiers: UInt32(controlKey | optionKey | shiftKey)),
+            for: .moveRight
+        )
+        XCTAssertEqual(
+            DirectionalMoveChordFamily.resolve(configuration: mismatched),
+            .failure(.modifierMismatch)
+        )
+
+        var duplicate = defaults
+        duplicate.setChord(defaults.chord(for: .moveLeft), for: .moveRight)
+        let duplicateReport = ShortcutConflictModel.evaluate(configuration: duplicate, workspaces: [])
+        XCTAssertEqual(
+            DirectionalMoveChordFamily.resolve(configuration: duplicate, report: duplicateReport),
+            .failure(.shortcutConflict)
+        )
+    }
+
+    func testHotKeyManagerDefersSingleAndDispatchesOneCompositeCorner() {
+        var commands: [WindowManagerCommand] = []
+        let scheduler = TestDirectionalMoveScheduler()
+        let monitor = TestDirectionalMoveMonitor()
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { command, _ in commands.append(command) },
+            registrationService: TestDirectionalMoveRegistrationService(),
+            directionalGestureScheduler: scheduler,
+            directionalGestureMonitor: monitor,
+            installsEventHandler: false
+        )
+        let report = manager.register(workspaces: [], radialMenuEnabled: false)
+        XCTAssertTrue(report.runtimeIssues.isEmpty)
+
+        manager.handleDirectionalMoveHotKey(
+            direction: .up,
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        XCTAssertEqual(commands.count, 1)
+        guard case let .beginDirectionalMoveGesture(identifier, .up) = commands[0] else {
+            return XCTFail("First press must only capture the gesture")
+        }
+        XCTAssertEqual(scheduler.latestDelay, HotKeyManager.directionalMoveChordWindow)
+        manager.handleDirectionalMoveHotKey(
+            direction: .right,
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        XCTAssertEqual(commands.count, 2)
+        XCTAssertEqual(commands[1], .commitDirectionalMoveGesture(identifier, .corner(.topRight)))
+        XCTAssertTrue(scheduler.latestTask?.isCancelled == true)
+        XCTAssertEqual(monitor.stopCount, 1)
+    }
+
+    func testHotKeyManagerSingleReleaseTimeoutAndCompetingInputAreDeterministic() {
+        var commands: [WindowManagerCommand] = []
+        let scheduler = TestDirectionalMoveScheduler()
+        let monitor = TestDirectionalMoveMonitor()
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { command, _ in commands.append(command) },
+            registrationService: TestDirectionalMoveRegistrationService(),
+            directionalGestureScheduler: scheduler,
+            directionalGestureMonitor: monitor,
+            installsEventHandler: false
+        )
+        _ = manager.register(workspaces: [], radialMenuEnabled: false)
+
+        manager.handleDirectionalMoveHotKey(direction: .left, eventKind: UInt32(kEventHotKeyPressed))
+        guard case let .beginDirectionalMoveGesture(releaseID, .left) = commands.last else {
+            return XCTFail("Expected release gesture capture")
+        }
+        manager.handleDirectionalMoveHotKey(direction: .left, eventKind: UInt32(kEventHotKeyReleased))
+        XCTAssertEqual(commands.last, .commitDirectionalMoveGesture(releaseID, .single(.left)))
+
+        manager.handleDirectionalMoveHotKey(direction: .down, eventKind: UInt32(kEventHotKeyPressed))
+        guard case let .beginDirectionalMoveGesture(timeoutID, .down) = commands.last else {
+            return XCTFail("Expected timeout gesture capture")
+        }
+        scheduler.fireLatest()
+        XCTAssertEqual(commands.last, .commitDirectionalMoveGesture(timeoutID, .single(.down)))
+        manager.handleDirectionalMoveHotKey(direction: .down, eventKind: UInt32(kEventHotKeyReleased))
+
+        manager.handleDirectionalMoveHotKey(direction: .up, eventKind: UInt32(kEventHotKeyPressed))
+        guard case let .beginDirectionalMoveGesture(cancelID, .up) = commands.last else {
+            return XCTFail("Expected cancellable gesture capture")
+        }
+        monitor.send(.keyDown(
+            keyCode: 0,
+            modifiers: UInt32(controlKey | optionKey),
+            isRepeat: false
+        ))
+        XCTAssertEqual(
+            commands.last,
+            .cancelDirectionalMoveGesture(cancelID, reason: "competing-key")
+        )
+
+        manager.handleDirectionalMoveHotKey(direction: .up, eventKind: UInt32(kEventHotKeyReleased))
+        manager.handleDirectionalMoveHotKey(direction: .right, eventKind: UInt32(kEventHotKeyPressed))
+        guard case let .beginDirectionalMoveGesture(modifierID, .right) = commands.last else {
+            return XCTFail("Expected modifier-cancellable gesture capture")
+        }
+        monitor.send(.modifiersChanged(
+            modifiers: UInt32(controlKey | optionKey | shiftKey),
+            functionDown: false
+        ))
+        XCTAssertEqual(
+            commands.last,
+            .cancelDirectionalMoveGesture(modifierID, reason: "modifier-changed")
+        )
+    }
+
+    func testDirectionalMoveGestureFailsClosedWithoutMonitorOrCompleteRegistration() {
+        var commands: [WindowManagerCommand] = []
+        let unavailableMonitor = TestDirectionalMoveMonitor(canStart: false)
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { command, _ in commands.append(command) },
+            registrationService: TestDirectionalMoveRegistrationService(),
+            directionalGestureScheduler: TestDirectionalMoveScheduler(),
+            directionalGestureMonitor: unavailableMonitor,
+            installsEventHandler: false
+        )
+        var runtimeIssue: String?
+        manager.directionalMoveGestureRuntimeIssueChanged = { runtimeIssue = $0 }
+        _ = manager.register(workspaces: [], radialMenuEnabled: false)
+        XCTAssertTrue(manager.directionalMoveCornerGestureEnabled)
+        manager.handleDirectionalMoveHotKey(direction: .left, eventKind: UInt32(kEventHotKeyPressed))
+        XCTAssertEqual(commands, [.moveWindowDirection(.left)])
+        XCTAssertTrue(runtimeIssue?.contains("Single-arrow Reorder shortcuts still work") == true)
+
+        commands.removeAll()
+        let partial = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { command, _ in commands.append(command) },
+            registrationService: TestDirectionalMoveRegistrationService(failingKeyCode: 124),
+            directionalGestureScheduler: TestDirectionalMoveScheduler(),
+            directionalGestureMonitor: TestDirectionalMoveMonitor(),
+            installsEventHandler: false
+        )
+        let report = partial.register(workspaces: [], radialMenuEnabled: false)
+        XCTAssertTrue(report.runtimeIssues.contains { $0.owner.configurableAction == .moveRight })
+        XCTAssertFalse(partial.directionalMoveCornerGestureEnabled)
+        partial.handleDirectionalMoveHotKey(direction: .left, eventKind: UInt32(kEventHotKeyPressed))
+        partial.handleDirectionalMoveHotKey(direction: .left, eventKind: UInt32(kEventHotKeyReleased))
+        XCTAssertEqual(commands, [.moveWindowDirection(.left)])
+    }
+
     func testDirectionalFocusPrefersAxisAlignedCandidate() {
         let source = CGRect(x: 400, y: 400, width: 200, height: 200)
         let candidates = [
@@ -285,4 +516,78 @@ final class KeyboardManipulationTests: XCTestCase {
             generation: latestGeneration
         ))
     }
+}
+
+private final class TestDirectionalMoveRegistrationService: GlobalHotKeyRegistrationService {
+    private let failingKeyCode: UInt32?
+
+    init(failingKeyCode: UInt32? = nil) {
+        self.failingKeyCode = failingKeyCode
+    }
+
+    func register(
+        chord: HotKeyChord,
+        identifier _: UInt32
+    ) -> Result<HotKeyRegistrationToken, HotKeyRegistrationFailure> {
+        if chord.keyCode == failingKeyCode {
+            return .failure(HotKeyRegistrationFailure(status: OSStatus(eventHotKeyExistsErr)))
+        }
+        return .success(HotKeyRegistrationToken())
+    }
+
+    func unregister(_: HotKeyRegistrationToken) -> OSStatus { noErr }
+}
+
+private final class TestDirectionalMoveScheduledTask: DirectionalMoveGestureScheduledTask {
+    private let action: () -> Void
+    private(set) var isCancelled = false
+
+    init(action: @escaping () -> Void) { self.action = action }
+    func cancel() { isCancelled = true }
+    func fire() {
+        guard !isCancelled else { return }
+        action()
+    }
+}
+
+private final class TestDirectionalMoveScheduler: DirectionalMoveGestureScheduling {
+    private(set) var latestTask: TestDirectionalMoveScheduledTask?
+    private(set) var latestDelay: TimeInterval?
+
+    func schedule(
+        after delay: TimeInterval,
+        action: @escaping () -> Void
+    ) -> DirectionalMoveGestureScheduledTask {
+        let task = TestDirectionalMoveScheduledTask(action: action)
+        latestDelay = delay
+        latestTask = task
+        return task
+    }
+
+    func fireLatest() { latestTask?.fire() }
+}
+
+private final class TestDirectionalMoveMonitor: DirectionalMoveGestureMonitoring {
+    private let canStart: Bool
+    private var handler: ((DirectionalMoveObservedInput) -> Void)?
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+
+    init(canStart: Bool = true) {
+        self.canStart = canStart
+    }
+
+    func start(handler: @escaping (DirectionalMoveObservedInput) -> Void) -> Bool {
+        guard canStart else { return false }
+        self.handler = handler
+        startCount += 1
+        return true
+    }
+
+    func stop() {
+        if handler != nil { stopCount += 1 }
+        handler = nil
+    }
+
+    func send(_ input: DirectionalMoveObservedInput) { handler?(input) }
 }

@@ -499,6 +499,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private let settingsNavigation: SettingsNavigationModel
     private let settingsWindowCoordinator: SettingsWindowCoordinator
     private let diagnostics: DiagnosticLogger
+    private let tiledPlacementUndoManager: UndoManager?
     private var presentationMode: MenuBarPresentationMode
     private var contentView: MenuBarStatusContentView?
     private var lastSnapshot: MenuBarPresentationSnapshot?
@@ -511,6 +512,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         settingsNavigation: SettingsNavigationModel,
         settingsWindowCoordinator: SettingsWindowCoordinator,
         diagnostics: DiagnosticLogger,
+        tiledPlacementUndoManager: UndoManager? = nil,
         initialMode: MenuBarPresentationMode
     ) {
         self.engine = engine
@@ -519,6 +521,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         self.settingsNavigation = settingsNavigation
         self.settingsWindowCoordinator = settingsWindowCoordinator
         self.diagnostics = diagnostics
+        self.tiledPlacementUndoManager = tiledPlacementUndoManager
         presentationMode = initialMode
         super.init()
         statusItem.autosaveName = "com.chris.WindowManager.primary-status"
@@ -683,6 +686,27 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         )
         appMenu.addItem(wheelSettings)
 
+        if let tiledPlacementUndoManager,
+           tiledPlacementUndoManager.canUndo || tiledPlacementUndoManager.canRedo {
+            appMenu.addItem(.separator())
+            if tiledPlacementUndoManager.canUndo {
+                let undo = actionMenuItem(
+                    title: tiledPlacementUndoManager.undoMenuItemTitle,
+                    action: #selector(undoTiledPlacement)
+                )
+                undo.image = symbol("arrow.uturn.backward")
+                appMenu.addItem(undo)
+            }
+            if tiledPlacementUndoManager.canRedo {
+                let redo = actionMenuItem(
+                    title: tiledPlacementUndoManager.redoMenuItemTitle,
+                    action: #selector(redoTiledPlacement)
+                )
+                redo.image = symbol("arrow.uturn.forward")
+                appMenu.addItem(redo)
+            }
+        }
+
         #if DEBUG
         appMenu.addItem(.separator())
         appMenu.addItem(disabledMenuItem(title: "WindowManager Debug"))
@@ -764,6 +788,16 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func resumeAutomaticProfileSelection() {
         settingsStore.resumeAutomaticProfileSelection()
+    }
+
+    @objc private func undoTiledPlacement() {
+        tiledPlacementUndoManager?.undo()
+        rebuildMenu()
+    }
+
+    @objc private func redoTiledPlacement() {
+        tiledPlacementUndoManager?.redo()
+        rebuildMenu()
     }
 
     #if DEBUG
