@@ -48,6 +48,9 @@ it directly.
 and ordinary agent branches start from and merge into `develop`. A green `develop` commit may produce
 a Dev artifact, but it is not a Beta or Stable release.
 
+The GitHub repository uses `develop` as its default branch so new pull requests target the normal
+integration path. This does not change `main`'s role as the Stable source of truth.
+
 ## Short-lived branches
 
 | Pattern | Starts from | Merges into | Purpose |
