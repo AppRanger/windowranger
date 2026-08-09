@@ -248,6 +248,29 @@ final class ICloudSyncSettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalEditsCannotImplicitlyReplaceARejectedRemoteLibrary() throws {
+        let (defaults, suite) = isolatedDefaults("RejectedRemoteEdit")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+        let local = ProfileLibrary(profiles: [profile(name: "Local")])
+        defaults.set(try JSONEncoder().encode(local), forKey: "profileLibrary.v1")
+        let cloud = InspectableUbiquitousStore()
+        let rejectedRemote = Data("not-json".utf8)
+        cloud.seed(rejectedRemote, forKey: "profileLibrary.v1")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+
+        store.renameProfile(store.activeProfileID, to: "Edited Local")
+
+        XCTAssertEqual(store.profiles.map(\.name), ["Edited Local"])
+        XCTAssertEqual(cloud.peekData(forKey: "profileLibrary.v1"), rejectedRemote)
+        XCTAssertEqual(store.iCloudProfileLibraryIssue?.source, .remote)
+    }
+
+    @MainActor
     func testExistingOversizedLocalPrivateLibraryRemainsAvailableWhenSyncIsOff() throws {
         let (defaults, suite) = isolatedDefaults("ExistingLocal")
         defer { defaults.removePersistentDomain(forName: suite) }

@@ -249,9 +249,9 @@ second copy of that checklist.
   replaces or truncates local profiles; existing oversized private-install libraries remain local,
   writes are withheld visibly, and an eligible local copy replaces rejected cloud data only through
   an explicit General Settings recovery action.
-- **Automated evidence:** Fourteen focused tests cover exact boundaries, every collection limit,
+- **Automated evidence:** Fifteen focused tests cover exact boundaries, every collection limit,
   oversized bytes, long names, malformed/future versions, local preservation, safe enablement,
-  remote rejection and explicit recovery. Test isolation and the complete 444-test suite passed on
+  remote rejection and explicit recovery. Test isolation and the complete 445-test suite passed on
   10 August 2026.
 
 ### WR-017 — Copy a focused-window diagnostic report for bug reports
