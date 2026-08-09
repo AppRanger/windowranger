@@ -329,6 +329,70 @@ enum TiledLayoutEngine {
         return swapped
     }
 
+    /// Moves a focused leaf across the split that directly contains it by exchanging that leaf
+    /// with the complete sibling branch. This is the structural BSP interpretation of one arrow:
+    /// a compound sibling keeps its internal topology and ratios instead of donating whichever
+    /// individual leaf happens to be the closest visual neighbour.
+    ///
+    /// The search recurses so the direct split may itself be nested under unrelated ancestors.
+    /// A result is produced only when the focused leaf is the direct child on the side from which
+    /// the requested direction can cross the split. Callers can retain visual leaf swapping as a
+    /// fallback when no such boundary exists.
+    static func swappingFocusedLeafWithDirectSiblingBranch(
+        _ focusedWindow: WindowKey,
+        direction: WindowDirection,
+        in tree: TiledNode
+    ) -> (tree: TiledNode, siblingWindowKeys: [WindowKey])? {
+        guard tree.contains(focusedWindow),
+              (try? validated(tree, participants: Set(tree.windowKeys))) != nil
+        else { return nil }
+
+        let requestedAxis: SplitAxis = direction.axis == .horizontal ? .horizontal : .vertical
+        let movesTowardFirst = direction == .left || direction == .up
+
+        func swap(in node: TiledNode) -> (node: TiledNode, siblingWindowKeys: [WindowKey])? {
+            guard case let .split(axis, ratio, first, second) = node else { return nil }
+
+            if axis == requestedAxis {
+                if movesTowardFirst,
+                   case let .window(key) = second,
+                   key == focusedWindow {
+                    return (
+                        .split(axis: axis, ratio: ratio, first: second, second: first),
+                        first.windowKeys
+                    )
+                }
+                if !movesTowardFirst,
+                   case let .window(key) = first,
+                   key == focusedWindow {
+                    return (
+                        .split(axis: axis, ratio: ratio, first: second, second: first),
+                        second.windowKeys
+                    )
+                }
+            }
+
+            if first.contains(focusedWindow), let changed = swap(in: first) {
+                return (
+                    .split(axis: axis, ratio: ratio, first: changed.node, second: second),
+                    changed.siblingWindowKeys
+                )
+            }
+            if second.contains(focusedWindow), let changed = swap(in: second) {
+                return (
+                    .split(axis: axis, ratio: ratio, first: first, second: changed.node),
+                    changed.siblingWindowKeys
+                )
+            }
+            return nil
+        }
+
+        guard let changed = swap(in: tree),
+              (try? validated(changed.node, participants: Set(tree.windowKeys))) != nil
+        else { return nil }
+        return (changed.node, changed.siblingWindowKeys)
+    }
+
     /// Resizes only the nearest divider that directly contains the focused leaf. A window in a
     /// top/bottom branch therefore changes height without also changing the width allocated by an
     /// outer left/right branch. The tree topology and every unrelated split ratio stay intact.

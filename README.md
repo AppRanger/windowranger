@@ -15,6 +15,7 @@ general-purpose command language.
 - [Pre-release checklist](docs/release-checklist.md)
 - [Portable profile transfer design](docs/profile-transfer-design.md)
 - [Future workspace systems decision brief](docs/future-workspace-systems-decisions.md)
+- [Two-arrow Tiled placement recommendation](docs/two-arrow-tiled-placement-recommendation.md)
 - [2026-08-08 code review](docs/code-review-2026-08-08.md)
 - [Third-party reference notices](THIRD_PARTY_NOTICES.md)
 - [MIT license](LICENSE)
@@ -41,6 +42,12 @@ general-purpose command language.
 - Portable display-home matching using runtime UUID first and conservative hardware fingerprints on reconnect.
 - Optional focus-following when moving a window, opt-in hidden-app compatibility, and an explicit native launch-at-login control.
 - No native macOS Spaces integration.
+
+Window discovery treats a successful per-application Accessibility window enumeration as the
+authoritative lifecycle snapshot for that application. A native tab/window identity absent from a
+successful snapshot is removed immediately from the registry, focus history, Tiled tree, and next
+persisted state, so closed or inactive tab identities cannot leave ghost layout slots. A failed or
+incomplete enumeration is not evidence that a window closed and retains prior state for recovery.
 
 Default shortcuts:
 

@@ -113,11 +113,7 @@ final class WindowManagerCommandDispatcher {
                 engine?.cycleWorkspaceLayout(offset: offset, correlationID: correlationID)
             case let .setLayout(layout): engine?.setWorkspaceLayout(layout, correlationID: correlationID)
             case let .selectLayoutFromShortcut(layout):
-                engine?.setWorkspaceLayout(
-                    layout,
-                    cycleOrientationWhenAlreadySelected: true,
-                    correlationID: correlationID
-                )
+                engine?.setWorkspaceLayout(layout, correlationID: correlationID)
             case .toggleFloating: engine?.toggleFocusedWindowFloating()
             case .previousWorkspace:
                 engine?.switchToPreviousWorkspace(correlationID: correlationID)

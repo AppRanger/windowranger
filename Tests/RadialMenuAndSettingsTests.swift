@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import Combine
 import XCTest
 
 final class RadialMenuAndSettingsTests: XCTestCase {
@@ -705,6 +706,53 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testPublishedGlobeFnEnableUsesEmittedWillSetValue() {
+        final class Probe: ObservableObject {
+            @Published var globeFnEnabled = false
+        }
+
+        let probe = Probe()
+        let radial = TestGlobeFnRadialTrigger()
+        let monitor = TestGlobeFnEventMonitor()
+        let controller = GlobeFnHoldActivationController(
+            radialTrigger: radial,
+            scheduler: TestGlobeFnScheduler(),
+            monitorFactory: { eventHandler, interruptionHandler in
+                monitor.eventHandler = eventHandler
+                monitor.interruptionHandler = interruptionHandler
+                return monitor
+            }
+        )
+        var resolved: [GlobeFnRuntimeSettings] = []
+        var cancellable: AnyCancellable? = probe.$globeFnEnabled
+            .dropFirst()
+            .sink { emittedValue in
+                // During this callback @Published's source property still contains its old value.
+                XCTAssertFalse(probe.globeFnEnabled)
+                let settings = GlobeFnRuntimeSettings(
+                    radialMenuEnabled: true,
+                    globeFnEnabled: emittedValue,
+                    isShortcutRecording: false,
+                    holdDelay: 0.2
+                )
+                resolved.append(settings)
+                controller.update(enabled: settings.isEnabled, holdDelay: settings.holdDelay)
+            }
+
+        probe.globeFnEnabled = true
+
+        XCTAssertEqual(resolved, [GlobeFnRuntimeSettings(
+            radialMenuEnabled: true,
+            globeFnEnabled: true,
+            isShortcutRecording: false,
+            holdDelay: 0.2
+        )])
+        XCTAssertEqual(monitor.startCount, 1, "The live enable transition must install the monitor")
+        withExtendedLifetime(cancellable) {}
+        cancellable = nil
+    }
+
+    @MainActor
     func testGlobeFnRuntimeQuickTapChordAndOrdinaryShortcutNeverOpen() {
         let radial = TestGlobeFnRadialTrigger()
         let scheduler = TestGlobeFnScheduler()
@@ -849,6 +897,11 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         _ = monitor.send(.keyChanged(isDown: true, keyCode: 123, isRepeat: false))
 
         XCTAssertTrue(sink.text.contains("globe-fn-trigger"))
+        XCTAssertTrue(sink.text.contains("configuration-updated"))
+        XCTAssertTrue(sink.text.contains("monitor-installed"))
+        XCTAssertTrue(sink.text.contains("monitor-awaiting-fn-transition"))
+        XCTAssertTrue(sink.text.contains("fn-transition-observed"))
+        XCTAssertTrue(sink.text.contains("hold-not-accepted"))
         XCTAssertTrue(sink.text.contains("competing-key"))
         XCTAssertFalse(sink.text.localizedCaseInsensitiveContains("keycode"))
         XCTAssertFalse(sink.text.localizedCaseInsensitiveContains("key-code"))

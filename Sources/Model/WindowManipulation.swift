@@ -44,3 +44,8 @@ enum SmartResizeResult: Equatable, Sendable {
     case resized(String)
     case noMeaning(String)
 }
+
+enum TiledDirectionalMoveStrategy: String, Equatable, Sendable {
+    case directSiblingBranch = "direct-sibling-branch"
+    case visualNeighbourLeaf = "visual-neighbour-leaf"
+}
