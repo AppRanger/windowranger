@@ -51,7 +51,7 @@ struct SettingsView: View {
                         }
                     }
                 )) {
-                    Section("WindowManager") {
+                    Section("WindowRanger") {
                         sidebarRow(.general)
                         sidebarRow(.profiles)
                         sidebarRow(.workspaces)
@@ -278,7 +278,7 @@ private struct GeneralSettingsView: View {
                     ),
                     supportsOpacity: false
                 )
-                Text("Choose one highlight colour. WindowManager automatically derives readable labels, borders, and secondary active states. White keeps the menu bar monochrome.")
+                Text("Choose one highlight colour. WindowRanger automatically derives readable labels, borders, and secondary active states. White keeps the menu bar monochrome.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 MenuBarSettingsPreview(snapshot: MenuBarPresentationResolver.preview(
@@ -325,13 +325,13 @@ private struct GeneralSettingsView: View {
                     "Automatically unhide applications when focusing their windows",
                     isOn: $store.automaticallyUnhideApplications
                 )
-                Text("Off by default. When enabled, WindowManager only unhides an app while carrying out an explicit focus command, with duplicate attempts throttled to avoid loops.")
+                Text("Off by default. When enabled, WindowRanger only unhides an app while carrying out an explicit focus command, with duplicate attempts throttled to avoid loops.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             Section {
-                Button("Quit WindowManager") { NSApp.terminate(nil) }
+                Button("Quit WindowRanger") { NSApp.terminate(nil) }
             }
         }
         .formStyle(.grouped)
@@ -711,7 +711,7 @@ private struct ProfilesSettingsView: View {
     private func roleBindingNote(_ roleID: UUID) -> String? {
         switch store.roleBindingResolution(roleID) {
         case .ambiguous:
-            "Two identical monitors match. WindowManager will not guess; this role uses the safe main-display fallback."
+            "Two identical monitors match. WindowRanger will not guess; this role uses the safe main-display fallback."
         case .disconnected:
             "The bound monitor is disconnected. Its role is preserved and will return on reconnect."
         case .exactIdentifier, .exactUUID, .portableFingerprint:
@@ -1108,7 +1108,7 @@ struct WorkspaceSettingsView: View {
                 store.resetToWindowManagerDefaults()
                 reconcileSelection()
             }
-            .help("Restore WindowManager's built-in workspace configuration")
+            .help("Restore WindowRanger's built-in workspace configuration")
             .accessibilityLabel(SettingsCopy.restoreWindowManagerDefaultsTitle)
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -1264,7 +1264,7 @@ struct WorkspaceSettingsView: View {
 
                 let controls = WorkspaceInspectorControlVisibility(layout: workspace.layout)
                 if controls.showsFreeformExplanation {
-                    Text("Freeform leaves window frames under manual control. WindowManager still manages workspace visibility, focus, persistence, display assignment, and quit/wake recovery.")
+                    Text("Freeform leaves window frames under manual control. WindowRanger still manages workspace visibility, focus, persistence, display assignment, and quit/wake recovery.")
                         .foregroundStyle(.secondary)
                 }
                 if controls.showsOrientation {
@@ -1294,7 +1294,7 @@ struct WorkspaceSettingsView: View {
                 Button("Reset This Workspace", systemImage: "arrow.counterclockwise") {
                     store.resetWorkspaceSettings(workspace.id, undoManager: undoManager)
                 }
-                Text("Restores Freeform and WindowManager's built-in geometry. It keeps the workspace name, key, Home Display, app rules, and live window membership. The settings change can be undone.")
+                Text("Restores Freeform and WindowRanger's built-in geometry. It keeps the workspace name, key, Home Display, app rules, and live window membership. The settings change can be undone.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -1485,10 +1485,10 @@ struct WorkspaceSettingsView: View {
     private func roleNote(for workspaceID: UUID) -> String {
         guard let roleID = store.roleID(for: workspaceID),
               let role = store.activeProfile.displayRoles.first(where: { $0.id == roleID })
-        else { return "No display role is assigned; WindowManager uses the safe main-display fallback." }
+        else { return "No display role is assigned; WindowRanger uses the safe main-display fallback." }
         switch store.roleBindingResolution(roleID) {
         case .ambiguous:
-            return "\(role.name) matches multiple identical monitors, so WindowManager will not guess and uses the safe main-display fallback."
+            return "\(role.name) matches multiple identical monitors, so WindowRanger will not guess and uses the safe main-display fallback."
         case .disconnected:
             return "\(role.name)'s monitor is disconnected; this home is preserved and returns when the binding reconnects."
         case .exactIdentifier, .exactUUID, .portableFingerprint:
@@ -2092,7 +2092,7 @@ private struct RadialMenuSettingsView: View {
                     isOn: $store.radialMenuGlobeFnHoldEnabled
                 )
                 .disabled(!store.radialMenuEnabled)
-                .help("A quick Globe/Fn tap remains assigned to macOS. Only a deliberate hold opens WindowManager's command wheel.")
+                .help("A quick Globe/Fn tap remains assigned to macOS. Only a deliberate hold opens WindowRanger's command wheel.")
                 Text("Optional and local to this Mac. A quick tap is passed through unchanged to macOS. Fn combined with another key or modifier is never treated as a wheel gesture.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

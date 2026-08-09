@@ -3,7 +3,7 @@
 .swiftpm/
 build/
 DerivedData/
-WindowManager.xcodeproj/
+*.xcodeproj/
 xcuserdata/
 *.xcuserstate
 *.xcresult

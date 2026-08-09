@@ -44,9 +44,9 @@ These systems confirm that a structural reinsert is meaningfully different from 
 single-arrow reorder. Encoding the desired visible destination is clearer than asking users to
 predict a BSP traversal.
 
-## Fit with WindowManager
+## Fit with WindowRanger
 
-WindowManager already has eight compass `VisualPlacement` values. Corner placement:
+WindowRanger already has eight compass `VisualPlacement` values. Corner placement:
 
 1. detaches the focused leaf;
 2. collapses its empty parent;

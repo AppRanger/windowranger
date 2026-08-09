@@ -378,7 +378,7 @@ enum AccessibilityWindow {
     }
 
     /// Best-effort neutral focus for the uncommon case where the last visible window is sent away.
-    /// WindowManager never activates itself just to manufacture a replacement focus target.
+    /// WindowRanger never activates itself just to manufacture a replacement focus target.
     static func clearFocus(
         of element: AXUIElement
     ) -> (focused: AXError?, main: AXError?) {

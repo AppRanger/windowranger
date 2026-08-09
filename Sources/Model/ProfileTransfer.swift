@@ -124,9 +124,9 @@ enum ProfileTransferError: Error, Equatable, LocalizedError, Sendable {
         case let .documentTooLarge(maximumBytes):
             "The profile file is larger than the supported \(maximumBytes / 1_048_576) MiB limit."
         case .malformedDocument:
-            "This is not a valid WindowManager profile file."
+            "This is not a valid WindowRanger profile file."
         case .invalidFormat:
-            "This JSON document is not a WindowManager profile export."
+            "This JSON document is not a WindowRanger profile export."
         case let .unsupportedVersion(version):
             "Profile export version \(version) is not supported by this build."
         case .emptyDocument:
@@ -140,7 +140,7 @@ enum ProfileTransferError: Error, Equatable, LocalizedError, Sendable {
         case let .invalidValue(detail):
             "The profile file contains an invalid value: \(detail)."
         case .unableToCreateUniqueIdentity:
-            "WindowManager could not create unique identities for the imported profiles."
+            "WindowRanger could not create unique identities for the imported profiles."
         }
     }
 
@@ -487,7 +487,7 @@ final class AppKitProfileTransferPanelPresenter: ProfileTransferPanelPresenting 
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.message = "Choose a WindowManager profile export to preview."
+        panel.message = "Choose a WindowRanger profile export to preview."
         return await withCheckedContinuation { continuation in
             panel.begin { response in continuation.resume(returning: response == .OK ? panel.url : nil) }
         }
@@ -526,7 +526,7 @@ final class ProfileTransferCoordinator: ObservableObject {
 
     func exportProfiles(_ profiles: [WindowManagerProfile]) async throws -> Bool {
         guard let url = await panels.chooseExportURL(
-            suggestedFileName: "WindowManager-Profiles.json"
+            suggestedFileName: "WindowRanger-Profiles.json"
         ) else {
             diagnostics.log(category: "profile-transfer", event: "export-cancelled")
             return false

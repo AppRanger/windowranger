@@ -133,7 +133,7 @@ Accessibility trust.
 - Fn alone starts a candidate. Crossing the shared hold delay opens the existing Hold-to-Show
   session exactly once; Fn release uses the normal release-commit/no-selection-cancel path.
 - Releasing before the delay leaves every event untouched, so macOS remains responsible for the
-  configured Globe quick-tap action. WindowManager never invokes or replays the emoji picker.
+  configured Globe quick-tap action. WindowRanger never invokes or replays the emoji picker.
 - Any key, function/media event, mouse button, or other modifier before or during the candidate
   cancels it. The entire Fn chord remains untouched.
 - Only the native Globe action event associated with an accepted long hold is filtered, preventing
@@ -274,7 +274,7 @@ The new definition is the sole authoritative saved format after a successful wri
 ## Focus and nonactivation
 
 - The panel is borderless, nonactivating, cannot become main, does not appear in normal window cycling, and never enters WorkspaceEngine discovery/persistence.
-- Presentation uses ordering that does not activate WindowManager or replace the focused app/window. Input is observed through an injected controller/event source; tests never install a live event tap.
+- Presentation uses ordering that does not activate WindowRanger or replace the focused app/window. Input is observed through an injected controller/event source; tests never install a live event tap.
 - Opening, hovering, previewing, and cancelling perform no AX writes and do not alter interaction display.
 - Commit is the only mutation boundary and routes through the shared command dispatcher.
 
@@ -329,7 +329,7 @@ Diagnostics never include window titles, document names, URLs, typed content, fu
 - Direct-only, submenu-only, and direct-plus-submenu interactions are deterministic in Press and Hold modes.
 - All nine initial types use existing shared commands or narrowly added shared commands, with correct workspace/profile/display scope.
 - Tiled preview performs zero AX writes and matches the atomically committed layout.
-- The panel does not activate WindowManager, steal focus, or admit itself to managed-window state.
+- The panel does not activate WindowRanger, steal focus, or admit itself to managed-window state.
 - Migration, Repair, Reset, Undo, Settings search, iCloud/global persistence, accessibility, diagnostics, and stale-context cancellation are verified.
 - Offscreen visual comparison has no unresolved P0, P1, or P2 mismatch before handoff.
 

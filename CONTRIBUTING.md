@@ -1,6 +1,6 @@
-# Contributing to WindowManager
+# Contributing to WindowRanger
 
-WindowManager is a pre-release native macOS project and the product name is provisional. The
+WindowRanger is a pre-release native macOS project. The
 repository is being prepared for later open sourcing; these instructions document the current safe
 development workflow, not a promise of public compatibility.
 
@@ -37,16 +37,16 @@ Use focused non-hosted tests while iterating, then the full suite once at a chec
 
 ```sh
 ./scripts/verify-test-isolation.sh
-xcodebuild -project WindowManager.xcodeproj \
-  -scheme WindowManager \
+xcodebuild -project WindowRanger.xcodeproj \
+  -scheme WindowRanger \
   -configuration Debug \
   -destination 'platform=macOS' \
   CODE_SIGNING_ALLOWED=NO \
   test
 ```
 
-The Test action must continue to report only `WindowManagerTests` in its dependency graph. It must
-not build, host or macro-expand `WindowManager.app`. Tests must not register Carbon hotkeys, prompt
+The Test action must continue to report only `WindowRangerTests` in its dependency graph. It must
+not build, host or macro-expand `WindowRanger.app`. Tests must not register Carbon hotkeys, prompt
 for Accessibility, change login items, access iCloud, write diagnostics in the user's home directory,
 or inspect/move live windows.
 
@@ -63,13 +63,13 @@ for background tests.
 
 ## Live-window safety
 
-Never launch, stop, replace or automate a user's running WindowManager while doing background
+Never launch, stop, replace or automate a user's running WindowRanger while doing background
 verification. Do not reset TCC, alter Accessibility permissions, mutate the real login-item state or
 move/resize user windows from tests. A human live test must begin by gracefully quitting the old
 build through its menu, then running the intended signed Debug product from Xcode.
 
 Xcode Stop is a hard termination and does not test graceful window restoration. Use **Quit
-WindowManager** when validating quit recovery.
+WindowRanger** when validating quit recovery.
 
 ## Changes and review
 

@@ -192,13 +192,13 @@ struct MenuBarPresentationSnapshot: Equatable, Sendable {
 
     var primaryAccessibilityLabel: String {
         let states = displays.map(\.accessibilityLabel).joined(separator: ". ")
-        return "WindowManager menu. \(states)."
+        return "WindowRanger menu. \(states)."
     }
 
     var primaryTooltip: String {
         let states = displays.map { "\($0.name): \($0.activeWorkspaceName)" }
             .joined(separator: " · ")
-        return "WindowManager — \(states)"
+        return "WindowRanger — \(states)"
     }
 
     func replacingMode(_ mode: MenuBarPresentationMode) -> MenuBarPresentationSnapshot {
@@ -1021,7 +1021,7 @@ final class MenuBarFullStripView: NSView {
         invalidateIntrinsicContentSize()
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
-        setAccessibilityLabel("WindowManager display workspace strip")
+        setAccessibilityLabel("WindowRanger display workspace strip")
     }
 
     private func makeDisplayGroup(

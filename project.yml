@@ -1,4 +1,4 @@
-name: WindowManager
+name: WindowRanger
 options:
   bundleIdPrefix: com.chris
   deploymentTarget:
@@ -11,19 +11,21 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
 targets:
-  WindowManager:
+  WindowRanger:
     type: application
     platform: macOS
     sources:
       - path: Sources
     settings:
       base:
+        # Preserve the existing signed identity during the product rename so Accessibility trust,
+        # preferences, diagnostics, and saved workspace state continue to resolve in development.
         PRODUCT_BUNDLE_IDENTIFIER: com.chris.WindowManager
-        PRODUCT_NAME: WindowManager
+        PRODUCT_NAME: WindowRanger
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 44NAD22AK6
         INFOPLIST_FILE: Sources/App/Info.plist
-        CODE_SIGN_ENTITLEMENTS: Sources/App/WindowManager.entitlements
+        CODE_SIGN_ENTITLEMENTS: Sources/App/WindowRanger.entitlements
         ENABLE_APP_SANDBOX: NO
         GENERATE_INFOPLIST_FILE: NO
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
@@ -31,7 +33,7 @@ targets:
       - sdk: ApplicationServices.framework
       - sdk: Carbon.framework
       - sdk: ServiceManagement.framework
-  WindowManagerTests:
+  WindowRangerTests:
     type: bundle.unit-test
     platform: macOS
     sources:
@@ -45,7 +47,7 @@ targets:
       - sdk: ServiceManagement.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.chris.WindowManagerTests
+        PRODUCT_BUNDLE_IDENTIFIER: com.chris.WindowRangerTests
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: ""
         # These are deliberately empty: unit tests must run in xctest, never in the production
@@ -53,19 +55,19 @@ targets:
         TEST_HOST: ""
         BUNDLE_LOADER: ""
 schemes:
-  WindowManager:
+  WindowRanger:
     build:
       targets:
         # The non-hosted unit tests compile shared Sources directly. Keeping the app out of the
         # Test build graph prevents xcodebuild test from creating/registering another app bundle.
-        WindowManager: [run, profile, analyze, archive]
-        WindowManagerTests: [test]
+        WindowRanger: [run, profile, analyze, archive]
+        WindowRangerTests: [test]
     run:
       config: Debug
     test:
       config: Debug
-      macroExpansion: WindowManagerTests
+      macroExpansion: WindowRangerTests
       targets:
-        - WindowManagerTests
+        - WindowRangerTests
     archive:
       config: Release

@@ -89,7 +89,7 @@ final class DisplayWorkspaceTests: XCTestCase {
 
     @MainActor
     func testLegacyUUIDAssignmentMigratesFallsBackAndReturnsOnReconnect() throws {
-        let suite = "WindowManagerTests.DisplayMigration.\(UUID().uuidString)"
+        let suite = "WindowRangerTests.DisplayMigration.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(false, forKey: "iCloudSyncEnabled")
@@ -989,7 +989,7 @@ final class ProfileTests: XCTestCase {
     }
 
     private func isolatedDefaults(_ label: String) -> (UserDefaults, String) {
-        let suite = "WindowManagerTests.\(label).\(UUID().uuidString)"
+        let suite = "WindowRangerTests.\(label).\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
         return (defaults, suite)

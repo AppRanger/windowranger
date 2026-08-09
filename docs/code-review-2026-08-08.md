@@ -1,6 +1,6 @@
 # Code review — 2026-08-08
 
-This review covers the current pre-release WindowManager codebase after the workspace Settings,
+This review covers the current pre-release WindowRanger codebase after the workspace Settings,
 profiles, command wheel, menu-bar, recovery, layout, and shortcut-conflict milestones. It is a
 source/static-analysis and deterministic-test review. It does not claim that macOS Accessibility
 behavior, visual feel, or multi-display interactions have been live-validated.

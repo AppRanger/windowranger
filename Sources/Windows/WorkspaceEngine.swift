@@ -7358,7 +7358,7 @@ final class WorkspaceEngine {
         case .accordion:
             // AeroSpace's accordion is an overlapping stack, not a master/secondary split.
             // Its inner gap setting is deliberately absent here: accordion-padding alone reveals
-            // the neighbouring windows. WindowManager's built-in values are 250 points and automatic
+            // the neighbouring windows. WindowRanger's built-in values are 250 points and automatic
             // orientation (horizontal on wide displays, vertical on tall displays).
             let configuration = layoutConfiguration?.clamped()
             let effectiveBounds = configuration.map {

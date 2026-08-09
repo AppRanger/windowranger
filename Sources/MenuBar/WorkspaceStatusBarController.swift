@@ -89,9 +89,9 @@ final class MenuBarStateModel: ObservableObject {
     var accessibilityLabel: String {
         let active = activeWorkspaceNames.joined(separator: ", ")
         if activeWorkspaceNames.count > 1 {
-            return "WindowManager menu. Interaction workspace \(currentWorkspaceName). Active workspaces \(active)."
+            return "WindowRanger menu. Interaction workspace \(currentWorkspaceName). Active workspaces \(active)."
         }
-        return "WindowManager menu. Current workspace \(currentWorkspaceName)."
+        return "WindowRanger menu. Current workspace \(currentWorkspaceName)."
     }
 
     private func rebuildLabels() {
@@ -597,8 +597,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         statusButton.setAccessibilityLabel(snapshot.primaryAccessibilityLabel)
         statusButton.setAccessibilityHelp(
             presentationMode == .full
-                ? "Opens the WindowManager menu. Only the labelled workspace buttons switch workspaces."
-                : "Opens the WindowManager menu."
+                ? "Opens the WindowRanger menu. Only the labelled workspace buttons switch workspaces."
+                : "Opens the WindowRanger menu."
         )
         content.layoutSubtreeIfNeeded()
     }
@@ -703,7 +703,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
 
         #if DEBUG
         appMenu.addItem(.separator())
-        appMenu.addItem(disabledMenuItem(title: "WindowManager Debug"))
+        appMenu.addItem(disabledMenuItem(title: "WindowRanger Debug"))
         appMenu.addItem(actionMenuItem(
             title: "Copy Recent Diagnostics",
             action: #selector(copyRecentDiagnostics)
@@ -718,7 +718,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
 
         appMenu.addItem(.separator())
         let quit = actionMenuItem(
-            title: "Quit WindowManager",
+            title: "Quit WindowRanger",
             action: #selector(quitWindowManager)
         )
         quit.keyEquivalent = "q"

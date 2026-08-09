@@ -252,7 +252,7 @@ final class DiagnosticLogger {
         )
         let actionExcerpt = Self.newlineTerminatedText(actionData)
         let backgroundExcerpt = Self.newlineTerminatedText(backgroundData)
-        return "WindowManager \(buildMode.rawValue) diagnostics\n" +
+        return "WindowRanger \(buildMode.rawValue) diagnostics\n" +
             "Session: \(sessionIdentifier)\n" +
             "Privacy: \(Self.privacySummary)\n\n" +
             "Recent correlated actions (trigger and results):\n" +

@@ -1,11 +1,11 @@
 # Permissions and privacy
 
-> WindowManager is a provisional name and the project is not yet publicly released. This document
+> WindowRanger is not yet publicly released. This document
 > describes current code behavior; final release copy still needs human review.
 
 ## Accessibility
 
-WindowManager uses macOS Accessibility APIs to enumerate eligible application windows and to read or
+WindowRanger uses macOS Accessibility APIs to enumerate eligible application windows and to read or
 set attributes needed for virtual workspaces: position, size, focused/main state, raise, minimized and
 full-screen safety checks. Without trust, the normal interactive app asks macOS for access. Plain
 builds and the non-hosted test target do not execute that request path.
@@ -14,7 +14,7 @@ The app does not use Accessibility to read typed text or window contents. Discov
 avoids logging window titles and document names. Ignored/transient windows are rejected at the
 central admission boundary and receive no workspace, layout, persistence, focus or recovery action.
 
-Accessibility permission is controlled by macOS. WindowManager does not reset TCC or silently alter
+Accessibility permission is controlled by macOS. WindowRanger does not reset TCC or silently alter
 the system permission list.
 
 ## Launch at login

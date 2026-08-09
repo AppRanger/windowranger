@@ -4,7 +4,7 @@ Status: implementation contract for the first JSON export/import increment.
 
 ## Goal
 
-Let a user move reusable WindowManager profile definitions between Macs without creating a second
+Let a user move reusable WindowRanger profile definitions between Macs without creating a second
 configuration source or leaking machine/session state. Import is additive, previewed, atomic and
 never activates a profile or moves a window.
 

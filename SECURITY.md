@@ -1,7 +1,7 @@
 # Security policy
 
-WindowManager is pre-release software under active private development. A permanent product name,
-public repository and supported release channel have not yet been selected.
+WindowRanger is pre-release software under active private development. A supported public release
+channel has not yet been selected.
 
 ## Reporting a vulnerability
 

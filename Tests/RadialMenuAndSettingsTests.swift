@@ -956,7 +956,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 
     @MainActor
     func testSettingsSelectionRestoresAndFallsBackWhenDebugPaneDisappears() {
-        let suite = "WindowManagerTests.SettingsNavigation.\(UUID().uuidString)"
+        let suite = "WindowRangerTests.SettingsNavigation.\(UUID().uuidString)"
         let defaults = try! XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
 
@@ -1209,8 +1209,8 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         let target = TestSettingsMenuCommandTarget()
         let root = NSMenu(title: "Application")
         root.autoenablesItems = false
-        let applicationItem = NSMenuItem(title: "WindowManager", action: nil, keyEquivalent: "")
-        let applicationMenu = NSMenu(title: "WindowManager")
+        let applicationItem = NSMenuItem(title: "WindowRanger", action: nil, keyEquivalent: "")
+        let applicationMenu = NSMenu(title: "WindowRanger")
         applicationMenu.autoenablesItems = false
         let decoy = NSMenuItem(title: "Decoy", action: nil, keyEquivalent: ",")
         decoy.keyEquivalentModifierMask = []
@@ -2128,10 +2128,10 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     func testWorkspaceResetUsesWindowManagerTerminologyEverywhere() {
         XCTAssertEqual(
             SettingsCopy.restoreWindowManagerDefaultsTitle,
-            "Restore WindowManager Defaults"
+            "Restore WindowRanger Defaults"
         )
         XCTAssertEqual(
-            SettingsCatalog.search("Restore WindowManager defaults", includeDebug: false).first?.id,
+            SettingsCatalog.search("Restore WindowRanger defaults", includeDebug: false).first?.id,
             "workspace-defaults"
         )
         XCTAssertTrue(
@@ -2394,7 +2394,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     private func isolatedDefaults() -> UserDefaults {
-        let suite = "WindowManagerTests.Radial.\(UUID().uuidString)"
+        let suite = "WindowRangerTests.Radial.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
         return defaults

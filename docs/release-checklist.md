@@ -1,11 +1,11 @@
 # Pre-release checklist
 
-WindowManager is a provisional internal name. Nothing in this checklist authorizes publishing,
+WindowRanger is the selected product name. Nothing in this checklist authorizes publishing,
 packaging or distribution; those remain held until product and release decisions are made.
 
 ## Product identity
 
-- [ ] Select and clear the permanent product name.
+- [x] Select the product name and complete preliminary clearance: **WindowRanger**.
 - [ ] Confirm the copyright line in `LICENSE` with the maintainer.
 - [ ] Select the public bundle identifier and decide whether/how the private identity migrates.
 - [ ] Confirm Developer ID ownership, signing team and designated requirement.
@@ -41,7 +41,7 @@ packaging or distribution; those remain held until product and release decisions
 - [ ] Freeform, Tiled and Accordion with floating/dialog/rule-excluded/keep-on-all windows.
 - [ ] Ignored panels/popups, minimized/full-screen windows and apps that reject AX frame writes.
 - [ ] Native full-screen game enter/exit, Command-Escape Game Overlay, workspace away/return, and
-      zero WindowManager frame writes while the session is active.
+      zero WindowRanger frame writes while the session is active.
 - [ ] Profile conversion/switching/triggers/iCloud sync and additive profile import/export preview,
       cancellation, invalid-file rejection, and safe Undo.
 - [ ] Menu-bar Compact/Medium/Full pressure, notch, long names and VoiceOver.

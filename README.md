@@ -1,7 +1,7 @@
-# WindowManager
+# WindowRanger
 
-> **Pre-release:** WindowManager is a provisional internal/project name. The app is under active
-> development, has not been packaged or published, and still has live-validation work outstanding.
+> **Pre-release:** WindowRanger is under active development, has not been packaged or published,
+> and still has live-validation work outstanding.
 
 A small, native macOS virtual-workspace manager built around one workflow rather than a
 general-purpose command language.
@@ -94,7 +94,7 @@ Generate the Xcode project:
 xcodegen generate
 ```
 
-Open `WindowManager.xcodeproj`, select a Development Team, and run the `WindowManager` scheme. The app requests Accessibility access on first launch. iCloud key-value sync requires a signed build with the iCloud capability available to the selected team.
+Open `WindowRanger.xcodeproj`, select a Development Team, and run the `WindowRanger` scheme. The app requests Accessibility access on first launch. iCloud key-value sync requires a signed build with the iCloud capability available to the selected team.
 
 Quit AeroSpace before testing the global shortcuts: macOS lets only one app register a given Carbon hotkey, and the defaults intentionally overlap your AeroSpace bindings.
 
@@ -102,12 +102,12 @@ For side-effect-free automated tests:
 
 ```sh
 ./scripts/verify-test-isolation.sh
-xcodebuild -project WindowManager.xcodeproj -scheme WindowManager -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
+xcodebuild -project WindowRanger.xcodeproj -scheme WindowRanger -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
 ```
 
 The unit-test bundle is deliberately non-hosted: it compiles the shared sources directly and
-excludes `AppDelegate`, so tests never launch WindowManager, request Accessibility access, register
-hotkeys, manage live windows, or build/register a `WindowManager.app`. Do not give automated tests a
+excludes `AppDelegate`, so tests never launch WindowRanger, request Accessibility access, register
+hotkeys, manage live windows, or build/register a `WindowRanger.app`. Do not give automated tests a
 temporary `-derivedDataPath` and do not add the app target back to the scheme's Test build action.
 Xcode's macOS app build step registers every built app with LaunchServices; current Xcode provides no
 supported per-build opt-out. App builds should therefore use the normal Xcode DerivedData location,
@@ -129,8 +129,8 @@ The selected three-column Workspaces Settings screen has the same isolated produ
 The current selected-reference review and durable output paths are recorded in `design-qa.md`.
 
 The scheme runs as **Debug** from Xcode and archives as **Release**. Both configurations keep the
-same signed `com.chris.WindowManager` identity, so Debug does not create a second Accessibility
-client. Debug app runs write structured JSON Lines diagnostics to
+same signed legacy `com.chris.WindowManager` identity, preserved through the WindowRanger product
+rename so Debug does not create a second Accessibility client. Debug app runs write structured JSON Lines diagnostics to
 `~/Library/Logs/com.chris.WindowManager/diagnostics.jsonl`; the file rotates at 1 MB and retains two
 1 MB backups. Release builds do not create this verbose file. Unit tests use memory or no-op loggers
 and never write there.
@@ -193,7 +193,7 @@ monitor bindings; Shortcuts remains separate for global commands.
 Each workspace key produces read-only summaries of the exact derived commands: Control-Option-key
 switches to it and Option-Command-key sends the focused window there. Add and Duplicate resolve a
 unique name and supported key automatically. Drag reorder, context-menu and VoiceOver Move Up/Down,
-safe deletion, native Undo for **Reset This Workspace**, and **Restore WindowManager Defaults** all
+safe deletion, native Undo for **Reset This Workspace**, and **Restore WindowRanger Defaults** all
 use the same profile-backed storage path. Saved or deep-linked legacy Displays and Layouts panes now
 open the corresponding Workspaces inspector instead of leaving a stale destination.
 
@@ -245,7 +245,7 @@ damaged or empty saved definition cannot make the wheel inaccessible.
 The visual and hold-interaction design was informed by the [official Loop repository](https://github.com/MrKai77/Loop),
 the [BetterStage Snap Wheel guide](https://betterstage.app/docs/snap-wheel), and BetterStage's
 [official settings reference](https://betterstage.app/docs/settings-reference). These are design
-references only: WindowManager uses its own contextual command catalogue, geometry, native material
+references only: WindowRanger uses its own contextual command catalogue, geometry, native material
 treatment, accessibility semantics, and profile boundary rather than copying their branding, assets,
 or snap-centric command layouts.
 
@@ -278,7 +278,7 @@ session keeps the active workspace intent but discards unsafe exact window IDs.
 
 Native macOS full-screen windows use an explicit fail-closed session. A true Accessibility full-screen
 observation enters immediately; failed or unsupported reads retain an existing session, and two
-consecutive authoritative false reads are required to leave it. During the session WindowManager
+consecutive authoritative false reads are required to leave it. During the session WindowRanger
 performs no position or size writes for that window. For apps declaring Game Mode support or a Games
 category, foreground sessions also suppress the command wheel and command-feedback panels, retain
 only workspace-navigation hotkeys, reserve Command-Escape for macOS Game Overlay, and reduce broad
@@ -294,7 +294,7 @@ and AppKit's main-actor
 
 Inactive windows are parked at the lower-right desktop edge because public macOS APIs do not provide a per-window hide operation. Unified mode keeps one active workspace across every display. Independent Displays mode gives each display its own active workspace and assigns each workspace an abstract display-role home. Role assignments sync with their profile, while this Mac retains the physical UUID/fingerprint binding locally; a disconnected role falls back safely and returns on reconnect. The Settings recovery button restores every tracked window; if a prior crash or force-stop left only a parked coordinate to recover, it centers that window on the main display without resizing it. A normal app quit performs the same cleanup. Animation suppression is temporary and app-scoped; it does not change macOS system animation or Accessibility settings.
 
-Layout is selected independently for each workspace. **Freeform** preserves manual window frames and stops automatic positioning or resizing; WindowManager still manages workspace visibility, focus, persistence, display assignment, and quit/wake recovery. Tiled is a deliberately flat, non-overlapping split with stable order and per-window weight. Accordion follows the current AeroSpace-style overlapping stack with the focused window promoted to its primary pane. Both automatic layouts can resolve orientation from the display shape or use an explicit horizontal/vertical direction, with per-workspace inner gaps, outer screen padding, and configurable Accordion visible-edge padding. In Unified mode each display's windows are laid out separately according to saved display affinity; Independent Displays mode lays the workspace out only on its assigned display. The persisted raw value remains `none`, so existing and legacy saved definitions migrate without changing behavior.
+Layout is selected independently for each workspace. **Freeform** preserves manual window frames and stops automatic positioning or resizing; WindowRanger still manages workspace visibility, focus, persistence, display assignment, and quit/wake recovery. Tiled is a deliberately flat, non-overlapping split with stable order and per-window weight. Accordion follows the current AeroSpace-style overlapping stack with the focused window promoted to its primary pane. Both automatic layouts can resolve orientation from the display shape or use an explicit horizontal/vertical direction, with per-workspace inner gaps, outer screen padding, and configurable Accordion visible-edge padding. In Unified mode each display's windows are laid out separately according to saved display affinity; Independent Displays mode lays the workspace out only on its assigned display. The persisted raw value remains `none`, so existing and legacy saved definitions migrate without changing behavior.
 
 Option-comma selects Accordion and Option-period selects Tiled. Selecting a different layout keeps
 its saved orientation, or uses Automatic for an unconfigured workspace. Pressing the same direct
@@ -313,7 +313,7 @@ Application Rules are selected from installed or currently running apps and are 
 
 Rules can be paused without deleting their saved actions. Rule edits apply immediately to managed windows and participate in the Settings window's normal Command-Z Undo chain. Disabled rules remain persisted and synced, but resolve to no behavior until resumed.
 
-Existing global command shortcuts can be recorded and reset in Settings. The recorder temporarily suspends WindowManager's Carbon registrations, rejects bare typing and conflicts with workspace, command-wheel, or other command bindings, and preserves every established default until the user explicitly changes it. Workspace-specific switch/move bindings remain configured with the workspace definitions; no default chord was invented for selecting Freeform.
+Existing global command shortcuts can be recorded and reset in Settings. The recorder temporarily suspends WindowRanger's Carbon registrations, rejects bare typing and conflicts with workspace, command-wheel, or other command bindings, and preserves every established default until the user explicitly changes it. Workspace-specific switch/move bindings remain configured with the workspace definitions; no default chord was invented for selecting Freeform.
 
 Moving a focused window is send-only by default: the source workspace remains active and focus moves to the next eligible visible window on the same interaction display. **Focus follows moved window** is opt-in in General Settings, and the command wheel always offers a one-shot **Move & Follow** action. If no local source window remains, internal focus state is cleared rather than selecting a parked or other-display fallback.
 
@@ -321,7 +321,7 @@ Menu-bar presentation is selected in General Settings and syncs with other globa
 
 Long names remain available to tooltips and VoiceOver while visible labels are bounded. Under severe notch or menu-bar pressure, Full first compacts labels, then hides inactive buttons deterministically behind a disclosed `+N` overflow while keeping every connected display and its active workspace visible. Missing display homes are not shown as connected and are never rewritten by this presentation layer. Existing private-install values migrate once: Compact and Icon Only become Compact, Active Workspace Label becomes Medium, and Full Workspace Strip becomes Full.
 
-The choices deliberately combine a few proven patterns rather than copying a single product: AeroSpace exposes the current workspace in its tray icon, AeroSpork renders active per-monitor workspace chips, Loop uses a compact icon-led menu, and BetterStage allows selectable status content. WindowManager keeps one always-accessible primary menu target in every mode so presentation choices cannot strand Settings or Quit. The production component is owned by one persistent AppKit status item; changing Compact, Medium, or Full reconfigures that item instead of disconnecting and recreating status scenes.
+The choices deliberately combine a few proven patterns rather than copying a single product: AeroSpace exposes the current workspace in its tray icon, AeroSpork renders active per-monitor workspace chips, Loop uses a compact icon-led menu, and BetterStage allows selectable status content. WindowRanger keeps one always-accessible primary menu target in every mode so presentation choices cannot strand Settings or Quit. The production component is owned by one persistent AppKit status item; changing Compact, Medium, or Full reconfigures that item instead of disconnecting and recreating status scenes.
 
 High-frequency command feedback uses one centered, click-through nonactivating overlay rather than a status-item popover or notification banner. It follows the resolved interaction display, never becomes key or main, coalesces rapid updates, and cleans itself up across display changes, sleep, and quit. Debug diagnostics record the overlay lifecycle and display decision without recording its message text. In Debug Settings, **Window Admission** can also show the engine's existing privacy-safe managed/floating/deferred/ignored classifications and reasons; refreshing that view does not re-enumerate, move, resize, or focus windows.
 
@@ -331,20 +331,20 @@ Physical display-role bindings are local to each Mac. The app first matches the 
 
 **Open at login** uses macOS's native login-item service and changes only after an explicit Settings toggle. **Automatically unhide applications when focusing their windows** is an opt-in compatibility setting, off by default, and throttles duplicate attempts to avoid activation loops. Automated tests inject substitutes and never alter the live login-item state.
 
-Use the primary app menu's **Quit WindowManager** command when testing quit recovery. Xcode's Stop button terminates the debug process immediately, so macOS does not give the app an opportunity to run synchronous cleanup; continuously saved state is used to recover on the next launch instead.
+Use the primary app menu's **Quit WindowRanger** command when testing quit recovery. Xcode's Stop button terminates the debug process immediately, so macOS does not give the app an opportunity to run synchronous cleanup; continuously saved state is used to recover on the next launch instead.
 
 ## Reproducing a cross-display focus jump
 
-1. Gracefully quit the old build with the primary app menu's **Quit WindowManager**.
-2. In Xcode, keep the `WindowManager` scheme on its normal Debug Run configuration and click Run.
+1. Gracefully quit the old build with the primary app menu's **Quit WindowRanger**.
+2. In Xcode, keep the `WindowRanger` scheme on its normal Debug Run configuration and click Run.
 3. Focus a managed window on the second display, then use Option-`[` / Option-`]` to cycle windows.
 4. With the second-display window focused, use Option-`,` or Option-`.` to change its workspace layout.
 5. If focus jumps to the main display, stop after one occurrence and choose **Copy Recent Diagnostics** from the primary app menu. The log can instead be inspected directly with **Reveal Diagnostics File**.
 
 ## Retesting sleep/wake recovery
 
-1. Gracefully quit the currently running old build with the primary app menu's **Quit WindowManager**.
-2. In Xcode, select the normal `WindowManager` scheme and Debug Run configuration, then click Run.
+1. Gracefully quit the currently running old build with the primary app menu's **Quit WindowRanger**.
+2. In Xcode, select the normal `WindowRanger` scheme and Debug Run configuration, then click Run.
 3. In Unified mode, put windows from visible and inactive workspaces on both displays, sleep the Mac,
    wake it, and confirm the active workspace is visible while inactive workspace windows remain parked.
 4. Repeat in Independent Displays mode with a different active workspace on each display.

@@ -324,7 +324,7 @@ final class SettingsWindowCoordinator {
             )
         } else if remainsActive, isHiddenForWorkspace {
             // Returning to the utility's assigned virtual workspace should restore it without
-            // activating WindowManager or stealing focus from the workspace switch target.
+            // activating WindowRanger or stealing focus from the workspace switch target.
             guard let placement = SettingsWindowGeometry.placement(
                 currentFrame: surface.frame,
                 requestedDisplayIdentifier: assignedContext.displayIdentifier,

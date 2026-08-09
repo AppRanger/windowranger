@@ -1,9 +1,9 @@
-# WindowManager architecture
+# WindowRanger architecture
 
-> **Pre-release:** WindowManager is a provisional project name. This document describes the
-> current private development build; it is not a compatibility or public API contract.
+> **Pre-release:** WindowRanger remains under active private development. This document describes
+> the current build; it is not a compatibility or public API contract.
 
-WindowManager is a native macOS menu-bar application that implements virtual workspaces without
+WindowRanger is a native macOS menu-bar application that implements virtual workspaces without
 creating or controlling native macOS Spaces. It discovers eligible windows through Accessibility,
 keeps workspace membership in its own model, and makes inactive-workspace windows non-visible by
 parking them at a recoverable screen edge.
@@ -20,7 +20,7 @@ parking them at a recoverable screen edge.
 | Menu bar and command wheel | `Sources/MenuBar`, `Sources/RadialMenu` | Context presentation and dispatch through the same typed command layer used by hotkeys. |
 | Diagnostics | `Sources/Diagnostics` | Structured privacy-filtered Debug traces with bounded rotation and no-op/test sinks. |
 
-The non-hosted `WindowManagerTests` target compiles shared sources directly and excludes
+The non-hosted `WindowRangerTests` target compiles shared sources directly and excludes
 `Sources/App`. It therefore tests the model and injected boundaries without starting AppDelegate,
 installing production hotkeys, asking for Accessibility permission or moving live windows.
 
