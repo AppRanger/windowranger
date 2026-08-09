@@ -303,12 +303,13 @@ second copy of that checklist.
 - **Priority:** P1
 - **Status:** Live validation
 - **Outcome:** Publish `v0.1.0-beta.1` as a GitHub prerelease with the exact universal Developer
-  ID-signed, notarized, stapled ZIP, SHA-256 checksum, provenance manifest, reviewed release notes,
-  and no claim of Sparkle or Stable support.
+  ID-signed, notarized, stapled Beta DMG, notarized ZIP fallback, SHA-256 checksums, provenance
+  manifest, reviewed release notes, and no claim of Sparkle or Stable support.
 - **Implemented groundwork:** Unprivileged GitHub Actions verification, Hardened Runtime build
-  setting, Developer ID export configuration, local build/notarize/package script, draft-release
+  setting, Developer ID export configuration, approved Stable and construction-themed Beta DMG
+  artwork, deterministic headless DMG packaging, local build/notarize/package script, draft-release
   script, release-notes template, and first-release runbook.
-- **Automated evidence:** Stable Xcode 26.6 passes the non-hosted test-isolation check, all 415
+- **Automated evidence:** Stable Xcode 26.6 passes the non-hosted test-isolation check, all 417
   tests, Release static analysis, and an unsigned universal `arm64 x86_64` Release build with
   Hardened Runtime enabled. GitHub Actions run
   [31326683991](https://github.com/windowranger/windowranger/actions/runs/31326683991) independently
@@ -316,7 +317,9 @@ second copy of that checklist.
   Xcode 26.6. The intended `44NAD22AK6` team now has a local Developer ID Application identity with
   private key, an installed all-device Developer ID profile authorizing the public bundle ID and
   iCloud key-value entitlement through August 2044, and a validated `WindowRanger` notary Keychain
-  profile. The credentialed archive/export/notarization path remains untested.
+  profile. A local unsigned universal Release build has produced both channel DMGs; each passes disk
+  image, bundle identity, `/Applications` shortcut, background, and Finder-metadata verification
+  without launching the app. The credentialed archive/export/notarization path remains untested.
 - **Current blockers:**
   - complete the remaining product-identity, repository-publication, manual regression,
     accessibility, privacy, and clean-package gates in `docs/release-checklist.md`;

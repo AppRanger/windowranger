@@ -51,10 +51,14 @@ tag="v$version"
 release_directory="$release_root/$version"
 archive="$release_directory/WindowRanger-$version.zip"
 checksum="$archive.sha256"
+dmg="$release_directory/WindowRanger-$version.dmg"
+dmg_checksum="$dmg.sha256"
 manifest="$release_directory/WindowRanger-$version.release.txt"
 
 [[ -f "$archive" ]] || { print -u2 "Missing notarized release archive: $archive"; exit 1; }
 [[ -f "$checksum" ]] || { print -u2 "Missing release checksum: $checksum"; exit 1; }
+[[ -f "$dmg" ]] || { print -u2 "Missing notarized release DMG: $dmg"; exit 1; }
+[[ -f "$dmg_checksum" ]] || { print -u2 "Missing DMG checksum: $dmg_checksum"; exit 1; }
 [[ -f "$manifest" ]] || { print -u2 "Missing release manifest: $manifest"; exit 1; }
 [[ -z "$notes_file" || -f "$notes_file" ]] || { print -u2 "Notes file not found: $notes_file"; exit 1; }
 [[ -z "$(/usr/bin/git -C "$repository_root" status --porcelain --untracked-files=normal)" ]] || {
@@ -78,7 +82,7 @@ fi
 
 typeset -a release_arguments
 release_arguments=(
-    release create "$tag" "$archive" "$checksum" "$manifest"
+    release create "$tag" "$dmg" "$dmg_checksum" "$archive" "$checksum" "$manifest"
     --repo "$repo_name"
     --verify-tag
     --draft
@@ -97,4 +101,4 @@ fi
 print "Creating a draft GitHub release for $tag..."
 release_url="$(gh "${release_arguments[@]}")"
 print "Draft release created: $release_url"
-print "Review the attached ZIP, checksum, title, and notes on GitHub before publishing it."
+print "Review the attached DMG, ZIP, checksums, title, and notes on GitHub before publishing it."

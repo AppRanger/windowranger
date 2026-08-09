@@ -69,13 +69,16 @@ promotion and versioning. It is a design authority, not evidence that the releas
 
 - [x] Define Stable, Beta, and Dev release channels and the Gitflow-style promotion model.
 - [ ] Create and protect the `develop` integration branch after required checks are ready.
-- [x] Choose the initial distribution: a signed, notarized ZIP attached to a GitHub prerelease;
-      Homebrew remains a later Stable channel.
+- [x] Choose the initial distribution: a signed, notarized channel-specific DMG attached to a
+      GitHub prerelease, with a notarized ZIP fallback; Homebrew remains a later Stable channel.
 - [x] Choose a local-first release pipeline: GitHub Actions performs unprivileged verification, and
       the maintainer's Mac performs Developer ID signing, notarization, stapling, and packaging.
 - [ ] Validate `scripts/build-distribution.sh` with the intended Developer ID identity and notary
       profile, then test the exact packaged artifact on a clean machine or user account.
-- [ ] Choose packaging/install/uninstall behavior and Accessibility migration guidance.
+- [x] Create and automatically verify the Stable and construction-themed Beta DMG layouts, including
+      the `/Applications` shortcut and native drag-to-install instruction.
+- [ ] Validate DMG install/uninstall behavior and Accessibility migration guidance on a clean machine
+      or user account.
 - [ ] Create and validate a Homebrew Cask for the signed, notarized Stable app, including immutable
       artifact/checksum provenance, Sparkle coexistence, install/upgrade/uninstall/zap behavior, and
       Accessibility permission guidance.

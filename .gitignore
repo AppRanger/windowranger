@@ -11,3 +11,5 @@ xcuserdata/
 *.app
 *.dSYM/
 *.log
+__pycache__/
+*.py[cod]
