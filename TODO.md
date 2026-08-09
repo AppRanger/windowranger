@@ -23,7 +23,6 @@ smallest useful outcome and acceptance boundary.
 None.
 
 ## Ready
-
 ### WR-017 — Copy a focused-window diagnostic report for bug reports
 
 - **Type:** Feature / support diagnostics
