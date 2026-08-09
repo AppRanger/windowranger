@@ -158,8 +158,9 @@ structured JSON Lines diagnostics to
 1 MB backups. Release builds do not create this verbose file. Unit tests use memory or no-op loggers
 and never write there.
 
-The Debug app menu identifies the build and provides **Copy Recent Diagnostics** (a bounded recent
-excerpt with its privacy notice) and **Reveal Diagnostics File**. Diagnostics contain action/session
+Option-clicking the status item in a Debug build reveals **Copy Recent Diagnostics** (a bounded recent
+excerpt with its privacy notice) and **Reveal Diagnostics File** for that menu opening. Opening the
+menu normally keeps those support controls hidden. Diagnostics contain action/session
 IDs, bundle identifiers, internal window/workspace/display IDs, layout decisions, frames, and AX
 success/failure results. They do not collect window titles, document names, URLs, typed content,
 full file paths, or window contents.
@@ -365,7 +366,7 @@ Use the primary app menu's **Quit WindowRanger** command when testing quit recov
 2. In Xcode, keep the `WindowRanger` scheme on its normal Debug Run configuration and click Run.
 3. Focus a managed window on the second display, then use Option-`[` / Option-`]` to cycle windows.
 4. With the second-display window focused, use Option-`,` or Option-`.` to change its workspace layout.
-5. If focus jumps to the main display, stop after one occurrence and choose **Copy Recent Diagnostics** from the primary app menu. The log can instead be inspected directly with **Reveal Diagnostics File**.
+5. If focus jumps to the main display, stop after one occurrence, Option-click the status item, and choose **Copy Recent Diagnostics**. The log can instead be inspected directly with **Reveal Diagnostics File** from the same Option-revealed section.
 
 ## Retesting sleep/wake recovery
 
@@ -377,6 +378,6 @@ Use the primary app menu's **Quit WindowRanger** command when testing quit recov
 5. For the topology case, sleep while docked and wake undocked (then reconnect), or disconnect/reconnect
    the external display immediately around sleep. The laptop/main display is the temporary fallback;
    reconnecting must restore the external workspace home and its prior active selection.
-6. If anything is wrong, reproduce once and use the primary app menu's **Copy Recent Diagnostics**. The correlated
+6. If anything is wrong, reproduce once, Option-click the status item, and use **Copy Recent Diagnostics**. The correlated
    `lifecycle` records include the wake generation, topology, bounded attempts, deferred windows, and
    final active-workspace map without window titles or document content.

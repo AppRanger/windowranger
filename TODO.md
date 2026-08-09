@@ -24,34 +24,6 @@ None.
 
 ## Ready
 
-### WR-016 — Reveal menu diagnostics only with Option-click
-
-- **Type:** Feature / menu cleanup
-- **Priority:** P2
-- **Status:** Ready
-- **Evidence:** Requested
-- **Current behavior:** Debug builds always show the **WindowRanger Debug**, **Copy Recent
-  Diagnostics**, and **Reveal Diagnostics File** section in the primary status-item menu. Release
-  builds already omit it.
-- **Requested outcome:** Keep diagnostics out of the normal user menu. Holding Option while clicking
-  the WindowRanger status item reveals the diagnostics section for that menu opening.
-- **Acceptance:**
-  - opening the Debug status menu normally shows no diagnostics header, separator, copy, or reveal
-    items;
-  - holding Option when opening the menu shows the existing diagnostics section without changing
-    its actions, privacy boundary, or file-availability state;
-  - the reveal decision is recalculated for each menu opening and never becomes a persisted/sticky
-    preference;
-  - releasing Option or reopening normally returns to the clean menu, without duplicate separators
-    or menu items;
-  - Release builds continue to contain no verbose diagnostics menu controls or file path;
-  - the Debug-only Diagnostics destination in Settings remains available and is outside this menu
-    change;
-  - deterministic menu tests cover normal open, Option-open, repeated transitions, disabled Reveal
-    state, and the Release compile-time boundary;
-  - troubleshooting docs tell support/test users to Option-click before choosing **Copy Recent
-    Diagnostics** or **Reveal Diagnostics File**.
-
 ### WR-017 — Copy a focused-window diagnostic report for bug reports
 
 - **Type:** Feature / support diagnostics
@@ -327,6 +299,16 @@ second copy of that checklist.
   publishing the reviewed draft each require explicit maintainer action at the final checkpoint.
 
 ## Done
+
+### WR-016 — Reveal menu diagnostics only with Option-click
+
+- **Result:** Debug status-menu diagnostics are hidden during an ordinary open and appear only while
+  Option is held for that opening. The decision is stateless, the unavailable file action remains
+  disabled, Release retains its compile-time exclusion, and support/privacy instructions now explain
+  the Option-click route.
+- **Automated evidence:** Deterministic policy tests cover normal, Option, repeated, unavailable-file,
+  and Debug/Release compile-boundary cases; test isolation, the focused Debug and Release checks,
+  and the complete 426-test Debug suite passed on 10 August 2026.
 
 ### WR-015 — Make iCloud settings sync opt-in
 

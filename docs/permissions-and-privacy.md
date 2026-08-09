@@ -55,8 +55,10 @@ Debug app runs can write structured JSON Lines diagnostics to:
 
 `~/Library/Logs/com.windowranger.WindowRanger/diagnostics.jsonl`
 
-The file is bounded at 1 MB with two 1 MB backups. Debug Settings can copy a bounded, action-aware
-excerpt or reveal the file. Records can include timestamps, session/action IDs, bundle identifiers,
+The file is bounded at 1 MB with two 1 MB backups. Option-clicking the Debug status item reveals
+controls to copy a bounded, action-aware excerpt or reveal the file for that menu opening; opening
+the menu normally keeps them hidden. Debug Settings retains its Diagnostics destination. Records can
+include timestamps, session/action IDs, bundle identifiers,
 internal window/workspace/display IDs, short display identifiers, frames, layout decisions and AX
 success/failure results.
 
