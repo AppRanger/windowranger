@@ -1,3 +1,4 @@
+# Unprivileged verification only. Release signing and notarization credentials stay off this job.
 name: CI
 
 on:
