@@ -39,6 +39,7 @@ final class MenuBarStateModel: ObservableObject {
                 id: $0.id,
                 name: $0.name,
                 compactName: MenuBarWorkspaceLabelFormatter.compact($0.name),
+                key: $0.key,
                 isActive: $0.id == initial[0].id,
                 isInteractionWorkspace: $0.id == initial[0].id
             )
@@ -75,9 +76,13 @@ final class MenuBarStateModel: ObservableObject {
         rebuildLabels()
     }
 
-    func presentation(for mode: MenuBarPresentationMode) -> MenuBarPresentationSnapshot {
+    func presentation(
+        for mode: MenuBarPresentationMode,
+        workspaceLabelMode: MenuBarWorkspaceLabelMode = .name
+    ) -> MenuBarPresentationSnapshot {
         MenuBarPresentationResolver.resolve(
             mode: mode,
+            workspaceLabelMode: workspaceLabelMode,
             displayMode: displayMode,
             state: state,
             workspaces: workspaceDefinitions,
@@ -107,6 +112,7 @@ final class MenuBarStateModel: ObservableObject {
                 id: workspace.id,
                 name: workspace.name,
                 compactName: MenuBarWorkspaceLabelFormatter.compact(workspace.name),
+                key: workspace.key,
                 isActive: state.activeWorkspaceIDs.contains(workspace.id),
                 isInteractionWorkspace: workspace.id == state.currentWorkspaceID
             )
@@ -500,6 +506,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private let diagnostics: DiagnosticLogger
     private let tiledPlacementUndoManager: UndoManager?
     private var presentationMode: MenuBarPresentationMode
+    private var workspaceLabelMode: MenuBarWorkspaceLabelMode
     private var highlightColor: MenuBarHighlightColor
     private var contentView: MenuBarStatusContentView?
     private var lastSnapshot: MenuBarPresentationSnapshot?
@@ -513,6 +520,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         diagnostics: DiagnosticLogger,
         tiledPlacementUndoManager: UndoManager? = nil,
         initialMode: MenuBarPresentationMode,
+        initialWorkspaceLabelMode: MenuBarWorkspaceLabelMode = .name,
         initialHighlightColor: MenuBarHighlightColor = .default
     ) {
         self.engine = engine
@@ -522,6 +530,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         self.diagnostics = diagnostics
         self.tiledPlacementUndoManager = tiledPlacementUndoManager
         presentationMode = initialMode
+        workspaceLabelMode = initialWorkspaceLabelMode
         highlightColor = initialHighlightColor
         super.init()
         statusItem.autosaveName = "com.windowranger.WindowRanger.primary-status"
@@ -542,6 +551,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         rebuild(force: true)
     }
 
+    func setWorkspaceLabelMode(_ mode: MenuBarWorkspaceLabelMode) {
+        guard !isInvalidated, workspaceLabelMode != mode else { return }
+        workspaceLabelMode = mode
+        rebuild(force: true)
+    }
+
     func setHighlightColor(_ color: MenuBarHighlightColor) {
         guard !isInvalidated, highlightColor != color else { return }
         highlightColor = color
@@ -551,7 +566,10 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     func rebuild(force: Bool = false) {
         guard !isInvalidated else { return }
         guard let statusButton = statusItem.button else { return }
-        let snapshot = stateModel.presentation(for: presentationMode)
+        let snapshot = stateModel.presentation(
+            for: presentationMode,
+            workspaceLabelMode: workspaceLabelMode
+        )
         guard force || snapshot != lastSnapshot else { return }
         lastSnapshot = snapshot
 
@@ -660,12 +678,16 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         }
 
         if presentationMode == .full {
-            let snapshot = stateModel.presentation(for: .full)
+            let snapshot = stateModel.presentation(
+                for: .full,
+                workspaceLabelMode: workspaceLabelMode
+            )
             let layout = MenuBarPressurePolicy.layout(
                 displays: snapshot.displays,
                 availableWidth: MenuBarPressurePolicy.defaultBudget(
                     for: NSScreen.main?.visibleFrame.width
-                )
+                ),
+                workspaceLabelMode: workspaceLabelMode
             )
             if let overflowSummary = layout.overflowSummary {
                 appMenu.addItem(disabledMenuItem(title: "Menu bar overflow: \(overflowSummary)"))

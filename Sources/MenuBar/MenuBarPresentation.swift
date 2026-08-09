@@ -124,6 +124,20 @@ enum MenuBarPresentationMode: String, Codable, CaseIterable, Identifiable, Senda
     }
 }
 
+enum MenuBarWorkspaceLabelMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    case name
+    case key
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .name: "Names"
+        case .key: "Keys"
+        }
+    }
+}
+
 enum MenuBarPrimaryIndicatorStyle: Equatable, Sendable {
     case none
     case compact
@@ -154,8 +168,16 @@ struct MenuBarWorkspaceItem: Identifiable, Equatable, Sendable {
     let id: UUID
     let name: String
     let compactName: String
+    let key: String
     let isActive: Bool
     let isInteractionWorkspace: Bool
+
+    func visibleLabel(mode: MenuBarWorkspaceLabelMode, compact: Bool = false) -> String {
+        switch mode {
+        case .name: compact ? compactName : name
+        case .key: MenuBarWorkspaceLabelFormatter.key(key)
+        }
+    }
 
     var accessibilityLabel: String {
         var qualifiers: [String] = []
@@ -176,7 +198,15 @@ struct MenuBarDisplayItem: Identifiable, Equatable, Sendable {
     let activeWorkspaceID: UUID
     let activeWorkspaceName: String
     let activeWorkspaceCompactName: String
+    let activeWorkspaceKey: String
     let workspaces: [MenuBarWorkspaceItem]
+
+    func activeWorkspaceLabel(mode: MenuBarWorkspaceLabelMode, compact: Bool = false) -> String {
+        switch mode {
+        case .name: compact ? activeWorkspaceCompactName : activeWorkspaceName
+        case .key: MenuBarWorkspaceLabelFormatter.key(activeWorkspaceKey)
+        }
+    }
 
     var accessibilityLabel: String {
         let interaction = isInteractionDisplay ? ", interaction display" : ""
@@ -186,6 +216,7 @@ struct MenuBarDisplayItem: Identifiable, Equatable, Sendable {
 
 struct MenuBarPresentationSnapshot: Equatable, Sendable {
     let mode: MenuBarPresentationMode
+    let workspaceLabelMode: MenuBarWorkspaceLabelMode
     let displayMode: MultiDisplayMode
     let interactionWorkspaceID: UUID
     let displays: [MenuBarDisplayItem]
@@ -204,6 +235,7 @@ struct MenuBarPresentationSnapshot: Equatable, Sendable {
     func replacingMode(_ mode: MenuBarPresentationMode) -> MenuBarPresentationSnapshot {
         MenuBarPresentationSnapshot(
             mode: mode,
+            workspaceLabelMode: workspaceLabelMode,
             displayMode: displayMode,
             interactionWorkspaceID: interactionWorkspaceID,
             displays: displays
@@ -244,11 +276,17 @@ enum MenuBarWorkspaceLabelFormatter {
         let retained = max(1, maximumCharacters - 1)
         return String(trimmed.prefix(retained)) + "…"
     }
+
+    static func key(_ key: String) -> String {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "—" : trimmed.uppercased()
+    }
 }
 
 enum MenuBarPresentationResolver {
     static func resolve(
         mode: MenuBarPresentationMode,
+        workspaceLabelMode: MenuBarWorkspaceLabelMode = .name,
         displayMode: MultiDisplayMode,
         state: WorkspaceEngineState,
         workspaces: [WorkspaceDefinition],
@@ -260,6 +298,7 @@ enum MenuBarPresentationResolver {
         if displayMode == .unified {
             return unifiedSnapshot(
                 mode: mode,
+                workspaceLabelMode: workspaceLabelMode,
                 state: state,
                 workspaces: definitions
             )
@@ -331,6 +370,7 @@ enum MenuBarPresentationResolver {
 
         return MenuBarPresentationSnapshot(
             mode: mode,
+            workspaceLabelMode: workspaceLabelMode,
             displayMode: .independent,
             interactionWorkspaceID: state.currentWorkspaceID,
             displays: displayItems
@@ -339,6 +379,7 @@ enum MenuBarPresentationResolver {
 
     static func preview(
         mode: MenuBarPresentationMode,
+        workspaceLabelMode: MenuBarWorkspaceLabelMode = .name,
         displayMode: MultiDisplayMode,
         workspaces: [WorkspaceDefinition],
         connectedDisplays: [DisplaySnapshot],
@@ -378,6 +419,7 @@ enum MenuBarPresentationResolver {
             ?? definitions[0].id
         return resolve(
             mode: mode,
+            workspaceLabelMode: workspaceLabelMode,
             displayMode: displayMode,
             state: WorkspaceEngineState(
                 currentWorkspaceID: interactionID,
@@ -395,6 +437,7 @@ enum MenuBarPresentationResolver {
 
     private static func unifiedSnapshot(
         mode: MenuBarPresentationMode,
+        workspaceLabelMode: MenuBarWorkspaceLabelMode,
         state: WorkspaceEngineState,
         workspaces: [WorkspaceDefinition]
     ) -> MenuBarPresentationSnapshot {
@@ -411,6 +454,7 @@ enum MenuBarPresentationResolver {
         )
         return MenuBarPresentationSnapshot(
             mode: mode,
+            workspaceLabelMode: workspaceLabelMode,
             displayMode: .unified,
             interactionWorkspaceID: activeID,
             displays: [display]
@@ -433,6 +477,7 @@ enum MenuBarPresentationResolver {
                 id: workspace.id,
                 name: workspace.name,
                 compactName: MenuBarWorkspaceLabelFormatter.compact(workspace.name),
+                key: workspace.key,
                 isActive: workspace.id == activeDefinition.id,
                 isInteractionWorkspace: isInteraction && workspace.id == interactionWorkspaceID
             )
@@ -445,6 +490,7 @@ enum MenuBarPresentationResolver {
             activeWorkspaceID: activeDefinition.id,
             activeWorkspaceName: activeDefinition.name,
             activeWorkspaceCompactName: MenuBarWorkspaceLabelFormatter.compact(activeDefinition.name),
+            activeWorkspaceKey: activeDefinition.key,
             workspaces: items
         )
     }
@@ -502,7 +548,8 @@ enum MenuBarPressurePolicy {
 
     static func layout(
         displays: [MenuBarDisplayItem],
-        availableWidth: CGFloat
+        availableWidth: CGFloat,
+        workspaceLabelMode: MenuBarWorkspaceLabelMode = .name
     ) -> MenuBarFullStripLayout {
         let budget = max(120, availableWidth)
         let fullGroups = displays.map {
@@ -512,7 +559,12 @@ enum MenuBarPressurePolicy {
                 hiddenWorkspaces: []
             )
         }
-        let fullWidth = estimatedWidth(groups: fullGroups, style: .full, hasOverflow: false)
+        let fullWidth = estimatedWidth(
+            groups: fullGroups,
+            style: .full,
+            hasOverflow: false,
+            workspaceLabelMode: workspaceLabelMode
+        )
         if fullWidth <= budget {
             return MenuBarFullStripLayout(
                 groups: fullGroups,
@@ -521,7 +573,12 @@ enum MenuBarPressurePolicy {
             )
         }
 
-        let compactWidth = estimatedWidth(groups: fullGroups, style: .compact, hasOverflow: false)
+        let compactWidth = estimatedWidth(
+            groups: fullGroups,
+            style: .compact,
+            hasOverflow: false,
+            workspaceLabelMode: workspaceLabelMode
+        )
         if compactWidth <= budget {
             return MenuBarFullStripLayout(
                 groups: fullGroups,
@@ -543,7 +600,12 @@ enum MenuBarPressurePolicy {
             var proposed = visibleByDisplay
             proposed[displayID, default: []].append(workspace)
             let proposedGroups = makeGroups(displays: displays, visibleByDisplay: proposed)
-            if estimatedWidth(groups: proposedGroups, style: .compact, hasOverflow: true) <= budget {
+            if estimatedWidth(
+                groups: proposedGroups,
+                style: .compact,
+                hasOverflow: true,
+                workspaceLabelMode: workspaceLabelMode
+            ) <= budget {
                 visibleByDisplay = proposed
             }
         }
@@ -554,7 +616,8 @@ enum MenuBarPressurePolicy {
             estimatedWidth: estimatedWidth(
                 groups: reducedGroups,
                 style: .compact,
-                hasOverflow: reducedGroups.contains { !$0.hiddenWorkspaces.isEmpty }
+                hasOverflow: reducedGroups.contains { !$0.hiddenWorkspaces.isEmpty },
+                workspaceLabelMode: workspaceLabelMode
             )
         )
     }
@@ -581,11 +644,16 @@ enum MenuBarPressurePolicy {
     private static func estimatedWidth(
         groups: [MenuBarFullStripDisplayGroup],
         style: MenuBarFullStripLabelStyle,
-        hasOverflow: Bool
+        hasOverflow: Bool,
+        workspaceLabelMode: MenuBarWorkspaceLabelMode
     ) -> CGFloat {
         let groupWidths = groups.map { group -> CGFloat in
             let workspaces = group.visibleWorkspaces.reduce(CGFloat(0)) { result, workspace in
-                result + workspaceWidth(workspace, style: style) + MenuBarVisualTokens.workspaceSpacing
+                result + workspaceWidth(
+                    workspace,
+                    style: style,
+                    workspaceLabelMode: workspaceLabelMode
+                ) + MenuBarVisualTokens.workspaceSpacing
             }
             return MenuBarVisualTokens.displayIconWidth + MenuBarVisualTokens.displayWorkspaceGap + workspaces
         }
@@ -596,9 +664,13 @@ enum MenuBarPressurePolicy {
 
     private static func workspaceWidth(
         _ workspace: MenuBarWorkspaceItem,
-        style: MenuBarFullStripLabelStyle
+        style: MenuBarFullStripLabelStyle,
+        workspaceLabelMode: MenuBarWorkspaceLabelMode
     ) -> CGFloat {
-        let label = style == .full ? workspace.name : workspace.compactName
+        let label = workspace.visibleLabel(
+            mode: workspaceLabelMode,
+            compact: style == .compact
+        )
         let measured = CGFloat(label.count) * 6.3 + 12
         return min(MenuBarVisualTokens.maximumWorkspaceButtonWidth, max(22, measured))
     }
@@ -632,9 +704,17 @@ struct MenuBarPrimaryStatusView: View {
                 ForEach(snapshot.displays) { display in
                     switch snapshot.mode {
                     case .compact:
-                        CompactDisplaySignal(display: display, highlightColor: highlightColor)
+                        CompactDisplaySignal(
+                            display: display,
+                            workspaceLabelMode: snapshot.workspaceLabelMode,
+                            highlightColor: highlightColor
+                        )
                     case .medium:
-                        MediumDisplayChip(display: display, highlightColor: highlightColor)
+                        MediumDisplayChip(
+                            display: display,
+                            workspaceLabelMode: snapshot.workspaceLabelMode,
+                            highlightColor: highlightColor
+                        )
                     case .full:
                         EmptyView()
                     }
@@ -675,6 +755,7 @@ struct MenuBarPrimaryStatusView: View {
 
 private struct CompactDisplaySignal: View {
     let display: MenuBarDisplayItem
+    let workspaceLabelMode: MenuBarWorkspaceLabelMode
     let highlightColor: MenuBarHighlightColor
 
     var body: some View {
@@ -687,9 +768,10 @@ private struct CompactDisplaySignal: View {
                             ? highlightColor.color
                             : Color.primary.opacity(0.58)
                     )
-                Text(display.activeWorkspaceCompactName)
+                let label = display.activeWorkspaceLabel(mode: workspaceLabelMode, compact: true)
+                Text(label)
                     .font(.system(
-                        size: display.activeWorkspaceCompactName.count > 1 ? 7 : 8.5,
+                        size: label.count > 1 ? 7 : 8.5,
                         weight: .semibold
                     ))
                     .lineLimit(1)
@@ -712,13 +794,14 @@ private struct CompactDisplaySignal: View {
 
 private struct MediumDisplayChip: View {
     let display: MenuBarDisplayItem
+    let workspaceLabelMode: MenuBarWorkspaceLabelMode
     let highlightColor: MenuBarHighlightColor
 
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: display.iconKind.systemImage)
                 .font(.system(size: 11.5, weight: .semibold))
-            Text(display.activeWorkspaceName)
+            Text(display.activeWorkspaceLabel(mode: workspaceLabelMode))
                 .font(.system(size: 11.5, weight: display.isInteractionDisplay ? .semibold : .medium))
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -942,7 +1025,8 @@ final class MenuBarFullStripView: NSView {
     ) {
         layout = MenuBarPressurePolicy.layout(
             displays: snapshot.displays,
-            availableWidth: availableWidth
+            availableWidth: availableWidth,
+            workspaceLabelMode: snapshot.workspaceLabelMode
         )
         self.workspaceAction = workspaceAction
         super.init(frame: .zero)
@@ -980,7 +1064,8 @@ final class MenuBarFullStripView: NSView {
         self.workspaceAction = workspaceAction
         layout = MenuBarPressurePolicy.layout(
             displays: snapshot.displays,
-            availableWidth: availableWidth
+            availableWidth: availableWidth,
+            workspaceLabelMode: snapshot.workspaceLabelMode
         )
         subviews.forEach { $0.removeFromSuperview() }
 
@@ -992,7 +1077,11 @@ final class MenuBarFullStripView: NSView {
 
         for (index, group) in layout.groups.enumerated() {
             if index > 0 { stack.addArrangedSubview(makeDivider()) }
-            stack.addArrangedSubview(makeDisplayGroup(group, highlightColor: highlightColor))
+            stack.addArrangedSubview(makeDisplayGroup(
+                group,
+                workspaceLabelMode: snapshot.workspaceLabelMode,
+                highlightColor: highlightColor
+            ))
         }
         if layout.hiddenWorkspaceCount > 0 {
             let overflow = NSTextField(labelWithString: "+\(layout.hiddenWorkspaceCount)")
@@ -1026,6 +1115,7 @@ final class MenuBarFullStripView: NSView {
 
     private func makeDisplayGroup(
         _ group: MenuBarFullStripDisplayGroup,
+        workspaceLabelMode: MenuBarWorkspaceLabelMode,
         highlightColor: MenuBarHighlightColor
     ) -> NSView {
         let stack = NSStackView()
@@ -1053,6 +1143,7 @@ final class MenuBarFullStripView: NSView {
                 workspace: workspace,
                 display: group.display,
                 labelStyle: layout.labelStyle,
+                workspaceLabelMode: workspaceLabelMode,
                 highlightColor: highlightColor
             )
             button.onClick = { [weak self] in
@@ -1086,10 +1177,14 @@ private final class MenuBarWorkspaceButton: NSButton {
         workspace: MenuBarWorkspaceItem,
         display: MenuBarDisplayItem,
         labelStyle: MenuBarFullStripLabelStyle,
+        workspaceLabelMode: MenuBarWorkspaceLabelMode = .name,
         highlightColor: MenuBarHighlightColor = .default
     ) {
         super.init(frame: .zero)
-        title = labelStyle == .full ? workspace.name : workspace.compactName
+        title = workspace.visibleLabel(
+            mode: workspaceLabelMode,
+            compact: labelStyle == .compact
+        )
         target = self
         action = #selector(clicked)
         isBordered = false

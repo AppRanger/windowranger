@@ -98,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isShortcutRecording = false
     private var fullscreenGameSession: FullscreenGameSessionSnapshot?
     private var pendingMenuBarPresentationUpdate: DispatchWorkItem?
+    private var pendingMenuBarWorkspaceLabelUpdate: DispatchWorkItem?
     private var pendingMenuBarHighlightUpdate: DispatchWorkItem?
     private let tiledPlacementUndoManager = UndoManager()
 
@@ -374,6 +375,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        settingsStore.$menuBarWorkspaceLabelMode
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] mode in
+                self?.scheduleMenuBarWorkspaceLabelUpdate(mode)
+            }
+            .store(in: &cancellables)
+
         settingsStore.$menuBarHighlightColor
             .dropFirst()
             .removeDuplicates()
@@ -431,6 +440,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preparedForTermination = true
         pendingMenuBarPresentationUpdate?.cancel()
         pendingMenuBarPresentationUpdate = nil
+        pendingMenuBarWorkspaceLabelUpdate?.cancel()
+        pendingMenuBarWorkspaceLabelUpdate = nil
         pendingMenuBarHighlightUpdate?.cancel()
         pendingMenuBarHighlightUpdate = nil
         tiledPlacementUndoManager.removeAllActions()
@@ -525,6 +536,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async(execute: work)
     }
 
+    private func scheduleMenuBarWorkspaceLabelUpdate(_ mode: MenuBarWorkspaceLabelMode) {
+        pendingMenuBarWorkspaceLabelUpdate?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingMenuBarWorkspaceLabelUpdate = nil
+            self.workspaceStatusBarController?.setWorkspaceLabelMode(mode)
+        }
+        pendingMenuBarWorkspaceLabelUpdate = work
+        DispatchQueue.main.async(execute: work)
+    }
+
     private func updateMenuBarPresentation() {
         menuBarState.updateConfiguration(
             workspaces: settingsStore.workspaces,
@@ -541,11 +563,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 diagnostics: diagnostics,
                 tiledPlacementUndoManager: tiledPlacementUndoManager,
                 initialMode: settingsStore.menuBarPresentationMode,
+                initialWorkspaceLabelMode: settingsStore.menuBarWorkspaceLabelMode,
                 initialHighlightColor: settingsStore.menuBarHighlightColor
             )
         } else {
             workspaceStatusBarController?.setPresentationMode(
                 settingsStore.menuBarPresentationMode
+            )
+            workspaceStatusBarController?.setWorkspaceLabelMode(
+                settingsStore.menuBarWorkspaceLabelMode
             )
             workspaceStatusBarController?.setHighlightColor(
                 settingsStore.menuBarHighlightColor
