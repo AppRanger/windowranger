@@ -3,6 +3,9 @@
 WindowRanger is the selected product name. Nothing in this checklist authorizes publishing,
 packaging or distribution; those remain held until product and release decisions are made.
 
+The [release-channel contract](release-channels-and-branching.md) defines Stable, Beta, and Dev
+promotion and versioning. It is a design authority, not evidence that the release machinery exists.
+
 ## Product identity
 
 - [x] Select the product name and complete preliminary clearance: **WindowRanger**.
@@ -19,7 +22,11 @@ packaging or distribution; those remain held until product and release decisions
 - [ ] Confirm no copied generated artwork, vendor branding or incompatible source is present.
 - [ ] Scan tracked history and current files for credentials, tokens, personal paths, logs, app
       bundles, DerivedData and private diagnostics.
-- [ ] Add the chosen public security-reporting channel and contribution/issue templates.
+- [x] Add contribution guidelines, issue forms, a pull-request template, governance, support, and a
+      code of conduct.
+- [ ] Enable GitHub private vulnerability reporting or publish another verified private security
+      contact, then update `SECURITY.md`.
+- [ ] Publish a private project-controlled conduct-reporting contact in `CODE_OF_CONDUCT.md`.
 - [ ] Review commit authorship/privacy before making history public.
 
 ## Build and verification
@@ -60,9 +67,23 @@ packaging or distribution; those remain held until product and release decisions
 
 ## Packaging and updates — held
 
-- [ ] Choose distribution: direct download, App Store or another reviewed channel.
+- [x] Define Stable, Beta, and Dev release channels and the Gitflow-style promotion model.
+- [ ] Create and protect the `develop` integration branch after required checks are ready.
+- [x] Choose the initial distribution: a signed, notarized ZIP attached to a GitHub prerelease;
+      Homebrew remains a later Stable channel.
+- [x] Choose a local-first release pipeline: GitHub Actions performs unprivileged verification, and
+      the maintainer's Mac performs Developer ID signing, notarization, stapling, and packaging.
+- [ ] Validate `scripts/build-distribution.sh` with the intended Developer ID identity and notary
+      profile, then test the exact packaged artifact on a clean machine or user account.
 - [ ] Choose packaging/install/uninstall behavior and Accessibility migration guidance.
-- [ ] Choose update mechanism, signing/notarization pipeline and rollback policy.
+- [ ] Create and validate a Homebrew Cask for the signed, notarized Stable app, including immutable
+      artifact/checksum provenance, Sparkle coexistence, install/upgrade/uninstall/zap behavior, and
+      Accessibility permission guidance.
+- [x] Select Sparkle as the intended future Stable/Beta update framework; implementation remains
+      held.
+- [ ] Design and implement one signed Sparkle appcast with default Stable and opt-in `beta` channel,
+      including channel switching, monotonic build numbers, signatures, rollback, and failure UX.
+- [ ] Choose the signing/notarization pipeline and final rollback policy.
 - [ ] Produce reproducible release notes, checksums and provenance.
 - [ ] Notarize and staple only after the preceding decisions and tests are complete.
 - [ ] Publish only with explicit maintainer approval.

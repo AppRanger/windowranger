@@ -6,12 +6,28 @@
 A small, native macOS virtual-workspace manager built around one workflow rather than a
 general-purpose command language.
 
+WindowRanger will use three release channels: Stable from `main`, Beta from release branches, and
+rolling Dev builds from `develop`. Stable and opt-in Beta updates will use Sparkle later; Dev builds
+will remain outside automatic updates. No public release artifacts exist yet.
+
+The planned first download is the signed and notarized `v0.1.0-beta.1` ZIP attached to a GitHub
+prerelease. Until it appears under GitHub Releases, source checkouts and local development builds are
+the only available forms; generated GitHub source archives are not an installable macOS app.
+
 ## Project documentation
 
+- [Canonical work queue](TODO.md)
 - [Architecture](ARCHITECTURE.md)
-- [Contributing safely](CONTRIBUTING.md)
+- [Contributing](CONTRIBUTING.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Governance](GOVERNANCE.md)
+- [Support](SUPPORT.md)
+- [Release channels and branching](docs/release-channels-and-branching.md)
+- [First GitHub release runbook](docs/first-github-release.md)
+- [Release notes template](docs/release-notes-template.md)
+- [Daily use and local development](docs/daily-development-workflow.md)
 - [Permissions and privacy](docs/permissions-and-privacy.md)
-- [Security reporting status](SECURITY.md)
+- [Security policy](SECURITY.md)
 - [Pre-release checklist](docs/release-checklist.md)
 - [Portable profile transfer design](docs/profile-transfer-design.md)
 - [Future workspace systems decision brief](docs/future-workspace-systems-decisions.md)
