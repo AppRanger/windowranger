@@ -46,7 +46,10 @@ private struct WindowManagerSettingsCommands: Commands {
                     navigation: navigation,
                     engine: engine,
                     coordinator: coordinator,
-                    openSettings: { openSettings() }
+                    openSettings: {
+                        openSettings()
+                        return true
+                    }
                 )
             }
             .keyboardShortcut(",", modifiers: .command)

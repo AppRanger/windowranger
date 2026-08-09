@@ -84,16 +84,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         guard settingsStore.workspaces.first != nil else { return }
 
-        if ProcessInfo.processInfo.arguments.contains("--settings-preview") {
-            engine.settingsSurfaceContext { [weak self] context in
-                guard let self else { return }
-                self.settingsWindowCoordinator.requestOpen(context: context) {
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                }
-            }
-            return
-        }
-
         engine.onStateChanged = { [weak self] state in
             guard let self else { return }
             self.menuBarState.update(

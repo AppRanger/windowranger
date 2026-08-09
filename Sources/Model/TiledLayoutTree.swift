@@ -293,6 +293,42 @@ enum TiledLayoutEngine {
             ?? flatTree(windowKeys: windowKeys, weights: weights, orientation: orientation)
     }
 
+    /// Exchanges the two window leaves without changing any split, ratio, or other leaf. Tiled
+    /// directional movement must mutate this placement tree because it is the authoritative
+    /// geometry model once a workspace has one; changing only the legacy flat order is invisible
+    /// to the tree solver.
+    static func swappingWindows(
+        _ firstWindow: WindowKey,
+        _ secondWindow: WindowKey,
+        in tree: TiledNode
+    ) -> TiledNode? {
+        guard firstWindow != secondWindow,
+              tree.contains(firstWindow),
+              tree.contains(secondWindow),
+              (try? validated(tree, participants: Set(tree.windowKeys))) != nil
+        else { return nil }
+
+        func swap(in node: TiledNode) -> TiledNode {
+            switch node {
+            case let .window(key):
+                if key == firstWindow { return .window(secondWindow) }
+                if key == secondWindow { return .window(firstWindow) }
+                return node
+            case let .split(axis, ratio, first, second):
+                return .split(
+                    axis: axis,
+                    ratio: ratio,
+                    first: swap(in: first),
+                    second: swap(in: second)
+                )
+            }
+        }
+
+        let swapped = swap(in: tree)
+        guard (try? validated(swapped, participants: Set(tree.windowKeys))) != nil else { return nil }
+        return swapped
+    }
+
     /// Resizes only the nearest divider that directly contains the focused leaf. A window in a
     /// top/bottom branch therefore changes height without also changing the width allocated by an
     /// outer left/right branch. The tree topology and every unrelated split ratio stay intact.
