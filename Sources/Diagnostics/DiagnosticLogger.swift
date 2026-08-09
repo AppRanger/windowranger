@@ -263,10 +263,15 @@ final class DiagnosticLogger {
 
     static func completeJSONLinesSuffix(from data: Data, maxBytes: Int) -> Data {
         guard maxBytes > 0, !data.isEmpty else { return Data() }
-        var suffix = Data(data.suffix(maxBytes))
-        if suffix.first != 0x7B, let firstNewline = suffix.firstIndex(of: 0x0A) {
+        let retainedByteCount = min(maxBytes, data.count)
+        let suffixStart = data.index(data.endIndex, offsetBy: -retainedByteCount)
+        let startsAtLineBoundary = suffixStart == data.startIndex ||
+            data[data.index(before: suffixStart)] == 0x0A
+        var suffix = Data(data[suffixStart..<data.endIndex])
+        if (!startsAtLineBoundary || suffix.first != 0x7B),
+           let firstNewline = suffix.firstIndex(of: 0x0A) {
             suffix.removeSubrange(suffix.startIndex...firstNewline)
-        } else if suffix.first != 0x7B {
+        } else if !startsAtLineBoundary || suffix.first != 0x7B {
             return Data()
         }
         // A concurrent writer or a byte cap can leave a trailing partial record. JSON Lines is
