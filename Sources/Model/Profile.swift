@@ -127,6 +127,13 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+enum ProfileCreationSource: String, CaseIterable, Identifiable, Sendable {
+    case currentProfile
+    case scratch
+
+    var id: String { rawValue }
+}
+
 struct ProfileLibrary: Codable, Equatable, Sendable {
     static let currentVersion = 1
 
@@ -434,6 +441,7 @@ enum InitialProfileConverter {
     static func convert(
         legacy: LegacyProfileConfiguration,
         connectedDisplays: [DisplaySnapshot],
+        profileName: String = "Current Setup",
         profileID: UUID = UUID(),
         makeUUID: () -> UUID = UUID.init
     ) -> InitialProfileConversion {
@@ -499,7 +507,7 @@ enum InitialProfileConverter {
         })
         let profile = WindowManagerProfile(
             id: profileID,
-            name: "Current Setup",
+            name: profileName,
             workspaces: legacy.workspaces.isEmpty ? WorkspaceDefinition.defaults : legacy.workspaces,
             displayMode: legacy.displayMode,
             displayRoles: roles,

@@ -276,6 +276,15 @@ gets at most two bounded retries. Minimized, full-screen, ignored, disappeared, 
 windows are left untouched rather than being moved from stale AX elements. A changed WindowServer
 session keeps the active workspace intent but discards unsafe exact window IDs.
 
+Native macOS full-screen windows use an explicit fail-closed session. A true Accessibility full-screen
+observation enters immediately; failed or unsupported reads retain an existing session, and two
+consecutive authoritative false reads are required to leave it. During the session WindowManager
+performs no position or size writes for that window. For apps declaring Game Mode support or a Games
+category, foreground sessions also suppress the command wheel and command-feedback panels, retain
+only workspace-navigation hotkeys, reserve Command-Escape for macOS Game Overlay, and reduce broad
+window discovery while still checking promptly for full-screen exit. Returning to the workspace
+focuses the native full-screen window without restoring a frame or moving it between displays.
+
 Lifecycle wiring follows Apple's documented notification centers and boundaries:
 [NSWorkspace willSleep](https://developer.apple.com/documentation/appkit/nsworkspace/willsleepnotification),
 [didWake](https://developer.apple.com/documentation/appkit/nsworkspace/didwakenotification),

@@ -104,6 +104,7 @@ enum SettingsCatalog {
         SettingsSearchEntry(id: "launch-at-login", category: .general, title: "Open at login", description: "Start WindowManager automatically after signing in.", synonyms: ["startup", "login item"]),
         SettingsSearchEntry(id: "icloud", category: .general, title: "iCloud settings sync", description: "Sync named profile definitions and global preferences without syncing this Mac's active profile or monitor bindings.", synonyms: ["cloud", "sync", "local profile"]),
         SettingsSearchEntry(id: "menu-bar-presentation", category: .general, title: "Menu bar presentation", description: "Choose Compact, Medium, or Full display-aware workspace status.", synonyms: ["status item", "tray", "workspace indicator", "notch", "menu icon", "monitor chips", "full workspace strip"]),
+        SettingsSearchEntry(id: "menu-bar-highlight", category: .general, title: "Menu bar highlight colour", description: "Choose the colour used to identify active workspaces and displays.", synonyms: ["accent", "color", "colour", "selected workspace", "status item"]),
         SettingsSearchEntry(id: "recovery", category: .general, title: "Bring windows back on screen", description: "Recover managed windows that were left parked or outside a connected display.", synonyms: ["rescue", "restore", "offscreen"]),
         SettingsSearchEntry(id: "focus-follows-move", category: .general, title: "Focus follows moved window", description: "Choose whether sending a window also opens its destination workspace and focuses it there.", synonyms: ["move and follow", "send only", "workspace move focus"]),
         SettingsSearchEntry(id: "auto-unhide-apps", category: .general, title: "Automatically unhide applications", description: "Opt in to unhiding a hidden app when WindowManager explicitly focuses one of its managed windows.", synonyms: ["hidden apps", "compatibility", "CFG-13"]),
@@ -227,31 +228,39 @@ final class SettingsNavigationModel: ObservableObject {
     func select(_ category: SettingsCategory, highlightedSettingID: String? = nil) {
         let destination = category.canonicalDestination
         guard availableCategories.contains(destination) else {
-            selectedCategory = Self.resolvedSelection(nil, available: availableCategories)
-            self.highlightedSettingID = nil
-            requestedWorkspaceID = nil
+            let fallback = Self.resolvedSelection(nil, available: availableCategories)
+            if selectedCategory != fallback { selectedCategory = fallback }
+            if self.highlightedSettingID != nil { self.highlightedSettingID = nil }
+            if requestedWorkspaceID != nil { requestedWorkspaceID = nil }
             return
         }
-        selectedCategory = destination
-        self.highlightedSettingID = highlightedSettingID
-        if destination != .workspaces { requestedWorkspaceID = nil }
+        if selectedCategory != destination { selectedCategory = destination }
+        if self.highlightedSettingID != highlightedSettingID {
+            self.highlightedSettingID = highlightedSettingID
+        }
+        if destination != .workspaces, requestedWorkspaceID != nil {
+            requestedWorkspaceID = nil
+        }
     }
 
     func select(_ result: SettingsSearchEntry) {
-        requestedWorkspaceID = result.workspaceID
+        if requestedWorkspaceID != result.workspaceID {
+            requestedWorkspaceID = result.workspaceID
+        }
         select(result.category, highlightedSettingID: result.id)
     }
 
     func selectWorkspace(_ workspaceID: UUID) {
-        requestedWorkspaceID = workspaceID
+        if requestedWorkspaceID != workspaceID { requestedWorkspaceID = workspaceID }
         select(.workspaces)
     }
 
     func validateSelection() {
         guard availableCategories.contains(selectedCategory) else {
-            selectedCategory = Self.resolvedSelection(nil, available: availableCategories)
-            highlightedSettingID = nil
-            requestedWorkspaceID = nil
+            let fallback = Self.resolvedSelection(nil, available: availableCategories)
+            if selectedCategory != fallback { selectedCategory = fallback }
+            if highlightedSettingID != nil { highlightedSettingID = nil }
+            if requestedWorkspaceID != nil { requestedWorkspaceID = nil }
             return
         }
     }

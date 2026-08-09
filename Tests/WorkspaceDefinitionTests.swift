@@ -2,13 +2,22 @@ import Carbon
 import XCTest
 
 final class WorkspaceDefinitionTests: XCTestCase {
-    func testDefaultsMatchCurrentAeroSpaceWorkspaceOrder() {
-        XCTAssertEqual(WorkspaceDefinition.defaults.map(\.name), ["1", "2", "3", "W", "P", "R", "U", "G", "M"])
+    func testDefaultsContainFourNumberedWorkspaces() {
+        XCTAssertEqual(WorkspaceDefinition.defaults.map(\.name), ["1", "2", "3", "4"])
+        XCTAssertEqual(WorkspaceDefinition.defaults.map(\.key), ["1", "2", "3", "4"])
     }
 
     func testDefaultWorkspaceKeysAreUnique() {
         let keys = WorkspaceDefinition.defaults.map(\.key)
         XCTAssertEqual(Set(keys).count, keys.count)
+    }
+
+    func testFreshDefaultsUseFreshIdentities() {
+        let first = WorkspaceDefinition.freshDefaults()
+        let second = WorkspaceDefinition.freshDefaults()
+
+        XCTAssertEqual(first.map(\.name), WorkspaceDefinition.defaults.map(\.name))
+        XCTAssertTrue(Set(first.map(\.id)).isDisjoint(with: second.map(\.id)))
     }
 
     func testWorkspaceDefinitionsRoundTripThroughJSON() throws {
@@ -485,7 +494,7 @@ final class WorkspaceDefinitionTests: XCTestCase {
         }
         defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set(false, forKey: "iCloudSyncEnabled")
-        let workspaceID = WorkspaceDefinition.defaults[4].id
+        let workspaceID = WorkspaceDefinition.defaults[3].id
         let expected = [AppRule(
             bundleIdentifier: "com.example.Terminal",
             displayName: "Terminal",
@@ -1053,7 +1062,7 @@ final class WorkspaceDefinitionTests: XCTestCase {
     }
 
     func testIgnoredTrackedWindowIsEvictedWithoutARecoveryOrFrameOperation() {
-        let workspace = WorkspaceDefinition.defaults[8]
+        let workspace = WorkspaceDefinition(name: "Mail", key: "m")
         let ignored = WindowKey(processIdentifier: 42_394, windowIdentifier: 17_298)
         let legitimate = WindowKey(processIdentifier: 1_697, windowIdentifier: 115)
         var tracked = [ignored: "Codex pet", legitimate: "Mail"]

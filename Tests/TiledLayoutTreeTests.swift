@@ -874,6 +874,273 @@ final class TiledLayoutTreeTests: XCTestCase {
         ))
     }
 
+    func testObservedManualResizeMovesSharedDividerAndReflowsBothWindows() throws {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(a),
+            second: .window(b)
+        )
+        let bounds = CGRect(x: 0, y: 0, width: 1_000, height: 700)
+        let resized = try XCTUnwrap(TiledLayoutEngine.resizedToMatchObservedFrame(
+            tree,
+            focusedWindow: a,
+            observedFrame: WindowFrame(
+                position: CGPoint(x: 0, y: 0),
+                size: CGSize(width: 650, height: 700)
+            ),
+            displayBounds: bounds,
+            configuration: configuration()
+        ))
+        let frames = try rects(resized, bounds: bounds, configuration: configuration())
+
+        XCTAssertEqual(frames[a], CGRect(x: 0, y: 0, width: 650, height: 700))
+        XCTAssertEqual(frames[b], CGRect(x: 650, y: 0, width: 350, height: 700))
+        guard case let .split(_, ratio, _, _) = resized else {
+            return XCTFail("Manual resize must retain the split")
+        }
+        XCTAssertEqual(ratio, 0.65, accuracy: 0.000_001)
+    }
+
+    func testObservedManualResizeUsesSecondWindowLeadingEdgeAndInnerGap() throws {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(a),
+            second: .window(b)
+        )
+        let bounds = CGRect(x: 0, y: 0, width: 1_000, height: 700)
+        let config = WorkspaceLayoutConfiguration(
+            orientation: .horizontal,
+            accordionPadding: 250,
+            gaps: WorkspaceLayoutGaps(
+                innerHorizontal: 20,
+                innerVertical: 0,
+                outerTop: 0,
+                outerRight: 10,
+                outerBottom: 0,
+                outerLeft: 10
+            )
+        )
+        let resized = try XCTUnwrap(TiledLayoutEngine.resizedToMatchObservedFrame(
+            tree,
+            focusedWindow: b,
+            observedFrame: WindowFrame(
+                position: CGPoint(x: 430, y: 0),
+                size: CGSize(width: 560, height: 700)
+            ),
+            displayBounds: bounds,
+            configuration: config
+        ))
+        let frames = try rects(resized, bounds: bounds, configuration: config)
+
+        XCTAssertEqual(frames[a], CGRect(x: 10, y: 0, width: 400, height: 700))
+        XCTAssertEqual(frames[b], CGRect(x: 430, y: 0, width: 560, height: 700))
+    }
+
+    func testObservedManualResizePreservesAnchoredNestedDividerInAbsolutePosition() throws {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(a),
+            second: .split(
+                axis: .horizontal,
+                ratio: 0.5,
+                first: .window(b),
+                second: .window(c)
+            )
+        )
+        let bounds = CGRect(x: 0, y: 0, width: 1_200, height: 800)
+        let resized = try XCTUnwrap(TiledLayoutEngine.resizedToMatchObservedFrame(
+            tree,
+            focusedWindow: b,
+            observedFrame: WindowFrame(
+                position: CGPoint(x: 500, y: 0),
+                size: CGSize(width: 400, height: 800)
+            ),
+            displayBounds: bounds,
+            configuration: configuration()
+        ))
+        let frames = try rects(resized, bounds: bounds, configuration: configuration())
+
+        XCTAssertEqual(frames[a], CGRect(x: 0, y: 0, width: 500, height: 800))
+        XCTAssertEqual(frames[b], CGRect(x: 500, y: 0, width: 400, height: 800))
+        XCTAssertEqual(frames[c], CGRect(x: 900, y: 0, width: 300, height: 800))
+    }
+
+    func testObservedCornerResizeUpdatesHorizontalAndVerticalAncestors() throws {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(a),
+            second: .split(
+                axis: .vertical,
+                ratio: 0.5,
+                first: .window(b),
+                second: .window(c)
+            )
+        )
+        let bounds = CGRect(x: 0, y: 0, width: 1_200, height: 800)
+        let resized = try XCTUnwrap(TiledLayoutEngine.resizedToMatchObservedFrame(
+            tree,
+            focusedWindow: b,
+            observedFrame: WindowFrame(
+                position: CGPoint(x: 500, y: 0),
+                size: CGSize(width: 700, height: 500)
+            ),
+            displayBounds: bounds,
+            configuration: configuration()
+        ))
+        let frames = try rects(resized, bounds: bounds, configuration: configuration())
+
+        XCTAssertEqual(frames[a], CGRect(x: 0, y: 0, width: 500, height: 800))
+        XCTAssertEqual(frames[b], CGRect(x: 500, y: 0, width: 700, height: 500))
+        XCTAssertEqual(frames[c], CGRect(x: 500, y: 500, width: 700, height: 300))
+    }
+
+    func testObservedMoveAndOuterEdgeResizeDoNotChangeInternalSplits() {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(a),
+            second: .window(b)
+        )
+        let bounds = CGRect(x: 0, y: 0, width: 1_000, height: 700)
+
+        XCTAssertNil(TiledLayoutEngine.resizedToMatchObservedFrame(
+            tree,
+            focusedWindow: a,
+            observedFrame: WindowFrame(
+                position: CGPoint(x: 50, y: 0),
+                size: CGSize(width: 500, height: 700)
+            ),
+            displayBounds: bounds,
+            configuration: configuration()
+        ), "Moving a tiled window without resizing must not rewrite its split")
+        XCTAssertNil(TiledLayoutEngine.resizedToMatchObservedFrame(
+            tree,
+            focusedWindow: a,
+            observedFrame: WindowFrame(
+                position: CGPoint(x: -100, y: 0),
+                size: CGSize(width: 600, height: 700)
+            ),
+            displayBounds: bounds,
+            configuration: configuration()
+        ), "Dragging only the outer display edge has no tiled neighbour to reflow")
+    }
+
+    func testObservedPositionOnlyDragTargetsTileUnderPointerAndSwapsLeaves() throws {
+        let tree = try XCTUnwrap(TiledLayoutEngine.flatTree(
+            windowKeys: [a, b, c],
+            orientation: .horizontal
+        ))
+        let bounds = CGRect(x: 0, y: 0, width: 1_200, height: 800)
+        let expectedFrames = try TiledLayoutEngine.frames(
+            for: tree,
+            in: bounds,
+            configuration: configuration()
+        )
+        let drag = try XCTUnwrap(TiledLayoutEngine.observedDrag(
+            in: tree,
+            focusedWindow: a,
+            observedFrame: WindowFrame(
+                position: CGPoint(x: 700, y: 0),
+                size: CGSize(width: 400, height: 800)
+            ),
+            pointerLocation: CGPoint(x: 450, y: 100),
+            expectedFrames: expectedFrames
+        ))
+
+        XCTAssertEqual(drag.swapTarget, b, "The pointer target wins even when the dragged frame overlaps another tile")
+        let swapped = try XCTUnwrap(TiledLayoutEngine.swappingWindows(a, drag.swapTarget!, in: tree))
+        XCTAssertEqual(swapped.windowKeys, [b, a, c])
+        let swappedFrames = try rects(swapped, bounds: bounds, configuration: configuration())
+        XCTAssertEqual(swappedFrames[a], expectedFrames[b]?.rect)
+        XCTAssertEqual(swappedFrames[b], expectedFrames[a]?.rect)
+    }
+
+    func testObservedDragOverSourceOrGapHasNoSwapTarget() throws {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(a),
+            second: .window(b)
+        )
+        let config = WorkspaceLayoutConfiguration(
+            orientation: .horizontal,
+            accordionPadding: 250,
+            gaps: WorkspaceLayoutGaps(
+                innerHorizontal: 20,
+                innerVertical: 0,
+                outerTop: 0,
+                outerRight: 0,
+                outerBottom: 0,
+                outerLeft: 0
+            )
+        )
+        let bounds = CGRect(x: 0, y: 0, width: 1_000, height: 700)
+        let expectedFrames = try TiledLayoutEngine.frames(
+            for: tree,
+            in: bounds,
+            configuration: config
+        )
+        let moved = WindowFrame(
+            position: CGPoint(x: 300, y: 0),
+            size: CGSize(width: 490, height: 700)
+        )
+
+        XCTAssertNil(try XCTUnwrap(TiledLayoutEngine.observedDrag(
+            in: tree,
+            focusedWindow: a,
+            observedFrame: moved,
+            pointerLocation: CGPoint(x: 100, y: 100),
+            expectedFrames: expectedFrames
+        )).swapTarget)
+        XCTAssertNil(try XCTUnwrap(TiledLayoutEngine.observedDrag(
+            in: tree,
+            focusedWindow: a,
+            observedFrame: moved,
+            pointerLocation: CGPoint(x: 500, y: 100),
+            expectedFrames: expectedFrames
+        )).swapTarget)
+    }
+
+    func testObservedDragRejectsResizeAndPositionJitter() throws {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(a),
+            second: .window(b)
+        )
+        let bounds = CGRect(x: 0, y: 0, width: 1_000, height: 700)
+        let expectedFrames = try TiledLayoutEngine.frames(
+            for: tree,
+            in: bounds,
+            configuration: configuration()
+        )
+
+        XCTAssertNil(TiledLayoutEngine.observedDrag(
+            in: tree,
+            focusedWindow: a,
+            observedFrame: WindowFrame(
+                position: CGPoint(x: 100, y: 0),
+                size: CGSize(width: 600, height: 700)
+            ),
+            pointerLocation: CGPoint(x: 750, y: 100),
+            expectedFrames: expectedFrames
+        ), "A size change belongs to manual split resizing, not drag swapping")
+        XCTAssertNil(TiledLayoutEngine.observedDrag(
+            in: tree,
+            focusedWindow: a,
+            observedFrame: WindowFrame(
+                position: CGPoint(x: 5, y: 4),
+                size: CGSize(width: 500, height: 700)
+            ),
+            pointerLocation: CGPoint(x: 750, y: 100),
+            expectedFrames: expectedFrames
+        ), "Small AX position jitter must not begin a drag")
+    }
+
     func testPreviewIsPureDataAndCodingRoundTripRetainsSessionPartition() throws {
         let tree = try XCTUnwrap(TiledLayoutEngine.flatTree(
             windowKeys: [a, b, c],

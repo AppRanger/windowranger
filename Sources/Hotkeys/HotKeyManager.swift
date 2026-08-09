@@ -338,6 +338,31 @@ struct HotKeyRegistrationReport: Equatable, Sendable {
     )
 }
 
+enum HotKeyRegistrationScope: Equatable, Sendable {
+    case all
+    case workspaceNavigationOnly
+
+    func allows(_ binding: ShortcutBindingDefinition) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .workspaceNavigationOnly:
+            // macOS Tahoe's Game Overlay owns Command-Escape while a native fullscreen game is
+            // foregrounded. Never retain that chord, even if navigation was customized to use it.
+            if binding.chord.keyCode == 53,
+               binding.chord.modifiers == UInt32(cmdKey) {
+                return false
+            }
+            if binding.owner.kind == .workspaceSwitch { return true }
+            return binding.owner.configurableAction.map {
+                $0 == .previousWorkspace ||
+                    $0 == .nextWorkspace ||
+                    $0 == .backAndForthWorkspace
+            } == true
+        }
+    }
+}
+
 protocol DirectionalMoveGestureScheduledTask: AnyObject {
     func cancel()
 }
@@ -497,7 +522,8 @@ final class HotKeyManager {
     func register(
         workspaces: [WorkspaceDefinition],
         hotKeyConfiguration: HotKeyConfiguration = HotKeyConfiguration(),
-        radialMenuEnabled: Bool = false
+        radialMenuEnabled: Bool = false,
+        scope: HotKeyRegistrationScope = .all
     ) -> HotKeyRegistrationReport {
         cancelDirectionalMoveGesture(reason: "hotkeys-reconfigured", awaitRelease: false)
         unregisterAll()
@@ -506,6 +532,7 @@ final class HotKeyManager {
             workspaces: workspaces,
             includeCommandWheel: radialMenuEnabled
         )
+        let eligibleBindings = configuration.eligibleBindings.filter(scope.allows)
         for issue in configuration.issues {
             diagnostics.log(
                 category: "hotkey",
@@ -519,7 +546,7 @@ final class HotKeyManager {
         }
 
         if let status = eventHandlerInstallationFailure {
-            let runtimeIssues = configuration.eligibleBindings.map {
+            let runtimeIssues = eligibleBindings.map {
                 HotKeyRuntimeIssue(owner: $0.owner, chord: $0.chord, status: status)
             }
             return HotKeyRegistrationReport(
@@ -531,7 +558,7 @@ final class HotKeyManager {
 
         var runtimeIssues: [HotKeyRuntimeIssue] = []
         var registeredOwners: [ShortcutBindingOwner] = []
-        for binding in configuration.eligibleBindings {
+        for binding in eligibleBindings {
             guard let action = action(for: binding.owner) else { continue }
             let identifier = allocateRegistrationIdentifier()
             if let issue = add(id: identifier, binding: binding, action: action) {

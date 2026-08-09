@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var settingsStore = SettingsStore(diagnostics: diagnostics)
     lazy var settingsNavigation = SettingsNavigationModel()
     lazy var settingsWindowCoordinator = SettingsWindowCoordinator(diagnostics: diagnostics)
+    lazy var settingsCommandRequestRouter = SettingsCommandRequestRouter()
     lazy var menuBarState = MenuBarStateModel(
         workspaces: settingsStore.workspaces,
         displayMode: settingsStore.multiDisplayMode,
@@ -95,7 +96,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
     private var preparedForTermination = false
     private var isShortcutRecording = false
+    private var fullscreenGameSession: FullscreenGameSessionSnapshot?
     private var pendingMenuBarPresentationUpdate: DispatchWorkItem?
+    private var pendingMenuBarHighlightUpdate: DispatchWorkItem?
     private let tiledPlacementUndoManager = UndoManager()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -126,7 +129,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.registerTiledPlacementHistory(transaction, direction: .undo)
         }
         engine.onCommandFeedback = { [weak self] request in
-            self?.commandFeedbackPresenter.present(request)
+            guard let self else { return }
+            if let gameSession = self.fullscreenGameSession,
+               request.preferredDisplayIdentifier == nil ||
+                request.preferredDisplayIdentifier == gameSession.displayIdentifier {
+                self.diagnostics.log(
+                    category: "fullscreen-session",
+                    event: "command-feedback-suppressed",
+                    correlation: request.correlationID,
+                    fields: ["display": gameSession.displayIdentifier]
+                )
+                return
+            }
+            self.commandFeedbackPresenter.present(request)
+        }
+        engine.onFullscreenGameSessionChanged = { [weak self] session in
+            guard let self, self.fullscreenGameSession != session else { return }
+            self.fullscreenGameSession = session
+            if session != nil {
+                self.hotKeyManager.cancelDirectionalMoveGesture(reason: "fullscreen-game-session")
+                self.globeFnHoldActivationController.cancel(reason: "fullscreen-game-session")
+                self.radialMenuTriggerController.cancel(reason: "fullscreen-game-session")
+                self.commandFeedbackPresenter.dismiss(reason: "fullscreen-game-session")
+            }
+            self.registerHotKeys()
+            self.updateGlobeFnHoldActivation()
         }
         engine.onWorkspaceDisplayAssignmentsChanged = { [weak self] assignments in
             self?.settingsStore.assignWorkspaces(assignments)
@@ -347,6 +374,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        settingsStore.$menuBarHighlightColor
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] color in
+                self?.scheduleMenuBarHighlightUpdate(color)
+            }
+            .store(in: &cancellables)
+
         settingsStore.$hotKeyConfiguration
             .dropFirst()
             .removeDuplicates()
@@ -396,6 +431,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preparedForTermination = true
         pendingMenuBarPresentationUpdate?.cancel()
         pendingMenuBarPresentationUpdate = nil
+        pendingMenuBarHighlightUpdate?.cancel()
+        pendingMenuBarHighlightUpdate = nil
         tiledPlacementUndoManager.removeAllActions()
         hotKeyManager.cancelDirectionalMoveGesture(reason: "application-terminating")
         globeFnHoldActivationController.shutdown()
@@ -412,7 +449,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let report = hotKeyManager.register(
             workspaces: settingsStore.workspaces,
             hotKeyConfiguration: settingsStore.hotKeyConfiguration,
-            radialMenuEnabled: settingsStore.radialMenuEnabled
+            radialMenuEnabled: settingsStore.radialMenuEnabled,
+            scope: fullscreenGameSession == nil ? .all : .workspaceNavigationOnly
         )
         settingsStore.setHotKeyRuntimeIssues(report.runtimeIssues)
     }
@@ -457,7 +495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             holdDelay: holdDelay ?? settingsStore.radialMenuHoldDelay
         )
         globeFnHoldActivationController.update(
-            enabled: runtimeSettings.isEnabled,
+            enabled: runtimeSettings.isEnabled && fullscreenGameSession == nil,
             holdDelay: runtimeSettings.holdDelay
         )
     }
@@ -476,6 +514,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async(execute: work)
     }
 
+    private func scheduleMenuBarHighlightUpdate(_ color: MenuBarHighlightColor) {
+        pendingMenuBarHighlightUpdate?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingMenuBarHighlightUpdate = nil
+            self.workspaceStatusBarController?.setHighlightColor(color)
+        }
+        pendingMenuBarHighlightUpdate = work
+        DispatchQueue.main.async(execute: work)
+    }
+
     private func updateMenuBarPresentation() {
         menuBarState.updateConfiguration(
             workspaces: settingsStore.workspaces,
@@ -488,15 +537,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 engine: engine,
                 stateModel: menuBarState,
                 settingsStore: settingsStore,
-                settingsNavigation: settingsNavigation,
-                settingsWindowCoordinator: settingsWindowCoordinator,
+                settingsCommandRequestRouter: settingsCommandRequestRouter,
                 diagnostics: diagnostics,
                 tiledPlacementUndoManager: tiledPlacementUndoManager,
-                initialMode: settingsStore.menuBarPresentationMode
+                initialMode: settingsStore.menuBarPresentationMode,
+                initialHighlightColor: settingsStore.menuBarHighlightColor
             )
         } else {
             workspaceStatusBarController?.setPresentationMode(
                 settingsStore.menuBarPresentationMode
+            )
+            workspaceStatusBarController?.setHighlightColor(
+                settingsStore.menuBarHighlightColor
             )
         }
     }

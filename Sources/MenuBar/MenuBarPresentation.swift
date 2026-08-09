@@ -1,6 +1,70 @@
 import AppKit
 import SwiftUI
 
+struct MenuBarHighlightColor: Equatable, Sendable {
+    static let `default` = MenuBarHighlightColor(red: 1, green: 1, blue: 1)
+
+    let red: Double
+    let green: Double
+    let blue: Double
+
+    init(red: Double, green: Double, blue: Double) {
+        self.red = min(max(red, 0), 1)
+        self.green = min(max(green, 0), 1)
+        self.blue = min(max(blue, 0), 1)
+    }
+
+    init?(hex: String) {
+        let normalized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard normalized.count == 6, let value = UInt32(normalized, radix: 16) else { return nil }
+        self.init(
+            red: Double((value >> 16) & 0xff) / 255,
+            green: Double((value >> 8) & 0xff) / 255,
+            blue: Double(value & 0xff) / 255
+        )
+    }
+
+    @MainActor
+    init?(nsColor: NSColor) {
+        guard let color = nsColor.usingColorSpace(.sRGB) else { return nil }
+        self.init(red: color.redComponent, green: color.greenComponent, blue: color.blueComponent)
+    }
+
+    var hex: String {
+        let redByte = UInt8((red * 255).rounded())
+        let greenByte = UInt8((green * 255).rounded())
+        let blueByte = UInt8((blue * 255).rounded())
+        return String(format: "#%02X%02X%02X", redByte, greenByte, blueByte)
+    }
+
+    var color: Color { Color(red: red, green: green, blue: blue) }
+
+    @MainActor
+    var nsColor: NSColor { NSColor(srgbRed: red, green: green, blue: blue, alpha: 1) }
+
+    var usesDarkForeground: Bool {
+        func linearized(_ component: Double) -> Double {
+            component <= 0.04045
+                ? component / 12.92
+                : pow((component + 0.055) / 1.055, 2.4)
+        }
+        let luminance = 0.2126 * linearized(red)
+            + 0.7152 * linearized(green)
+            + 0.0722 * linearized(blue)
+        return luminance > 0.45
+    }
+
+    var foregroundColor: Color { usesDarkForeground ? .black : .white }
+
+    @MainActor
+    var nsForegroundColor: NSColor { usesDarkForeground ? .black : .white }
+
+    var contrastStrokeColor: Color {
+        usesDarkForeground ? .black.opacity(0.28) : .white.opacity(0.30)
+    }
+}
+
 enum MenuBarPresentationMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case compact
     case medium
@@ -558,6 +622,7 @@ enum MenuBarVisualTokens {
 
 struct MenuBarPrimaryStatusView: View {
     let snapshot: MenuBarPresentationSnapshot
+    var highlightColor: MenuBarHighlightColor = .default
 
     var body: some View {
         HStack(spacing: snapshot.mode == .compact ? 4 : 5) {
@@ -567,9 +632,9 @@ struct MenuBarPrimaryStatusView: View {
                 ForEach(snapshot.displays) { display in
                     switch snapshot.mode {
                     case .compact:
-                        CompactDisplaySignal(display: display)
+                        CompactDisplaySignal(display: display, highlightColor: highlightColor)
                     case .medium:
-                        MediumDisplayChip(display: display)
+                        MediumDisplayChip(display: display, highlightColor: highlightColor)
                     case .full:
                         EmptyView()
                     }
@@ -610,6 +675,7 @@ struct MenuBarPrimaryStatusView: View {
 
 private struct CompactDisplaySignal: View {
     let display: MenuBarDisplayItem
+    let highlightColor: MenuBarHighlightColor
 
     var body: some View {
         VStack(spacing: 0) {
@@ -618,7 +684,7 @@ private struct CompactDisplaySignal: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(
                         display.isInteractionDisplay
-                            ? Color.accentColor
+                            ? highlightColor.color
                             : Color.primary.opacity(0.58)
                     )
                 Text(display.activeWorkspaceCompactName)
@@ -633,7 +699,7 @@ private struct CompactDisplaySignal: View {
             }
             .frame(width: 24, height: 14)
             Circle()
-                .fill(display.isInteractionDisplay ? Color.accentColor : Color.primary.opacity(0.38))
+                .fill(display.isInteractionDisplay ? highlightColor.color : Color.primary.opacity(0.38))
                 .frame(
                     width: display.isInteractionDisplay ? 3.5 : 3,
                     height: display.isInteractionDisplay ? 3.5 : 3
@@ -646,6 +712,7 @@ private struct CompactDisplaySignal: View {
 
 private struct MediumDisplayChip: View {
     let display: MenuBarDisplayItem
+    let highlightColor: MenuBarHighlightColor
 
     var body: some View {
         HStack(spacing: 4) {
@@ -657,18 +724,23 @@ private struct MediumDisplayChip: View {
                 .truncationMode(.tail)
                 .frame(maxWidth: 70)
         }
-        .foregroundStyle(display.isInteractionDisplay ? Color.white : Color.primary)
+        .foregroundStyle(display.isInteractionDisplay ? highlightColor.foregroundColor : Color.primary)
         .padding(.horizontal, 6)
         .frame(height: MenuBarVisualTokens.componentHeight)
         .background(
             RoundedRectangle(cornerRadius: MenuBarVisualTokens.chipCornerRadius)
                 .fill(display.isInteractionDisplay
-                    ? Color.accentColor.opacity(0.82)
+                    ? highlightColor.color
                     : Color.primary.opacity(0.10))
         )
         .overlay(
             RoundedRectangle(cornerRadius: MenuBarVisualTokens.chipCornerRadius)
-                .stroke(Color.primary.opacity(display.isInteractionDisplay ? 0.10 : 0.12), lineWidth: 0.5)
+                .stroke(
+                    display.isInteractionDisplay
+                        ? highlightColor.contrastStrokeColor
+                        : Color.primary.opacity(0.12),
+                    lineWidth: 0.5
+                )
         )
         .accessibilityHidden(true)
         .help(display.accessibilityLabel)
@@ -677,11 +749,13 @@ private struct MediumDisplayChip: View {
 
 struct MenuBarSettingsPreview: View {
     let snapshot: MenuBarPresentationSnapshot
+    var highlightColor: MenuBarHighlightColor = .default
 
     var body: some View {
         MenuBarStatusContentRepresentable(
             snapshot: snapshot,
-            availableWidth: MenuBarPressurePolicy.defaultAvailableWidth
+            availableWidth: MenuBarPressurePolicy.defaultAvailableWidth,
+            highlightColor: highlightColor
         )
         .fixedSize()
         .foregroundStyle(.white)
@@ -705,11 +779,13 @@ struct MenuBarSettingsPreview: View {
 struct MenuBarStatusContentRepresentable: NSViewRepresentable {
     let snapshot: MenuBarPresentationSnapshot
     let availableWidth: CGFloat
+    var highlightColor: MenuBarHighlightColor = .default
 
     func makeNSView(context: Context) -> MenuBarStatusContentView {
         MenuBarStatusContentView(
             snapshot: snapshot,
             availableWidth: availableWidth,
+            highlightColor: highlightColor,
             workspaceAction: nil
         )
     }
@@ -718,6 +794,7 @@ struct MenuBarStatusContentRepresentable: NSViewRepresentable {
         nsView.configure(
             snapshot: snapshot,
             availableWidth: availableWidth,
+            highlightColor: highlightColor,
             workspaceAction: nil
         )
     }
@@ -736,6 +813,7 @@ final class MenuBarStatusContentView: NSView {
     init(
         snapshot: MenuBarPresentationSnapshot,
         availableWidth: CGFloat,
+        highlightColor: MenuBarHighlightColor = .default,
         workspaceAction: ((MenuBarHitTarget) -> Void)?
     ) {
         super.init(frame: .zero)
@@ -743,6 +821,7 @@ final class MenuBarStatusContentView: NSView {
         configure(
             snapshot: snapshot,
             availableWidth: availableWidth,
+            highlightColor: highlightColor,
             workspaceAction: workspaceAction
         )
     }
@@ -753,6 +832,7 @@ final class MenuBarStatusContentView: NSView {
     func configure(
         snapshot: MenuBarPresentationSnapshot,
         availableWidth: CGFloat,
+        highlightColor: MenuBarHighlightColor = .default,
         workspaceAction: ((MenuBarHitTarget) -> Void)?
     ) {
         subviews.forEach { $0.removeFromSuperview() }
@@ -764,7 +844,10 @@ final class MenuBarStatusContentView: NSView {
         stack.spacing = 5
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        let primary = NSHostingView(rootView: MenuBarPrimaryStatusView(snapshot: snapshot))
+        let primary = NSHostingView(rootView: MenuBarPrimaryStatusView(
+            snapshot: snapshot,
+            highlightColor: highlightColor
+        ))
         primary.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(primary)
 
@@ -781,6 +864,7 @@ final class MenuBarStatusContentView: NSView {
             let strip = MenuBarFullStripView(
                 snapshot: snapshot,
                 availableWidth: max(120, availableWidth - MenuBarVisualTokens.fullPrimaryReservedWidth),
+                highlightColor: highlightColor,
                 workspaceAction: workspaceAction
             )
             fullStrip = strip
@@ -821,11 +905,13 @@ final class MenuBarStatusContentView: NSView {
 struct MenuBarFullStripRepresentable: NSViewRepresentable {
     let snapshot: MenuBarPresentationSnapshot
     let availableWidth: CGFloat
+    var highlightColor: MenuBarHighlightColor = .default
 
     func makeNSView(context: Context) -> MenuBarFullStripView {
         MenuBarFullStripView(
             snapshot: snapshot,
             availableWidth: availableWidth,
+            highlightColor: highlightColor,
             workspaceAction: nil
         )
     }
@@ -834,6 +920,7 @@ struct MenuBarFullStripRepresentable: NSViewRepresentable {
         nsView.configure(
             snapshot: snapshot,
             availableWidth: availableWidth,
+            highlightColor: highlightColor,
             workspaceAction: nil
         )
     }
@@ -850,6 +937,7 @@ final class MenuBarFullStripView: NSView {
     init(
         snapshot: MenuBarPresentationSnapshot,
         availableWidth: CGFloat,
+        highlightColor: MenuBarHighlightColor = .default,
         workspaceAction: ((MenuBarHitTarget) -> Void)?
     ) {
         layout = MenuBarPressurePolicy.layout(
@@ -859,7 +947,12 @@ final class MenuBarFullStripView: NSView {
         self.workspaceAction = workspaceAction
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        configure(snapshot: snapshot, availableWidth: availableWidth, workspaceAction: workspaceAction)
+        configure(
+            snapshot: snapshot,
+            availableWidth: availableWidth,
+            highlightColor: highlightColor,
+            workspaceAction: workspaceAction
+        )
     }
 
     @available(*, unavailable)
@@ -881,6 +974,7 @@ final class MenuBarFullStripView: NSView {
     func configure(
         snapshot: MenuBarPresentationSnapshot,
         availableWidth: CGFloat,
+        highlightColor: MenuBarHighlightColor = .default,
         workspaceAction: ((MenuBarHitTarget) -> Void)?
     ) {
         self.workspaceAction = workspaceAction
@@ -898,7 +992,7 @@ final class MenuBarFullStripView: NSView {
 
         for (index, group) in layout.groups.enumerated() {
             if index > 0 { stack.addArrangedSubview(makeDivider()) }
-            stack.addArrangedSubview(makeDisplayGroup(group))
+            stack.addArrangedSubview(makeDisplayGroup(group, highlightColor: highlightColor))
         }
         if layout.hiddenWorkspaceCount > 0 {
             let overflow = NSTextField(labelWithString: "+\(layout.hiddenWorkspaceCount)")
@@ -930,7 +1024,10 @@ final class MenuBarFullStripView: NSView {
         setAccessibilityLabel("WindowManager display workspace strip")
     }
 
-    private func makeDisplayGroup(_ group: MenuBarFullStripDisplayGroup) -> NSView {
+    private func makeDisplayGroup(
+        _ group: MenuBarFullStripDisplayGroup,
+        highlightColor: MenuBarHighlightColor
+    ) -> NSView {
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.alignment = .centerY
@@ -955,7 +1052,8 @@ final class MenuBarFullStripView: NSView {
             let button = MenuBarWorkspaceButton(
                 workspace: workspace,
                 display: group.display,
-                labelStyle: layout.labelStyle
+                labelStyle: layout.labelStyle,
+                highlightColor: highlightColor
             )
             button.onClick = { [weak self] in
                 self?.workspaceAction?(.workspace(
@@ -987,7 +1085,8 @@ private final class MenuBarWorkspaceButton: NSButton {
     init(
         workspace: MenuBarWorkspaceItem,
         display: MenuBarDisplayItem,
-        labelStyle: MenuBarFullStripLabelStyle
+        labelStyle: MenuBarFullStripLabelStyle,
+        highlightColor: MenuBarHighlightColor = .default
     ) {
         super.init(frame: .zero)
         title = labelStyle == .full ? workspace.name : workspace.compactName
@@ -999,7 +1098,8 @@ private final class MenuBarWorkspaceButton: NSButton {
             ofSize: 11,
             weight: workspace.isInteractionWorkspace ? .semibold : (workspace.isActive ? .medium : .regular)
         )
-        contentTintColor = workspace.isInteractionWorkspace ? .white : .labelColor
+        contentTintColor = workspace.isInteractionWorkspace
+            ? highlightColor.nsForegroundColor : .labelColor
         toolTip = "\(display.name) — workspace \(workspace.name)"
         setAccessibilityLabel("\(workspace.accessibilityLabel), \(display.name)")
         setAccessibilityHelp("Switches \(display.name) to workspace \(workspace.name)")
@@ -1008,10 +1108,14 @@ private final class MenuBarWorkspaceButton: NSButton {
         wantsLayer = true
         layer?.cornerRadius = MenuBarVisualTokens.compactCornerRadius
         if workspace.isInteractionWorkspace {
-            layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+            layer?.backgroundColor = highlightColor.nsColor.cgColor
+            layer?.borderColor = (highlightColor.usesDarkForeground
+                ? NSColor.black.withAlphaComponent(0.28)
+                : NSColor.white.withAlphaComponent(0.30)).cgColor
+            layer?.borderWidth = 0.5
         } else if workspace.isActive {
-            layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
-            layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.72).cgColor
+            layer?.backgroundColor = highlightColor.nsColor.withAlphaComponent(0.14).cgColor
+            layer?.borderColor = highlightColor.nsColor.withAlphaComponent(0.72).cgColor
             layer?.borderWidth = 1
         } else {
             layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.09).cgColor

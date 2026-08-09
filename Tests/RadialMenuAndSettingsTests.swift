@@ -1187,6 +1187,51 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertTrue(displays[1].visibleFrame.contains(surface.surfacedFrames[0].midpoint))
     }
 
+    @MainActor
+    func testSettingsCommandRequestRouterConsumesStatusContextExactlyOnce() {
+        let router = SettingsCommandRequestRouter()
+        let statusRequest = SettingsCommandRequest(
+            category: .radialMenu,
+            preferPointerDisplay: true
+        )
+
+        router.prepare(statusRequest)
+        XCTAssertEqual(router.consume(), statusRequest)
+        XCTAssertEqual(router.consume(), .applicationMenuDefault)
+
+        router.prepare(statusRequest)
+        router.cancelPendingRequest()
+        XCTAssertEqual(router.consume(), .applicationMenuDefault)
+    }
+
+    @MainActor
+    func testSettingsMenuCommandDispatcherPerformsNestedNativeCommandCommaItem() {
+        let target = TestSettingsMenuCommandTarget()
+        let root = NSMenu(title: "Application")
+        root.autoenablesItems = false
+        let applicationItem = NSMenuItem(title: "WindowManager", action: nil, keyEquivalent: "")
+        let applicationMenu = NSMenu(title: "WindowManager")
+        applicationMenu.autoenablesItems = false
+        let decoy = NSMenuItem(title: "Decoy", action: nil, keyEquivalent: ",")
+        decoy.keyEquivalentModifierMask = []
+        applicationMenu.addItem(decoy)
+        let settings = NSMenuItem(
+            title: "Settings…",
+            action: #selector(TestSettingsMenuCommandTarget.openSettings(_:)),
+            keyEquivalent: ","
+        )
+        settings.keyEquivalentModifierMask = [.command]
+        settings.target = target
+        settings.isEnabled = true
+        applicationMenu.addItem(settings)
+        applicationItem.submenu = applicationMenu
+        root.addItem(applicationItem)
+
+        XCTAssertTrue(SettingsMenuCommandDispatcher.performSettingsCommand(in: root))
+        XCTAssertEqual(target.invocationCount, 1)
+        XCTAssertFalse(SettingsMenuCommandDispatcher.performSettingsCommand(in: nil))
+    }
+
     func testSettingsPlacementCentersAcrossDisplaysAndClampsOnSameDisplay() {
         let displays = settingsDisplays()
         let crossing = SettingsWindowGeometry.placement(
@@ -1258,6 +1303,22 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         model.select(result)
         XCTAssertEqual(model.selectedCategory, .radialMenu)
         XCTAssertEqual(model.highlightedSettingID, "radial-shortcut")
+    }
+
+    @MainActor
+    func testSettingsRepeatedSelectionDoesNotRepublishUnchangedNavigationState() {
+        let model = SettingsNavigationModel(defaults: isolatedDefaults(), includeDebug: false)
+        model.select(.profiles)
+        var publicationCount = 0
+        let observation = model.objectWillChange.sink { publicationCount += 1 }
+
+        model.select(.profiles)
+        XCTAssertEqual(publicationCount, 0)
+
+        model.select(.workspaces)
+        XCTAssertEqual(publicationCount, 1)
+
+        withExtendedLifetime(observation) {}
     }
 
     @MainActor
@@ -1622,6 +1683,10 @@ final class RadialMenuAndSettingsTests: XCTestCase {
                 "Expected menu-bar presentation result for \(query)"
             )
         }
+        XCTAssertEqual(
+            SettingsCatalog.search("highlight colour", includeDebug: false).first?.id,
+            "menu-bar-highlight"
+        )
     }
 
     func testSettingsSearchFindsApplicationRulePause() {
@@ -1805,6 +1870,60 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         let countAfterFirstSuspend = service.unregistrations.count
         manager.suspendRegistration()
         XCTAssertEqual(service.unregistrations.count, countAfterFirstSuspend)
+    }
+
+    func testFullscreenGameRegistrationScopeKeepsOnlyWorkspaceNavigation() {
+        let service = TestGlobalHotKeyRegistrationService()
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { _, _ in },
+            registrationService: service,
+            installsEventHandler: false
+        )
+        let workspace = WorkspaceDefinition(name: "Game", key: "1", layout: .none)
+
+        let report = manager.register(
+            workspaces: [workspace],
+            hotKeyConfiguration: HotKeyConfiguration(),
+            radialMenuEnabled: true,
+            scope: .workspaceNavigationOnly
+        )
+
+        XCTAssertTrue(report.registeredOwners.contains {
+            $0.kind == .workspaceSwitch && $0.workspaceID == workspace.id
+        })
+        XCTAssertFalse(report.registeredOwners.contains { $0.kind == .workspaceMove })
+        XCTAssertEqual(
+            Set(report.registeredOwners.compactMap(\.configurableAction)),
+            Set([.previousWorkspace, .nextWorkspace, .backAndForthWorkspace])
+        )
+        XCTAssertFalse(report.registeredOwners.contains { $0.kind == .commandWheel })
+    }
+
+    func testFullscreenGameRegistrationScopeReservesCommandEscapeForGameOverlay() {
+        let service = TestGlobalHotKeyRegistrationService()
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { _, _ in },
+            registrationService: service,
+            installsEventHandler: false
+        )
+        var configuration = HotKeyConfiguration()
+        configuration.setChord(
+            HotKeyChord(keyCode: 53, modifiers: UInt32(cmdKey)),
+            for: .previousWorkspace
+        )
+
+        let report = manager.register(
+            workspaces: [],
+            hotKeyConfiguration: configuration,
+            scope: .workspaceNavigationOnly
+        )
+
+        XCTAssertFalse(report.registeredOwners.contains {
+            $0.configurableAction == .previousWorkspace
+        })
+        XCTAssertFalse(service.registrations.contains {
+            $0.chord == HotKeyChord(keyCode: 53, modifiers: UInt32(cmdKey))
+        })
     }
 
     func testFailedUnregistrationIsRetriedWithoutReusingItsEventIdentifier() {
@@ -2478,6 +2597,15 @@ private final class TestGlobeFnEventMonitor: GlobeFnEventMonitoring {
 
     func interrupt(_ interruption: GlobeFnEventMonitorInterruption) {
         interruptionHandler?(interruption)
+    }
+}
+
+@MainActor
+private final class TestSettingsMenuCommandTarget: NSObject {
+    private(set) var invocationCount = 0
+
+    @objc func openSettings(_ sender: NSMenuItem) {
+        invocationCount += 1
     }
 }
 

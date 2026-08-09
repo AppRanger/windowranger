@@ -40,6 +40,8 @@ packaging or distribution; those remain held until product and release decisions
 - [ ] Workspace switch/move/focus/reorder/resize across same-app windows and multiple displays.
 - [ ] Freeform, Tiled and Accordion with floating/dialog/rule-excluded/keep-on-all windows.
 - [ ] Ignored panels/popups, minimized/full-screen windows and apps that reject AX frame writes.
+- [ ] Native full-screen game enter/exit, Command-Escape Game Overlay, workspace away/return, and
+      zero WindowManager frame writes while the session is active.
 - [ ] Profile conversion/switching/triggers/iCloud sync and additive profile import/export preview,
       cancellation, invalid-file rejection, and safe Undo.
 - [ ] Menu-bar Compact/Medium/Full pressure, notch, long names and VoiceOver.

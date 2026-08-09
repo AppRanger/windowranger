@@ -3,18 +3,24 @@ import XCTest
 @MainActor
 final class UtilitySettingsTests: XCTestCase {
     private final class FakeLaunchAtLoginService: LaunchAtLoginServicing {
-        var isEnabled: Bool
+        var status: LaunchAtLoginStatus
+        var enabledResultStatus: LaunchAtLoginStatus = .enabled
         var requestedValues: [Bool] = []
+        var openSystemSettingsCount = 0
         var error: Error?
 
-        init(isEnabled: Bool) {
-            self.isEnabled = isEnabled
+        init(status: LaunchAtLoginStatus) {
+            self.status = status
         }
 
         func setEnabled(_ enabled: Bool) throws {
             requestedValues.append(enabled)
             if let error { throw error }
-            isEnabled = enabled
+            status = enabled ? enabledResultStatus : .notRegistered
+        }
+
+        func openSystemSettings() {
+            openSystemSettingsCount += 1
         }
     }
 
@@ -23,7 +29,7 @@ final class UtilitySettingsTests: XCTestCase {
     }
 
     func testLaunchAtLoginControllerOnlyMutatesServiceAfterExplicitToggle() {
-        let service = FakeLaunchAtLoginService(isEnabled: false)
+        let service = FakeLaunchAtLoginService(status: .notRegistered)
         let controller = LaunchAtLoginController(service: service)
 
         XCTAssertFalse(controller.isEnabled)
@@ -38,7 +44,7 @@ final class UtilitySettingsTests: XCTestCase {
     }
 
     func testLaunchAtLoginFailureRestoresObservedServiceState() {
-        let service = FakeLaunchAtLoginService(isEnabled: false)
+        let service = FakeLaunchAtLoginService(status: .notRegistered)
         service.error = TestError()
         let controller = LaunchAtLoginController(service: service)
 
@@ -47,6 +53,37 @@ final class UtilitySettingsTests: XCTestCase {
         XCTAssertFalse(controller.isEnabled)
         XCTAssertEqual(service.requestedValues, [true])
         XCTAssertEqual(controller.errorMessage, "Could not update login item")
+    }
+
+    func testLaunchAtLoginApprovalStateRemainsVisuallyEnabled() {
+        let service = FakeLaunchAtLoginService(status: .notRegistered)
+        service.enabledResultStatus = .requiresApproval
+        let controller = LaunchAtLoginController(service: service)
+
+        controller.setEnabled(true)
+
+        XCTAssertTrue(controller.isEnabled)
+        XCTAssertEqual(controller.status, .requiresApproval)
+        XCTAssertEqual(service.requestedValues, [true])
+
+        controller.setEnabled(true)
+        XCTAssertEqual(service.requestedValues, [true])
+    }
+
+    func testLaunchAtLoginRefreshObservesApprovalAndOpeningSystemSettings() {
+        let service = FakeLaunchAtLoginService(status: .requiresApproval)
+        let controller = LaunchAtLoginController(service: service)
+
+        XCTAssertTrue(controller.isEnabled)
+        XCTAssertNotNil(controller.statusMessage)
+
+        controller.openSystemSettings()
+        XCTAssertEqual(service.openSystemSettingsCount, 1)
+
+        service.status = .enabled
+        controller.refresh()
+        XCTAssertEqual(controller.status, .enabled)
+        XCTAssertTrue(controller.isEnabled)
     }
 
     func testAutomaticallyUnhideApplicationsIsMigrationSafeAndPersistsLocally() {

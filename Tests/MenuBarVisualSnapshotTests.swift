@@ -227,6 +227,41 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             options: .atomic
         )
 
+        let darkView = SettingsView(
+            store: store,
+            engine: engine,
+            navigation: navigation,
+            windowCoordinator: coordinator,
+            diagnostics: .disabled,
+            shortcutRecordingStateChanged: { _ in }
+        )
+        .frame(width: Self.snapshotSize.width, height: Self.snapshotSize.height)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, .dark)
+        .environment(\.controlActiveState, .key)
+        let darkData = try renderRetinaPNG(
+            darkView,
+            size: Self.snapshotSize,
+            appearance: .darkAqua
+        )
+        XCTAssertGreaterThan(darkData.count, 25_000)
+        try darkData.write(
+            to: outputDirectory.appendingPathComponent("window-manager-settings-workspaces-dark.png"),
+            options: .atomic
+        )
+
+        let currentProfileID = store.activeProfileID
+        store.renameProfile(currentProfileID, to: "Current Setup")
+        _ = store.createProfile(named: "Travel", source: .scratch)
+        store.selectProfile(currentProfileID)
+        navigation.select(.profiles)
+        let profilesData = try renderRetinaPNG(view, size: Self.snapshotSize)
+        XCTAssertGreaterThan(profilesData.count, 25_000)
+        try profilesData.write(
+            to: outputDirectory.appendingPathComponent("window-manager-settings-profiles.png"),
+            options: .atomic
+        )
+
         let largeTextSize = CGSize(width: 1_180, height: 900)
         let largeTextData = try renderRetinaPNG(
             WorkspaceSettingsView(
@@ -260,9 +295,13 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
     }
 
     @MainActor
-    private func renderRetinaPNG<V: View>(_ view: V, size: CGSize) throws -> Data {
+    private func renderRetinaPNG<V: View>(
+        _ view: V,
+        size: CGSize,
+        appearance: NSAppearance.Name = .aqua
+    ) throws -> Data {
         let renderedView = NSHostingView(rootView: view)
-        renderedView.appearance = NSAppearance(named: .aqua)
+        renderedView.appearance = NSAppearance(named: appearance)
         renderedView.frame = CGRect(origin: .zero, size: size)
         let window = NSWindow(
             contentRect: renderedView.frame,
@@ -271,7 +310,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             defer: false
         )
         window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .aqua)
+        window.appearance = NSAppearance(named: appearance)
         window.contentView = renderedView
         renderedView.layoutSubtreeIfNeeded()
         // SwiftUI Lists and NavigationSplitView virtualize their AppKit descendants. A bounded

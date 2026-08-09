@@ -496,11 +496,11 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private let engine: WorkspaceEngine
     private let stateModel: MenuBarStateModel
     private let settingsStore: SettingsStore
-    private let settingsNavigation: SettingsNavigationModel
-    private let settingsWindowCoordinator: SettingsWindowCoordinator
+    private let settingsCommandRequestRouter: SettingsCommandRequestRouter
     private let diagnostics: DiagnosticLogger
     private let tiledPlacementUndoManager: UndoManager?
     private var presentationMode: MenuBarPresentationMode
+    private var highlightColor: MenuBarHighlightColor
     private var contentView: MenuBarStatusContentView?
     private var lastSnapshot: MenuBarPresentationSnapshot?
     private var isInvalidated = false
@@ -509,20 +509,20 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         engine: WorkspaceEngine,
         stateModel: MenuBarStateModel,
         settingsStore: SettingsStore,
-        settingsNavigation: SettingsNavigationModel,
-        settingsWindowCoordinator: SettingsWindowCoordinator,
+        settingsCommandRequestRouter: SettingsCommandRequestRouter,
         diagnostics: DiagnosticLogger,
         tiledPlacementUndoManager: UndoManager? = nil,
-        initialMode: MenuBarPresentationMode
+        initialMode: MenuBarPresentationMode,
+        initialHighlightColor: MenuBarHighlightColor = .default
     ) {
         self.engine = engine
         self.stateModel = stateModel
         self.settingsStore = settingsStore
-        self.settingsNavigation = settingsNavigation
-        self.settingsWindowCoordinator = settingsWindowCoordinator
+        self.settingsCommandRequestRouter = settingsCommandRequestRouter
         self.diagnostics = diagnostics
         self.tiledPlacementUndoManager = tiledPlacementUndoManager
         presentationMode = initialMode
+        highlightColor = initialHighlightColor
         super.init()
         statusItem.autosaveName = "com.chris.WindowManager.primary-status"
         appMenu.autoenablesItems = false
@@ -539,6 +539,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             return
         }
         presentationMode = mode
+        rebuild(force: true)
+    }
+
+    func setHighlightColor(_ color: MenuBarHighlightColor) {
+        guard !isInvalidated, highlightColor != color else { return }
+        highlightColor = color
         rebuild(force: true)
     }
 
@@ -566,6 +572,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             existing.configure(
                 snapshot: snapshot,
                 availableWidth: availableWidth,
+                highlightColor: highlightColor,
                 workspaceAction: workspaceAction
             )
             content = existing
@@ -573,6 +580,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             content = MenuBarStatusContentView(
                 snapshot: snapshot,
                 availableWidth: availableWidth,
+                highlightColor: highlightColor,
                 workspaceAction: workspaceAction
             )
             contentView = content
@@ -665,26 +673,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         }
 
         appMenu.addItem(.separator())
-        let profileSettings = settingsLinkMenuItem(
-            title: "Profile Settings…",
-            systemImage: "person.crop.rectangle.stack",
-            category: .profiles
-        )
-        appMenu.addItem(profileSettings)
-
-        let settings = settingsLinkMenuItem(
+        let settings = actionMenuItem(
             title: "Settings…",
-            systemImage: "gearshape",
-            category: nil
+            action: #selector(openSettingsFromStatusMenu)
         )
+        settings.image = symbol("gearshape")
         appMenu.addItem(settings)
-
-        let wheelSettings = settingsLinkMenuItem(
-            title: "Command Wheel Settings…",
-            systemImage: "circle.hexagongrid",
-            category: .radialMenu
-        )
-        appMenu.addItem(wheelSettings)
 
         if let tiledPlacementUndoManager,
            tiledPlacementUndoManager.canUndo || tiledPlacementUndoManager.canRedo {
@@ -739,36 +733,6 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         return item
     }
 
-    /// SwiftUI owns the Settings scene, so the AppKit status menu embeds the supported
-    /// `SettingsLink` control instead of invoking the removed `showSettingsWindow:` selector.
-    private func settingsLinkMenuItem(
-        title: String,
-        systemImage: String,
-        category: SettingsCategory?
-    ) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        let view = SettingsMenuLinkRow(
-            title: title,
-            systemImage: systemImage,
-            prepare: { [weak self] in
-                guard let self else { return }
-                SettingsWindowOpener.prepareForSettingsLink(
-                    category: category,
-                    preferPointerDisplay: true,
-                    navigation: self.settingsNavigation,
-                    engine: self.engine,
-                    coordinator: self.settingsWindowCoordinator
-                )
-            },
-            dismissMenu: { [weak self] in self?.appMenu.cancelTracking() }
-        )
-        let hostingView = NSHostingView(rootView: view)
-        hostingView.frame = CGRect(x: 0, y: 0, width: 270, height: 24)
-        item.view = hostingView
-        item.isEnabled = true
-        return item
-    }
-
     private func disabledMenuItem(title: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
@@ -777,6 +741,26 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
 
     private func symbol(_ name: String) -> NSImage? {
         NSImage(systemSymbolName: name, accessibilityDescription: nil)
+    }
+
+    @objc private func openSettingsFromStatusMenu() {
+        settingsCommandRequestRouter.prepare(SettingsCommandRequest(
+            category: nil,
+            preferPointerDisplay: true
+        ))
+        appMenu.cancelTracking()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard SettingsMenuCommandDispatcher.performSettingsCommand(in: NSApp.mainMenu) else {
+                self.settingsCommandRequestRouter.cancelPendingRequest()
+                self.diagnostics.log(
+                    category: "settings-window",
+                    event: "main-menu-command-unavailable",
+                    fields: ["route": "status-menu-native-item"]
+                )
+                return
+            }
+        }
     }
 
     @objc private func selectProfile(_ sender: NSMenuItem) {
@@ -820,82 +804,5 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         if !isInvalidated {
             NSStatusBar.system.removeStatusItem(statusItem)
         }
-    }
-}
-
-/// A native SwiftUI SettingsLink hosted inside the AppKit status menu. Its primitive style runs
-/// the app's context capture before triggering the link for pointer, keyboard, and accessibility
-/// activation alike; the renderer contains no Settings scene creation workaround of its own.
-@MainActor
-private struct SettingsMenuLinkRow: View {
-    let title: String
-    let systemImage: String
-    let prepare: () -> Void
-    let dismissMenu: () -> Void
-
-    var body: some View {
-        SettingsLink {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 13))
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .buttonStyle(SettingsMenuLinkButtonStyle(
-            prepare: prepare,
-            dismissMenu: dismissMenu
-        ))
-        .accessibilityLabel(title)
-        .accessibilityHint("Opens the WindowManager Settings window.")
-        .frame(width: 270, height: 24)
-    }
-}
-
-@MainActor
-private struct SettingsMenuLinkButtonStyle: PrimitiveButtonStyle {
-    let prepare: () -> Void
-    let dismissMenu: () -> Void
-
-    func makeBody(configuration: Configuration) -> some View {
-        SettingsMenuLinkButton(
-            configuration: configuration,
-            prepare: prepare,
-            dismissMenu: dismissMenu
-        )
-    }
-}
-
-@MainActor
-private struct SettingsMenuLinkButton: View {
-    let configuration: PrimitiveButtonStyleConfiguration
-    let prepare: () -> Void
-    let dismissMenu: () -> Void
-    @State private var isHovering = false
-
-    var body: some View {
-        configuration.label
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .foregroundStyle(isHovering ? Color.white : Color.primary)
-            .background {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(isHovering ? Color.accentColor : Color.clear)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-            }
-            .contentShape(Rectangle())
-            .focusable()
-            .onHover { isHovering = $0 }
-            .onTapGesture { activate() }
-            .onKeyPress(.return) {
-                activate()
-                return .handled
-            }
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { activate() }
-    }
-
-    private func activate() {
-        prepare()
-        configuration.trigger()
-        DispatchQueue.main.async { dismissMenu() }
     }
 }

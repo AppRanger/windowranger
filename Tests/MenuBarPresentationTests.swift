@@ -27,6 +27,14 @@ final class MenuBarPresentationTests: XCTestCase {
         XCTAssertEqual(MenuBarPresentationMode.migrated(from: nil), .compact)
     }
 
+    func testHighlightColourNormalizesHexAndDerivesReadableForeground() {
+        XCTAssertEqual(MenuBarHighlightColor(hex: "ffffff"), .default)
+        XCTAssertEqual(MenuBarHighlightColor(hex: "#0A80FF")?.hex, "#0A80FF")
+        XCTAssertNil(MenuBarHighlightColor(hex: "not-a-colour"))
+        XCTAssertTrue(MenuBarHighlightColor.default.usesDarkForeground)
+        XCTAssertFalse(MenuBarHighlightColor(red: 0, green: 0, blue: 0).usesDarkForeground)
+    }
+
     @MainActor
     func testSettingsMigrationRewritesLegacyValueToCanonicalRawValue() {
         let cases: [(String, MenuBarPresentationMode)] = [
@@ -59,6 +67,7 @@ final class MenuBarPresentationTests: XCTestCase {
         defaults.set(true, forKey: "iCloudSyncEnabled")
         let cloud = FakeUbiquitousKeyValueStore()
         cloud.set("workspace-label", forKey: "menuBarPresentationMode.v1")
+        cloud.set("#FF7A00", forKey: "menuBarHighlightColor.v1")
 
         let store = SettingsStore(
             defaults: defaults,
@@ -67,11 +76,40 @@ final class MenuBarPresentationTests: XCTestCase {
         )
 
         XCTAssertEqual(store.menuBarPresentationMode, .medium)
+        XCTAssertEqual(store.menuBarHighlightColor.hex, "#FF7A00")
         XCTAssertEqual(cloud.string(forKey: "menuBarPresentationMode.v1"), "medium")
+        XCTAssertEqual(cloud.string(forKey: "menuBarHighlightColor.v1"), "#FF7A00")
         store.menuBarPresentationMode = .full
+        store.menuBarHighlightColor = MenuBarHighlightColor(red: 0, green: 0.5, blue: 1)
         XCTAssertEqual(defaults.string(forKey: "menuBarPresentationMode.v1"), "full")
         XCTAssertEqual(cloud.string(forKey: "menuBarPresentationMode.v1"), "full")
+        XCTAssertEqual(defaults.string(forKey: "menuBarHighlightColor.v1"), "#0080FF")
+        XCTAssertEqual(cloud.string(forKey: "menuBarHighlightColor.v1"), "#0080FF")
         XCTAssertGreaterThan(cloud.synchronizeCount, 0)
+    }
+
+    @MainActor
+    func testMenuBarHighlightDefaultsToWhiteAndPersistsLocally() {
+        let suite = "MenuBarHighlightTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+
+        let writer = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertEqual(writer.menuBarHighlightColor, .default)
+        XCTAssertEqual(defaults.string(forKey: "menuBarHighlightColor.v1"), "#FFFFFF")
+        writer.menuBarHighlightColor = MenuBarHighlightColor(red: 0.2, green: 0.4, blue: 0.6)
+
+        let reader = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertEqual(reader.menuBarHighlightColor.hex, "#336699")
     }
 
     func testUnifiedModeUsesOneCombinedDisplaySignal() {

@@ -24,25 +24,64 @@ enum SettingsWindowOpener {
         }
     }
 
-    /// AppKit status menus host a real SwiftUI `SettingsLink`. Capture the destination/category
-    /// before that link opens the scene, then let the shared coordinator handle either attachment
-    /// ordering. This remains safe when scene creation wins the race with context resolution.
-    static func prepareForSettingsLink(
-        category: SettingsCategory?,
-        preferPointerDisplay: Bool,
-        navigation: SettingsNavigationModel,
-        engine: WorkspaceEngine,
-        coordinator: SettingsWindowCoordinator
-    ) {
-        if let category { navigation.select(category) }
-        let preferredDisplayIdentifier = preferPointerDisplay
-            ? SettingsWindowCoordinator.pointerDisplayIdentifierForCurrentMouseEvent()
-            : nil
-        engine.settingsSurfaceContext(
-            preferredDisplayIdentifier: preferredDisplayIdentifier
-        ) { context in
-            coordinator.prepareOpen(context: context)
+}
+
+struct SettingsCommandRequest: Equatable, Sendable {
+    let category: SettingsCategory?
+    let preferPointerDisplay: Bool
+
+    static let applicationMenuDefault = SettingsCommandRequest(
+        category: nil,
+        preferPointerDisplay: false
+    )
+}
+
+/// Carries status-menu routing context into the SwiftUI-owned Command-comma action. The pending
+/// request is consumed exactly once, so a normal application-menu or keyboard invocation always
+/// falls back to the canonical default behavior.
+@MainActor
+final class SettingsCommandRequestRouter {
+    private var pendingRequest: SettingsCommandRequest?
+
+    func prepare(_ request: SettingsCommandRequest) {
+        pendingRequest = request
+    }
+
+    func consume() -> SettingsCommandRequest {
+        defer { pendingRequest = nil }
+        return pendingRequest ?? .applicationMenuDefault
+    }
+
+    func cancelPendingRequest() {
+        pendingRequest = nil
+    }
+}
+
+/// Finds and performs the SwiftUI Settings command installed in the app's main menu. Matching the
+/// standard Command-comma equivalent avoids depending on removed private AppKit selectors or on a
+/// localized menu title.
+@MainActor
+enum SettingsMenuCommandDispatcher {
+    static func performSettingsCommand(in rootMenu: NSMenu?) -> Bool {
+        guard let item = settingsCommandItem(in: rootMenu),
+              let action = item.action
+        else { return false }
+        return NSApplication.shared.sendAction(action, to: item.target, from: item)
+    }
+
+    private static func settingsCommandItem(in menu: NSMenu?) -> NSMenuItem? {
+        guard let menu else { return nil }
+        for item in menu.items {
+            if item.isEnabled,
+               item.keyEquivalent == ",",
+               item.keyEquivalentModifierMask.contains(.command) {
+                return item
+            }
+            if let nested = settingsCommandItem(in: item.submenu) {
+                return nested
+            }
         }
+        return nil
     }
 }
 
