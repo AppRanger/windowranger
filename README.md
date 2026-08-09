@@ -128,10 +128,10 @@ The selected three-column Workspaces Settings screen has the same isolated produ
 
 The current selected-reference review and durable output paths are recorded in `design-qa.md`.
 
-The scheme runs as **Debug** from Xcode and archives as **Release**. Both configurations keep the
-same signed legacy `com.chris.WindowManager` identity, preserved through the WindowRanger product
-rename so Debug does not create a second Accessibility client. Debug app runs write structured JSON Lines diagnostics to
-`~/Library/Logs/com.chris.WindowManager/diagnostics.jsonl`; the file rotates at 1 MB and retains two
+The scheme runs as **Debug** from Xcode and archives as **Release**. Both configurations use the
+same signed `com.windowranger.WindowRanger` identity, so Debug does not create a second Accessibility
+client. Debug app runs write structured JSON Lines diagnostics to
+`~/Library/Logs/com.windowranger.WindowRanger/diagnostics.jsonl`; the file rotates at 1 MB and retains two
 1 MB backups. Release builds do not create this verbose file. Unit tests use memory or no-op loggers
 and never write there.
 
@@ -258,7 +258,7 @@ WindowServer session and never becomes synced profile configuration.
 
 ## Current behaviour and limits
 
-Window membership, original positions, per-window floating overrides, and the active workspace are saved locally in `~/Library/Caches/com.chris.WindowManager/workspace-state.json` for the active profile. On a normal quit, the state is saved before every managed window is made visible again. On the next launch, exact window-ID and app-bundle matches are returned only when the saved profile and WindowServer session remain valid; the previously active workspace is shown, and inactive workspaces are parked again.
+Window membership, original positions, per-window floating overrides, and the active workspace are saved locally in `~/Library/Caches/com.windowranger.WindowRanger/workspace-state.json` for the active profile. On a normal quit, the state is saved before every managed window is made visible again. On the next launch, exact window-ID and app-bundle matches are returned only when the saved profile and WindowServer session remain valid; the previously active workspace is shown, and inactive workspaces are parked again.
 
 Recovery-state replacement is atomic and private to the user. A failed write remains retryable, an
 externally removed cache file is recreated on the next persistence tick even when workspace state has

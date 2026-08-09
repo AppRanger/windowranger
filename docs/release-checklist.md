@@ -7,7 +7,8 @@ packaging or distribution; those remain held until product and release decisions
 
 - [x] Select the product name and complete preliminary clearance: **WindowRanger**.
 - [ ] Confirm the copyright line in `LICENSE` with the maintainer.
-- [ ] Select the public bundle identifier and decide whether/how the private identity migrates.
+- [x] Select `com.windowranger.WindowRanger` as the public bundle identifier; the private development
+      identity intentionally does not migrate.
 - [ ] Confirm Developer ID ownership, signing team and designated requirement.
 - [ ] Finalize app icon, menu-bar identity, versioning and support language.
 

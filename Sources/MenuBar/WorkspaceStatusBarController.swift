@@ -524,7 +524,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         presentationMode = initialMode
         highlightColor = initialHighlightColor
         super.init()
-        statusItem.autosaveName = "com.chris.WindowManager.primary-status"
+        statusItem.autosaveName = "com.windowranger.WindowRanger.primary-status"
         appMenu.autoenablesItems = false
         appMenu.delegate = self
         statusItem.menu = appMenu

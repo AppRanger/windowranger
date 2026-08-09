@@ -1,6 +1,6 @@
 name: WindowRanger
 options:
-  bundleIdPrefix: com.chris
+  bundleIdPrefix: com.windowranger
   deploymentTarget:
     macOS: "14.0"
   generateEmptyDirectories: true
@@ -18,9 +18,7 @@ targets:
       - path: Sources
     settings:
       base:
-        # Preserve the existing signed identity during the product rename so Accessibility trust,
-        # preferences, diagnostics, and saved workspace state continue to resolve in development.
-        PRODUCT_BUNDLE_IDENTIFIER: com.chris.WindowManager
+        PRODUCT_BUNDLE_IDENTIFIER: com.windowranger.WindowRanger
         PRODUCT_NAME: WindowRanger
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 44NAD22AK6
@@ -47,7 +45,7 @@ targets:
       - sdk: ServiceManagement.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.chris.WindowRangerTests
+        PRODUCT_BUNDLE_IDENTIFIER: com.windowranger.WindowRangerTests
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: ""
         # These are deliberately empty: unit tests must run in xctest, never in the production
