@@ -20,11 +20,15 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+None.
+
+## Ready
+
 ### WR-015 — Make iCloud settings sync opt-in
 
 - **Type:** Feature / privacy default
 - **Priority:** P2
-- **Status:** Inbox
+- **Status:** Ready
 - **Evidence:** Requested
 - **Current behavior:** General Settings already provides **Sync settings with iCloud**, and turning
   it off keeps settings local. New installations currently default the preference to on.
@@ -45,7 +49,7 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Feature / menu cleanup
 - **Priority:** P2
-- **Status:** Inbox
+- **Status:** Ready
 - **Evidence:** Requested
 - **Current behavior:** Debug builds always show the **WindowRanger Debug**, **Copy Recent
   Diagnostics**, and **Reveal Diagnostics File** section in the primary status-item menu. Release
@@ -73,7 +77,7 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Feature / support diagnostics
 - **Priority:** P1
-- **Status:** Inbox
+- **Status:** Ready
 - **Evidence:** Requested
 - **Current behavior:** Debug builds provide a rotating diagnostic log and a live admission view,
   but users cannot produce one self-contained report explaining why a particular window is being
@@ -117,32 +121,6 @@ smallest useful outcome and acceptance boundary.
   mutations; verify bounds and schema stability; and inject forbidden privacy values through every
   source to prove none survive the final output.
 
-### WR-019 — Separate the local Xcode development identity
-
-- **Type:** Development workflow / signing
-- **Priority:** P2
-- **Status:** Needs decision
-- **Evidence:** User-observed and signing-requirement backed during the first Beta smoke test.
-- **Current behavior:** Xcode Debug and the installed Developer ID app use the same
-  `com.windowranger.WindowRanger` bundle identifier but different designated requirements. macOS can
-  therefore treat them as separate Accessibility clients while LaunchServices still sees the same
-  bundle identifier, making handoff and permission recovery ambiguous.
-- **Smallest useful outcome:** Decide whether the local Xcode product should use a clearly named
-  development-only bundle identifier and app name while Stable and Beta retain the canonical public
-  identity.
-- **Acceptance:**
-  - the installed public app and Xcode development app are unambiguous in Accessibility settings,
-    LaunchServices, process inspection, and menus;
-  - the required development App ID, provisioning profile, and iCloud capability are configured
-    before changing the project;
-  - Xcode handoff scripts quit and resume only the intended product;
-  - public Stable/Beta bundle identity, preferences, update continuity, and release provenance do
-    not change;
-  - migration guidance avoids global TCC or LaunchServices resets and is live-tested on the
-    maintainer's Mac.
-
-## Ready
-
 ### WR-004 — Bound synced profile-library input with recovery UX
 
 - **Type:** Hardening
@@ -162,16 +140,6 @@ smallest useful outcome and acceptance boundary.
 - **Outcome:** Measure a noisy real Debug session on slow storage before deciding whether ordered
   synchronous JSONL writes need a queue. Preserve diagnostic ordering unless evidence justifies a
   change.
-
-### WR-006 — Reconcile the future-systems brief with implemented Tiled manipulation
-
-- **Type:** Documentation change
-- **Priority:** P2
-- **Status:** Ready
-- **Source:** `docs/future-workspace-systems-decisions.md` versus current
-  `TiledLayoutTree`/`WorkspaceEngine` code and tests
-- **Outcome:** Stop describing manual split resizing and drag-to-swap as wholly future work. Keep
-  layout presets and any unimplemented overlay/editor behavior clearly separated and research-only.
 
 ## Live validation
 
@@ -251,6 +219,30 @@ adding engineering tasks.
 - **Source:** `docs/future-workspace-systems-decisions.md`
 - **Decision:** Global/profile/workspace ownership, initial presets and participant policy,
   Tiled-only versus Freeform, and what topology can persist without guessing window identity.
+
+### WR-019 — Separate the local Xcode development identity
+
+- **Type:** Development workflow / signing
+- **Priority:** P2
+- **Status:** Needs decision
+- **Evidence:** User-observed and signing-requirement backed during the first Beta smoke test.
+- **Current behavior:** Xcode Debug and the installed Developer ID app use the same
+  `com.windowranger.WindowRanger` bundle identifier but different designated requirements. macOS can
+  therefore treat them as separate Accessibility clients while LaunchServices still sees the same
+  bundle identifier, making handoff and permission recovery ambiguous.
+- **Smallest useful outcome:** Decide whether the local Xcode product should use a clearly named
+  development-only bundle identifier and app name while Stable and Beta retain the canonical public
+  identity.
+- **Acceptance:**
+  - the installed public app and Xcode development app are unambiguous in Accessibility settings,
+    LaunchServices, process inspection, and menus;
+  - the required development App ID, provisioning profile, and iCloud capability are configured
+    before changing the project;
+  - Xcode handoff scripts quit and resume only the intended product;
+  - public Stable/Beta bundle identity, preferences, update continuity, and release provenance do
+    not change;
+  - migration guidance avoids global TCC or LaunchServices resets and is live-tested on the
+    maintainer's Mac.
 
 ## Pre-release work
 
@@ -355,14 +347,25 @@ second copy of that checklist.
 - **Publication gate:** Creating the draft is not publication. Changing repository visibility and
   publishing the reviewed draft each require explicit maintainer action at the final checkpoint.
 
+## Done
+
+### WR-006 — Reconcile the future-systems brief with implemented Tiled manipulation
+
+- **Result:** Updated the future-systems brief and README to distinguish implemented, deterministically
+  tested manual split resizing, title-bar drag-to-swap, and radial edge/corner placement from
+  research-only reusable presets and any future explicit overlay editor. Signed-app behavior remains
+  covered by the existing live-validation queue.
+- **Automated evidence:** Test isolation passed and all 36 focused `TiledLayoutTreeTests` passed with
+  no failures on 9 August 2026.
+
 ## Scan notes — not queued again
 
 - Menu-bar, Workspace Settings, and contextual radial-menu visual QA have no unresolved P0/P1/P2
   mismatch in `design-qa.md`.
 - Portable profile transfer is described as implemented in the current README and reviewed code;
   its remaining live coverage belongs to WR-001/WR-013.
-- Manual Tiled split resizing and drag-to-swap already have implementation/test evidence. WR-006 is
-  the documentation correction; it is not a request to rebuild them.
+- Manual Tiled split resizing and drag-to-swap already have implementation/test evidence; their
+  documentation correction is recorded under Done rather than queued as an implementation request.
 - Native Spaces integration remains an explicit non-goal.
 
 ## New-item template
