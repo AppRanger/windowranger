@@ -115,6 +115,14 @@ identity_output="$(/usr/bin/security find-identity -v -p codesigning 2>&1 || tru
     "No Developer ID Application signing identity is installed in the keychain"
 )
 
+if [[ -d "$developer_directory" ]]; then
+    DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun notarytool history \
+        --keychain-profile "$notary_profile" \
+        --output-format json >/dev/null 2>&1 || blockers+=(
+        "Notary keychain profile '$notary_profile' is missing or invalid"
+    )
+fi
+
 if (( ${#blockers} > 0 )); then
     print -u2 "Release preflight failed:"
     for blocker in "${blockers[@]}"; do
@@ -255,12 +263,21 @@ WINDOWRANGER_DMGBUILD="$dmgbuild" "$repository_root/scripts/build-dmg.sh" \
     --channel "$channel" \
     --output "$final_dmg"
 
+print "Signing the DMG container with Developer ID..."
+/usr/bin/codesign --force \
+    --sign "Developer ID Application" \
+    --timestamp \
+    --identifier "com.windowranger.WindowRanger.dmg" \
+    "$final_dmg"
+/usr/bin/codesign --verify --verbose=2 "$final_dmg"
+
 print "Notarizing and stapling the DMG container..."
 DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun notarytool submit "$final_dmg" \
     --keychain-profile "$notary_profile" \
     --wait
 DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun stapler staple "$final_dmg"
 DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun stapler validate "$final_dmg"
+/usr/sbin/spctl -a -vv -t open --context context:primary-signature "$final_dmg"
 "$repository_root/scripts/verify-dmg.sh" --dmg "$final_dmg"
 
 print "Writing release checksums and provenance..."
