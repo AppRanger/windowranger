@@ -270,6 +270,35 @@ final class ICloudSyncSettingsTests: XCTestCase {
         XCTAssertNil(store.iCloudProfileLibraryIssue)
     }
 
+    @MainActor
+    func testEnablingSyncWithOversizedLocalLibraryDoesNotOverwriteCloudProfiles() throws {
+        let (defaults, suite) = isolatedDefaults("OversizedLocalEnable")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let oversized = (0...SyncedProfileLibraryPolicy.maximumProfiles).map {
+            profile(name: "Private \($0)")
+        }
+        defaults.set(
+            try JSONEncoder().encode(ProfileLibrary(profiles: oversized)),
+            forKey: "profileLibrary.v1"
+        )
+        let cloud = InspectableUbiquitousStore()
+        let existingCloud = try JSONEncoder().encode(ProfileLibrary(
+            profiles: [profile(name: "Existing Cloud")]
+        ))
+        cloud.seed(existingCloud, forKey: "profileLibrary.v1")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+
+        store.iCloudSyncEnabled = true
+
+        XCTAssertEqual(store.profiles.count, oversized.count)
+        XCTAssertEqual(store.iCloudProfileLibraryIssue?.source, .local)
+        XCTAssertEqual(cloud.peekData(forKey: "profileLibrary.v1"), existingCloud)
+    }
+
     func testMalformedAndFutureSyncedDocumentsHaveDistinctRecoveryReasons() throws {
         XCTAssertEqual(
             SyncedProfileLibraryPolicy.validate(Data("not-json".utf8)),
