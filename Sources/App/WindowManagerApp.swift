@@ -25,7 +25,8 @@ struct WindowManagerApp: App {
             WindowManagerSettingsCommands(
                 navigation: appDelegate.settingsNavigation,
                 engine: appDelegate.engine,
-                coordinator: appDelegate.settingsWindowCoordinator
+                coordinator: appDelegate.settingsWindowCoordinator,
+                requestRouter: appDelegate.settingsCommandRequestRouter
             )
         }
     }
@@ -35,14 +36,16 @@ private struct WindowManagerSettingsCommands: Commands {
     @ObservedObject var navigation: SettingsNavigationModel
     let engine: WorkspaceEngine
     let coordinator: SettingsWindowCoordinator
+    let requestRouter: SettingsCommandRequestRouter
     @Environment(\.openSettings) private var openSettings
 
     var body: some Commands {
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") {
+                let request = requestRouter.consume()
                 SettingsWindowOpener.open(
-                    category: nil,
-                    preferPointerDisplay: false,
+                    category: request.category,
+                    preferPointerDisplay: request.preferPointerDisplay,
                     navigation: navigation,
                     engine: engine,
                     coordinator: coordinator,

@@ -579,6 +579,108 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(store.activeProfileSelectionReason, .docked)
     }
 
+    func testFreshInstallStartsWithDefaultProfileAndFourNumberedWorkspaces() {
+        let (defaults, suite) = isolatedDefaults("FreshProfileDefaults")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: {
+                [self.profileDisplay("main", isMain: true, serial: "1")]
+            }
+        )
+
+        XCTAssertEqual(store.activeProfile.name, "Default")
+        XCTAssertEqual(store.workspaces.map(\.name), ["1", "2", "3", "4"])
+        XCTAssertEqual(store.workspaces.map(\.key), ["1", "2", "3", "4"])
+    }
+
+    func testNewScratchProfileUsesCleanDefaultsInsteadOfCurrentConfiguration() throws {
+        let (defaults, suite) = isolatedDefaults("ScratchProfile")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let displays = [profileDisplay("main", isMain: true, serial: "1")]
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { displays }
+        )
+        store.multiDisplayMode = .independent
+        _ = store.addWorkspace()
+
+        let profileID = try XCTUnwrap(store.createProfile(named: "Travel", source: .scratch))
+        let profile = try XCTUnwrap(store.profiles.first(where: { $0.id == profileID }))
+
+        XCTAssertEqual(profile.name, "Travel")
+        XCTAssertEqual(profile.workspaces.map(\.name), ["1", "2", "3", "4"])
+        XCTAssertEqual(profile.workspaces.map(\.key), ["1", "2", "3", "4"])
+        XCTAssertEqual(profile.displayMode, .unified)
+        XCTAssertEqual(profile.displayRoles.map(\.name), ["Primary Display"])
+        XCTAssertTrue(profile.appRules.isEmpty)
+        XCTAssertEqual(Set(profile.workspaceRoleAssignments.keys), Set(profile.workspaces.map(\.id)))
+        XCTAssertEqual(store.roleBindings[profile.displayRoles[0].id]?.lastKnownIdentifier, "main")
+        XCTAssertEqual(store.activeProfileID, profileID)
+        XCTAssertEqual(store.manualPinnedProfileID, profileID)
+    }
+
+    func testNewCopiedProfileUsesChosenNameAndCopiesCurrentConfiguration() throws {
+        let (defaults, suite) = isolatedDefaults("CopiedProfile")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: {
+                [self.profileDisplay("main", isMain: true, serial: "1")]
+            }
+        )
+        _ = store.addWorkspace()
+        let source = store.activeProfile
+
+        let copiedID = try XCTUnwrap(
+            store.createProfile(named: "  Desk  ", source: .currentProfile)
+        )
+        let copied = try XCTUnwrap(store.profiles.first(where: { $0.id == copiedID }))
+
+        XCTAssertEqual(copied.name, "Desk")
+        XCTAssertEqual(copied.workspaces.map(\.name), source.workspaces.map(\.name))
+        XCTAssertEqual(copied.workspaces.map(\.key), source.workspaces.map(\.key))
+        XCTAssertTrue(Set(copied.workspaces.map(\.id)).isDisjoint(with: source.workspaces.map(\.id)))
+        XCTAssertEqual(copied.displayMode, source.displayMode)
+    }
+
+    func testNewProfileRejectsBlankNameWithoutChangingLibrary() {
+        let (defaults, suite) = isolatedDefaults("BlankProfileName")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let store = SettingsStore(defaults: defaults, ubiquitousStore: nil)
+        let profiles = store.profiles
+
+        XCTAssertNil(store.createProfile(named: "  \n ", source: .scratch))
+        XCTAssertEqual(store.profiles, profiles)
+    }
+
+    func testRenameProfileTrimsUniquifiesAndRejectsBlankNames() throws {
+        let (defaults, suite) = isolatedDefaults("RenameProfile")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let store = SettingsStore(defaults: defaults, ubiquitousStore: nil)
+        let originalID = store.activeProfileID
+        let secondID = try XCTUnwrap(
+            store.createProfile(named: "Second", source: .currentProfile)
+        )
+
+        store.renameProfile(originalID, to: "  Home  ")
+        store.renameProfile(secondID, to: "Home")
+        XCTAssertEqual(store.profiles.first(where: { $0.id == originalID })?.name, "Home")
+        XCTAssertEqual(store.profiles.first(where: { $0.id == secondID })?.name, "Home 2")
+
+        store.renameProfile(secondID, to: "  \n ")
+        XCTAssertEqual(store.profiles.first(where: { $0.id == secondID })?.name, "Home 2")
+    }
+
     func testProfileCrudCleansLocalReferencesAndProtectsOnlyRemainingProfile() throws {
         let (defaults, suite) = isolatedDefaults("ProfileCrud")
         defer { defaults.removePersistentDomain(forName: suite) }

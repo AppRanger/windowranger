@@ -293,6 +293,110 @@ final class WakeReconciliationTests: XCTestCase {
         ))
     }
 
+    func testFullscreenObservationLatchesAcrossFailuresAndRequiresTwoFalseReadsToExit() {
+        XCTAssertEqual(
+            FullscreenSessionPolicy.resolve(
+                observation: .trueValue,
+                hadSession: false,
+                consecutiveAuthoritativeFalseObservations: 0
+            ),
+            FullscreenObservationResolution(
+                isFullscreen: true,
+                consecutiveAuthoritativeFalseObservations: 0
+            )
+        )
+        XCTAssertEqual(
+            FullscreenSessionPolicy.resolve(
+                observation: .unavailable,
+                hadSession: true,
+                consecutiveAuthoritativeFalseObservations: 0
+            ),
+            FullscreenObservationResolution(
+                isFullscreen: true,
+                consecutiveAuthoritativeFalseObservations: 0
+            )
+        )
+        XCTAssertFalse(FullscreenSessionPolicy.resolve(
+            observation: .unsupported,
+            hadSession: false,
+            consecutiveAuthoritativeFalseObservations: 0
+        ).isFullscreen)
+
+        let settling = FullscreenSessionPolicy.resolve(
+            observation: .falseValue,
+            hadSession: true,
+            consecutiveAuthoritativeFalseObservations: 0
+        )
+        XCTAssertTrue(settling.isFullscreen)
+        XCTAssertEqual(settling.consecutiveAuthoritativeFalseObservations, 1)
+        XCTAssertFalse(FullscreenSessionPolicy.resolve(
+            observation: .falseValue,
+            hadSession: true,
+            consecutiveAuthoritativeFalseObservations: 1
+        ).isFullscreen)
+    }
+
+    func testFullscreenGameQuietModeStillChecksExitAndRunsPeriodicBroadDiscovery() {
+        XCTAssertTrue(FullscreenSessionPolicy.shouldPerformBroadRefresh(
+            hasForegroundGameSession: false,
+            focusedGameObservation: nil,
+            timeSinceBroadRefresh: 0
+        ))
+        XCTAssertFalse(FullscreenSessionPolicy.shouldPerformBroadRefresh(
+            hasForegroundGameSession: true,
+            focusedGameObservation: .trueValue,
+            timeSinceBroadRefresh: 0.75
+        ))
+        XCTAssertTrue(FullscreenSessionPolicy.shouldPerformBroadRefresh(
+            hasForegroundGameSession: true,
+            focusedGameObservation: .falseValue,
+            timeSinceBroadRefresh: 0.75
+        ))
+        XCTAssertTrue(FullscreenSessionPolicy.shouldPerformBroadRefresh(
+            hasForegroundGameSession: true,
+            focusedGameObservation: .unavailable,
+            timeSinceBroadRefresh: FullscreenSessionPolicy.quietBroadRefreshInterval
+        ))
+    }
+
+    func testFullscreenSessionAlwaysBlocksGeometryWrites() {
+        XCTAssertTrue(FullscreenSessionPolicy.allowsGeometryWrite(
+            hasFullscreenSession: false,
+            isTemporarilyDeferred: false
+        ))
+        XCTAssertFalse(FullscreenSessionPolicy.allowsGeometryWrite(
+            hasFullscreenSession: true,
+            isTemporarilyDeferred: false
+        ))
+        XCTAssertFalse(FullscreenSessionPolicy.allowsGeometryWrite(
+            hasFullscreenSession: false,
+            isTemporarilyDeferred: true
+        ))
+    }
+
+    func testDeclaredGameMetadataUsesSupportedPublicBundleSignals() {
+        XCTAssertTrue(FullscreenGameMetadataPolicy.isDeclaredGame(
+            supportsGameMode: true,
+            supportsGameControllerMode: nil,
+            applicationCategory: nil
+        ))
+        XCTAssertTrue(FullscreenGameMetadataPolicy.isDeclaredGame(
+            supportsGameMode: nil,
+            supportsGameControllerMode: nil,
+            applicationCategory: "PUBLIC.APP-CATEGORY.GAMES"
+        ))
+        XCTAssertTrue(FullscreenGameMetadataPolicy.isDeclaredGame(
+            supportsGameMode: nil,
+            supportsGameControllerMode: nil,
+            applicationCategory: "public.app-category.role-playing-games"
+        ))
+        XCTAssertFalse(FullscreenGameMetadataPolicy.isDeclaredGame(
+            supportsGameMode: false,
+            supportsGameControllerMode: false,
+            applicationCategory: "public.app-category.productivity"
+        ))
+    }
+
     func testWakeFocusRestoresPriorVisibleLocalWindowAndNeverParkedOrOtherDisplay() {
         let candidates = [
             WakeFocusCandidate(
@@ -377,6 +481,7 @@ final class WakeReconciliationTests: XCTestCase {
         )
 
         XCTAssertEqual(fields["is-fullscreen"], "true")
+        XCTAssertEqual(fields["fullscreen-observation"], "true")
         XCTAssertEqual(fields["is-minimized"], "false")
         XCTAssertNil(fields["title"])
         XCTAssertNil(fields["path"])

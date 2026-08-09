@@ -84,6 +84,7 @@ final class SettingsStore: ObservableObject {
         static let radialWheelDefinition = "radialWheelDefinition.v1"
         static let hotKeyConfiguration = "hotKeyConfiguration.v1"
         static let menuBarPresentationMode = "menuBarPresentationMode.v1"
+        static let menuBarHighlightColor = "menuBarHighlightColor.v1"
         static let focusFollowsMovedWindow = "focusFollowsMovedWindow.v1"
         static let automaticallyUnhideApplications = "automaticallyUnhideApplications.v1"
     }
@@ -162,6 +163,10 @@ final class SettingsStore: ObservableObject {
 
     @Published var menuBarPresentationMode: MenuBarPresentationMode {
         didSet { persistMenuBarPresentationMode() }
+    }
+
+    @Published var menuBarHighlightColor: MenuBarHighlightColor {
+        didSet { persistMenuBarHighlightColor() }
     }
 
     @Published var focusFollowsMovedWindow: Bool {
@@ -272,6 +277,10 @@ final class SettingsStore: ObservableObject {
         )
         menuBarPresentationMode = initialMenuBarPresentationMode
         defaults.set(initialMenuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
+        let initialMenuBarHighlightColor = defaults.string(forKey: Keys.menuBarHighlightColor)
+            .flatMap(MenuBarHighlightColor.init(hex:)) ?? .default
+        menuBarHighlightColor = initialMenuBarHighlightColor
+        defaults.set(initialMenuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
         focusFollowsMovedWindow = defaults.object(forKey: Keys.focusFollowsMovedWindow) as? Bool ?? false
         automaticallyUnhideApplications = defaults.object(
             forKey: Keys.automaticallyUnhideApplications
@@ -375,6 +384,18 @@ final class SettingsStore: ObservableObject {
     @discardableResult
     func createProfileFromCurrentConfiguration(name: String = "New Profile") -> UUID {
         cloneProfile(activeProfile, proposedName: name)
+    }
+
+    @discardableResult
+    func createProfile(named proposedName: String, source: ProfileCreationSource) -> UUID? {
+        let name = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+        switch source {
+        case .currentProfile:
+            return cloneProfile(activeProfile, proposedName: name)
+        case .scratch:
+            return createProfileFromScratch(proposedName: name)
+        }
     }
 
     @discardableResult
@@ -1046,22 +1067,61 @@ final class SettingsStore: ObservableObject {
 
     private func cloneProfile(_ source: WindowManagerProfile, proposedName: String) -> UUID {
         let clone = source.cloned(name: uniqueProfileName(proposedName))
-        var updated = profiles
-        updated.append(clone)
-        profiles = updated
-        var local = localProfileState
+        var clonedBindings: [UUID: WorkspaceDisplayPin] = [:]
         for (sourceRole, clonedRole) in zip(source.displayRoles, clone.displayRoles) {
-            if let binding = local.roleBindings[sourceRole.id] {
-                local.roleBindings[clonedRole.id] = binding
+            if let binding = localProfileState.roleBindings[sourceRole.id] {
+                clonedBindings[clonedRole.id] = binding
             }
         }
-        local.manualPinnedProfileID = clone.id
-        local.activeProfileID = clone.id
+        installCreatedProfile(clone, roleBindings: clonedBindings)
+        return clone.id
+    }
+
+    private func createProfileFromScratch(proposedName: String) -> UUID {
+        let workspaces = WorkspaceDefinition.freshDefaults()
+        let primaryRole = ProfileDisplayRole(name: "Primary Display")
+        let profile = WindowManagerProfile(
+            name: uniqueProfileName(proposedName),
+            workspaces: workspaces,
+            displayMode: .unified,
+            displayRoles: [primaryRole],
+            workspaceRoleAssignments: Dictionary(
+                uniqueKeysWithValues: workspaces.map { ($0.id, primaryRole.id) }
+            ),
+            appRules: []
+        )
+        let bindings: [UUID: WorkspaceDisplayPin]
+        if let mainDisplay = connectedDisplays.first(where: \.isMain) ?? connectedDisplays.first {
+            bindings = [
+                primaryRole.id: WorkspaceDisplayPin(
+                    lastKnownIdentifier: mainDisplay.identifier,
+                    fingerprint: mainDisplay.fingerprint
+                ),
+            ]
+        } else {
+            bindings = [:]
+        }
+        installCreatedProfile(profile, roleBindings: bindings)
+        return profile.id
+    }
+
+    private func installCreatedProfile(
+        _ profile: WindowManagerProfile,
+        roleBindings: [UUID: WorkspaceDisplayPin]
+    ) {
+        var updated = profiles
+        updated.append(profile)
+        profiles = updated
+        var local = localProfileState
+        for (roleID, binding) in roleBindings {
+            local.roleBindings[roleID] = binding
+        }
+        local.manualPinnedProfileID = profile.id
+        local.activeProfileID = profile.id
         localProfileState = local
         persistProfileLibrary()
         persistLocalProfileState()
-        activateProfile(clone.id, reason: .manualPin, source: "profile-created")
-        return clone.id
+        activateProfile(profile.id, reason: .manualPin, source: "profile-created")
     }
 
     private func removeImportedProfilesIfSafe(_ importedProfiles: [WindowManagerProfile]) {
@@ -1303,6 +1363,7 @@ final class SettingsStore: ObservableObject {
             ubiquitousStore.set(hotKeyData, forKey: Keys.hotKeyConfiguration)
         }
         ubiquitousStore.set(menuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
+        ubiquitousStore.set(menuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
         ubiquitousStore.set(focusFollowsMovedWindow, forKey: Keys.focusFollowsMovedWindow)
         ubiquitousStore.set(
             automaticallyUnhideApplications,
@@ -1335,6 +1396,12 @@ final class SettingsStore: ObservableObject {
         let remoteMenuBarPresentationMode = remoteMenuBarPresentationRawValue.map {
             MenuBarPresentationMode.migrated(from: $0)
         }
+        let remoteMenuBarHighlightRawValue = ubiquitousStore.string(
+            forKey: Keys.menuBarHighlightColor
+        )
+        let remoteMenuBarHighlightColor = remoteMenuBarHighlightRawValue.flatMap(
+            MenuBarHighlightColor.init(hex:)
+        )
         let remoteFocusFollowsMovedWindow = ubiquitousStore.object(
             forKey: Keys.focusFollowsMovedWindow
         ) as? Bool
@@ -1362,6 +1429,9 @@ final class SettingsStore: ObservableObject {
         }
         if ubiquitousStore.string(forKey: Keys.menuBarPresentationMode) == nil {
             ubiquitousStore.set(menuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
+        }
+        if remoteMenuBarHighlightRawValue == nil {
+            ubiquitousStore.set(menuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
         }
         if ubiquitousStore.object(forKey: Keys.focusFollowsMovedWindow) == nil {
             ubiquitousStore.set(focusFollowsMovedWindow, forKey: Keys.focusFollowsMovedWindow)
@@ -1452,6 +1522,16 @@ final class SettingsStore: ObservableObject {
                 forKey: Keys.menuBarPresentationMode
             )
         }
+        if let remoteMenuBarHighlightColor,
+           remoteMenuBarHighlightColor != menuBarHighlightColor {
+            menuBarHighlightColor = remoteMenuBarHighlightColor
+            defaults.set(remoteMenuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
+        }
+        if let remoteMenuBarHighlightColor {
+            ubiquitousStore.set(remoteMenuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
+        } else if remoteMenuBarHighlightRawValue != nil {
+            ubiquitousStore.set(menuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
+        }
         if let remoteFocusFollowsMovedWindow,
            remoteFocusFollowsMovedWindow != focusFollowsMovedWindow {
             focusFollowsMovedWindow = remoteFocusFollowsMovedWindow
@@ -1500,6 +1580,15 @@ final class SettingsStore: ObservableObject {
         defaults.set(menuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
         if iCloudSyncEnabled, let ubiquitousStore {
             ubiquitousStore.set(menuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
+            ubiquitousStore.synchronize()
+        }
+    }
+
+    private func persistMenuBarHighlightColor() {
+        guard !isApplyingRemoteChange else { return }
+        defaults.set(menuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
+        if iCloudSyncEnabled, let ubiquitousStore {
+            ubiquitousStore.set(menuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
             ubiquitousStore.synchronize()
         }
     }
@@ -1601,6 +1690,8 @@ final class SettingsStore: ObservableObject {
             )
         }
 
+        let isFreshInstall = defaults.data(forKey: Keys.profileConversionBackup) == nil
+            && !hasLegacyProfileConfiguration(defaults: defaults)
         let legacy: LegacyProfileConfiguration
         if let backupData = defaults.data(forKey: Keys.profileConversionBackup),
            let backup = try? JSONDecoder().decode(LegacyProfileConfiguration.self, from: backupData) {
@@ -1611,7 +1702,11 @@ final class SettingsStore: ObservableObject {
                 defaults.set(backup, forKey: Keys.profileConversionBackup)
             }
         }
-        let conversion = InitialProfileConverter.convert(legacy: legacy, connectedDisplays: displays)
+        let conversion = InitialProfileConverter.convert(
+            legacy: legacy,
+            connectedDisplays: displays,
+            profileName: isFreshInstall ? "Default" : "Current Setup"
+        )
         guard let libraryData = try? JSONEncoder().encode(conversion.library),
               let localData = try? JSONEncoder().encode(conversion.localState)
         else {
@@ -1688,6 +1783,16 @@ final class SettingsStore: ObservableObject {
             workspaceDisplayPins: pins,
             appRules: normalizedAppRules(rules)
         )
+    }
+
+    private static func hasLegacyProfileConfiguration(defaults: UserDefaults) -> Bool {
+        [
+            Keys.legacyWorkspaces,
+            Keys.legacyMultiDisplayMode,
+            Keys.legacyWorkspaceDisplayAssignments,
+            Keys.legacyWorkspaceDisplayPins,
+            Keys.legacyAppRules,
+        ].contains { defaults.object(forKey: $0) != nil }
     }
 
     private static func confirmProfileConversion(defaults: UserDefaults) {

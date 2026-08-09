@@ -65,6 +65,21 @@ enum AXAttributePresence: String, Equatable, Sendable {
     case unavailable
 }
 
+enum AXBooleanAttributeObservation: String, Equatable, Sendable {
+    case trueValue = "true"
+    case falseValue = "false"
+    case unsupported
+    case unavailable
+
+    var value: Bool? {
+        switch self {
+        case .trueValue: true
+        case .falseValue: false
+        case .unsupported, .unavailable: nil
+        }
+    }
+}
+
 struct WindowAdmissionMetadata: Equatable, Sendable {
     let bundleIdentifier: String?
     let role: String?
@@ -72,6 +87,7 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
     let windowLayer: Int?
     let isMinimized: Bool
     let isFullscreen: Bool
+    let fullscreenObservation: AXBooleanAttributeObservation
     let fullscreenButton: AXAttributePresence
     let closeButton: AXAttributePresence
 
@@ -82,6 +98,7 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
         windowLayer: Int?,
         isMinimized: Bool,
         isFullscreen: Bool = false,
+        fullscreenObservation: AXBooleanAttributeObservation? = nil,
         fullscreenButton: AXAttributePresence = .unavailable,
         closeButton: AXAttributePresence = .unavailable
     ) {
@@ -91,6 +108,8 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
         self.windowLayer = windowLayer
         self.isMinimized = isMinimized
         self.isFullscreen = isFullscreen
+        self.fullscreenObservation = fullscreenObservation
+            ?? (isFullscreen ? .trueValue : .falseValue)
         self.fullscreenButton = fullscreenButton
         self.closeButton = closeButton
     }
@@ -164,6 +183,30 @@ enum AccessibilityWindow {
         }
     }
 
+    /// Unlike a plain optional read, this preserves the difference between an authoritative false
+    /// value, a window that does not expose the attribute, and a temporarily failed AX request.
+    /// Full-screen sessions use that distinction to avoid becoming frame-write eligible merely
+    /// because a busy game stopped answering Accessibility for one discovery pass.
+    static func booleanAttributeObservation(
+        _ attribute: CFString,
+        of element: AXUIElement
+    ) -> AXBooleanAttributeObservation {
+        var value: CFTypeRef?
+        switch AXUIElementCopyAttributeValue(element, attribute, &value) {
+        case .success:
+            guard let boolean = value as? Bool else { return .unavailable }
+            return boolean ? .trueValue : .falseValue
+        case .noValue, .attributeUnsupported:
+            return .unsupported
+        default:
+            return .unavailable
+        }
+    }
+
+    static func fullscreenObservation(of element: AXUIElement) -> AXBooleanAttributeObservation {
+        booleanAttributeObservation(fullScreenAttribute, of: element)
+    }
+
     static func isAttributeSettable(_ attribute: CFString, of element: AXUIElement) -> Bool {
         var settable = DarwinBoolean(false)
         return AXUIElementIsAttributeSettable(element, attribute, &settable) == .success && settable.boolValue
@@ -214,15 +257,19 @@ enum AccessibilityWindow {
     static func admissionMetadata(
         of element: AXUIElement,
         bundleIdentifier: String?,
-        windowLayer: Int?
+        windowLayer: Int?,
+        fullscreenObservation suppliedFullscreenObservation: AXBooleanAttributeObservation? = nil,
+        effectiveFullscreen: Bool? = nil
     ) -> WindowAdmissionMetadata {
-        WindowAdmissionMetadata(
+        let fullscreenObservation = suppliedFullscreenObservation ?? self.fullscreenObservation(of: element)
+        return WindowAdmissionMetadata(
             bundleIdentifier: bundleIdentifier,
             role: copyAttribute(element, kAXRoleAttribute as CFString, as: String.self),
             subrole: copyAttribute(element, kAXSubroleAttribute as CFString, as: String.self),
             windowLayer: windowLayer,
             isMinimized: copyAttribute(element, kAXMinimizedAttribute as CFString, as: Bool.self) ?? false,
-            isFullscreen: copyAttribute(element, fullScreenAttribute, as: Bool.self) ?? false,
+            isFullscreen: effectiveFullscreen ?? fullscreenObservation.value ?? false,
+            fullscreenObservation: fullscreenObservation,
             fullscreenButton: attributePresence(kAXFullScreenButtonAttribute as CFString, of: element),
             closeButton: attributePresence(kAXCloseButtonAttribute as CFString, of: element)
         )

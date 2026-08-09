@@ -156,6 +156,10 @@ struct TiledPlacementPreview: Equatable, Sendable {
     let fingerprint: String
 }
 
+struct TiledDragObservation: Equatable, Sendable {
+    let swapTarget: WindowKey?
+}
+
 enum TiledPlacementHistoryDirection: String, Equatable, Sendable {
     case undo
     case redo
@@ -434,6 +438,41 @@ enum TiledLayoutEngine {
         return swapped
     }
 
+    /// Classifies a position-only move of the focused tiled window and resolves the tile under the
+    /// pointer. Resizes are deliberately excluded because they update split ratios through the
+    /// manual-resize path, while small position jitter remains ordinary layout correction.
+    static func observedDrag(
+        in tree: TiledNode,
+        focusedWindow: WindowKey,
+        observedFrame: WindowFrame,
+        pointerLocation: CGPoint?,
+        expectedFrames: [WindowKey: WindowFrame],
+        positionTolerance: CGFloat = 8,
+        sizeTolerance: CGFloat = 2
+    ) -> TiledDragObservation? {
+        guard positionTolerance.isFinite, positionTolerance >= 0,
+              sizeTolerance.isFinite, sizeTolerance >= 0,
+              tree.contains(focusedWindow),
+              (try? validated(tree, participants: Set(tree.windowKeys))) != nil,
+              Set(expectedFrames.keys) == Set(tree.windowKeys),
+              let expectedFrame = expectedFrames[focusedWindow]
+        else { return nil }
+
+        let sizeIsStable = abs(observedFrame.size.width - expectedFrame.size.width) <= sizeTolerance &&
+            abs(observedFrame.size.height - expectedFrame.size.height) <= sizeTolerance
+        let positionMoved = abs(observedFrame.position.x - expectedFrame.position.x) > positionTolerance ||
+            abs(observedFrame.position.y - expectedFrame.position.y) > positionTolerance
+        guard sizeIsStable, positionMoved else { return nil }
+
+        let target = pointerLocation.flatMap { pointer in
+            tree.windowKeys.first { key in
+                guard key != focusedWindow, let frame = expectedFrames[key] else { return false }
+                return CGRect(origin: frame.position, size: frame.size).contains(pointer)
+            }
+        }
+        return TiledDragObservation(swapTarget: target)
+    }
+
     /// Moves a focused leaf across the split that directly contains it by exchanging that leaf
     /// with the complete sibling branch. This is the structural BSP interpretation of one arrow:
     /// a compound sibling keeps its internal topology and ratios instead of donating whichever
@@ -589,6 +628,194 @@ enum TiledLayoutEngine {
 
         let result = resize(tree, bounds: rootBounds)
         guard result.foundNearest, result.changed,
+              (try? validated(result.node, participants: Set(tree.windowKeys))) != nil
+        else { return nil }
+        return result.node
+    }
+
+    /// Reconciles a user-driven resize of one tiled window back into the BSP tree. Only an edge
+    /// that previously coincided with an internal divider can change a ratio: moving a whole
+    /// window or dragging an outer display edge therefore remains a no-op and the normal layout
+    /// pass restores it. A corner resize may update one horizontal and one vertical ancestor.
+    static func resizedToMatchObservedFrame(
+        _ tree: TiledNode,
+        focusedWindow: WindowKey,
+        observedFrame: WindowFrame,
+        displayBounds: CGRect,
+        configuration: WorkspaceLayoutConfiguration,
+        edgeTolerance: CGFloat = 2,
+        minimumWindowLength: Double = 120
+    ) -> TiledNode? {
+        let observed = CGRect(origin: observedFrame.position, size: observedFrame.size)
+        guard edgeTolerance.isFinite, edgeTolerance >= 0,
+              minimumWindowLength.isFinite, minimumWindowLength > 0,
+              displayBounds.minX.isFinite, displayBounds.minY.isFinite,
+              displayBounds.width.isFinite, displayBounds.height.isFinite,
+              displayBounds.width > 0, displayBounds.height > 0,
+              observed.minX.isFinite, observed.minY.isFinite,
+              observed.width.isFinite, observed.height.isFinite,
+              observed.width > 0, observed.height > 0,
+              tree.contains(focusedWindow),
+              (try? validated(tree, participants: Set(tree.windowKeys))) != nil,
+              let expectedFrames = try? frames(
+                  for: tree,
+                  in: displayBounds,
+                  configuration: configuration
+              ),
+              let expectedFrame = expectedFrames[focusedWindow]
+        else { return nil }
+
+        let expected = CGRect(origin: expectedFrame.position, size: expectedFrame.size)
+        let changedWidth = abs(observed.width - expected.width) > edgeTolerance
+        let changedHeight = abs(observed.height - expected.height) > edgeTolerance
+        guard changedWidth || changedHeight else { return nil }
+
+        let gaps = configuration.clamped().gaps
+        let rootBounds = inset(displayBounds, gaps: gaps)
+
+        func boundedRatio(_ proposed: Double, availableLength: CGFloat) -> Double? {
+            let available = Double(availableLength)
+            guard proposed.isFinite, available.isFinite, available > 1 else { return nil }
+            let minimum = min(max(1 / available, minimumWindowLength / available), 0.4)
+            let lower = max(minimumSplitRatio, minimum)
+            let upper = min(maximumSplitRatio, 1 - minimum)
+            guard lower < upper else { return nil }
+            return min(max(proposed, lower), upper)
+        }
+
+        func reconcile(
+            _ node: TiledNode,
+            originalBounds: CGRect,
+            adjustedBounds: CGRect
+        ) -> (node: TiledNode, changed: Bool) {
+            guard case let .split(axis, ratio, first, second) = node else {
+                return (node, false)
+            }
+            let originalGeometry = splitGeometry(
+                axis: axis,
+                ratio: ratio,
+                bounds: originalBounds,
+                gaps: gaps
+            )
+            let focusedInFirst = first.contains(focusedWindow)
+            let focusedInSecond = !focusedInFirst && second.contains(focusedWindow)
+            guard focusedInFirst || focusedInSecond else { return (node, false) }
+
+            var reconciledRatio = ratio
+            var ratioChanged = false
+
+            switch (axis, focusedInFirst) {
+            case (.horizontal, true)
+                where changedWidth &&
+                    abs(expected.maxX - originalGeometry.first.maxX) <= edgeTolerance:
+                let adjustedGeometry = splitGeometry(
+                    axis: axis,
+                    ratio: ratio,
+                    bounds: adjustedBounds,
+                    gaps: gaps
+                )
+                let firstLength = observed.maxX - adjustedBounds.minX
+                if let target = boundedRatio(
+                    Double(firstLength / adjustedGeometry.availableLength),
+                    availableLength: adjustedGeometry.availableLength
+                ), abs(target - ratio) > 0.000_001 {
+                    reconciledRatio = target
+                    ratioChanged = true
+                }
+            case (.horizontal, false)
+                where changedWidth &&
+                    abs(expected.minX - originalGeometry.second.minX) <= edgeTolerance:
+                let adjustedGeometry = splitGeometry(
+                    axis: axis,
+                    ratio: ratio,
+                    bounds: adjustedBounds,
+                    gaps: gaps
+                )
+                let innerGap = adjustedGeometry.second.minX - adjustedGeometry.first.maxX
+                let firstLength = observed.minX - adjustedBounds.minX - innerGap
+                if let target = boundedRatio(
+                    Double(firstLength / adjustedGeometry.availableLength),
+                    availableLength: adjustedGeometry.availableLength
+                ), abs(target - ratio) > 0.000_001 {
+                    reconciledRatio = target
+                    ratioChanged = true
+                }
+            case (.vertical, true)
+                where changedHeight &&
+                    abs(expected.maxY - originalGeometry.first.maxY) <= edgeTolerance:
+                let adjustedGeometry = splitGeometry(
+                    axis: axis,
+                    ratio: ratio,
+                    bounds: adjustedBounds,
+                    gaps: gaps
+                )
+                let firstLength = observed.maxY - adjustedBounds.minY
+                if let target = boundedRatio(
+                    Double(firstLength / adjustedGeometry.availableLength),
+                    availableLength: adjustedGeometry.availableLength
+                ), abs(target - ratio) > 0.000_001 {
+                    reconciledRatio = target
+                    ratioChanged = true
+                }
+            case (.vertical, false)
+                where changedHeight &&
+                    abs(expected.minY - originalGeometry.second.minY) <= edgeTolerance:
+                let adjustedGeometry = splitGeometry(
+                    axis: axis,
+                    ratio: ratio,
+                    bounds: adjustedBounds,
+                    gaps: gaps
+                )
+                let innerGap = adjustedGeometry.second.minY - adjustedGeometry.first.maxY
+                let firstLength = observed.minY - adjustedBounds.minY - innerGap
+                if let target = boundedRatio(
+                    Double(firstLength / adjustedGeometry.availableLength),
+                    availableLength: adjustedGeometry.availableLength
+                ), abs(target - ratio) > 0.000_001 {
+                    reconciledRatio = target
+                    ratioChanged = true
+                }
+            default:
+                break
+            }
+
+            let adjustedGeometry = splitGeometry(
+                axis: axis,
+                ratio: reconciledRatio,
+                bounds: adjustedBounds,
+                gaps: gaps
+            )
+            let child = focusedInFirst
+                ? reconcile(
+                    first,
+                    originalBounds: originalGeometry.first,
+                    adjustedBounds: adjustedGeometry.first
+                )
+                : reconcile(
+                    second,
+                    originalBounds: originalGeometry.second,
+                    adjustedBounds: adjustedGeometry.second
+                )
+            let reconciledFirst = focusedInFirst ? child.node : first
+            let reconciledSecond = focusedInSecond ? child.node : second
+
+            return (
+                .split(
+                    axis: axis,
+                    ratio: reconciledRatio,
+                    first: reconciledFirst,
+                    second: reconciledSecond
+                ),
+                child.changed || ratioChanged
+            )
+        }
+
+        let result = reconcile(
+            tree,
+            originalBounds: rootBounds,
+            adjustedBounds: rootBounds
+        )
+        guard result.changed,
               (try? validated(result.node, participants: Set(tree.windowKeys))) != nil
         else { return nil }
         return result.node

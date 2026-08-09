@@ -105,6 +105,88 @@ struct WindowRefreshReport: Equatable, Sendable {
     let managedWindowCount: Int
 }
 
+struct FullscreenObservationResolution: Equatable, Sendable {
+    let isFullscreen: Bool
+    let consecutiveAuthoritativeFalseObservations: Int
+}
+
+enum FullscreenSessionPolicy {
+    static let quietBroadRefreshInterval: TimeInterval = 2
+
+    /// Enter immediately, but require two authoritative false observations to leave. Unsupported
+    /// or failed reads retain an existing session and are harmless for ordinary, never-fullscreen
+    /// windows. This gives AppKit's fullscreen transition one settling interval without turning an
+    /// AX timeout into permission for a frame write.
+    static func resolve(
+        observation: AXBooleanAttributeObservation,
+        hadSession: Bool,
+        consecutiveAuthoritativeFalseObservations: Int
+    ) -> FullscreenObservationResolution {
+        switch observation {
+        case .trueValue:
+            return FullscreenObservationResolution(
+                isFullscreen: true,
+                consecutiveAuthoritativeFalseObservations: 0
+            )
+        case .falseValue:
+            guard hadSession, consecutiveAuthoritativeFalseObservations == 0 else {
+                return FullscreenObservationResolution(
+                    isFullscreen: false,
+                    consecutiveAuthoritativeFalseObservations: 0
+                )
+            }
+            return FullscreenObservationResolution(
+                isFullscreen: true,
+                consecutiveAuthoritativeFalseObservations: 1
+            )
+        case .unsupported, .unavailable:
+            return FullscreenObservationResolution(
+                isFullscreen: hadSession,
+                consecutiveAuthoritativeFalseObservations: 0
+            )
+        }
+    }
+
+    static func shouldPerformBroadRefresh(
+        hasForegroundGameSession: Bool,
+        focusedGameObservation: AXBooleanAttributeObservation?,
+        timeSinceBroadRefresh: TimeInterval
+    ) -> Bool {
+        guard hasForegroundGameSession else { return true }
+        if focusedGameObservation == .falseValue { return true }
+        return timeSinceBroadRefresh >= quietBroadRefreshInterval
+    }
+
+    static func allowsGeometryWrite(
+        hasFullscreenSession: Bool,
+        isTemporarilyDeferred: Bool
+    ) -> Bool {
+        !hasFullscreenSession && !isTemporarilyDeferred
+    }
+}
+
+enum FullscreenGameMetadataPolicy {
+    static func isDeclaredGame(
+        supportsGameMode: Bool?,
+        supportsGameControllerMode: Bool?,
+        applicationCategory: String?
+    ) -> Bool {
+        let normalizedCategory = applicationCategory?.lowercased()
+        return supportsGameMode == true ||
+            supportsGameControllerMode == true ||
+            normalizedCategory == "public.app-category.games" ||
+            normalizedCategory?.hasSuffix("-games") == true
+    }
+}
+
+struct FullscreenGameSessionSnapshot: Equatable, Sendable {
+    let processIdentifier: pid_t
+    let windowIdentifier: CGWindowID
+    let bundleIdentifier: String?
+    let workspaceID: UUID
+    let displayIdentifier: String
+}
+
 /// Pure lifecycle rules for AX window snapshots. A successful `AXWindows` read is authoritative
 /// for that process, so a missing window (including an inactive native tab that has closed) is
 /// removed. An incomplete/failed read is not evidence of closure and retains prior state.
@@ -528,6 +610,7 @@ final class WorkspaceEngine {
     var onTiledPlacementCommitted: ((TiledPlacementUndoTransaction) -> Void)?
     var onCommandFeedback: ((CommandFeedbackRequest) -> Void)?
     var onWorkspaceDisplayAssignmentsChanged: (([UUID: String]) -> Void)?
+    var onFullscreenGameSessionChanged: ((FullscreenGameSessionSnapshot?) -> Void)?
 
     private struct TrackedWindow {
         let key: WindowKey
@@ -546,6 +629,18 @@ final class WorkspaceEngine {
     private struct FocusedWindowSnapshot {
         let key: WindowKey
         let frame: WindowFrame?
+    }
+
+    private struct FullscreenWindowSession {
+        let key: WindowKey
+        var element: AXUIElement
+        var processIdentifier: pid_t
+        var bundleIdentifier: String?
+        var workspaceID: UUID
+        var displayIdentifier: String
+        var frame: WindowFrame?
+        var isDeclaredGame: Bool
+        let enteredAt: Date
     }
 
     private struct SleepFocusContext {
@@ -585,6 +680,18 @@ final class WorkspaceEngine {
         let placement: TiledPlacementCommitContext?
     }
 
+    private struct ManualTiledDragSession: Equatable {
+        let focusedWindow: WindowKey
+        let partition: TiledLayoutPartitionKey
+        let candidateTarget: WindowKey?
+    }
+
+    private enum ManualTiledMoveReconciliation: Equatable {
+        case none
+        case dragInProgress
+        case swapped
+    }
+
     private let queue = DispatchQueue(label: "com.chris.WindowManager.workspace-engine", qos: .userInitiated)
     private var timer: DispatchSourceTimer?
     private var workspaces: [WorkspaceDefinition]
@@ -603,6 +710,7 @@ final class WorkspaceEngine {
     private var tiledTrees: [TiledLayoutPartitionKey: TiledNode]
     private var radialPlacementCommitContext: TiledPlacementCommitContext? = nil
     private var directionalMoveGestureContext: DirectionalMoveGestureContext? = nil
+    private var manualTiledDragSession: ManualTiledDragSession? = nil
     private var ignoredWindowKeys = Set<WindowKey>()
     private var admissionDecisionByWindow: [WindowKey: WindowAdmissionDecision] = [:]
     private var admissionMetadataByWindow: [WindowKey: WindowAdmissionMetadata] = [:]
@@ -625,7 +733,14 @@ final class WorkspaceEngine {
     private var sendOnlyFocusSuppression: [WindowKey: Date] = [:]
     private var lastAutomaticUnhideAttemptByProcess: [pid_t: Date] = [:]
     private var lastBackgroundLayoutSignature: String?
+    private var lastSolvedTiledFrames: [WindowKey: WindowFrame] = [:]
     private var temporarilyDeferredWindowKeys = Set<WindowKey>()
+    private var fullscreenSessions: [WindowKey: FullscreenWindowSession] = [:]
+    private var fullscreenAuthoritativeFalseCounts: [WindowKey: Int] = [:]
+    private var foregroundFullscreenGameSessionKey: WindowKey?
+    private var lastEmittedFullscreenGameSession: FullscreenGameSessionSnapshot?
+    private var declaredGameByBundleIdentifier: [String: Bool] = [:]
+    private var lastBroadWindowRefreshDate = Date.distantPast
     private var wakeReconciliationState = WakeReconciliationState()
     private var wakeReconciliationWorkItem: DispatchWorkItem?
     private var wakeAttemptIndex = 0
@@ -724,6 +839,17 @@ final class WorkspaceEngine {
                       !self.wakeReconciliationState.isPending,
                       self.windowServerSessionValidated
                 else { return }
+                let foregroundSession = self.foregroundFullscreenGameSessionKey.flatMap {
+                    self.fullscreenSessions[$0]
+                }
+                let focusedGameObservation = foregroundSession.map {
+                    AccessibilityWindow.fullscreenObservation(of: $0.element)
+                }
+                guard FullscreenSessionPolicy.shouldPerformBroadRefresh(
+                    hasForegroundGameSession: foregroundSession != nil,
+                    focusedGameObservation: focusedGameObservation,
+                    timeSinceBroadRefresh: Date().timeIntervalSince(self.lastBroadWindowRefreshDate)
+                ) else { return }
                 self.refreshWindows(followExternalFocus: true)
                 self.persistState(preservingPendingRestores: Date() < self.startupGraceDeadline)
                 self.emitState()
@@ -754,6 +880,7 @@ final class WorkspaceEngine {
             wakeReconciliationWorkItem?.cancel()
             wakeReconciliationWorkItem = nil
             directionalMoveGestureContext = nil
+            manualTiledDragSession = nil
             invalidateFocusWorkForLifecycle()
             persistState(preservingPendingRestores: true, waitForCompletion: true)
             diagnostics.log(
@@ -827,6 +954,7 @@ final class WorkspaceEngine {
             )
             self.wakeReceivedAdditionalSignal = false
             self.directionalMoveGestureContext = nil
+            self.manualTiledDragSession = nil
             self.invalidateFocusWorkForLifecycle()
             self.lastBackgroundLayoutSignature = nil
             self.diagnostics.log(
@@ -853,6 +981,7 @@ final class WorkspaceEngine {
             wakeReconciliationWorkItem?.cancel()
             wakeReconciliationWorkItem = nil
             directionalMoveGestureContext = nil
+            manualTiledDragSession = nil
             // Preserve workspace membership and original frames before the safety escape hatch
             // places every managed window on the main display.
             persistState(preservingPendingRestores: true, waitForCompletion: true)
@@ -2778,6 +2907,7 @@ final class WorkspaceEngine {
     func applicationActivated(processIdentifier: pid_t) {
         queue.async { [weak self] in
             guard let self else { return }
+            self.noteApplicationActivation(processIdentifier: processIdentifier)
             guard Self.shouldProcessApplicationActivation(
                 processIdentifier: processIdentifier,
                 ownProcessIdentifier: self.ownProcessIdentifier
@@ -2832,7 +2962,7 @@ final class WorkspaceEngine {
             if let intendedTarget,
                intendedTarget.processIdentifier == processIdentifier,
                intendedTargetIsCurrent,
-               let tracked = self.windows[intendedTarget] {
+               let tracked = self.focusTargetWindow(intendedTarget) {
                 if let competingFocus = self.focusedWindowKey(),
                    self.ignoredWindowKeys.contains(competingFocus) {
                     self.diagnostics.log(
@@ -3575,6 +3705,232 @@ final class WorkspaceEngine {
             }
             return lhs.key.windowIdentifier < rhs.key.windowIdentifier
         }
+    }
+
+    /// Holds a position-only tiled drag in place while the pointer button is down, then swaps the
+    /// focused leaf with the tile under the release point. Returning true tells the refresh loop
+    /// not to run its normal corrective layout pass during the active drag.
+    private func reconcileManualTiledMove(
+        focusedWindow: WindowKey,
+        observedFrames: [WindowKey: WindowFrame],
+        displays: [DisplaySnapshot],
+        pointerLocation: CGPoint?,
+        isLeftMouseButtonPressed: Bool,
+        correlationID: String?
+    ) -> ManualTiledMoveReconciliation {
+        guard let tracked = windows[focusedWindow],
+              let observedFrame = observedFrames[focusedWindow],
+              isWorkspaceActive(tracked.workspaceID),
+              workspaceLayout(for: tracked.workspaceID) == .tiled,
+              fullscreenSessions[focusedWindow] == nil,
+              !temporarilyDeferredWindowKeys.contains(focusedWindow),
+              Self.shouldIncludeInLayout(
+                  layoutOverride: tracked.layoutOverride,
+                  admissionDecision: tracked.admissionDecision,
+                  rule: resolvedRule(for: tracked.bundleIdentifier)
+              ),
+              let display = targetDisplay(
+                  for: tracked,
+                  workspaceID: tracked.workspaceID,
+                  displays: displays,
+                  correlationID: correlationID
+              )
+        else {
+            manualTiledDragSession = nil
+            return .none
+        }
+
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier,
+            displays: displays,
+            correlationID: correlationID
+        )
+        let configuration = workspaceLayoutConfiguration(for: tracked.workspaceID)
+            ?? .aeroSpaceUserDefaults
+        let partition = TiledLayoutPartitionKey(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier
+        )
+        guard participants.count > 1,
+              participants.contains(focusedWindow),
+              let currentTree = TiledLayoutEngine.reconciled(
+                  tiledTrees[partition],
+                  windowKeys: participants,
+                  weights: participants.map {
+                      CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
+                  },
+                  orientation: configuration.orientation.resolved(for: display.usableBounds)
+              ), let expectedFrames = try? TiledLayoutEngine.frames(
+                  for: currentTree,
+                  in: display.usableBounds,
+                  configuration: configuration
+              ), let expectedFocusedFrame = expectedFrames[focusedWindow],
+              let lastSolvedFrame = lastSolvedTiledFrames[focusedWindow],
+              AccessibilityWindow.framesMatch(lastSolvedFrame, expectedFocusedFrame),
+              let drag = TiledLayoutEngine.observedDrag(
+                  in: currentTree,
+                  focusedWindow: focusedWindow,
+                  observedFrame: observedFrame,
+                  pointerLocation: pointerLocation,
+                  expectedFrames: expectedFrames
+              )
+        else {
+            if !isLeftMouseButtonPressed {
+                manualTiledDragSession = nil
+            }
+            return .none
+        }
+
+        let session = ManualTiledDragSession(
+            focusedWindow: focusedWindow,
+            partition: partition,
+            candidateTarget: drag.swapTarget
+        )
+        if isLeftMouseButtonPressed {
+            if manualTiledDragSession != session {
+                diagnostics.log(
+                    category: "manual-move",
+                    event: "drag-candidate",
+                    correlation: correlationID,
+                    fields: [
+                        "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                        "display": Self.shortIdentifier(display.identifier),
+                        "window": Self.diagnosticWindowKey(focusedWindow),
+                        "target": drag.swapTarget.map(Self.diagnosticWindowKey) ?? "none",
+                    ]
+                )
+            }
+            manualTiledDragSession = session
+            return .dragInProgress
+        }
+
+        let priorSession = manualTiledDragSession
+        manualTiledDragSession = nil
+        let target = drag.swapTarget ?? (pointerLocation == nil &&
+            priorSession?.focusedWindow == focusedWindow &&
+            priorSession?.partition == partition
+                ? priorSession?.candidateTarget
+                : nil)
+        guard let target,
+              participants.contains(target),
+              let swappedTree = TiledLayoutEngine.swappingWindows(
+                  focusedWindow,
+                  target,
+                  in: currentTree
+              ), let effectiveShares = TiledLayoutEngine.leafShares(swappedTree)
+        else { return .none }
+
+        tiledTrees[partition] = swappedTree
+        for (index, key) in swappedTree.windowKeys.enumerated() {
+            windows[key]?.layoutOrder = index
+            windows[key]?.layoutWeight = effectiveShares[key] ?? 1
+        }
+        lastFocusedWindow[tracked.workspaceID] = focusedWindow
+        radialPlacementCommitContext = nil
+        directionalMoveGestureContext = nil
+        lastBackgroundLayoutSignature = nil
+        diagnostics.log(
+            category: "manual-move",
+            event: "windows-swapped",
+            correlation: correlationID,
+            fields: [
+                "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                "display": Self.shortIdentifier(display.identifier),
+                "window": Self.diagnosticWindowKey(focusedWindow),
+                "swapped-with": Self.diagnosticWindowKey(target),
+                "tree-before": TiledLayoutEngine.fingerprint(currentTree),
+                "tree-after": TiledLayoutEngine.fingerprint(swappedTree),
+            ]
+        )
+        return .swapped
+    }
+
+    /// A normal refresh sees an externally resized tiled window before the background layout pass.
+    /// Convert a focused window's moved internal edge into tree ratios first, so that pass resizes
+    /// its neighbours around the user's divider rather than restoring the previous geometry.
+    private func reconcileManualTiledResize(
+        focusedWindow: WindowKey,
+        observedFrames: [WindowKey: WindowFrame],
+        displays: [DisplaySnapshot],
+        correlationID: String?
+    ) {
+        guard let tracked = windows[focusedWindow],
+              let observedFrame = observedFrames[focusedWindow],
+              isWorkspaceActive(tracked.workspaceID),
+              workspaceLayout(for: tracked.workspaceID) == .tiled,
+              fullscreenSessions[focusedWindow] == nil,
+              !temporarilyDeferredWindowKeys.contains(focusedWindow),
+              Self.shouldIncludeInLayout(
+                  layoutOverride: tracked.layoutOverride,
+                  admissionDecision: tracked.admissionDecision,
+                  rule: resolvedRule(for: tracked.bundleIdentifier)
+              ),
+              let display = targetDisplay(
+                  for: tracked,
+                  workspaceID: tracked.workspaceID,
+                  displays: displays,
+                  correlationID: correlationID
+              )
+        else { return }
+
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier,
+            displays: displays,
+            correlationID: correlationID
+        )
+        guard participants.count > 1, participants.contains(focusedWindow) else { return }
+
+        let configuration = workspaceLayoutConfiguration(for: tracked.workspaceID)
+            ?? .aeroSpaceUserDefaults
+        let partition = TiledLayoutPartitionKey(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier
+        )
+        guard let currentTree = TiledLayoutEngine.reconciled(
+            tiledTrees[partition],
+            windowKeys: participants,
+            weights: participants.map {
+                CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
+            },
+            orientation: configuration.orientation.resolved(for: display.usableBounds)
+        ), let expectedFrames = try? TiledLayoutEngine.frames(
+            for: currentTree,
+            in: display.usableBounds,
+            configuration: configuration
+        ), let expectedFocusedFrame = expectedFrames[focusedWindow],
+              let lastSolvedFrame = lastSolvedTiledFrames[focusedWindow],
+              AccessibilityWindow.framesMatch(lastSolvedFrame, expectedFocusedFrame),
+              let resizedTree = TiledLayoutEngine.resizedToMatchObservedFrame(
+                  currentTree,
+                  focusedWindow: focusedWindow,
+                  observedFrame: observedFrame,
+                  displayBounds: display.usableBounds,
+                  configuration: configuration
+              ), let effectiveShares = TiledLayoutEngine.leafShares(resizedTree)
+        else { return }
+
+        tiledTrees[partition] = resizedTree
+        for key in participants {
+            windows[key]?.layoutWeight = effectiveShares[key] ?? 1
+        }
+        radialPlacementCommitContext = nil
+        directionalMoveGestureContext = nil
+        lastBackgroundLayoutSignature = nil
+        diagnostics.log(
+            category: "manual-resize",
+            event: "tree-reweighted",
+            correlation: correlationID,
+            fields: [
+                "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                "display": Self.shortIdentifier(display.identifier),
+                "window": Self.diagnosticWindowKey(focusedWindow),
+                "observed-frame": Self.diagnosticFrame(observedFrame),
+                "tree-before": TiledLayoutEngine.fingerprint(currentTree),
+                "tree-after": TiledLayoutEngine.fingerprint(resizedTree),
+            ]
+        )
     }
 
     private func orderedLayoutParticipants(
@@ -4769,12 +5125,18 @@ final class WorkspaceEngine {
         lastFocusedWindow.removeAll()
         lastObservedFocusedWindow = nil
         temporarilyDeferredWindowKeys.removeAll()
+        fullscreenSessions.removeAll()
+        fullscreenAuthoritativeFalseCounts.removeAll()
+        foregroundFullscreenGameSessionKey = nil
+        emitFullscreenGameSessionIfNeeded()
         focusCycleRejectedUntil.removeAll()
         sendOnlyFocusSuppression.removeAll()
         lastAutomaticUnhideAttemptByProcess.removeAll()
         tiledTrees.removeAll()
+        lastSolvedTiledFrames.removeAll()
         radialPlacementCommitContext = nil
         directionalMoveGestureContext = nil
+        manualTiledDragSession = nil
         invalidateFocusWorkForLifecycle()
     }
 
@@ -4786,6 +5148,7 @@ final class WorkspaceEngine {
         performAXWrites: Bool = true,
         observeFocus: Bool = true
     ) -> WindowRefreshReport {
+        lastBroadWindowRefreshDate = Date()
         let displays = Self.activeDisplays()
         let topologySignature = Self.displayTopologySignature(displays)
         let displayBounds = displays.map(\.bounds)
@@ -4829,6 +5192,7 @@ final class WorkspaceEngine {
         var enumeratedWindowKeys = Set<WindowKey>()
         var writeEligibleWindowKeys = Set<WindowKey>()
         var deferredWindowKeys = Set<WindowKey>()
+        var observedFrames: [WindowKey: WindowFrame] = [:]
         var evictedIgnoredManagedState = false
 
         for app in runningApplications {
@@ -4862,12 +5226,40 @@ final class WorkspaceEngine {
                     lastKnownWindowLayer[key] = observedLayer
                 }
                 let effectiveLayer = observedLayer ?? lastKnownWindowLayer[key]
+                let fullscreenObservation = AccessibilityWindow.fullscreenObservation(of: element)
+                let fullscreenResolution = FullscreenSessionPolicy.resolve(
+                    observation: fullscreenObservation,
+                    hadSession: fullscreenSessions[key] != nil,
+                    consecutiveAuthoritativeFalseObservations:
+                        fullscreenAuthoritativeFalseCounts[key] ?? 0
+                )
+                if fullscreenResolution.consecutiveAuthoritativeFalseObservations == 0 {
+                    fullscreenAuthoritativeFalseCounts.removeValue(forKey: key)
+                } else {
+                    fullscreenAuthoritativeFalseCounts[key] =
+                        fullscreenResolution.consecutiveAuthoritativeFalseObservations
+                }
                 let admissionMetadata = AccessibilityWindow.admissionMetadata(
                     of: element,
                     bundleIdentifier: app.bundleIdentifier,
-                    windowLayer: effectiveLayer
+                    windowLayer: effectiveLayer,
+                    fullscreenObservation: fullscreenObservation,
+                    effectiveFullscreen: fullscreenResolution.isFullscreen
                 )
                 let admissionDecision = AccessibilityWindow.admissionDecision(for: admissionMetadata)
+                let observedFrame = AccessibilityWindow.frame(of: element)
+                if let observedFrame {
+                    observedFrames[key] = observedFrame
+                }
+                reconcileFullscreenSession(
+                    key: key,
+                    element: element,
+                    application: app,
+                    metadata: admissionMetadata,
+                    observedFrame: observedFrame,
+                    displays: displays,
+                    correlationID: correlationID
+                )
                 recordAdmissionDecision(
                     admissionDecision,
                     metadata: admissionMetadata,
@@ -4897,7 +5289,7 @@ final class WorkspaceEngine {
                 // Minimized or temporarily unusual AX objects retain existing state, matching the
                 // prior behaviour, but are not newly admitted until they become manageable again.
                 guard admissionDecision.disposition.admitsNewWindow,
-                      let frame = AccessibilityWindow.frame(of: element)
+                      let frame = observedFrame
                 else {
                     if windows[key] != nil { deferredWindowKeys.insert(key) }
                     continue
@@ -5048,6 +5440,9 @@ final class WorkspaceEngine {
                 tiledTrees,
                 removedWindowKeys: removedTrackedWindowKeys
             )
+            lastSolvedTiledFrames = lastSolvedTiledFrames.filter {
+                !removedTrackedWindowKeys.contains($0.key)
+            }
             focusCycleRejectedUntil = focusCycleRejectedUntil.filter {
                 !removedTrackedWindowKeys.contains($0.key)
             }
@@ -5128,21 +5523,66 @@ final class WorkspaceEngine {
         sendOnlyFocusSuppression = sendOnlyFocusSuppression.filter {
             shouldRetainDiscoveryState($0.key)
         }
+        let expiredFullscreenSessionKeys = Set(fullscreenSessions.keys.filter {
+            !shouldRetainDiscoveryState($0)
+        })
+        if !expiredFullscreenSessionKeys.isEmpty {
+            fullscreenSessions = fullscreenSessions.filter { !expiredFullscreenSessionKeys.contains($0.key) }
+            fullscreenAuthoritativeFalseCounts = fullscreenAuthoritativeFalseCounts.filter {
+                !expiredFullscreenSessionKeys.contains($0.key)
+            }
+            if foregroundFullscreenGameSessionKey.map(expiredFullscreenSessionKeys.contains) == true {
+                foregroundFullscreenGameSessionKey = nil
+            }
+        }
         writeEligibleWindowKeys = writeEligibleWindowKeys.intersection(windows.keys)
         deferredWindowKeys = deferredWindowKeys.intersection(windows.keys)
         temporarilyDeferredWindowKeys = deferredWindowKeys
 
         let focused = observeFocus ? focusedWindowKey() : nil
+        if observeFocus {
+            reconcileForegroundFullscreenGameSession(focusedWindow: focused)
+        } else if let foregroundFullscreenGameSessionKey,
+                  fullscreenSessions[foregroundFullscreenGameSessionKey]?.isDeclaredGame != true {
+            self.foregroundFullscreenGameSessionKey = nil
+        }
+        emitFullscreenGameSessionIfNeeded()
         if observeFocus, let focused,
            sendOnlyFocusSuppression[focused] == nil,
            let tracked = windows[focused] {
             lastFocusedWindow[tracked.workspaceID] = focused
         }
 
+        var manualTiledDragInProgress = false
+        if performAXWrites, !isStartup, !topologyChanged, let focused {
+            let moveReconciliation = reconcileManualTiledMove(
+                focusedWindow: focused,
+                observedFrames: observedFrames,
+                displays: displays,
+                pointerLocation: CGEvent(source: nil)?.location,
+                isLeftMouseButtonPressed: CGEventSource.buttonState(
+                    .combinedSessionState,
+                    button: .left
+                ),
+                correlationID: correlationID
+            )
+            manualTiledDragInProgress = moveReconciliation == .dragInProgress
+            if moveReconciliation == .none {
+                reconcileManualTiledResize(
+                    focusedWindow: focused,
+                    observedFrames: observedFrames,
+                    displays: displays,
+                    correlationID: correlationID
+                )
+            }
+        } else if isStartup || topologyChanged || focused == nil {
+            manualTiledDragSession = nil
+        }
+
         let layoutSignatureBeforeApply = backgroundLayoutSignature(displays: displays)
         if performAXWrites, topologyChanged, !isStartup {
             applyVisibility(displays: displays, correlationID: correlationID)
-        } else if performAXWrites, Self.shouldApplyBackgroundLayout(
+        } else if performAXWrites, !manualTiledDragInProgress, Self.shouldApplyBackgroundLayout(
             previousSignature: lastBackgroundLayoutSignature,
             currentSignature: layoutSignatureBeforeApply,
             isStartup: isStartup
@@ -5163,7 +5603,7 @@ final class WorkspaceEngine {
                 )
             }
         }
-        if performAXWrites {
+        if performAXWrites, !manualTiledDragInProgress {
             lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
         }
 
@@ -5197,6 +5637,169 @@ final class WorkspaceEngine {
         )
     }
 
+    private func reconcileFullscreenSession(
+        key: WindowKey,
+        element: AXUIElement,
+        application: NSRunningApplication,
+        metadata: WindowAdmissionMetadata,
+        observedFrame: WindowFrame?,
+        displays: [DisplaySnapshot],
+        correlationID: String?
+    ) {
+        guard metadata.isFullscreen else {
+            if let previous = fullscreenSessions.removeValue(forKey: key) {
+                fullscreenAuthoritativeFalseCounts.removeValue(forKey: key)
+                if foregroundFullscreenGameSessionKey == key {
+                    foregroundFullscreenGameSessionKey = nil
+                }
+                diagnostics.log(
+                    category: "fullscreen-session",
+                    event: "exited",
+                    correlation: correlationID,
+                    fields: [
+                        "window": Self.diagnosticWindowKey(key),
+                        "bundle": previous.bundleIdentifier ?? "unknown",
+                        "workspace": Self.shortIdentifier(previous.workspaceID.uuidString),
+                        "display": Self.shortIdentifier(previous.displayIdentifier),
+                        "declared-game": String(previous.isDeclaredGame),
+                        "frame-write": "false",
+                    ]
+                )
+            }
+            return
+        }
+
+        let previous = fullscreenSessions[key]
+        let placement = observedFrame.flatMap { Self.displayPlacement(for: $0, displays: displays) }
+        let displayIdentifier = placement?.displayIdentifier
+            ?? previous?.displayIdentifier
+            ?? windows[key]?.displayPlacement?.displayIdentifier
+            ?? displays.first(where: \.isMain)?.identifier
+            ?? displays.first?.identifier
+            ?? "main-display"
+        let workspaceID = windows[key]?.workspaceID
+            ?? previous?.workspaceID
+            ?? Self.initialWorkspaceID(
+                for: displayIdentifier,
+                mode: displayMode,
+                currentWorkspaceID: currentWorkspaceID,
+                activeWorkspaceIDByDisplay: activeWorkspaceIDByDisplay
+            )
+        let declaredGame = previous?.isDeclaredGame == true || isDeclaredGame(application)
+        let session = FullscreenWindowSession(
+            key: key,
+            element: element,
+            processIdentifier: application.processIdentifier,
+            bundleIdentifier: application.bundleIdentifier,
+            workspaceID: workspaceID,
+            displayIdentifier: displayIdentifier,
+            frame: observedFrame ?? previous?.frame,
+            isDeclaredGame: declaredGame,
+            enteredAt: previous?.enteredAt ?? Date()
+        )
+        fullscreenSessions[key] = session
+        if previous == nil {
+            diagnostics.log(
+                category: "fullscreen-session",
+                event: "entered",
+                correlation: correlationID,
+                fields: [
+                    "window": Self.diagnosticWindowKey(key),
+                    "bundle": application.bundleIdentifier ?? "unknown",
+                    "workspace": Self.shortIdentifier(workspaceID.uuidString),
+                    "display": Self.shortIdentifier(displayIdentifier),
+                    "declared-game": String(declaredGame),
+                    "fullscreen-observation": metadata.fullscreenObservation.rawValue,
+                    "frame-write": "false",
+                ]
+            )
+        }
+    }
+
+    private func isDeclaredGame(_ application: NSRunningApplication) -> Bool {
+        let cacheKey = application.bundleIdentifier?.lowercased()
+            ?? application.bundleURL?.standardizedFileURL.path.lowercased()
+            ?? "pid:\(application.processIdentifier)"
+        if let cached = declaredGameByBundleIdentifier[cacheKey] { return cached }
+        let bundle = application.bundleURL.flatMap { Bundle(url: $0) }
+        let declared = FullscreenGameMetadataPolicy.isDeclaredGame(
+            supportsGameMode: bundle?.object(forInfoDictionaryKey: "LSSupportsGameMode") as? Bool,
+            supportsGameControllerMode: bundle?.object(forInfoDictionaryKey: "GCSupportsGameMode") as? Bool,
+            applicationCategory: bundle?.object(forInfoDictionaryKey: "LSApplicationCategoryType") as? String
+        )
+        declaredGameByBundleIdentifier[cacheKey] = declared
+        return declared
+    }
+
+    private func reconcileForegroundFullscreenGameSession(focusedWindow: WindowKey?) {
+        if let focusedWindow,
+           let session = fullscreenSessions[focusedWindow],
+           session.isDeclaredGame {
+            foregroundFullscreenGameSessionKey = focusedWindow
+            lastFocusedWindow[session.workspaceID] = focusedWindow
+            return
+        }
+
+        guard let currentKey = foregroundFullscreenGameSessionKey,
+              fullscreenSessions[currentKey]?.isDeclaredGame == true
+        else {
+            foregroundFullscreenGameSessionKey = nil
+            return
+        }
+        guard let focusedWindow else {
+            // Game Overlay and fullscreen transitions can temporarily remove the system-wide AX
+            // focused window. Keep the session until a genuine regular application activates.
+            return
+        }
+        if windows[focusedWindow] != nil || fullscreenSessions[focusedWindow] != nil {
+            foregroundFullscreenGameSessionKey = nil
+            return
+        }
+        let focusedApplication = NSRunningApplication(
+            processIdentifier: focusedWindow.processIdentifier
+        )
+        if focusedWindow.processIdentifier != ownProcessIdentifier,
+           focusedApplication?.activationPolicy == .regular {
+            foregroundFullscreenGameSessionKey = nil
+        }
+    }
+
+    private func noteApplicationActivation(processIdentifier: pid_t) {
+        if let session = fullscreenSessions.values
+            .filter({ $0.processIdentifier == processIdentifier && $0.isDeclaredGame })
+            .sorted(by: { $0.enteredAt > $1.enteredAt })
+            .first {
+            foregroundFullscreenGameSessionKey = session.key
+            lastFocusedWindow[session.workspaceID] = session.key
+            emitFullscreenGameSessionIfNeeded()
+            return
+        }
+        guard processIdentifier != ownProcessIdentifier else { return }
+        if NSRunningApplication(processIdentifier: processIdentifier)?.activationPolicy == .regular,
+           windows.keys.contains(where: { $0.processIdentifier == processIdentifier }) {
+            foregroundFullscreenGameSessionKey = nil
+            emitFullscreenGameSessionIfNeeded()
+        }
+    }
+
+    private func emitFullscreenGameSessionIfNeeded() {
+        let snapshot = foregroundFullscreenGameSessionKey.flatMap { key -> FullscreenGameSessionSnapshot? in
+            guard let session = fullscreenSessions[key], session.isDeclaredGame else { return nil }
+            return FullscreenGameSessionSnapshot(
+                processIdentifier: session.processIdentifier,
+                windowIdentifier: session.key.windowIdentifier,
+                bundleIdentifier: session.bundleIdentifier,
+                workspaceID: session.workspaceID,
+                displayIdentifier: session.displayIdentifier
+            )
+        }
+        guard snapshot != lastEmittedFullscreenGameSession else { return }
+        lastEmittedFullscreenGameSession = snapshot
+        DispatchQueue.main.async { [weak self] in
+            self?.onFullscreenGameSessionChanged?(snapshot)
+        }
+    }
+
     static func shouldLogAdmissionDecisionChange(
         previous: WindowAdmissionDecision?,
         current: WindowAdmissionDecision
@@ -5219,6 +5822,7 @@ final class WorkspaceEngine {
             "layer-source": layerSource,
             "fullscreen-button": metadata.fullscreenButton.rawValue,
             "is-fullscreen": String(metadata.isFullscreen),
+            "fullscreen-observation": metadata.fullscreenObservation.rawValue,
             "is-minimized": String(metadata.isMinimized),
             "close-button": metadata.closeButton.rawValue,
             "disposition": decision.disposition.rawValue,
@@ -5303,6 +5907,7 @@ final class WorkspaceEngine {
         }
         focusCycleRejectedUntil.removeValue(forKey: key)
         sendOnlyFocusSuppression.removeValue(forKey: key)
+        lastSolvedTiledFrames.removeValue(forKey: key)
 
         if removal.changedManagedState {
             diagnostics.log(
@@ -6385,7 +6990,13 @@ final class WorkspaceEngine {
     ) where S.Element == TrackedWindow {
         var positionChanges: [PositionChange] = []
         var frameChanges: [FrameChange] = []
-        let windowsByWorkspace = Dictionary(grouping: Array(trackedWindows), by: \.workspaceID)
+        let writeEligibleWindows = trackedWindows.filter {
+            FullscreenSessionPolicy.allowsGeometryWrite(
+                hasFullscreenSession: fullscreenSessions[$0.key] != nil,
+                isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains($0.key)
+            )
+        }
+        let windowsByWorkspace = Dictionary(grouping: Array(writeEligibleWindows), by: \.workspaceID)
 
         for (workspaceID, workspaceWindows) in windowsByWorkspace {
             let layout = isWorkspaceActive(workspaceID) ? workspaceLayout(for: workspaceID) : .none
@@ -6405,6 +7016,15 @@ final class WorkspaceEngine {
                         rule: resolvedRule(for: $0.bundleIdentifier)
                     )
                 }
+            if layout == .tiled {
+                for tracked in stationaryWindows {
+                    lastSolvedTiledFrames.removeValue(forKey: tracked.key)
+                }
+            } else {
+                for tracked in workspaceWindows {
+                    lastSolvedTiledFrames.removeValue(forKey: tracked.key)
+                }
+            }
 
             for tracked in stationaryWindows {
                 let rule = resolvedRule(for: tracked.bundleIdentifier)
@@ -6480,9 +7100,11 @@ final class WorkspaceEngine {
                         configuration: configuration
                     ) {
                         tiledTrees[partition] = tree
-                        frameChanges.append(contentsOf: ordered.compactMap { tracked in
-                            frames[tracked.key].map { FrameChange(window: tracked, frame: $0) }
-                        })
+                        for tracked in ordered {
+                            guard let frame = frames[tracked.key] else { continue }
+                            lastSolvedTiledFrames[tracked.key] = frame
+                            frameChanges.append(FrameChange(window: tracked, frame: frame))
+                        }
                     }
                 } else {
                     let frames = Self.layoutFrames(
@@ -6563,6 +7185,10 @@ final class WorkspaceEngine {
         guard !workspaceIDs.isEmpty else { return }
         for key in windows.keys {
             guard var tracked = windows[key],
+                  FullscreenSessionPolicy.allowsGeometryWrite(
+                    hasFullscreenSession: fullscreenSessions[key] != nil,
+                    isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains(key)
+                  ),
                   workspaceIDs.contains(tracked.workspaceID),
                   isWorkspaceActive(tracked.workspaceID),
                   let frame = AccessibilityWindow.frame(of: tracked.element),
@@ -6867,7 +7493,13 @@ final class WorkspaceEngine {
         _ changes: [PositionChange],
         correlationID: String? = nil
     ) {
-        let changesByApplication = Dictionary(grouping: changes, by: { $0.window.processIdentifier })
+        let eligibleChanges = changes.filter {
+            FullscreenSessionPolicy.allowsGeometryWrite(
+                hasFullscreenSession: fullscreenSessions[$0.window.key] != nil,
+                isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains($0.window.key)
+            )
+        }
+        let changesByApplication = Dictionary(grouping: eligibleChanges, by: { $0.window.processIdentifier })
         for (processIdentifier, applicationChanges) in changesByApplication {
             AccessibilityWindow.withoutPositionAnimations(for: processIdentifier) {
                 for change in applicationChanges {
@@ -6895,6 +7527,11 @@ final class WorkspaceEngine {
         correlationID: String? = nil
     ) {
         let effectiveChanges = changes.compactMap { change -> (FrameChange, WindowFrame?)? in
+            guard FullscreenSessionPolicy.allowsGeometryWrite(
+                hasFullscreenSession: fullscreenSessions[change.window.key] != nil,
+                isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains(change.window.key)
+            )
+            else { return nil }
             let current = AccessibilityWindow.frame(of: change.window.element)
             if let current, AccessibilityWindow.framesMatch(current, change.frame) {
                 diagnostics.log(
@@ -6947,8 +7584,13 @@ final class WorkspaceEngine {
         let mainDisplayBounds = CGDisplayBounds(CGMainDisplayID())
         guard !mainDisplayBounds.isNull, !mainDisplayBounds.isEmpty else { return }
 
-        var pending = windows.values.map { tracked in
-            FrameChange(
+        var pending = windows.values.compactMap { tracked -> FrameChange? in
+            guard FullscreenSessionPolicy.allowsGeometryWrite(
+                hasFullscreenSession: fullscreenSessions[tracked.key] != nil,
+                isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains(tracked.key)
+            )
+            else { return nil }
+            return FrameChange(
                 window: tracked,
                 frame: Self.quitRecoveryFrame(
                     savedFrame: tracked.restoreFrame,
@@ -7355,6 +7997,19 @@ final class WorkspaceEngine {
             )
             return
         }
+        if let preferredKey = lastFocusedWindow[workspaceID],
+           let preferredSession = fullscreenSessions[preferredKey],
+           preferredSession.workspaceID == workspaceID,
+           preferredSession.displayIdentifier == destinationDisplayIdentifier {
+            focusFullscreenSessionAfterSwitch(
+                preferredSession,
+                workspaceID: workspaceID,
+                destinationDisplayIdentifier: destinationDisplayIdentifier,
+                correlationID: correlationID,
+                token: token
+            )
+            return
+        }
         let attemptOrder = orderedWorkspaceSwitchFocusCandidates(
             workspaceID: workspaceID,
             destinationDisplayIdentifier: destinationDisplayIdentifier,
@@ -7362,6 +8017,22 @@ final class WorkspaceEngine {
             correlationID: correlationID
         )
         guard let target = attemptOrder.first else {
+            if let fallbackSession = fullscreenSessions.values
+                .filter({
+                    $0.workspaceID == workspaceID &&
+                        $0.displayIdentifier == destinationDisplayIdentifier
+                })
+                .sorted(by: { $0.enteredAt > $1.enteredAt })
+                .first {
+                focusFullscreenSessionAfterSwitch(
+                    fallbackSession,
+                    workspaceID: workspaceID,
+                    destinationDisplayIdentifier: destinationDisplayIdentifier,
+                    correlationID: correlationID,
+                    token: token
+                )
+                return
+            }
             lastFocusedWindow.removeValue(forKey: workspaceID)
             recentInteractionFocusTarget = nil
             recentInteractionDisplayIdentifier = destinationDisplayIdentifier
@@ -7404,6 +8075,40 @@ final class WorkspaceEngine {
             correlationID: correlationID,
             token: token
         )
+    }
+
+    private func focusFullscreenSessionAfterSwitch(
+        _ session: FullscreenWindowSession,
+        workspaceID: UUID,
+        destinationDisplayIdentifier: String,
+        correlationID: String,
+        token: FocusVerificationToken
+    ) {
+        guard let focusTarget = focusTargetWindow(session.key) else { return }
+        lastFocusedWindow[workspaceID] = session.key
+        recentInteractionFocusTarget = session.key
+        recentInteractionDisplayIdentifier = destinationDisplayIdentifier
+        recentInteractionDisplayDeadline = Date().addingTimeInterval(1.75)
+        diagnostics.log(
+            category: "workspace-switch-focus",
+            event: "fullscreen-session-target-chosen",
+            correlation: correlationID,
+            fields: [
+                "window": Self.diagnosticWindowKey(session.key),
+                "workspace": Self.shortIdentifier(workspaceID.uuidString),
+                "display": Self.shortIdentifier(destinationDisplayIdentifier),
+                "declared-game": String(session.isDeclaredGame),
+                "geometry-write": "false",
+            ]
+        )
+        focusManagedWindow(
+            session.key,
+            tracked: focusTarget,
+            correlationID: correlationID,
+            token: token
+        )
+        persistState(preservingPendingRestores: true)
+        emitState()
     }
 
     private func orderedWorkspaceSwitchFocusCandidates(
@@ -7923,6 +8628,28 @@ final class WorkspaceEngine {
         }
         pendingFocusVerification = workItem
         queue.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func focusTargetWindow(_ key: WindowKey) -> TrackedWindow? {
+        if let tracked = windows[key] { return tracked }
+        guard let session = fullscreenSessions[key] else { return nil }
+        let fallbackFrame = session.frame ?? WindowFrame(position: .zero, size: CGSize(width: 1, height: 1))
+        return TrackedWindow(
+            key: key,
+            element: session.element,
+            processIdentifier: session.processIdentifier,
+            bundleIdentifier: session.bundleIdentifier,
+            workspaceID: session.workspaceID,
+            restoreFrame: fallbackFrame,
+            displayPlacement: nil,
+            layoutOverride: .automatic,
+            admissionDecision: WindowAdmissionDecision(
+                disposition: .temporarilyIneligible,
+                reason: .fullscreen
+            ),
+            layoutOrder: 0,
+            layoutWeight: 1
+        )
     }
 
     private func focusManagedWindow(

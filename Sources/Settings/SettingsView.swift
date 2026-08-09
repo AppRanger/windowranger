@@ -45,7 +45,11 @@ struct SettingsView: View {
             if navigation.searchText.isEmpty {
                 List(selection: Binding(
                     get: { Optional(navigation.selectedCategory) },
-                    set: { if let category = $0 { navigation.select(category) } }
+                    set: {
+                        if let category = $0, category != navigation.selectedCategory {
+                            navigation.select(category)
+                        }
+                    }
                 )) {
                     Section("WindowManager") {
                         sidebarRow(.general)
@@ -236,6 +240,16 @@ private struct GeneralSettingsView: View {
                     get: { launchAtLogin.isEnabled },
                     set: { launchAtLogin.setEnabled($0) }
                 ))
+                if let statusMessage = launchAtLogin.statusMessage {
+                    Text(statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(launchAtLogin.status == .notFound ? .red : .secondary)
+                }
+                if launchAtLogin.status == .requiresApproval {
+                    Button("Open Login Items Settings", systemImage: "gear") {
+                        launchAtLogin.openSystemSettings()
+                    }
+                }
                 Toggle("Sync settings with iCloud", isOn: $store.iCloudSyncEnabled)
                 Text("Named profile definitions and global preferences sync through your private iCloud key-value store. The active profile, automatic trigger mappings, live window state, and physical monitor bindings remain local to each Mac.")
                     .font(.caption)
@@ -252,13 +266,28 @@ private struct GeneralSettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                ColorPicker(
+                    "Highlight Colour",
+                    selection: Binding(
+                        get: { store.menuBarHighlightColor.color },
+                        set: { color in
+                            if let resolved = MenuBarHighlightColor(nsColor: NSColor(color)) {
+                                store.menuBarHighlightColor = resolved
+                            }
+                        }
+                    ),
+                    supportsOpacity: false
+                )
+                Text("Choose one highlight colour. WindowManager automatically derives readable labels, borders, and secondary active states. White keeps the menu bar monochrome.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 MenuBarSettingsPreview(snapshot: MenuBarPresentationResolver.preview(
                     mode: store.menuBarPresentationMode,
                     displayMode: store.multiDisplayMode,
                     workspaces: store.workspaces,
                     connectedDisplays: store.connectedDisplays,
                     workspaceDisplayAssignments: store.workspaceDisplayAssignments
-                ))
+                ), highlightColor: store.menuBarHighlightColor)
                 Text(store.menuBarPresentationMode.explanation)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -306,6 +335,12 @@ private struct GeneralSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            launchAtLogin.refresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            launchAtLogin.refresh()
+        }
     }
 
 }
@@ -317,6 +352,8 @@ private struct ProfilesSettingsView: View {
     @State private var pendingProfileDeletion: UUID?
     @State private var pendingProfileImport: ProfileImportPlan?
     @State private var transferNotice: ProfileTransferNotice?
+    @State private var isCreatingProfile = false
+    @State private var profileBeingRenamed: ProfileRenameRequest?
 
     init(store: SettingsStore) {
         self.store = store
@@ -326,213 +363,183 @@ private struct ProfilesSettingsView: View {
     }
 
     var body: some View {
-        Form {
-            Section("Current profile") {
-                Picker("Active configuration", selection: Binding(
-                    get: { store.activeProfileID },
-                    set: { store.selectProfile($0) }
-                )) {
+        HSplitView {
+            Form {
+                Section("Your Profiles") {
                     ForEach(store.profiles) { profile in
-                        Text(profile.name).tag(profile.id)
+                        profileRow(profile)
                     }
-                }
-                LabeledContent("Selection", value: store.activeProfileSelectionReason.title)
-                if store.manualPinnedProfileID != nil {
-                    Button("Resume Automatic", systemImage: "arrow.triangle.2.circlepath") {
-                        store.resumeAutomaticProfileSelection()
+                    Button("New Profile…", systemImage: "plus") {
+                        isCreatingProfile = true
                     }
-                    Text("This profile is pinned on this Mac. Wake, docking, timers, and display changes cannot clear the pin; only Resume Automatic can.")
+                    LabeledContent("Selection", value: store.activeProfileSelectionReason.title)
+                    if store.manualPinnedProfileID != nil {
+                        Button("Resume Automatic", systemImage: "arrow.triangle.2.circlepath") {
+                            store.resumeAutomaticProfileSelection()
+                        }
+                        Text("The active profile is pinned on this Mac until you resume automatic selection.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Automatic selection uses exact display mappings, dock state, then this Mac's default profile.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Profiles sync workspace definitions, layouts, display roles, assignments, and app rules. Open windows and physical display bindings stay local.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else {
-                    Text("Automatic selection uses the first matching rule in this order: exact display setup, docked or undocked, then this Mac's default profile.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
-            }
 
-            Section("Synced profile definitions") {
-                ForEach(store.profiles) { profile in
-                    HStack(spacing: 10) {
-                        Image(systemName: profile.id == store.activeProfileID
-                            ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(profile.id == store.activeProfileID ? Color.accentColor : .secondary)
-                        TextField("Profile name", text: Binding(
-                            get: {
-                                store.profiles.first(where: { $0.id == profile.id })?.name
-                                    ?? profile.name
-                            },
-                            set: { store.renameProfile(profile.id, to: $0) }
-                        ))
-                        Button {
-                            _ = store.duplicateProfile(profile.id)
-                        } label: {
-                            Image(systemName: "plus.square.on.square")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Duplicate profile")
-                        Button(role: .destructive) {
-                            pendingProfileDeletion = profile.id
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(store.profiles.count == 1)
-                        .help("Delete profile")
-                    }
-                }
-                Button("Create Profile from Current Configuration", systemImage: "plus") {
-                    _ = store.createProfileFromCurrentConfiguration()
-                }
-                Text("Profiles sync workspace definitions and order, workspace keys and layouts, display mode and abstract roles, workspace-to-role assignments, and the complete app-rule collection. They never contain open-window identities, membership, frames, or focus.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Transfer reusable profiles") {
-                HStack {
-                    Button("Export All Profiles…", systemImage: "square.and.arrow.up") {
-                        Task {
-                            do {
-                                if try await transferCoordinator.exportProfiles(store.profiles) {
+                Section("Import & Export") {
+                    HStack {
+                        Button("Import Profiles…", systemImage: "square.and.arrow.down") {
+                            Task {
+                                do {
+                                    pendingProfileImport = try await transferCoordinator.prepareImport(
+                                        existingProfiles: store.profiles
+                                    )
+                                } catch {
                                     transferNotice = ProfileTransferNotice(
-                                        title: "Profiles Exported",
-                                        message: "The portable file contains reusable profile definitions only."
+                                        title: "Could Not Import Profiles",
+                                        message: error.localizedDescription
                                     )
                                 }
-                            } catch {
-                                transferNotice = ProfileTransferNotice(
-                                    title: "Could Not Export Profiles",
-                                    message: error.localizedDescription
-                                )
                             }
                         }
-                    }
-                    Button("Import Profiles…", systemImage: "square.and.arrow.down") {
-                        Task {
-                            do {
-                                pendingProfileImport = try await transferCoordinator.prepareImport(
-                                    existingProfiles: store.profiles
-                                )
-                            } catch {
-                                transferNotice = ProfileTransferNotice(
-                                    title: "Could Not Import Profiles",
-                                    message: error.localizedDescription
-                                )
-                            }
-                        }
-                    }
-                }
-                Text("Export includes synced reusable definitions. Import previews and adds fresh copies; it never activates them or transfers this Mac's triggers, current selection, physical monitor bindings, runtime workspaces, or open windows.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Automatic selection on this Mac") {
-                profilePicker("Default profile", selection: Binding(
-                    get: { Optional(store.defaultProfileID) },
-                    set: { if let id = $0 { store.setDefaultProfile(id) } }
-                ), permitsNone: false)
-                profilePicker("When docked", selection: Binding(
-                    get: { store.dockedProfileID },
-                    set: { store.setDockedProfile($0) }
-                ))
-                profilePicker("When undocked", selection: Binding(
-                    get: { store.undockedProfileID },
-                    set: { store.setUndockedProfile($0) }
-                ))
-                Text("Docked/undocked applies only when this Mac is a portable: built-in display only is undocked; any active external display is docked. Desktop Macs fall through to an exact mapping or the local default.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Divider()
-                HStack {
-                    Text("Exact display setups").font(.headline)
-                    Spacer()
-                    Button("Map Current Displays", systemImage: "display.badge.plus") {
-                        _ = store.addExactTriggerForCurrentDisplays()
-                    }
-                    .disabled(store.connectedDisplays.isEmpty)
-                }
-                if store.exactProfileTriggers.isEmpty {
-                    Text("No exact display setup mappings on this Mac.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(store.exactProfileTriggers) { trigger in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(trigger.name)
-                                Text("\(trigger.displayPins.count) conservative monitor identities")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Picker("Profile", selection: Binding(
-                                get: { trigger.profileID },
-                                set: { store.setExactTrigger(trigger.id, profileID: $0) }
-                            )) {
-                                ForEach(store.profiles) { profile in
-                                    Text(profile.name).tag(profile.id)
+                        Button("Export All Profiles…", systemImage: "square.and.arrow.up") {
+                            Task {
+                                do {
+                                    if try await transferCoordinator.exportProfiles(store.profiles) {
+                                        transferNotice = ProfileTransferNotice(
+                                            title: "Profiles Exported",
+                                            message: "The portable file contains reusable profile definitions only."
+                                        )
+                                    }
+                                } catch {
+                                    transferNotice = ProfileTransferNotice(
+                                        title: "Could Not Export Profiles",
+                                        message: error.localizedDescription
+                                    )
                                 }
                             }
-                            .labelsHidden()
-                            .frame(width: 190)
-                            Button(role: .destructive) {
-                                store.removeExactTrigger(trigger.id)
-                            } label: {
-                                Image(systemName: "minus.circle")
-                            }
-                            .buttonStyle(.borderless)
                         }
                     }
+                    Text("Imported profiles are added without changing the active profile, local triggers, monitor bindings, or open windows.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Text("The default, exact mappings, dock rules, active selection, and manual pin are local. They never sync or cause another Mac to switch profiles.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
+            .formStyle(.grouped)
+            .frame(minWidth: 390, idealWidth: 430, maxWidth: 500, maxHeight: .infinity)
 
-            Section("Display roles") {
-                ForEach(store.activeProfile.displayRoles) { role in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            TextField("Role name", text: Binding(
-                                get: {
-                                    store.activeProfile.displayRoles.first(where: { $0.id == role.id })?.name
-                                        ?? role.name
-                                },
-                                set: { store.renameDisplayRole(role.id, to: $0) }
-                            ))
-                            Button(role: .destructive) {
-                                _ = store.deleteDisplayRole(role.id)
-                            } label: {
-                                Image(systemName: "trash")
-                            }
-                            .buttonStyle(.borderless)
-                            .disabled(store.activeProfile.displayRoles.count == 1)
+            Form {
+                Section("Automatic Selection") {
+                    profilePicker("Default profile", selection: Binding(
+                        get: { Optional(store.defaultProfileID) },
+                        set: { if let id = $0 { store.setDefaultProfile(id) } }
+                    ), permitsNone: false)
+                    profilePicker("When docked", selection: Binding(
+                        get: { store.dockedProfileID },
+                        set: { store.setDockedProfile($0) }
+                    ))
+                    profilePicker("When undocked", selection: Binding(
+                        get: { store.undockedProfileID },
+                        set: { store.setUndockedProfile($0) }
+                    ))
+                    Text("Dock rules apply to portable Macs. Desktop Macs fall through to an exact display mapping or the local default.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+                    HStack {
+                        Text("Exact display setups").font(.headline)
+                        Spacer()
+                        Button("Map Current Displays", systemImage: "display.2") {
+                            _ = store.addExactTriggerForCurrentDisplays()
                         }
-                        Picker("This Mac", selection: Binding<String?>(
-                            get: { store.roleBindings[role.id]?.lastKnownIdentifier },
-                            set: { store.bindDisplayRole(role.id, to: $0) }
-                        )) {
-                            Text("Unbound — safe main-display fallback").tag(nil as String?)
-                            ForEach(roleDisplayOptions(role.id)) { display in
-                                Text(display.name).tag(Optional(display.identifier))
+                        .disabled(store.connectedDisplays.isEmpty)
+                    }
+                    if store.exactProfileTriggers.isEmpty {
+                        Text("No exact display setup mappings on this Mac.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(store.exactProfileTriggers) { trigger in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(trigger.name)
+                                    Text("\(trigger.displayPins.count) conservative monitor identities")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Picker("Profile", selection: Binding(
+                                    get: { trigger.profileID },
+                                    set: { store.setExactTrigger(trigger.id, profileID: $0) }
+                                )) {
+                                    ForEach(store.profiles) { profile in
+                                        Text(profile.name).tag(profile.id)
+                                    }
+                                }
+                                .labelsHidden()
+                                .frame(width: 170)
+                                Button(role: .destructive) {
+                                    store.removeExactTrigger(trigger.id)
+                                } label: {
+                                    Image(systemName: "minus.circle")
+                                }
+                                .buttonStyle(.borderless)
                             }
-                        }
-                        if let note = roleBindingNote(role.id) {
-                            Text(note).font(.caption).foregroundStyle(.secondary)
                         }
                     }
+                    Text("Automatic selection rules and the active profile are local to this Mac and never cause another Mac to switch profiles.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Button("Add Display Role", systemImage: "plus") {
-                    _ = store.addDisplayRole()
+
+                Section("Display Roles") {
+                    ForEach(store.activeProfile.displayRoles) { role in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                TextField("Role name", text: Binding(
+                                    get: {
+                                        store.activeProfile.displayRoles.first(where: { $0.id == role.id })?.name
+                                            ?? role.name
+                                    },
+                                    set: { store.renameDisplayRole(role.id, to: $0) }
+                                ))
+                                Button(role: .destructive) {
+                                    _ = store.deleteDisplayRole(role.id)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(store.activeProfile.displayRoles.count == 1)
+                            }
+                            Picker("This Mac", selection: Binding<String?>(
+                                get: { store.roleBindings[role.id]?.lastKnownIdentifier },
+                                set: { store.bindDisplayRole(role.id, to: $0) }
+                            )) {
+                                Text("Unbound — safe main-display fallback").tag(nil as String?)
+                                ForEach(roleDisplayOptions(role.id)) { display in
+                                    Text(display.name).tag(Optional(display.identifier))
+                                }
+                            }
+                            if let note = roleBindingNote(role.id) {
+                                Text(note).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    Button("Add Display Role", systemImage: "plus") {
+                        _ = store.addDisplayRole()
+                    }
+                    Text("Role names and workspace assignments sync with the profile. Their physical monitor bindings stay on this Mac.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Text("Role names and workspace assignments sync as part of this profile. The fingerprint binding above is local to this Mac. Missing, disconnected, or ambiguous roles fall back safely without rewriting the synced assignment.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
+            .formStyle(.grouped)
+            .frame(minWidth: 430, maxWidth: .infinity, maxHeight: .infinity)
         }
-        .formStyle(.grouped)
         .confirmationDialog(
             "Delete this profile?",
             isPresented: Binding(
@@ -577,6 +584,26 @@ private struct ProfilesSettingsView: View {
                 }
             )
         }
+        .sheet(isPresented: $isCreatingProfile) {
+            NewProfileView(
+                currentProfileName: store.activeProfile.name,
+                cancel: { isCreatingProfile = false },
+                create: { name, source in
+                    _ = store.createProfile(named: name, source: source)
+                    isCreatingProfile = false
+                }
+            )
+        }
+        .sheet(item: $profileBeingRenamed) { request in
+            RenameProfileView(
+                currentName: request.currentName,
+                cancel: { profileBeingRenamed = nil },
+                rename: { name in
+                    store.renameProfile(request.id, to: name)
+                    profileBeingRenamed = nil
+                }
+            )
+        }
         .alert(item: $transferNotice) { notice in
             Alert(
                 title: Text(notice.title),
@@ -584,6 +611,75 @@ private struct ProfilesSettingsView: View {
                 dismissButton: .default(Text("OK"))
             )
         }
+    }
+
+    private func profileRow(_ profile: WindowManagerProfile) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                if profile.id != store.activeProfileID {
+                    store.selectProfile(profile.id)
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: profile.id == store.activeProfileID
+                        ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(
+                            profile.id == store.activeProfileID ? Color.accentColor : .secondary
+                        )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(profile.name)
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(.primary)
+                        Text(profileSummary(profile))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(profile.id == store.activeProfileID ? "Active profile" : "Use this profile")
+
+            Button {
+                profileBeingRenamed = ProfileRenameRequest(profile: profile)
+            } label: {
+                Image(systemName: "pencil")
+            }
+            .buttonStyle(.borderless)
+            .help("Rename profile")
+
+            Button(role: .destructive) {
+                pendingProfileDeletion = profile.id
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .disabled(store.profiles.count == 1)
+            .help("Delete profile")
+        }
+        .contextMenu {
+            Button("Use Profile") { store.selectProfile(profile.id) }
+                .disabled(profile.id == store.activeProfileID)
+            Button("Rename…") {
+                profileBeingRenamed = ProfileRenameRequest(profile: profile)
+            }
+            Divider()
+            Button("Delete", role: .destructive) {
+                pendingProfileDeletion = profile.id
+            }
+            .disabled(store.profiles.count == 1)
+        }
+    }
+
+    private func profileSummary(_ profile: WindowManagerProfile) -> String {
+        let workspaceLabel = profile.workspaces.count == 1 ? "workspace" : "workspaces"
+        let roleLabel = profile.displayRoles.count == 1 ? "display role" : "display roles"
+        let ruleLabel = profile.appRules.count == 1 ? "app rule" : "app rules"
+        return "\(profile.workspaces.count) \(workspaceLabel) · "
+            + "\(profile.displayRoles.count) \(roleLabel) · "
+            + "\(profile.appRules.count) \(ruleLabel)"
     }
 
     @ViewBuilder
@@ -623,6 +719,127 @@ private struct ProfilesSettingsView: View {
         case nil:
             "Unbound on this Mac; workspaces using this role fall back safely without changing the synced profile."
         }
+    }
+}
+
+private struct ProfileRenameRequest: Identifiable {
+    let id: UUID
+    let currentName: String
+
+    init(profile: WindowManagerProfile) {
+        id = profile.id
+        currentName = profile.name
+    }
+}
+
+private struct RenameProfileView: View {
+    let currentName: String
+    let cancel: () -> Void
+    let rename: (String) -> Void
+    @State private var name: String
+    @FocusState private var isNameFocused: Bool
+
+    init(currentName: String, cancel: @escaping () -> Void, rename: @escaping (String) -> Void) {
+        self.currentName = currentName
+        self.cancel = cancel
+        self.rename = rename
+        _name = State(initialValue: currentName)
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Rename Profile")
+                    .font(.title2.weight(.semibold))
+                Text("Choose a new name for “\(currentName)”.")
+                    .foregroundStyle(.secondary)
+            }
+
+            TextField("Profile name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .focused($isNameFocused)
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: cancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Rename") {
+                    rename(trimmedName)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(trimmedName.isEmpty || trimmedName == currentName)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+        .onAppear { isNameFocused = true }
+    }
+}
+
+private struct NewProfileView: View {
+    let currentProfileName: String
+    let cancel: () -> Void
+    let create: (String, ProfileCreationSource) -> Void
+    @State private var name = ""
+    @State private var source: ProfileCreationSource = .currentProfile
+    @FocusState private var isNameFocused: Bool
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("New Profile")
+                    .font(.title2.weight(.semibold))
+                Text("Name the profile and choose its starting point.")
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Profile name")
+                    .font(.headline)
+                TextField("For example, Work or Travel", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($isNameFocused)
+            }
+
+            Picker("Starting point", selection: $source) {
+                Text("Copy Current Profile").tag(ProfileCreationSource.currentProfile)
+                Text("Start from Scratch").tag(ProfileCreationSource.scratch)
+            }
+            .pickerStyle(.radioGroup)
+
+            Group {
+                switch source {
+                case .currentProfile:
+                    Text("Copies “\(currentProfileName)” including its workspaces, display mode and roles, workspace assignments, and app rules.")
+                case .scratch:
+                    Text("Creates a clean profile with four workspaces—1, 2, 3, and 4—assigned to their matching keys.")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: cancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Create Profile") {
+                    create(trimmedName, source)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(trimmedName.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
+        .onAppear { isNameFocused = true }
     }
 }
 
@@ -852,7 +1069,9 @@ struct WorkspaceSettingsView: View {
                 }
                 .onMove(perform: store.moveWorkspaces)
             }
-            .listStyle(.sidebar)
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color(nsColor: .windowBackgroundColor))
 
             Divider()
 
@@ -894,7 +1113,7 @@ struct WorkspaceSettingsView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
         }
-        .background(.background)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     @ViewBuilder
@@ -1159,15 +1378,10 @@ struct WorkspaceSettingsView: View {
 
     private func workspaceRow(_ workspace: WorkspaceDefinition) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "line.3.horizontal")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
             Image(systemName: workspace.layout.systemImage)
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(Color.accentColor)
-                .frame(width: 34, height: 34)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                .frame(width: 22)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(workspace.name)
@@ -1179,9 +1393,11 @@ struct WorkspaceSettingsView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 6)
-            WorkspaceShortcutCaps(keys: ["⌃", "⌥", workspace.key.uppercased()], compact: true)
+            Text("⌃⌥\(workspace.key.uppercased())")
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 3)
         .contentShape(Rectangle())
         .help("\(workspace.name) — \(displayRoleName(for: workspace.id)), \(workspace.layout.title), key \(workspace.key.uppercased())")
         .accessibilityElement(children: .ignore)

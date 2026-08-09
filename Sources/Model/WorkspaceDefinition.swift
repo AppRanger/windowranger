@@ -158,11 +158,18 @@ struct WorkspaceDefinition: Codable, Equatable, Identifiable, Sendable {
         WorkspaceDefinition(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, name: "1", key: "1"),
         WorkspaceDefinition(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!, name: "2", key: "2"),
         WorkspaceDefinition(id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!, name: "3", key: "3"),
-        WorkspaceDefinition(id: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!, name: "W", key: "w"),
-        WorkspaceDefinition(id: UUID(uuidString: "00000000-0000-0000-0000-000000000005")!, name: "P", key: "p"),
-        WorkspaceDefinition(id: UUID(uuidString: "00000000-0000-0000-0000-000000000006")!, name: "R", key: "r"),
-        WorkspaceDefinition(id: UUID(uuidString: "00000000-0000-0000-0000-000000000007")!, name: "U", key: "u"),
-        WorkspaceDefinition(id: UUID(uuidString: "00000000-0000-0000-0000-000000000008")!, name: "G", key: "g"),
-        WorkspaceDefinition(id: UUID(uuidString: "00000000-0000-0000-0000-000000000009")!, name: "M", key: "m"),
+        WorkspaceDefinition(id: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!, name: "4", key: "4"),
     ]
+
+    static func freshDefaults(makeUUID: () -> UUID = UUID.init) -> [WorkspaceDefinition] {
+        defaults.map {
+            WorkspaceDefinition(
+                id: makeUUID(),
+                name: $0.name,
+                key: $0.key,
+                layout: $0.layout,
+                layoutConfiguration: $0.layoutConfiguration
+            )
+        }
+    }
 }
