@@ -24,17 +24,24 @@ None.
 
 ## Ready
 
+## Live validation
+
 ### WR-005 — Measure Debug diagnostic logging under slow storage
 
 - **Type:** Performance measurement
 - **Priority:** P3
-- **Status:** Ready
+- **Status:** Live validation
 - **Source:** `docs/code-review-2026-08-08.md`, CR-005
-- **Outcome:** Measure a noisy real Debug session on slow storage before deciding whether ordered
-  synchronous JSONL writes need a queue. Preserve diagnostic ordering unless evidence justifies a
-  change.
-
-## Live validation
+- **Controlled evidence:** A deterministic 100-record noisy action measured 4.2 ms with the memory
+  sink and 311.5 ms with 2 ms latency injected into every ordered append (3.11 ms per record), while
+  preserving exact JSONL sequence 1...100. This confirms synchronous cost tracks storage latency;
+  it does not establish that the normal Debug log volume or the maintainer's filesystem causes a
+  perceptible interaction problem.
+- **Automated evidence:** Test isolation and the complete 444-test suite passed on 10 August 2026.
+- **Remaining live boundary:** Gracefully quit the installed copy, run the intended signed Debug
+  build, reproduce a sustained noisy window/workspace session on the target slow-storage setup, and
+  record command latency plus diagnostic event rate. Keep ordered synchronous writes unless that
+  real session demonstrates a user-visible bottleneck.
 
 ### WR-001 — Run the signed-app stability checkpoint
 
