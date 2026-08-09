@@ -310,6 +310,179 @@ final class TiledLayoutTreeTests: XCTestCase {
         XCTAssertEqual(nestedSecond, .window(b))
     }
 
+    func testDirectionalMoveLeftSwapsSelectedRightLeafWithWholeCompoundSibling() throws {
+        let left = TiledNode.split(
+            axis: .vertical,
+            ratio: 0.37,
+            first: .window(a),
+            second: .window(b)
+        )
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.62,
+            first: left,
+            second: .window(c)
+        )
+
+        let moved = try XCTUnwrap(WorkspaceEngine.directionallyReorderedTiledState(
+            tree: tree,
+            focusedWindow: c,
+            direction: .left,
+            displayBounds: CGRect(x: 0, y: 0, width: 1_200, height: 900),
+            configuration: configuration()
+        ))
+
+        XCTAssertEqual(moved.strategy, .directSiblingBranch)
+        guard case let .split(axis, ratio, first, second) = moved.tree else {
+            return XCTFail("The direct split must remain intact")
+        }
+        XCTAssertEqual(axis, .horizontal)
+        XCTAssertEqual(ratio, 0.62)
+        XCTAssertEqual(first, .window(c))
+        XCTAssertEqual(second, left, "The compound sibling must move as one intact branch")
+    }
+
+    func testDirectionalMoveRightMirrorsWholeCompoundSiblingSwap() throws {
+        let right = TiledNode.split(
+            axis: .vertical,
+            ratio: 0.41,
+            first: .window(a),
+            second: .window(b)
+        )
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.46,
+            first: .window(c),
+            second: right
+        )
+
+        let moved = try XCTUnwrap(WorkspaceEngine.directionallyReorderedTiledState(
+            tree: tree,
+            focusedWindow: c,
+            direction: .right,
+            displayBounds: CGRect(x: 0, y: 0, width: 1_200, height: 900),
+            configuration: configuration()
+        ))
+
+        XCTAssertEqual(moved.strategy, .directSiblingBranch)
+        XCTAssertEqual(
+            moved.tree,
+            .split(axis: .horizontal, ratio: 0.46, first: right, second: .window(c))
+        )
+    }
+
+    func testDirectionalBranchSwapCanOccurInsideUnrelatedAncestor() throws {
+        let sibling = TiledNode.split(
+            axis: .vertical,
+            ratio: 0.33,
+            first: .window(a),
+            second: .window(b)
+        )
+        let inner = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.58,
+            first: sibling,
+            second: .window(c)
+        )
+        let tree = TiledNode.split(
+            axis: .vertical,
+            ratio: 0.72,
+            first: .window(d),
+            second: inner
+        )
+
+        let moved = try XCTUnwrap(WorkspaceEngine.directionallyReorderedTiledState(
+            tree: tree,
+            focusedWindow: c,
+            direction: .left,
+            displayBounds: CGRect(x: 0, y: 0, width: 1_400, height: 1_000),
+            configuration: configuration()
+        ))
+
+        XCTAssertEqual(moved.strategy, .directSiblingBranch)
+        XCTAssertEqual(
+            moved.tree,
+            .split(
+                axis: .vertical,
+                ratio: 0.72,
+                first: .window(d),
+                second: .split(
+                    axis: .horizontal,
+                    ratio: 0.58,
+                    first: .window(c),
+                    second: sibling
+                )
+            )
+        )
+    }
+
+    func testDirectionalMoveUpSwapsSelectedBottomLeafWithWholeCompoundSibling() throws {
+        let top = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.44,
+            first: .window(a),
+            second: .window(b)
+        )
+        let tree = TiledNode.split(
+            axis: .vertical,
+            ratio: 0.57,
+            first: top,
+            second: .window(c)
+        )
+
+        let moved = try XCTUnwrap(WorkspaceEngine.directionallyReorderedTiledState(
+            tree: tree,
+            focusedWindow: c,
+            direction: .up,
+            displayBounds: CGRect(x: 0, y: 0, width: 1_200, height: 900),
+            configuration: configuration()
+        ))
+
+        XCTAssertEqual(moved.strategy, .directSiblingBranch)
+        XCTAssertEqual(
+            moved.tree,
+            .split(axis: .vertical, ratio: 0.57, first: .window(c), second: top)
+        )
+    }
+
+    func testDirectionalMoveFallsBackToVisualLeafWhenNoDirectAxisBoundaryExists() throws {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(a),
+            second: .split(
+                axis: .vertical,
+                ratio: 0.5,
+                first: .window(b),
+                second: .window(c)
+            )
+        )
+
+        let moved = try XCTUnwrap(WorkspaceEngine.directionallyReorderedTiledState(
+            tree: tree,
+            focusedWindow: b,
+            direction: .left,
+            displayBounds: CGRect(x: 0, y: 0, width: 1_200, height: 900),
+            configuration: configuration()
+        ))
+
+        XCTAssertEqual(moved.strategy, .visualNeighbourLeaf)
+        XCTAssertEqual(
+            moved.tree,
+            .split(
+                axis: .horizontal,
+                ratio: 0.5,
+                first: .window(b),
+                second: .split(
+                    axis: .vertical,
+                    ratio: 0.5,
+                    first: .window(a),
+                    second: .window(c)
+                )
+            )
+        )
+    }
+
     func testLeafSwapRejectsMissingDuplicateOrInvalidParticipants() {
         let tree = TiledNode.split(
             axis: .horizontal,

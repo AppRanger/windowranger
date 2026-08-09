@@ -105,6 +105,45 @@ struct WindowRefreshReport: Equatable, Sendable {
     let managedWindowCount: Int
 }
 
+/// Pure lifecycle rules for AX window snapshots. A successful `AXWindows` read is authoritative
+/// for that process, so a missing window (including an inactive native tab that has closed) is
+/// removed. An incomplete/failed read is not evidence of closure and retains prior state.
+enum WindowEnumerationLifecycle {
+    static func removedTrackedWindowKeys(
+        trackedWindowKeys: Set<WindowKey>,
+        runningProcessIdentifiers: Set<pid_t>,
+        successfullyEnumeratedProcessIdentifiers: Set<pid_t>,
+        enumeratedWindowKeys: Set<WindowKey>
+    ) -> Set<WindowKey> {
+        Set(trackedWindowKeys.filter { key in
+            !runningProcessIdentifiers.contains(key.processIdentifier) ||
+                (successfullyEnumeratedProcessIdentifiers.contains(key.processIdentifier) &&
+                    !enumeratedWindowKeys.contains(key))
+        })
+    }
+
+    static func pruning(
+        _ trees: [TiledLayoutPartitionKey: TiledNode],
+        removedWindowKeys: Set<WindowKey>
+    ) -> [TiledLayoutPartitionKey: TiledNode] {
+        guard !removedWindowKeys.isEmpty else { return trees }
+        return trees.reduce(into: [:]) { result, entry in
+            var tree: TiledNode? = entry.value
+            for key in removedWindowKeys where tree?.contains(key) == true {
+                tree = tree?.removing(key)
+            }
+            if let tree { result[entry.key] = tree }
+        }
+    }
+
+    static func pruning(
+        _ history: [UUID: WindowKey],
+        removedWindowKeys: Set<WindowKey>
+    ) -> [UUID: WindowKey] {
+        history.filter { !removedWindowKeys.contains($0.value) }
+    }
+}
+
 enum WindowLayoutOverride: String, Codable, Equatable, Sendable {
     case automatic
     case floating
@@ -1758,6 +1797,7 @@ final class WorkspaceEngine {
             let orientation = configuration.orientation.resolved(for: display.usableBounds)
             let destinationKey: WindowKey
             var treeFingerprints: (before: String, after: String)?
+            var tiledMoveStrategy: TiledDirectionalMoveStrategy?
 
             switch layout {
             case .none:
@@ -1811,6 +1851,7 @@ final class WorkspaceEngine {
                     return
                 }
                 destinationKey = reordered.destinationWindow
+                tiledMoveStrategy = reordered.strategy
                 self.tiledTrees[partition] = reordered.tree
                 for (index, key) in reordered.tree.windowKeys.enumerated() {
                     self.windows[key]?.layoutOrder = index
@@ -1856,6 +1897,9 @@ final class WorkspaceEngine {
             if let treeFingerprints {
                 diagnosticFields["tree-before"] = treeFingerprints.before
                 diagnosticFields["tree-after"] = treeFingerprints.after
+            }
+            if let tiledMoveStrategy {
+                diagnosticFields["tree-move-strategy"] = tiledMoveStrategy.rawValue
             }
             self.diagnostics.log(
                 category: "directional-move",
@@ -2256,7 +2300,6 @@ final class WorkspaceEngine {
 
     func setWorkspaceLayout(
         _ layout: WorkspaceLayout,
-        cycleOrientationWhenAlreadySelected: Bool = false,
         correlationID: String? = nil
     ) {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
@@ -2274,11 +2317,6 @@ final class WorkspaceEngine {
             let interactionDisplay = self.interactionDisplayResolution(
                 focused: focusedBefore,
                 displays: displays
-            )
-            let verificationToken = self.beginCorrelatedAction(
-                correlationID: correlationID,
-                interactionDisplayIdentifier: interactionDisplay.identifier,
-                expectedFocusTarget: focusContextKey
             )
             self.diagnostics.log(
                 category: "layout-command",
@@ -2322,15 +2360,36 @@ final class WorkspaceEngine {
             )
             let updatedDefinition = Self.layoutDefinitionAfterSelection(
                 self.workspaces[index],
-                targetLayout: layout,
-                cycleOrientationWhenAlreadySelected: cycleOrientationWhenAlreadySelected
+                targetLayout: layout
             )
-            if updatedDefinition != self.workspaces[index] {
-                if layout == .none, self.workspaces[index].layout != .none {
-                    self.captureCurrentFrames(for: [workspaceID], displays: displays)
-                }
-                self.workspaces[index] = updatedDefinition
+            guard updatedDefinition != self.workspaces[index] else {
+                self.diagnostics.log(
+                    category: "layout-command",
+                    event: "unchanged",
+                    correlation: correlationID,
+                    fields: [
+                        "reason": "layout-already-selected",
+                        "layout": layout.rawValue,
+                        "workspace": Self.shortIdentifier(workspaceID.uuidString),
+                        "display": Self.shortIdentifier(interactionDisplay.identifier),
+                    ]
+                )
+                self.emitCommandFeedback(
+                    "\(layout.title) layout is already selected.",
+                    correlationID: correlationID,
+                    preferredDisplayIdentifier: interactionDisplay.identifier
+                )
+                return
             }
+            let verificationToken = self.beginCorrelatedAction(
+                correlationID: correlationID,
+                interactionDisplayIdentifier: interactionDisplay.identifier,
+                expectedFocusTarget: focusContextKey
+            )
+            if layout == .none, self.workspaces[index].layout != .none {
+                self.captureCurrentFrames(for: [workspaceID], displays: displays)
+            }
+            self.workspaces[index] = updatedDefinition
             if self.isWorkspaceActive(workspaceID) {
                 if let focusedKey = focusContextKey, self.windows[focusedKey] != nil {
                     self.prepareProgrammaticFocusIntent(
@@ -2377,8 +2436,7 @@ final class WorkspaceEngine {
 
     static func layoutDefinitionAfterSelection(
         _ definition: WorkspaceDefinition,
-        targetLayout: WorkspaceLayout,
-        cycleOrientationWhenAlreadySelected: Bool
+        targetLayout: WorkspaceLayout
     ) -> WorkspaceDefinition {
         var updated = definition
         if definition.layout != targetLayout {
@@ -2386,16 +2444,7 @@ final class WorkspaceEngine {
             if updated.layoutConfiguration == nil {
                 updated.layoutConfiguration = .aeroSpaceUserDefaults
             }
-            return updated
         }
-        guard cycleOrientationWhenAlreadySelected, targetLayout != .none else { return updated }
-        var configuration = updated.layoutConfiguration ?? .aeroSpaceUserDefaults
-        configuration.orientation = switch configuration.orientation {
-        case .automatic: .horizontal
-        case .horizontal: .vertical
-        case .vertical: .horizontal
-        }
-        updated.layoutConfiguration = configuration
         return updated
     }
 
@@ -3002,16 +3051,23 @@ final class WorkspaceEngine {
         )
     }
 
-    /// Resolves a visual neighbour from the authoritative Tiled tree and exchanges the two leaves.
-    /// This is deliberately spatial rather than limited to the workspace's root orientation: a
-    /// placed tree can contain a vertical split inside a horizontal root (and vice versa).
+    /// First interprets one arrow structurally: when the focused leaf directly borders a sibling
+    /// branch on that axis, exchange the leaf with that complete branch. Only when no such direct
+    /// split boundary exists does the command fall back to exchanging the closest visual leaves.
+    /// This preserves a compound sibling's topology while retaining useful movement through mixed-
+    /// axis trees.
     static func directionallyReorderedTiledState(
         tree: TiledNode,
         focusedWindow: WindowKey,
         direction: WindowDirection,
         displayBounds: CGRect,
         configuration: WorkspaceLayoutConfiguration
-    ) -> (tree: TiledNode, destinationWindow: WindowKey, effectiveShares: [WindowKey: Double])? {
+    ) -> (
+        tree: TiledNode,
+        destinationWindow: WindowKey,
+        effectiveShares: [WindowKey: Double],
+        strategy: TiledDirectionalMoveStrategy
+    )? {
         let participants = tree.windowKeys
         guard Set(participants).count == participants.count,
               participants.contains(focusedWindow),
@@ -3030,11 +3086,27 @@ final class WorkspaceEngine {
                 frame: CGRect(origin: frame.position, size: frame.size)
             )
         }
+        let focusedRect = CGRect(origin: focusedFrame.position, size: focusedFrame.size)
+
+        if let structural = TiledLayoutEngine.swappingFocusedLeafWithDirectSiblingBranch(
+            focusedWindow,
+            direction: direction,
+            in: tree
+        ), let effectiveShares = TiledLayoutEngine.leafShares(structural.tree) {
+            let siblingCandidates = candidates.filter { structural.siblingWindowKeys.contains($0.key) }
+            let representative = directionalCandidateOrder(
+                from: focusedRect,
+                direction: direction,
+                candidates: siblingCandidates
+            ).first ?? structural.siblingWindowKeys.first
+            guard let representative else { return nil }
+            return (structural.tree, representative, effectiveShares, .directSiblingBranch)
+        }
+
         // Prefer a leaf that actually overlaps the focused leaf on the perpendicular axis. In a
         // nested tree, a full-height sibling can merely touch the focused column's edge and have a
         // closer centre than the true top/bottom neighbour; treating that corner contact as aligned
         // would move the window into the wrong branch.
-        let focusedRect = CGRect(origin: focusedFrame.position, size: focusedFrame.size)
         let axisAlignedCandidates = candidates.filter { candidate in
             switch direction {
             case .left, .right:
@@ -3058,7 +3130,7 @@ final class WorkspaceEngine {
               ),
               let effectiveShares = TiledLayoutEngine.leafShares(reordered)
         else { return nil }
-        return (reordered, destination, effectiveShares)
+        return (reordered, destination, effectiveShares, .visualNeighbourLeaf)
     }
 
     static func adjustedAccordionPadding(
@@ -4379,11 +4451,83 @@ final class WorkspaceEngine {
         }
 
         // A single timed-out AXWindows request must not make us forget parked windows: once lost,
-        // there would be no element left to restore on quit. Remove a tracked window only when its
-        // app has exited, or a successful enumeration proves that the window no longer exists.
-        windows = windows.filter { key, _ in
-            runningProcessIdentifiers.contains(key.processIdentifier) &&
-                (!successfullyEnumeratedProcesses.contains(key.processIdentifier) || enumeratedWindowKeys.contains(key))
+        // there would be no element left to restore on quit. A successful per-process snapshot is
+        // authoritative, though, including for native tabs: a prior ID absent from that snapshot
+        // must leave every managed collection rather than surviving as a ghost layout slot.
+        let removedTrackedWindowKeys = WindowEnumerationLifecycle.removedTrackedWindowKeys(
+            trackedWindowKeys: Set(windows.keys),
+            runningProcessIdentifiers: runningProcessIdentifiers,
+            successfullyEnumeratedProcessIdentifiers: successfullyEnumeratedProcesses,
+            enumeratedWindowKeys: enumeratedWindowKeys
+        )
+        let removedTrackedWindows = windows.filter { removedTrackedWindowKeys.contains($0.key) }
+        if !removedTrackedWindowKeys.isEmpty {
+            windows = windows.filter { !removedTrackedWindowKeys.contains($0.key) }
+            lastFocusedWindow = WindowEnumerationLifecycle.pruning(
+                lastFocusedWindow,
+                removedWindowKeys: removedTrackedWindowKeys
+            )
+            tiledTrees = WindowEnumerationLifecycle.pruning(
+                tiledTrees,
+                removedWindowKeys: removedTrackedWindowKeys
+            )
+            focusCycleRejectedUntil = focusCycleRejectedUntil.filter {
+                !removedTrackedWindowKeys.contains($0.key)
+            }
+            sendOnlyFocusSuppression = sendOnlyFocusSuppression.filter {
+                !removedTrackedWindowKeys.contains($0.key)
+            }
+            if radialPlacementCommitContext.map({
+                !$0.participantKeys.isDisjoint(with: removedTrackedWindowKeys)
+            }) == true {
+                radialPlacementCommitContext = nil
+            }
+
+            let removedFocusState = [
+                lastObservedFocusedWindow,
+                programmaticFocusTarget,
+                recentInteractionFocusTarget,
+                preSleepFocusContext?.windowKey,
+            ].compactMap { $0 }.contains { removedTrackedWindowKeys.contains($0) }
+            if removedFocusState {
+                _ = advanceFocusActionGeneration()
+                pendingFocusVerification?.cancel()
+                pendingFocusVerification = nil
+                clearProgrammaticFocusIntent()
+            }
+            if lastObservedFocusedWindow.map(removedTrackedWindowKeys.contains) == true {
+                lastObservedFocusedWindow = nil
+            }
+            if recentInteractionFocusTarget.map(removedTrackedWindowKeys.contains) == true {
+                recentInteractionFocusTarget = nil
+                recentInteractionDisplayIdentifier = nil
+                recentInteractionDisplayDeadline = .distantPast
+            }
+            if let preSleepWindowKey = preSleepFocusContext?.windowKey,
+               removedTrackedWindowKeys.contains(preSleepWindowKey) {
+                preSleepFocusContext = nil
+            }
+
+            for (key, tracked) in removedTrackedWindows
+            where successfullyEnumeratedProcesses.contains(key.processIdentifier) {
+                let persistedKey = String(key.windowIdentifier)
+                if let pending = pendingRestoredWindows[persistedKey],
+                   let bundleIdentifier = tracked.bundleIdentifier,
+                   pending.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame {
+                    pendingRestoredWindows.removeValue(forKey: persistedKey)
+                }
+                diagnostics.log(
+                    category: "window-lifecycle",
+                    event: "enumeration-evicted",
+                    correlation: correlationID,
+                    fields: [
+                        "window": Self.diagnosticWindowKey(key),
+                        "bundle": tracked.bundleIdentifier ?? "unknown",
+                        "reason": "absent-from-successful-axwindows-snapshot",
+                        "frame-write": "false",
+                    ]
+                )
+            }
         }
         let shouldRetainDiscoveryState: (WindowKey) -> Bool = { key in
             runningProcessIdentifiers.contains(key.processIdentifier) &&
@@ -4444,9 +4588,9 @@ final class WorkspaceEngine {
             )
         }
 
-        if evictedIgnoredManagedState {
+        if evictedIgnoredManagedState || !removedTrackedWindowKeys.isEmpty {
             // Flush any stale assignment removed during admission without waiting for the next
-            // timer tick. This performs no AX writes and never restores or moves the ignored panel.
+            // timer tick. This performs no AX writes and never restores or moves the removed object.
             persistState(preservingPendingRestores: true)
         }
 

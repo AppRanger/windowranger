@@ -262,26 +262,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.radialMenuTriggerController.cancel(reason: "wheel-disabled")
             }
             self.registerHotKeys()
-            self.updateGlobeFnHoldActivation()
+            self.updateGlobeFnHoldActivation(radialMenuEnabled: enabled)
         }
         .store(in: &cancellables)
 
         settingsStore.$radialMenuGlobeFnHoldEnabled
             .dropFirst()
             .removeDuplicates()
-            .sink { [weak self] _ in
-                self?.updateGlobeFnHoldActivation()
+            .sink { [weak self] enabled in
+                // @Published delivers in willSet. Use the emitted value rather than rereading the
+                // store synchronously, otherwise switching this option on observes the old false
+                // value and never installs the event monitor.
+                self?.updateGlobeFnHoldActivation(globeFnEnabled: enabled)
             }
             .store(in: &cancellables)
 
         settingsStore.$radialMenuHoldDelay
             .dropFirst()
             .removeDuplicates()
-            .sink { [weak self] _ in
+            .sink { [weak self] delay in
                 guard let self else { return }
                 self.globeFnHoldActivationController.cancel(reason: "hold-delay-changed")
                 self.radialMenuTriggerController.cancel(reason: "hold-delay-changed")
-                self.updateGlobeFnHoldActivation()
+                self.updateGlobeFnHoldActivation(holdDelay: delay)
             }
             .store(in: &cancellables)
 
@@ -419,12 +422,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func updateGlobeFnHoldActivation() {
+    private func updateGlobeFnHoldActivation(
+        radialMenuEnabled: Bool? = nil,
+        globeFnEnabled: Bool? = nil,
+        holdDelay: TimeInterval? = nil
+    ) {
+        let runtimeSettings = GlobeFnRuntimeSettings(
+            radialMenuEnabled: radialMenuEnabled ?? settingsStore.radialMenuEnabled,
+            globeFnEnabled: globeFnEnabled ?? settingsStore.radialMenuGlobeFnHoldEnabled,
+            isShortcutRecording: isShortcutRecording,
+            holdDelay: holdDelay ?? settingsStore.radialMenuHoldDelay
+        )
         globeFnHoldActivationController.update(
-            enabled: settingsStore.radialMenuEnabled
-                && settingsStore.radialMenuGlobeFnHoldEnabled
-                && !isShortcutRecording,
-            holdDelay: settingsStore.radialMenuHoldDelay
+            enabled: runtimeSettings.isEnabled,
+            holdDelay: runtimeSettings.holdDelay
         )
     }
 

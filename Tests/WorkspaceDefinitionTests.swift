@@ -60,37 +60,128 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertEqual(WorkspaceLayout.none.cycled(by: -1), .accordion)
     }
 
+    func testSuccessfulEnumerationEvictsClosedNativeTabFromEveryPureManagedIndex() throws {
+        let workspaceID = UUID()
+        let partition = TiledLayoutPartitionKey(workspaceID: workspaceID, displayIdentifier: "main")
+        let first = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let closedTab = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+        let third = WindowKey(processIdentifier: 73, windowIdentifier: 200)
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.4,
+            first: .window(first),
+            second: .split(
+                axis: .vertical,
+                ratio: 0.65,
+                first: .window(closedTab),
+                second: .window(third)
+            )
+        )
+
+        let removed = WindowEnumerationLifecycle.removedTrackedWindowKeys(
+            trackedWindowKeys: [first, closedTab, third],
+            runningProcessIdentifiers: [42, 73],
+            successfullyEnumeratedProcessIdentifiers: [42, 73],
+            enumeratedWindowKeys: [first, third]
+        )
+        let trees = WindowEnumerationLifecycle.pruning(
+            [partition: tree],
+            removedWindowKeys: removed
+        )
+        let history = WindowEnumerationLifecycle.pruning(
+            [workspaceID: closedTab],
+            removedWindowKeys: removed
+        )
+
+        XCTAssertEqual(removed, [closedTab])
+        XCTAssertEqual(try XCTUnwrap(trees[partition]).windowKeys, [first, third])
+        guard case let .split(axis, ratio, _, _) = try XCTUnwrap(trees[partition]) else {
+            return XCTFail("The surviving topology should collapse only the closed tab's parent")
+        }
+        XCTAssertEqual(axis, .horizontal)
+        XCTAssertEqual(ratio, 0.4)
+        XCTAssertTrue(history.isEmpty)
+    }
+
+    func testFailedWindowEnumerationRetainsNativeTabsForRecovery() {
+        let first = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let inactiveTab = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+
+        XCTAssertTrue(WindowEnumerationLifecycle.removedTrackedWindowKeys(
+            trackedWindowKeys: [first, inactiveTab],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [],
+            enumeratedWindowKeys: []
+        ).isEmpty)
+    }
+
     func testFreeformDisplayNamePreservesMigrationSafeRawValue() {
         XCTAssertEqual(WorkspaceLayout.none.title, "Freeform")
         XCTAssertEqual(WorkspaceLayout.none.rawValue, "none")
         XCTAssertEqual(WorkspaceLayout(rawValue: "none"), Optional(WorkspaceLayout.none))
     }
 
-    func testLayoutSelectionShortcutsMatchAeroSpaceConfiguration() {
+    func testLayoutSelectionShortcutsRemainDirectIdempotentSelectors() {
         XCTAssertEqual(HotKeyManager.accordionKeyCode, 43)
         XCTAssertEqual(HotKeyManager.tiledKeyCode, 47)
+        XCTAssertEqual(
+            ConfigurableHotKeyAction.selectAccordion.command,
+            .selectLayoutFromShortcut(.accordion)
+        )
+        XCTAssertEqual(
+            ConfigurableHotKeyAction.selectTiled.command,
+            .selectLayoutFromShortcut(.tiled)
+        )
     }
 
-    func testRepeatedLayoutShortcutCyclesOrientationLikeUserAeroSpaceConfig() {
-        let legacy = WorkspaceDefinition(
-            name: "Legacy",
-            key: "l",
+    func testRepeatedTiledSelectionIsIdempotentAndPreservesConfiguration() {
+        let tiled = WorkspaceDefinition(
+            name: "Code",
+            key: "c",
             layout: .tiled,
-            layoutConfiguration: nil
+            layoutConfiguration: WorkspaceLayoutConfiguration(
+                orientation: .vertical,
+                accordionPadding: 173,
+                gaps: WorkspaceLayoutGaps(
+                    innerHorizontal: 7,
+                    innerVertical: 9,
+                    outerTop: 11,
+                    outerRight: 13,
+                    outerBottom: 15,
+                    outerLeft: 17
+                )
+            )
         )
-        let horizontal = WorkspaceEngine.layoutDefinitionAfterSelection(
-            legacy,
-            targetLayout: .tiled,
-            cycleOrientationWhenAlreadySelected: true
-        )
-        let vertical = WorkspaceEngine.layoutDefinitionAfterSelection(
-            horizontal,
-            targetLayout: .tiled,
-            cycleOrientationWhenAlreadySelected: true
+        let first = WorkspaceEngine.layoutDefinitionAfterSelection(tiled, targetLayout: .tiled)
+        let second = WorkspaceEngine.layoutDefinitionAfterSelection(first, targetLayout: .tiled)
+
+        XCTAssertEqual(first, tiled)
+        XCTAssertEqual(second, tiled)
+    }
+
+    func testRepeatedAccordionSelectionIsIdempotentAndPreservesConfiguration() {
+        let accordion = WorkspaceDefinition(
+            name: "Writing",
+            key: "w",
+            layout: .accordion,
+            layoutConfiguration: WorkspaceLayoutConfiguration(
+                orientation: .horizontal,
+                accordionPadding: 321,
+                gaps: WorkspaceLayoutGaps(
+                    innerHorizontal: 0,
+                    innerVertical: 0,
+                    outerTop: 0,
+                    outerRight: 0,
+                    outerBottom: 0,
+                    outerLeft: 0
+                )
+            )
         )
 
-        XCTAssertEqual(horizontal.layoutConfiguration?.orientation, .horizontal)
-        XCTAssertEqual(vertical.layoutConfiguration?.orientation, .vertical)
+        XCTAssertEqual(
+            WorkspaceEngine.layoutDefinitionAfterSelection(accordion, targetLayout: .accordion),
+            accordion
+        )
     }
 
     func testSelectingDifferentLayoutActivatesModernDefaultsWithoutChangingOrientation() {
@@ -102,8 +193,7 @@ final class WorkspaceDefinitionTests: XCTestCase {
         )
         let tiled = WorkspaceEngine.layoutDefinitionAfterSelection(
             legacy,
-            targetLayout: .tiled,
-            cycleOrientationWhenAlreadySelected: true
+            targetLayout: .tiled
         )
 
         XCTAssertEqual(tiled.layout, .tiled)

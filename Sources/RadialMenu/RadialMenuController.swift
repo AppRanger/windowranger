@@ -127,6 +127,12 @@ final class RadialMenuTriggerController {
                 thresholdWorkItem?.cancel()
                 thresholdWorkItem = nil
                 guard let context = capturedContexts[generation] else {
+                    diagnostics.log(
+                        category: "radial-trigger",
+                        event: "presentation-rejected",
+                        correlation: correlations[generation],
+                        fields: ["reason": "captured-context-unavailable"]
+                    )
                     apply(state.presentationRejected(
                         generation: generation,
                         reason: "captured-context-unavailable"
@@ -145,6 +151,12 @@ final class RadialMenuTriggerController {
                     guard let self, !presented,
                           self.state.isPresented(generation: generation)
                     else { return }
+                    self.diagnostics.log(
+                        category: "radial-trigger",
+                        event: "presentation-rejected",
+                        correlation: self.correlations[generation],
+                        fields: ["reason": "captured-context-stale"]
+                    )
                     self.apply(self.state.presentationRejected(
                         generation: generation,
                         reason: "captured-context-stale"
@@ -398,6 +410,8 @@ final class GlobeFnHoldActivationController {
     private var monitor: GlobeFnEventMonitoring?
     private var desiredEnabled = false
     private var holdDelay = RadialMenuHoldDelay.defaultValue
+    private var lastObservedFunctionState: Bool?
+    private var lastLoggedConfiguration: String?
 
     var runtimeIssueChanged: ((String?) -> Void)?
 
@@ -420,6 +434,18 @@ final class GlobeFnHoldActivationController {
 
     func update(enabled: Bool, holdDelay: TimeInterval) {
         let clampedDelay = RadialMenuHoldDelay.clamped(holdDelay)
+        let configuration = "enabled=\(enabled)|delay=\(Int(clampedDelay * 1_000))"
+        if configuration != lastLoggedConfiguration {
+            lastLoggedConfiguration = configuration
+            diagnostics.log(
+                category: "globe-fn-trigger",
+                event: "configuration-updated",
+                fields: [
+                    "enabled": String(enabled),
+                    "hold-delay-ms": String(Int(clampedDelay * 1_000)),
+                ]
+            )
+        }
         if self.holdDelay != clampedDelay {
             cancel(reason: "hold-delay-changed")
             self.holdDelay = clampedDelay
@@ -431,6 +457,7 @@ final class GlobeFnHoldActivationController {
             cancel(reason: "setting-disabled")
             monitor?.stop()
             monitor = nil
+            lastObservedFunctionState = nil
             runtimeIssueChanged?(nil)
         }
     }
@@ -471,15 +498,40 @@ final class GlobeFnHoldActivationController {
         cancel(reason: "shutdown")
         monitor?.stop()
         monitor = nil
+        lastObservedFunctionState = nil
     }
 
     @discardableResult
     func receive(_ observedEvent: GlobeFnObservedEvent) -> Bool {
-        guard desiredEnabled, let input = normalizer.normalize(observedEvent) else { return false }
+        guard desiredEnabled else { return false }
+        if case let .flagsChanged(functionDown, otherModifiersDown) = observedEvent,
+           lastObservedFunctionState != functionDown {
+            lastObservedFunctionState = functionDown
+            diagnostics.log(
+                category: "globe-fn-trigger",
+                event: "fn-transition-observed",
+                fields: [
+                    "state": functionDown ? "down" : "up",
+                    "other-modifiers": String(otherModifiersDown),
+                ]
+            )
+        }
+        guard let input = normalizer.normalize(observedEvent) else { return false }
         let before = state.phaseName
         let effects = state.handle(input, holdDelay: holdDelay)
         let shouldSuppress = apply(effects)
         let after = state.phaseName
+        if before == "candidate",
+           effects.contains(where: { effect in
+               if case .cancelThreshold = effect { return true }
+               return false
+           }) {
+            diagnostics.log(
+                category: "globe-fn-trigger",
+                event: "hold-not-accepted",
+                fields: ["reason": input.diagnosticName]
+            )
+        }
         if before != after || shouldSuppress {
             diagnostics.log(
                 category: "globe-fn-trigger",
@@ -514,11 +566,17 @@ final class GlobeFnHoldActivationController {
             return
         }
         self.monitor = monitor
+        lastObservedFunctionState = nil
         runtimeIssueChanged?(nil)
         diagnostics.log(
             category: "globe-fn-trigger",
             event: "monitor-installed",
             fields: ["reason": reason]
+        )
+        diagnostics.log(
+            category: "globe-fn-trigger",
+            event: "monitor-awaiting-fn-transition",
+            fields: [:]
         )
     }
 
@@ -528,6 +586,7 @@ final class GlobeFnHoldActivationController {
         if !restored {
             monitor?.stop()
             monitor = nil
+            lastObservedFunctionState = nil
         }
         runtimeIssueChanged?(restored ? nil : "Globe/Fn monitoring stopped and could not be restored. Toggle the option to retry.")
         diagnostics.log(
@@ -580,6 +639,11 @@ final class GlobeFnHoldActivationController {
                     fields: ["reason": reason]
                 )
             case .activateHold:
+                diagnostics.log(
+                    category: "globe-fn-trigger",
+                    event: "hold-accepted",
+                    fields: [:]
+                )
                 radialTrigger.beginRecognizedHold()
             case .releaseHold:
                 safetyTask?.cancel()

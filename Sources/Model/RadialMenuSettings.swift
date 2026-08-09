@@ -209,6 +209,24 @@ enum RadialMenuHoldDelay {
     }
 }
 
+/// Immutable runtime inputs for the optional device-local Globe/Fn trigger. Callers that receive
+/// an `@Published` value must pass that emitted value here instead of synchronously rereading its
+/// source object, because Combine publishes from `willSet`.
+struct GlobeFnRuntimeSettings: Equatable, Sendable {
+    let isEnabled: Bool
+    let holdDelay: TimeInterval
+
+    init(
+        radialMenuEnabled: Bool,
+        globeFnEnabled: Bool,
+        isShortcutRecording: Bool,
+        holdDelay: TimeInterval
+    ) {
+        isEnabled = radialMenuEnabled && globeFnEnabled && !isShortcutRecording
+        self.holdDelay = RadialMenuHoldDelay.clamped(holdDelay)
+    }
+}
+
 enum RadialMenuTriggerInputEvent: Equatable, Sendable {
     case pressed
     case released
