@@ -9,9 +9,10 @@ branch model. Stable and Beta will use Sparkle later. Dev is a rolling developme
 will not be an auto-update channel.
 
 The initial pipeline is intentionally local-first: GitHub Actions verifies clean generation, tests,
-analysis, and an unsigned Release build; the maintainer's Mac owns Developer ID signing,
-notarization, stapling, and packaging. See [First GitHub release](first-github-release.md). After the
-process is proven, the credentialed portion may move to a protected CI environment.
+analysis, an unsigned Release build, and Stable/Beta DMG packaging; the maintainer's Mac owns
+Developer ID signing, notarization, stapling, and release packaging. See
+[First GitHub release](first-github-release.md). After the process is proven, the credentialed
+portion may move to a protected CI environment.
 
 ## Channel contract
 

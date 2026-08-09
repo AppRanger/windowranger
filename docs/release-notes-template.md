@@ -14,10 +14,13 @@
 
 ## Installation
 
-1. Download `WindowRanger-VERSION.zip` from this release's **Assets** section.
-2. Optionally verify it against `WindowRanger-VERSION.zip.sha256`.
-3. Extract the ZIP and move `WindowRanger.app` to `/Applications`.
-4. Launch WindowRanger and grant Accessibility permission when macOS asks.
+1. Download `WindowRanger-VERSION.dmg` from this release's **Assets** section.
+2. Optionally verify it against `WindowRanger-VERSION.dmg.sha256`.
+3. Open the DMG and drag `WindowRanger.app` onto the `Applications` shortcut.
+4. Launch WindowRanger from `/Applications` and grant Accessibility permission when macOS asks.
+
+The notarized ZIP and its checksum are included as a fallback for environments that cannot mount a
+DMG.
 
 The source-code ZIP and tarball generated automatically by GitHub do not contain the installable
 application.

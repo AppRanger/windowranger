@@ -8,6 +8,8 @@ project_file="$repository_root/WindowRanger.xcodeproj"
 export_options="$repository_root/config/ExportOptions-DeveloperID.plist"
 release_root="${WINDOWRANGER_RELEASE_ROOT:-$repository_root/.build/releases}"
 developer_directory="${WINDOWRANGER_DEVELOPER_DIR:-${DEVELOPER_DIR:-$(/usr/bin/xcode-select -p)}}"
+dmg_tool_root="${WINDOWRANGER_DMG_TOOL_ROOT:-$repository_root/.build/dmg-tools}"
+dmgbuild="${WINDOWRANGER_DMGBUILD:-$dmg_tool_root/bin/dmgbuild}"
 version=""
 build_number=""
 notary_profile=""
@@ -22,6 +24,7 @@ usage() {
     print "Environment overrides:"
     print "  WINDOWRANGER_DEVELOPER_DIR   Stable Xcode Developer directory"
     print "  WINDOWRANGER_RELEASE_ROOT   Artifact root (default: .build/releases)"
+    print "  WINDOWRANGER_DMG_TOOL_ROOT  dmgbuild virtual environment (default: .build/dmg-tools)"
 }
 
 while (( $# > 0 )); do
@@ -83,7 +86,7 @@ require_command() {
     command -v "$1" >/dev/null 2>&1 || blockers+=("Missing required command: $1")
 }
 
-for required_command in git xcodegen xcodebuild codesign security ditto shasum; do
+for required_command in git xcodegen xcodebuild codesign security ditto shasum hdiutil; do
     require_command "$required_command"
 done
 
@@ -92,6 +95,12 @@ done
     "Release builds must use stable Xcode, not: $developer_directory"
 )
 [[ -f "$export_options" ]] || blockers+=("Missing export options: $export_options")
+[[ -x "$dmgbuild" ]] || blockers+=(
+    "DMG tools are not installed; run ./scripts/install-dmg-tools.sh"
+)
+[[ -f "$repository_root/Brand/WindowRanger/dmg/backgrounds/$channel-background.png" ]] || blockers+=(
+    "Missing $channel DMG background"
+)
 
 current_branch="$(/usr/bin/git -C "$repository_root" branch --show-current)"
 [[ "$current_branch" == "$expected_branch" ]] || blockers+=(
@@ -143,6 +152,10 @@ final_archive_name="WindowRanger-$version.zip"
 final_archive="$release_directory/$final_archive_name"
 checksum_name="$final_archive_name.sha256"
 checksum_file="$release_directory/$checksum_name"
+final_dmg_name="WindowRanger-$version.dmg"
+final_dmg="$release_directory/$final_dmg_name"
+dmg_checksum_name="$final_dmg_name.sha256"
+dmg_checksum_file="$release_directory/$dmg_checksum_name"
 manifest_name="WindowRanger-$version.release.txt"
 manifest_file="$release_directory/$manifest_name"
 entitlements_file="$release_directory/WindowRanger.entitlements.plist"
@@ -233,11 +246,29 @@ DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun stapler staple "$exported_ap
 DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun stapler validate "$exported_app"
 /usr/sbin/spctl -a -vv -t exec "$exported_app"
 
-print "Creating the immutable release archive and checksum..."
+print "Creating the immutable release archive..."
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$exported_app" "$final_archive"
+
+print "Creating the styled $channel DMG..."
+WINDOWRANGER_DMGBUILD="$dmgbuild" "$repository_root/scripts/build-dmg.sh" \
+    --app "$exported_app" \
+    --channel "$channel" \
+    --output "$final_dmg"
+
+print "Notarizing and stapling the DMG container..."
+DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun notarytool submit "$final_dmg" \
+    --keychain-profile "$notary_profile" \
+    --wait
+DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun stapler staple "$final_dmg"
+DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun stapler validate "$final_dmg"
+"$repository_root/scripts/verify-dmg.sh" --dmg "$final_dmg"
+
+print "Writing release checksums and provenance..."
 (cd "$release_directory" && /usr/bin/shasum -a 256 "$final_archive_name" > "$checksum_name")
+(cd "$release_directory" && /usr/bin/shasum -a 256 "$final_dmg_name" > "$dmg_checksum_name")
 commit_sha="$(/usr/bin/git -C "$repository_root" rev-parse HEAD)"
 archive_checksum="$(/usr/bin/awk '{ print $1 }' "$checksum_file")"
+dmg_checksum="$(/usr/bin/awk '{ print $1 }' "$dmg_checksum_file")"
 {
     print "product=WindowRanger"
     print "channel=$channel"
@@ -248,14 +279,18 @@ archive_checksum="$(/usr/bin/awk '{ print $1 }' "$checksum_file")"
     print "xcode=$xcode_version"
     print "architectures=$architectures"
     print "archive=$final_archive_name"
-    print "sha256=$archive_checksum"
+    print "archive_sha256=$archive_checksum"
+    print "dmg=$final_dmg_name"
+    print "dmg_sha256=$dmg_checksum"
 } > "$manifest_file"
 
 print "Release package ready:"
 print "  App: $exported_app"
 print "  Archive: $final_archive"
 print "  Checksum: $checksum_file"
+print "  DMG: $final_dmg"
+print "  DMG checksum: $dmg_checksum_file"
 print "  Manifest: $manifest_file"
 print ""
-print "Next: test this exact archive, create and push tag v$version, then run:"
+print "Next: test this exact DMG and archive, create and push tag v$version, then run:"
 print "  ./scripts/create-github-release.sh --version $version"

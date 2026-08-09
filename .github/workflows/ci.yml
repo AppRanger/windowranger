@@ -72,5 +72,29 @@ jobs:
             -scheme WindowRanger \
             -configuration Release \
             -destination 'generic/platform=macOS' \
+            -derivedDataPath .build/ci-derived-data \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+      - name: Build unsigned DMG smoke packages
+        run: |
+          ./scripts/install-dmg-tools.sh
+          mkdir -p .build/ci-packages
+          ./scripts/build-dmg.sh \
+            --app .build/ci-derived-data/Build/Products/Release/WindowRanger.app \
+            --channel stable \
+            --output .build/ci-packages/WindowRanger-unsigned-stable.dmg
+          ./scripts/build-dmg.sh \
+            --app .build/ci-derived-data/Build/Products/Release/WindowRanger.app \
+            --channel beta \
+            --output .build/ci-packages/WindowRanger-unsigned-beta.dmg
+          ./scripts/verify-dmg.sh --dmg .build/ci-packages/WindowRanger-unsigned-stable.dmg
+          ./scripts/verify-dmg.sh --dmg .build/ci-packages/WindowRanger-unsigned-beta.dmg
+
+      - name: Upload unsigned DMG smoke packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-dmg-smoke-${{ github.sha }}
+          path: .build/ci-packages/*.dmg
+          if-no-files-found: error
+          retention-days: 7

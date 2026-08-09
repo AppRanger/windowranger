@@ -10,9 +10,10 @@ WindowRanger will use three release channels: Stable from `main`, Beta from rele
 rolling Dev builds from `develop`. Stable and opt-in Beta updates will use Sparkle later; Dev builds
 will remain outside automatic updates. No public release artifacts exist yet.
 
-The planned first download is the signed and notarized `v0.1.0-beta.1` ZIP attached to a GitHub
-prerelease. Until it appears under GitHub Releases, source checkouts and local development builds are
-the only available forms; generated GitHub source archives are not an installable macOS app.
+The planned first download is the signed and notarized `v0.1.0-beta.1` DMG attached to a GitHub
+prerelease, with a notarized ZIP as a fallback. Until it appears under GitHub Releases, source
+checkouts and local development builds are the only available forms; generated GitHub source
+archives are not an installable macOS app.
 
 ## Project documentation
 

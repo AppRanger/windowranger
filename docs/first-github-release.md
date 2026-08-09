@@ -8,9 +8,9 @@ This runbook uses a local-first release pipeline:
 
 | Owner | Responsibility |
 | --- | --- |
-| GitHub Actions | Generate the project, verify test isolation, run tests and static analysis, and compile an unsigned universal Release configuration. |
-| Maintainer's Mac | Use the Developer ID private key, archive/export, notarize, staple, package, and verify the exact release app. |
-| GitHub Releases | Hold the immutable tag, draft notes, notarized ZIP, SHA-256 checksum, and provenance manifest. |
+| GitHub Actions | Generate the project, verify test isolation, run tests and static analysis, compile an unsigned universal Release configuration, and smoke-test both DMG layouts. |
+| Maintainer's Mac | Use the Developer ID private key, archive/export, notarize, staple, package, and verify the exact release app and DMG. |
+| GitHub Releases | Hold the immutable tag, draft notes, notarized DMG and ZIP, SHA-256 checksums, and provenance manifest. |
 
 The daily installer is not a distribution tool. It deliberately builds a local development copy and
 may use Apple Development signing. `scripts/build-distribution.sh` is the only scripted path for a
@@ -70,6 +70,8 @@ From a clean `release/0.1.0` worktree:
 ```sh
 export WINDOWRANGER_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 
+./scripts/install-dmg-tools.sh
+
 ./scripts/build-distribution.sh \
   --version 0.1.0-beta.1 \
   --build-number 1 \
@@ -89,9 +91,11 @@ The build command:
 3. runs the complete test suite and static analysis;
 4. creates a universal Release archive with Hardened Runtime;
 5. exports with Developer ID and rejects `get-task-allow`;
-6. submits a ZIP through `notarytool`, staples the ticket, and validates it with `stapler` and
+6. submits the app through `notarytool`, staples the ticket, and validates it with `stapler` and
    Gatekeeper;
-7. writes the final ZIP, SHA-256 checksum, and provenance manifest beneath
+7. creates the channel-specific DMG with the `/Applications` shortcut, submits the DMG to Apple,
+   staples its ticket, and verifies the disk image;
+8. writes the final DMG, fallback ZIP, SHA-256 checksums, and provenance manifest beneath
    `.build/releases/0.1.0-beta.1/`.
 
 Build number `1` is the first distribution build. Every later Beta or Stable artifact must use a
@@ -99,15 +103,17 @@ strictly larger integer.
 
 ## Test the exact artifact
 
-Do not test a separate Xcode product and assume the release ZIP is equivalent.
+Do not test a separate Xcode product and assume the release DMG is equivalent.
 
-1. Extract `WindowRanger-0.1.0-beta.1.zip` on another supported Mac or a clean macOS user account.
-2. Move `WindowRanger.app` to `/Applications` and launch it normally through Finder.
+1. Open `WindowRanger-0.1.0-beta.1.dmg` on another supported Mac or a clean macOS user account.
+2. Confirm the Beta construction artwork and instruction, then drag `WindowRanger.app` onto the
+   `Applications` shortcut and launch it normally through Finder.
 3. Verify Gatekeeper identifies the Developer ID publisher without an unidentified-developer
    override.
 4. Complete the relevant manual regression, permission, multi-display, privacy, and recovery checks
    from `docs/release-checklist.md`.
-5. Confirm graceful quit and uninstall behaviour and capture only privacy-safe evidence.
+5. Confirm the fallback ZIP contains the same signed and notarized app.
+6. Confirm graceful quit and uninstall behaviour and capture only privacy-safe evidence.
 
 Any change after this test requires a new build number and a newly notarized artifact.
 
@@ -125,8 +131,9 @@ git push origin v0.1.0-beta.1
 ```
 
 Use [the release-notes template](release-notes-template.md) as the starting point. The command
-requires the pushed tag to point to `HEAD`, attaches the ZIP/checksum/manifest, marks a Beta as a
-prerelease, and creates a **draft**. It cannot publish the release or make the repository public.
+requires the pushed tag to point to `HEAD`, attaches the DMG, fallback ZIP, both checksums, and the
+manifest, marks a Beta as a prerelease, and creates a **draft**. It cannot publish the release or
+make the repository public.
 
 Review the draft on GitHub, download and checksum its attached asset once more, and then explicitly
 publish it from GitHub. GitHub's automatically generated source archives are not the macOS app and

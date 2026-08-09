@@ -43,9 +43,28 @@ useful for the macOS 14 deployment target, exact size inspection, and as a
 deterministic fallback. Dark and Mono 1024-pixel masters are intentionally kept
 even though Icon Composer can derive those system appearances from the source.
 
+## DMG artwork
+
+- `dmg/source/stable-approved.png` and `dmg/source/beta-approved.png` preserve the approved generated
+  artwork at its original dimensions.
+- `dmg/backgrounds/` contains the exact 1440 x 900 Retina canvases used by the release builder.
+- Stable uses the moonlit ranger scene and cyan directional accent. Beta uses the approved
+  construction-site scene, amber hazard accent, tools, scaffolding, and a visible Beta marker.
+
+Regenerate the native instruction, arrow, and Beta marker without changing the approved source art:
+
+```sh
+./scripts/render-dmg-backgrounds.sh
+```
+
+The renderer produces the exact canvases deterministically. `scripts/build-dmg.sh` adds the app,
+the `/Applications` shortcut, volume icon, and Finder layout without requiring Finder automation.
+
 ## Provenance
 
-The artwork in this directory was generated for WindowRanger with OpenAI's
-built-in image generation workflow on 9 August 2026. The selected icon direction
-was tested as a 16-pixel raster before export. See `icons/manifest.json` for the
-machine-readable inventory and production decision.
+The artwork in this directory was generated for WindowRanger with OpenAI's built-in image generation
+workflow on 9 August 2026. The selected icon direction was tested as a 16-pixel raster before export.
+The DMG set explored a polished moonlit ranger scene for Stable and a playful construction-site
+treatment for Beta; the approved sources are retained before deterministic text and layout
+rendering. See `icons/manifest.json` for the machine-readable icon inventory and production
+decision.
