@@ -24,16 +24,6 @@ None.
 
 ## Ready
 
-### WR-004 — Bound synced profile-library input with recovery UX
-
-- **Type:** Hardening
-- **Priority:** P2 — before public release
-- **Status:** Ready
-- **Source:** `docs/code-review-2026-08-08.md`, CR-004
-- **Outcome:** Define explicit synced-library document, count, and name limits without silently
-  rejecting legitimate existing private-install data. Include migration/recovery behavior and
-  deterministic tests.
-
 ### WR-005 — Measure Debug diagnostic logging under slow storage
 
 - **Type:** Performance measurement
@@ -251,6 +241,17 @@ second copy of that checklist.
   publishing the reviewed draft each require explicit maintainer action at the final checkpoint.
 
 ## Done
+
+### WR-004 — Bound synced profile-library input with recovery UX
+
+- **Result:** The atomic iCloud profile-library value now has explicit byte, profile, nested-count,
+  and user-facing-name limits with validation before decode/application. Invalid remote data never
+  replaces or truncates local profiles; existing oversized private-install libraries remain local,
+  writes are withheld visibly, and an eligible local copy replaces rejected cloud data only through
+  an explicit General Settings recovery action.
+- **Automated evidence:** Thirteen focused tests cover exact boundaries, every collection limit,
+  oversized bytes, long names, malformed/future versions, local preservation, remote rejection and
+  explicit recovery. Test isolation and the complete 443-test suite passed on 10 August 2026.
 
 ### WR-017 — Copy a focused-window diagnostic report for bug reports
 

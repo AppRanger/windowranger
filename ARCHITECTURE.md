@@ -80,6 +80,13 @@ workspace-role assignments and typed app rules. Global preferences such as menu-
 general command shortcuts and command-wheel configuration use their existing global settings path
 and are not profile content.
 
+`SyncedProfileLibraryPolicy` validates the atomic encoded byte size before decoding, then validates
+the schema version, collection counts, user-facing name lengths and normalized structure. A remote
+rejection cannot replace or trim the local library. Local private-install data remains readable even
+when it exceeds the newer sync envelope; writing that library to iCloud is withheld with visible
+recovery state until it is eligible. Replacing a rejected remote value is a separate explicit user
+action and never occurs as a side effect of a failed pull.
+
 ### Local to one Mac
 
 The active/manual profile selection, automatic trigger mappings, runtime active-workspace state,
