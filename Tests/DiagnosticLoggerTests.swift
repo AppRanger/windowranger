@@ -94,6 +94,38 @@ final class DiagnosticLoggerTests: XCTestCase {
         _ = try decodedRecords(text)
     }
 
+    func testCompleteJSONLineSuffixDropsNestedObjectAtByteCap() throws {
+        let firstRecord = Data(
+            "{\"fields\":{\"index\":\"484\"},\"category\":\"background\"}\n".utf8
+        )
+        let completeRecord = Data("{\"sequence\":2}\n".utf8)
+        var data = firstRecord
+        data.append(completeRecord)
+        let nestedObject = Data("{\"index\"".utf8)
+        let nestedStart = try XCTUnwrap(data.range(of: nestedObject)?.lowerBound)
+        let maxBytes = data.distance(from: nestedStart, to: data.endIndex)
+
+        let suffix = DiagnosticLogger.completeJSONLinesSuffix(from: data, maxBytes: maxBytes)
+
+        XCTAssertEqual(suffix, completeRecord)
+        _ = try decodedRecords(String(decoding: suffix, as: UTF8.self))
+    }
+
+    func testCompleteJSONLineSuffixRetainsRecordAtExactLineBoundary() throws {
+        let firstRecord = Data("{\"sequence\":1}\n".utf8)
+        let secondRecord = Data("{\"sequence\":2}\n".utf8)
+        var data = firstRecord
+        data.append(secondRecord)
+
+        let suffix = DiagnosticLogger.completeJSONLinesSuffix(
+            from: data,
+            maxBytes: secondRecord.count
+        )
+
+        XCTAssertEqual(suffix, secondRecord)
+        _ = try decodedRecords(String(decoding: suffix, as: UTF8.self))
+    }
+
     func testPrivacyFilterRemovesForbiddenFieldsAndSensitiveValues() {
         let sink = MemoryDiagnosticSink()
         let logger = DiagnosticLogger(buildMode: .test, sink: sink)
