@@ -1684,6 +1684,11 @@ final class SettingsStore: ObservableObject {
     }
 
     private func validateLocalLibraryForSync(_ data: Data) -> Bool {
+        // A rejected remote value remains untouched until the user chooses the explicit recovery
+        // action. Ordinary local edits must not turn a failed pull into an implicit cloud replace.
+        if iCloudProfileLibraryIssue?.source == .remote {
+            return false
+        }
         switch SyncedProfileLibraryPolicy.validate(data) {
         case .accepted:
             if iCloudProfileLibraryIssue?.source == .local {

@@ -248,6 +248,29 @@ final class ICloudSyncSettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testLocalEditsCannotImplicitlyReplaceARejectedRemoteLibrary() throws {
+        let (defaults, suite) = isolatedDefaults("RejectedRemoteEdit")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+        let local = ProfileLibrary(profiles: [profile(name: "Local")])
+        defaults.set(try JSONEncoder().encode(local), forKey: "profileLibrary.v1")
+        let cloud = InspectableUbiquitousStore()
+        let rejectedRemote = Data("not-json".utf8)
+        cloud.seed(rejectedRemote, forKey: "profileLibrary.v1")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+
+        store.renameProfile(store.activeProfileID, to: "Edited Local")
+
+        XCTAssertEqual(store.profiles.map(\.name), ["Edited Local"])
+        XCTAssertEqual(cloud.peekData(forKey: "profileLibrary.v1"), rejectedRemote)
+        XCTAssertEqual(store.iCloudProfileLibraryIssue?.source, .remote)
+    }
+
+    @MainActor
     func testExistingOversizedLocalPrivateLibraryRemainsAvailableWhenSyncIsOff() throws {
         let (defaults, suite) = isolatedDefaults("ExistingLocal")
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -268,6 +291,35 @@ final class ICloudSyncSettingsTests: XCTestCase {
         XCTAssertFalse(store.iCloudSyncEnabled)
         XCTAssertEqual(store.profiles.count, profiles.count)
         XCTAssertNil(store.iCloudProfileLibraryIssue)
+    }
+
+    @MainActor
+    func testEnablingSyncWithOversizedLocalLibraryDoesNotOverwriteCloudProfiles() throws {
+        let (defaults, suite) = isolatedDefaults("OversizedLocalEnable")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let oversized = (0...SyncedProfileLibraryPolicy.maximumProfiles).map {
+            profile(name: "Private \($0)")
+        }
+        defaults.set(
+            try JSONEncoder().encode(ProfileLibrary(profiles: oversized)),
+            forKey: "profileLibrary.v1"
+        )
+        let cloud = InspectableUbiquitousStore()
+        let existingCloud = try JSONEncoder().encode(ProfileLibrary(
+            profiles: [profile(name: "Existing Cloud")]
+        ))
+        cloud.seed(existingCloud, forKey: "profileLibrary.v1")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+
+        store.iCloudSyncEnabled = true
+
+        XCTAssertEqual(store.profiles.count, oversized.count)
+        XCTAssertEqual(store.iCloudProfileLibraryIssue?.source, .local)
+        XCTAssertEqual(cloud.peekData(forKey: "profileLibrary.v1"), existingCloud)
     }
 
     func testMalformedAndFutureSyncedDocumentsHaveDistinctRecoveryReasons() throws {
