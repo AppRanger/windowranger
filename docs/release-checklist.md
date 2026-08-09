@@ -12,7 +12,8 @@ promotion and versioning. It is a design authority, not evidence that the releas
 - [ ] Confirm the copyright line in `LICENSE` with the maintainer.
 - [x] Select `com.windowranger.WindowRanger` as the public bundle identifier; the private development
       identity intentionally does not migrate.
-- [ ] Confirm Developer ID ownership, signing team and designated requirement.
+- [x] Confirm Developer ID ownership and team `44NAD22AK6`; verify the exported app's Developer ID
+      designated requirement and public bundle identifier.
 - [ ] Finalize app icon, menu-bar identity, versioning and support language.
 
 ## Licensing and repository hygiene
@@ -31,10 +32,12 @@ promotion and versioning. It is a design authority, not evidence that the releas
 
 ## Build and verification
 
-- [ ] Generate the project from a clean checkout with the documented Xcode/XcodeGen versions.
-- [ ] Verify non-hosted test isolation and run the complete suite from a clean DerivedData state.
-- [ ] Run static analysis and address compiler warnings relevant to project code.
-- [ ] Build universal Release and verify bundle ID, architectures, entitlements and signature.
+- [x] Generate the project from a clean release worktree with stable Xcode 26.6 and the documented
+      XcodeGen toolchain.
+- [x] Verify non-hosted test isolation and run the complete suite from a clean DerivedData state.
+- [x] Run static analysis and address compiler warnings relevant to project code.
+- [x] Build universal Release and verify bundle ID, architectures, entitlements and Developer ID
+      signature.
 - [ ] Confirm Release omits Debug menus, verbose diagnostic paths and internal-only copy.
 - [ ] Audit LaunchServices so validation leaves only intended products registered.
 - [ ] Run a clean-machine installation/upgrade/uninstall test.
@@ -68,13 +71,16 @@ promotion and versioning. It is a design authority, not evidence that the releas
 ## Packaging and updates — held
 
 - [x] Define Stable, Beta, and Dev release channels and the Gitflow-style promotion model.
-- [ ] Create and protect the `develop` integration branch after required checks are ready.
+- [x] Create `develop`, make it the default integration branch, and run the required CI workflow.
+- [ ] Protect `main`, `develop`, and release tags once GitHub Pro is enabled or the repository is
+      made public; the current private plan rejects rulesets and branch protection.
 - [x] Choose the initial distribution: a signed, notarized channel-specific DMG attached to a
       GitHub prerelease, with a notarized ZIP fallback; Homebrew remains a later Stable channel.
 - [x] Choose a local-first release pipeline: GitHub Actions performs unprivileged verification, and
       the maintainer's Mac performs Developer ID signing, notarization, stapling, and packaging.
-- [ ] Validate `scripts/build-distribution.sh` with the intended Developer ID identity and notary
-      profile, then test the exact packaged artifact on a clean machine or user account.
+- [x] Validate `scripts/build-distribution.sh` with the intended Developer ID identity and
+      `WindowRanger` notary profile; test the exact installed DMG on the maintainer's Mac.
+- [ ] Test the exact packaged artifact on another supported Mac or a clean macOS user account.
 - [x] Create and automatically verify the Stable and construction-themed Beta DMG layouts, including
       the `/Applications` shortcut and native drag-to-install instruction.
 - [ ] Validate DMG install/uninstall behavior and Accessibility migration guidance on a clean machine
@@ -86,7 +92,10 @@ promotion and versioning. It is a design authority, not evidence that the releas
       held.
 - [ ] Design and implement one signed Sparkle appcast with default Stable and opt-in `beta` channel,
       including channel switching, monotonic build numbers, signatures, rollback, and failure UX.
-- [ ] Choose the signing/notarization pipeline and final rollback policy.
-- [ ] Produce reproducible release notes, checksums and provenance.
-- [ ] Notarize and staple only after the preceding decisions and tests are complete.
+- [x] Choose and prove the local-first signing/notarization pipeline; keep credentials off ordinary
+      GitHub Actions jobs.
+- [ ] Finalize the Stable/Beta rollback policy before automatic updates are implemented.
+- [x] Produce tracked release notes, SHA-256 checksums and a commit/toolchain provenance manifest;
+      round-trip verify all five GitHub assets.
+- [x] Developer ID-sign, notarize, staple, Gatekeeper-check, and verify the exact Beta app and DMG.
 - [ ] Publish only with explicit maintainer approval.

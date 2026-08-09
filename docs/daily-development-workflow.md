@@ -1,9 +1,17 @@
 # Daily use and development on one Mac
 
-WindowRanger's Debug and Release configurations intentionally share the signed
-`com.windowranger.WindowRanger` identity. This preserves one Accessibility grant and one set of
-preferences. Only one copy should run at a time because both copies would compete for global
-shortcuts and window control.
+WindowRanger's Debug and Release configurations currently share the
+`com.windowranger.WindowRanger` bundle identifier, but they do not have one interchangeable signed
+identity. Xcode uses Apple Development while public packages use Developer ID; their designated
+requirements differ, so macOS may maintain separate Accessibility trust decisions. Switching
+between them can require removing a stale entry and granting the exact copy being launched. Only
+one copy should run at a time because both copies would compete for global shortcuts and window
+control.
+
+A future development-only bundle identifier may make the two local clients unambiguous, but that is
+a separate product/signing change. Stable and Beta releases continue to use the canonical public
+identifier. Do not change signing, reset TCC globally, or invent another release-channel identity as
+part of ordinary local handoff.
 
 “Daily copy” describes the locally installed app used on this Mac; it is not a release channel. A
 Release-configuration build from `develop` is still a Dev build, not a Stable release. Channel and
@@ -29,6 +37,11 @@ When Release is ready, use:
 The installed app is `/Applications/WindowRanger.app`. If it replaces an existing daily build, the
 previous bundle is retained at `/Applications/.WindowRanger.previous` without an `.app` suffix so
 LaunchServices cannot select it as a runnable app.
+
+If the installed Developer ID build is already trusted but the Xcode build is not, open **System
+Settings > Privacy & Security > Accessibility**, remove only the stale WindowRanger entry when
+necessary, launch the intended exact build, and grant that copy. Repeat the handoff for the installed
+copy if macOS later asks again. Do not use a global LaunchServices or privacy-database reset.
 
 ## Develop in Xcode
 

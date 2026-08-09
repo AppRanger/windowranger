@@ -118,9 +118,11 @@ When a pull request still needs signed-app or multi-display testing, say so plai
 tests is not evidence that live Accessibility behaviour, packaging, notarization, or distribution
 has been validated.
 
-GitHub Actions repeats project generation, isolated tests, static analysis, and an unsigned Release
-compile. It deliberately has no Apple signing or notarization secrets. Maintainer-only distribution
-uses the [first-release runbook](docs/first-github-release.md), not the daily installer.
+GitHub Actions runs on every pushed branch and on pull requests targeting `develop` or `main`. It
+repeats project generation, release-script syntax checks, isolated tests, static analysis, an
+unsigned universal Release compile, and Stable/Beta DMG smoke packaging. It deliberately has no
+Apple signing or notarization secrets. Maintainer-only distribution uses the
+[first-release runbook](docs/first-github-release.md), not the daily installer.
 
 ## Pull request workflow
 

@@ -26,9 +26,12 @@ Before `1.0.0`, the same structure applies under the `0.y.z` initial-development
 number describes product compatibility; it does not by itself prove that a build passed the release
 gates.
 
-All channels retain the canonical `com.windowranger.WindowRanger` bundle identifier and application
-identity. Do not create channel-specific bundle identifiers: doing so would create parallel
-Accessibility clients and make permissions and live validation unreliable.
+All publicly distributed Stable and Beta builds retain the canonical
+`com.windowranger.WindowRanger` bundle identifier and Developer ID application identity. Do not
+create channel-specific public identifiers: doing so would create parallel Accessibility clients
+and make update promotion unreliable. A future development-only Xcode identity is a separate local
+tooling decision; it would not be a public Dev release promise and must be documented in the daily
+development workflow before implementation.
 
 Build configuration does not determine the release channel. A local Release-configuration build
 from `develop` remains Dev; only provenance, completed gates, and promotion through the flow below
@@ -121,9 +124,11 @@ No released tag or artifact may be replaced. A correction receives a new patch v
   requirements. Human-facing prerelease labels can be supplied in release metadata and Sparkle's
   short-version string rather than inventing an invalid bundle version.
 
-The release pipeline will become the sole authority for release version and build-number assignment.
-Until that automation exists, version changes are manual release work and must not be made casually
-on topic branches.
+The distribution script is the enforcement boundary for version syntax, branch/channel agreement,
+and the build number embedded in an artifact. The maintainer still assigns the next monotonically
+increasing build number; that decision must be recorded as release work and must not be made casually
+on topic branches. Sparkle implementation must add an authoritative allocation/check before more
+than one builder can produce public artifacts.
 
 ## Future Sparkle behaviour
 
@@ -143,9 +148,15 @@ Opting out of Beta is not necessarily an immediate downgrade. If the installed B
 build number than the latest Stable release, the user remains on that build until a newer Stable is
 published or they deliberately install an older Stable build using a documented manual process.
 
-## Repository protections to configure later
+## Repository protections and current GitHub settings
 
-When both long-lived branches exist, configure GitHub rulesets for `main` and `develop`:
+The repository currently uses `develop` as its default branch. Actions are enabled with a read-only
+default workflow token, and the CI workflow supplies explicit `contents: read` permission. The
+private repository's current GitHub plan does not expose branch protection or rulesets; GitHub's API
+requires either GitHub Pro while private or a public repository for these controls.
+
+Before accepting public contributions—or immediately after the explicit visibility change if the
+private plan prevents advance configuration—configure rulesets for `main` and `develop`:
 
 - require pull requests and passing required checks;
 - require the branch to be current before merge;
@@ -154,5 +165,8 @@ When both long-lived branches exist, configure GitHub rulesets for `main` and `d
 - restrict stable tags matching `v*` to release maintainers;
 - keep release publication and signing permissions separate from ordinary write access.
 
-These are repository settings, not files. They must be applied deliberately after the branches and
-required checks exist so the rules do not refer to missing or unstable automation.
+Use the required check emitted by `.github/workflows/ci.yml`, retain read-only workflow permissions,
+enable automatic deletion of merged topic branches, and review whether merge commits remain useful
+alongside squash/rebase. Record the applied rules in this section rather than assuming that a YAML
+file can enforce repository settings. Publishing and the visibility change remain separate manual
+approval gates.

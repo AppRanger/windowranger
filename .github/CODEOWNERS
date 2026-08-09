@@ -12,3 +12,4 @@
 /docs/first-github-release.md @VeniVidiVici
 /scripts/build-distribution.sh @VeniVidiVici
 /scripts/create-github-release.sh @VeniVidiVici
+/scripts/verify-release-assets.sh @VeniVidiVici
