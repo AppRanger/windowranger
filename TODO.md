@@ -309,17 +309,17 @@ second copy of that checklist.
   setting, Developer ID export configuration, approved Stable and construction-themed Beta DMG
   artwork, deterministic headless DMG packaging, local build/notarize/package script, draft-release
   script, release-notes template, and first-release runbook.
-- **Automated evidence:** Stable Xcode 26.6 passes the non-hosted test-isolation check, all 417
-  tests, Release static analysis, and an unsigned universal `arm64 x86_64` Release build with
-  Hardened Runtime enabled. GitHub Actions run
-  [31326683991](https://github.com/windowranger/windowranger/actions/runs/31326683991) independently
-  passes the same isolation, 415-test, analysis, and unsigned Release-build gates on macOS 26 with
-  Xcode 26.6. The intended `44NAD22AK6` team now has a local Developer ID Application identity with
-  private key, an installed all-device Developer ID profile authorizing the public bundle ID and
-  iCloud key-value entitlement through August 2044, and a validated `WindowRanger` notary Keychain
-  profile. A local unsigned universal Release build has produced both channel DMGs; each passes disk
-  image, bundle identity, `/Applications` shortcut, background, and Finder-metadata verification
-  without launching the app. The credentialed archive/export/notarization path remains untested.
+- **Automated evidence:** Stable Xcode 26.6 passes the non-hosted test-isolation check and the current
+  local 419-test suite. GitHub Actions run
+  [31330255231](https://github.com/windowranger/windowranger/actions/runs/31330255231) independently
+  passes isolation, 417 committed tests, Release static analysis, an unsigned universal
+  `arm64 x86_64` Release build, Stable/Beta DMG creation and verification, and artifact upload on
+  macOS 26 with Xcode 26.6. Both exact hosted DMGs also pass local read-only disk-image, bundle
+  identity, `/Applications` shortcut, background, and Finder-metadata verification without launching
+  the app. The intended `44NAD22AK6` team has a local Developer ID Application identity with private
+  key, an installed all-device Developer ID profile authorizing the public bundle ID and iCloud
+  key-value entitlement through August 2044, and a validated `WindowRanger` notary Keychain profile.
+  The credentialed archive/export/notarization path remains untested.
 - **Current blockers:**
   - complete the remaining product-identity, repository-publication, manual regression,
     accessibility, privacy, and clean-package gates in `docs/release-checklist.md`;
