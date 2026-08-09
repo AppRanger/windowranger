@@ -577,12 +577,69 @@ final class DiagnosticLoggerTests: XCTestCase {
     }
 
     @MainActor
-    func testDebugConfigurationExposesDiagnosticMenuControls() {
-        let enabled = WorkspaceStatusBarController.verboseDiagnosticsMenuEnabled
+    func testNormalStatusMenuOpenOmitsVerboseDiagnostics() {
+        XCTAssertEqual(VerboseDiagnosticsMenuPolicy.entries(
+            buildSupportsVerboseDiagnostics: true,
+            modifierFlags: [],
+            diagnosticFileAvailable: true
+        ), [])
+    }
+
+    @MainActor
+    func testOptionStatusMenuOpenShowsOneCompleteDiagnosticsSection() {
+        XCTAssertEqual(VerboseDiagnosticsMenuPolicy.entries(
+            buildSupportsVerboseDiagnostics: true,
+            modifierFlags: [.option],
+            diagnosticFileAvailable: true
+        ), [
+            .separator,
+            .header,
+            .copyRecent,
+            .revealFile(isEnabled: true),
+        ])
+    }
+
+    @MainActor
+    func testDiagnosticsVisibilityIsRecalculatedForEveryMenuOpening() {
+        let sequence: [NSEvent.ModifierFlags] = [[], [.option], [], [.option]]
+        let results = sequence.map {
+            VerboseDiagnosticsMenuPolicy.entries(
+                buildSupportsVerboseDiagnostics: true,
+                modifierFlags: $0,
+                diagnosticFileAvailable: true
+            )
+        }
+
+        XCTAssertEqual(results.map(\.isEmpty), [true, false, true, false])
+        XCTAssertEqual(results[1], results[3])
+        XCTAssertEqual(results[1].filter { $0 == .separator }.count, 1)
+    }
+
+    @MainActor
+    func testOptionDiagnosticsDisablesRevealWhenNoFileExists() {
+        XCTAssertEqual(VerboseDiagnosticsMenuPolicy.entries(
+            buildSupportsVerboseDiagnostics: true,
+            modifierFlags: [.option, .shift],
+            diagnosticFileAvailable: false
+        ).last, .revealFile(isEnabled: false))
+    }
+
+    @MainActor
+    func testReleaseBoundaryOmitsVerboseDiagnosticsRegardlessOfOption() {
+        XCTAssertEqual(VerboseDiagnosticsMenuPolicy.entries(
+            buildSupportsVerboseDiagnostics: false,
+            modifierFlags: [.option],
+            diagnosticFileAvailable: true
+        ), [])
+
+        let compiledEntries = WorkspaceStatusBarController.verboseDiagnosticsMenuEntries(
+            modifierFlags: [.option],
+            diagnosticFileAvailable: true
+        )
         #if DEBUG
-        XCTAssertTrue(enabled)
+        XCTAssertFalse(compiledEntries.isEmpty)
         #else
-        XCTAssertFalse(enabled)
+        XCTAssertTrue(compiledEntries.isEmpty)
         #endif
     }
 

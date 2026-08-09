@@ -487,6 +487,29 @@ private final class CommandFeedbackPanel: NSPanel {
     override var canBecomeMain: Bool { CommandFeedbackPanelPolicy.nonActivating.canBecomeMain }
 }
 
+enum VerboseDiagnosticsMenuEntry: Equatable {
+    case separator
+    case header
+    case copyRecent
+    case revealFile(isEnabled: Bool)
+}
+
+enum VerboseDiagnosticsMenuPolicy {
+    static func entries(
+        buildSupportsVerboseDiagnostics: Bool,
+        modifierFlags: NSEvent.ModifierFlags,
+        diagnosticFileAvailable: Bool
+    ) -> [VerboseDiagnosticsMenuEntry] {
+        guard buildSupportsVerboseDiagnostics, modifierFlags.contains(.option) else { return [] }
+        return [
+            .separator,
+            .header,
+            .copyRecent,
+            .revealFile(isEnabled: diagnosticFileAvailable),
+        ]
+    }
+}
+
 @MainActor
 final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     static var verboseDiagnosticsMenuEnabled: Bool {
@@ -495,6 +518,17 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         #else
         false
         #endif
+    }
+
+    static func verboseDiagnosticsMenuEntries(
+        modifierFlags: NSEvent.ModifierFlags,
+        diagnosticFileAvailable: Bool
+    ) -> [VerboseDiagnosticsMenuEntry] {
+        VerboseDiagnosticsMenuPolicy.entries(
+            buildSupportsVerboseDiagnostics: verboseDiagnosticsMenuEnabled,
+            modifierFlags: modifierFlags,
+            diagnosticFileAvailable: diagnosticFileAvailable
+        )
     }
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -724,18 +758,29 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         }
 
         #if DEBUG
-        appMenu.addItem(.separator())
-        appMenu.addItem(disabledMenuItem(title: "WindowRanger Debug"))
-        appMenu.addItem(actionMenuItem(
-            title: "Copy Recent Diagnostics",
-            action: #selector(copyRecentDiagnostics)
-        ))
-        let reveal = actionMenuItem(
-            title: "Reveal Diagnostics File",
-            action: #selector(revealDiagnosticsFile)
-        )
-        reveal.isEnabled = diagnostics.fileURL != nil
-        appMenu.addItem(reveal)
+        for entry in Self.verboseDiagnosticsMenuEntries(
+            modifierFlags: NSEvent.modifierFlags,
+            diagnosticFileAvailable: diagnostics.fileURL != nil
+        ) {
+            switch entry {
+            case .separator:
+                appMenu.addItem(.separator())
+            case .header:
+                appMenu.addItem(disabledMenuItem(title: "WindowRanger Debug"))
+            case .copyRecent:
+                appMenu.addItem(actionMenuItem(
+                    title: "Copy Recent Diagnostics",
+                    action: #selector(copyRecentDiagnostics)
+                ))
+            case let .revealFile(isEnabled):
+                let reveal = actionMenuItem(
+                    title: "Reveal Diagnostics File",
+                    action: #selector(revealDiagnosticsFile)
+                )
+                reveal.isEnabled = isEnabled
+                appMenu.addItem(reveal)
+            }
+        }
         #endif
 
         appMenu.addItem(.separator())
