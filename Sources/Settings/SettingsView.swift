@@ -253,7 +253,7 @@ private struct GeneralSettingsView: View {
                     }
                 }
                 Toggle("Sync settings with iCloud", isOn: $store.iCloudSyncEnabled)
-                Text("Named profile definitions and global preferences sync through your private iCloud key-value store. The active profile, automatic trigger mappings, live window state, and physical monitor bindings remain local to each Mac.")
+                Text("Off by default. When enabled, named profile definitions and supported global preferences sync through your private iCloud key-value store. The active profile, automatic trigger mappings, live window state, and physical monitor bindings always remain local to each Mac.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let errorMessage = launchAtLogin.errorMessage {
