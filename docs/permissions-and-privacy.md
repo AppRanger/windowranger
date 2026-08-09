@@ -25,11 +25,13 @@ and do not register or unregister the live login item.
 
 ## Settings and iCloud
 
-When **Sync settings with iCloud** is enabled, reusable profile definitions and supported global
-preferences use the user's private iCloud key-value store. Profile definitions can contain workspace
-names/keys/order/layout geometry, abstract display-role names and typed app rules including app bundle
-identifiers. They do not contain open window IDs, titles, frames, focus, monitor serials/fingerprints,
-the active profile or automatic trigger assignments.
+Settings sync is off by default. When **Sync settings with iCloud** is explicitly enabled, reusable
+profile definitions and supported global preferences use the user's private iCloud key-value store.
+Turning it off immediately stops cloud reads and writes; it does not delete local settings or
+previously synced cloud data. Profile definitions can contain workspace names/keys/order/layout
+geometry, abstract display-role names and typed app rules including app bundle identifiers. They do
+not contain open window IDs, titles, frames, focus, monitor serials/fingerprints, the active profile
+or automatic trigger assignments.
 
 An explicitly requested profile export contains the same reusable definition boundary in a local
 JSON file chosen by the user. Import is additive and does not read or write physical monitor

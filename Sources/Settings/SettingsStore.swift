@@ -249,7 +249,7 @@ final class SettingsStore: ObservableObject {
             displays: initialDisplays
         )
 
-        iCloudSyncEnabled = defaults.object(forKey: Keys.iCloudSync) as? Bool ?? true
+        iCloudSyncEnabled = defaults.object(forKey: Keys.iCloudSync) as? Bool ?? false
         radialMenuEnabled = defaults.object(forKey: Keys.radialMenuEnabled) as? Bool ?? true
         radialMenuActivationStyle = defaults.string(forKey: Keys.radialMenuActivationStyle)
             .flatMap(RadialMenuActivationStyle.init(rawValue:)) ?? .pressToToggle

@@ -179,9 +179,12 @@ including paused rules. Exact open-window IDs, workspace membership, frames, and
 session state and are not copied into a profile.
 
 Profile definitions are stored as one versioned value and sync atomically through iCloud when sync is
-enabled. This Mac keeps its active profile, manual pin, automatic trigger mappings, per-profile active
-workspace state, conservative monitor fingerprints, and role-to-monitor bindings locally. A missing,
-disconnected, or ambiguous role safely falls back without rewriting the synced role assignment.
+enabled. New installations start local-only until **Sync settings with iCloud** is explicitly enabled.
+Turning sync off stops cloud reads and writes without deleting local settings or previously synced
+cloud data. This Mac always keeps its active profile, manual pin, automatic trigger mappings,
+per-profile active workspace state, conservative monitor fingerprints, and role-to-monitor bindings
+locally. A missing, disconnected, or ambiguous role safely falls back without rewriting the synced
+role assignment.
 
 Automatic selection resolves in a fixed order: a manual pin; an exact known display topology; a
 generic docked or undocked rule on portable Macs; then this Mac's default profile. A manual selection

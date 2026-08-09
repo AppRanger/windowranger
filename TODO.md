@@ -24,27 +24,6 @@ None.
 
 ## Ready
 
-### WR-015 — Make iCloud settings sync opt-in
-
-- **Type:** Feature / privacy default
-- **Priority:** P2
-- **Status:** Ready
-- **Evidence:** Requested
-- **Current behavior:** General Settings already provides **Sync settings with iCloud**, and turning
-  it off keeps settings local. New installations currently default the preference to on.
-- **Requested outcome:** Make new installations local-only by default so iCloud is an explicit
-  opt-in. Keep the existing visible toggle for people who want sync.
-- **Acceptance:**
-  - a new installation with no saved preference starts with iCloud sync disabled;
-  - an existing installation preserves its saved enabled/disabled choice;
-  - disabling sync immediately prevents cloud reads and writes while local profiles and preferences
-    continue to persist normally;
-  - disabling does not delete local settings or silently delete previously synced cloud data;
-  - running without an available iCloud account/store remains fully functional and does not nag;
-  - Settings and privacy copy explain which reusable settings sync and which machine/session state
-    always remains local;
-  - deterministic tests cover first-run default, migration, off-state isolation, and re-enabling.
-
 ### WR-016 — Reveal menu diagnostics only with Option-click
 
 - **Type:** Feature / menu cleanup
@@ -348,6 +327,15 @@ second copy of that checklist.
   publishing the reviewed draft each require explicit maintainer action at the final checkpoint.
 
 ## Done
+
+### WR-015 — Make iCloud settings sync opt-in
+
+- **Result:** New installations now start local-only; saved enabled/disabled choices remain intact,
+  disabling immediately gates every cloud read/write while retaining local and remote data, and
+  re-enabling pushes the current reusable settings. Settings, README, and privacy copy document the
+  opt-in and machine-local boundaries.
+- **Automated evidence:** Test isolation, five focused first-run/saved-choice/off-state/no-store/
+  re-enable tests, and the complete 422-test suite passed with no failures on 10 August 2026.
 
 ### WR-006 — Reconcile the future-systems brief with implemented Tiled manipulation
 
