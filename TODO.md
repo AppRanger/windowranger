@@ -24,6 +24,8 @@ None.
 
 ## Ready
 
+None.
+
 ## Live validation
 
 ### WR-005 — Measure Debug diagnostic logging under slow storage
@@ -37,7 +39,7 @@ None.
   preserving exact JSONL sequence 1...100. This confirms synchronous cost tracks storage latency;
   it does not establish that the normal Debug log volume or the maintainer's filesystem causes a
   perceptible interaction problem.
-- **Automated evidence:** Test isolation and the complete 444-test suite passed on 10 August 2026.
+- **Automated evidence:** Test isolation and the complete 446-test suite passed on 10 August 2026.
 - **Remaining live boundary:** Gracefully quit the installed copy, run the intended signed Debug
   build, reproduce a sustained noisy window/workspace session on the target slow-storage setup, and
   record command latency plus diagnostic event rate. Keep ordered synchronous writes unless that
