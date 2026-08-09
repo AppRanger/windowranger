@@ -494,6 +494,12 @@ enum VerboseDiagnosticsMenuEntry: Equatable {
     case revealFile(isEnabled: Bool)
 }
 
+enum FocusedWindowSupportMenuPolicy {
+    static func isVisible(modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        modifierFlags.contains(.option)
+    }
+}
+
 enum VerboseDiagnosticsMenuPolicy {
     static func entries(
         buildSupportsVerboseDiagnostics: Bool,
@@ -544,6 +550,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private var highlightColor: MenuBarHighlightColor
     private var contentView: MenuBarStatusContentView?
     private var lastSnapshot: MenuBarPresentationSnapshot?
+    private var focusedWindowDiagnosticReport: String?
+    private var supportSectionVisibleForCurrentOpen = false
     private var isInvalidated = false
 
     init(
@@ -675,7 +683,19 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        let modifierFlags = NSEvent.modifierFlags
+        supportSectionVisibleForCurrentOpen = FocusedWindowSupportMenuPolicy.isVisible(
+            modifierFlags: modifierFlags
+        )
+        focusedWindowDiagnosticReport = supportSectionVisibleForCurrentOpen
+            ? engine.focusedWindowDiagnosticReport()
+            : nil
         rebuildMenu()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        supportSectionVisibleForCurrentOpen = false
+        focusedWindowDiagnosticReport = nil
     }
 
     private func rebuildMenu() {
@@ -757,6 +777,16 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             }
         }
 
+        let supportSectionVisible = supportSectionVisibleForCurrentOpen
+        if supportSectionVisible {
+            appMenu.addItem(.separator())
+            appMenu.addItem(disabledMenuItem(title: "WindowRanger Support"))
+            appMenu.addItem(actionMenuItem(
+                title: "Copy Focused Window Diagnostic Report",
+                action: #selector(copyFocusedWindowDiagnosticReport)
+            ))
+        }
+
         #if DEBUG
         for entry in Self.verboseDiagnosticsMenuEntries(
             modifierFlags: NSEvent.modifierFlags,
@@ -764,9 +794,11 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         ) {
             switch entry {
             case .separator:
-                appMenu.addItem(.separator())
+                if !supportSectionVisible { appMenu.addItem(.separator()) }
             case .header:
-                appMenu.addItem(disabledMenuItem(title: "WindowRanger Debug"))
+                if !supportSectionVisible {
+                    appMenu.addItem(disabledMenuItem(title: "WindowRanger Debug"))
+                }
             case .copyRecent:
                 appMenu.addItem(actionMenuItem(
                     title: "Copy Recent Diagnostics",
@@ -849,6 +881,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     @objc private func redoTiledPlacement() {
         tiledPlacementUndoManager?.redo()
         rebuildMenu()
+    }
+
+    @objc private func copyFocusedWindowDiagnosticReport() {
+        guard let focusedWindowDiagnosticReport else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(focusedWindowDiagnosticReport, forType: .string)
     }
 
     #if DEBUG
