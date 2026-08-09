@@ -310,10 +310,13 @@ second copy of that checklist.
   script, release-notes template, and first-release runbook.
 - **Automated evidence:** Stable Xcode 26.6 passes the non-hosted test-isolation check, all 415
   tests, Release static analysis, and an unsigned universal `arm64 x86_64` Release build with
-  Hardened Runtime enabled. The intended `44NAD22AK6` team now has a local Developer ID Application
-  identity with private key, an installed all-device Developer ID profile authorizing the public
-  bundle ID and iCloud key-value entitlement through August 2044, and a validated `WindowRanger`
-  notary Keychain profile. The credentialed archive/export/notarization path remains untested.
+  Hardened Runtime enabled. GitHub Actions run
+  [31326683991](https://github.com/windowranger/windowranger/actions/runs/31326683991) independently
+  passes the same isolation, 415-test, analysis, and unsigned Release-build gates on macOS 26 with
+  Xcode 26.6. The intended `44NAD22AK6` team now has a local Developer ID Application identity with
+  private key, an installed all-device Developer ID profile authorizing the public bundle ID and
+  iCloud key-value entitlement through August 2044, and a validated `WindowRanger` notary Keychain
+  profile. The credentialed archive/export/notarization path remains untested.
 - **Current blockers:**
   - complete the remaining product-identity, repository-publication, manual regression,
     accessibility, privacy, and clean-package gates in `docs/release-checklist.md`;
