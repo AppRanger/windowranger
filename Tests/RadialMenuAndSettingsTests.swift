@@ -463,6 +463,398 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
+    func testGlobeFnQuickTapPassesThroughWithoutOpeningOrSuppressingNativeAction() {
+        var state = GlobeFnGestureStateMachine()
+        XCTAssertEqual(
+            state.handle(
+                .functionChanged(isDown: true, otherModifiersDown: false),
+                holdDelay: 0.2
+            ),
+            [.scheduleThreshold(generation: 1, delay: 0.2)]
+        )
+        XCTAssertEqual(
+            state.handle(
+                .functionChanged(isDown: false, otherModifiersDown: false),
+                holdDelay: 0.2
+            ),
+            [.cancelThreshold(reason: "quick-tap")]
+        )
+        XCTAssertEqual(
+            state.handle(.nativeGlobeKey(isDown: true), holdDelay: 0.2),
+            []
+        )
+        XCTAssertEqual(
+            state.handle(.nativeGlobeKey(isDown: false), holdDelay: 0.2),
+            []
+        )
+        XCTAssertEqual(state.phaseName, "idle")
+    }
+
+    func testGlobeFnThresholdOrderingAndReleaseCommitAreDeterministic() {
+        var below = GlobeFnGestureStateMachine()
+        _ = below.handle(
+            .functionChanged(isDown: true, otherModifiersDown: false),
+            holdDelay: 0.2
+        )
+        XCTAssertEqual(
+            below.handle(
+                .functionChanged(isDown: false, otherModifiersDown: false),
+                holdDelay: 0.2
+            ),
+            [.cancelThreshold(reason: "quick-tap")]
+        )
+        XCTAssertEqual(below.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2), [])
+
+        var exact = GlobeFnGestureStateMachine()
+        _ = exact.handle(
+            .functionChanged(isDown: true, otherModifiersDown: false),
+            holdDelay: 0.2
+        )
+        XCTAssertEqual(
+            exact.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2),
+            [.activateHold(generation: 1)]
+        )
+        XCTAssertEqual(
+            exact.handle(
+                .functionChanged(isDown: false, otherModifiersDown: false),
+                holdDelay: 0.2
+            ),
+            [
+                .releaseHold(generation: 1),
+                .scheduleSuppressionExpiry(
+                    generation: 1,
+                    delay: GlobeFnGestureStateMachine.nativeSuppressionWindow
+                ),
+            ]
+        )
+        XCTAssertEqual(
+            exact.handle(.nativeGlobeKey(isDown: true), holdDelay: 0.2),
+            [.suppressCurrentEvent]
+        )
+        XCTAssertEqual(
+            exact.handle(.nativeGlobeKey(isDown: false), holdDelay: 0.2),
+            [.suppressCurrentEvent]
+        )
+        XCTAssertEqual(exact.phaseName, "idle")
+    }
+
+    func testGlobeFnChordAndModifierOrderingNeverActivateTheWheel() {
+        for input in [
+            GlobeFnCompetingInput.key,
+            .escape,
+            .mouseButton,
+            .systemDefined,
+            .modifier,
+        ] {
+            var state = GlobeFnGestureStateMachine()
+            _ = state.handle(
+                .functionChanged(isDown: true, otherModifiersDown: false),
+                holdDelay: 0.2
+            )
+            XCTAssertEqual(
+                state.handle(.competingInput(input), holdDelay: 0.2),
+                [.cancelThreshold(reason: "competing-\(input.rawValue)")]
+            )
+            XCTAssertEqual(state.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2), [])
+            XCTAssertEqual(
+                state.handle(
+                    .functionChanged(isDown: false, otherModifiersDown: false),
+                    holdDelay: 0.2
+                ),
+                []
+            )
+        }
+
+        var modifierFirst = GlobeFnGestureStateMachine()
+        XCTAssertEqual(
+            modifierFirst.handle(
+                .functionChanged(isDown: true, otherModifiersDown: true),
+                holdDelay: 0.2
+            ),
+            []
+        )
+        XCTAssertEqual(
+            modifierFirst.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2),
+            []
+        )
+    }
+
+    func testGlobeFnCompetingInputAfterActivationCancelsWithoutCommit() {
+        var state = GlobeFnGestureStateMachine()
+        _ = state.handle(
+            .functionChanged(isDown: true, otherModifiersDown: false),
+            holdDelay: 0.2
+        )
+        _ = state.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2)
+        XCTAssertEqual(
+            state.handle(.competingInput(.key), holdDelay: 0.2),
+            [
+                .cancelThreshold(reason: "competing-key"),
+                .cancelHold(reason: "competing-key"),
+            ]
+        )
+        XCTAssertEqual(
+            state.handle(
+                .functionChanged(isDown: false, otherModifiersDown: false),
+                holdDelay: 0.2
+            ),
+            []
+        )
+        XCTAssertEqual(state.handle(.nativeGlobeKey(isDown: true), holdDelay: 0.2), [])
+    }
+
+    func testGlobeFnNormalizerIgnoresDuplicateFlagsAndRecognizesEveryChordClass() {
+        var normalizer = GlobeFnEventNormalizer()
+        XCTAssertEqual(
+            normalizer.normalize(.flagsChanged(functionDown: true, otherModifiersDown: false)),
+            .functionChanged(isDown: true, otherModifiersDown: false)
+        )
+        XCTAssertNil(
+            normalizer.normalize(.flagsChanged(functionDown: true, otherModifiersDown: false))
+        )
+        XCTAssertEqual(
+            normalizer.normalize(.flagsChanged(functionDown: true, otherModifiersDown: true)),
+            .competingInput(.modifier)
+        )
+        XCTAssertEqual(
+            normalizer.normalize(.keyChanged(isDown: true, keyCode: 123, isRepeat: false)),
+            .competingInput(.key)
+        )
+        XCTAssertEqual(
+            normalizer.normalize(.keyChanged(isDown: true, keyCode: 53, isRepeat: false)),
+            .competingInput(.escape)
+        )
+        XCTAssertEqual(normalizer.normalize(.mouseButtonDown), .competingInput(.mouseButton))
+        XCTAssertEqual(normalizer.normalize(.systemDefined), .competingInput(.systemDefined))
+        XCTAssertEqual(
+            normalizer.normalize(.keyChanged(
+                isDown: true,
+                keyCode: GlobeFnEventNormalizer.nativeGlobeActionKeyCode,
+                isRepeat: false
+            )),
+            .nativeGlobeKey(isDown: true)
+        )
+    }
+
+    func testGlobeFnLifecycleCancellationAndRapidGesturesCannotCommitStaleGeneration() {
+        var state = GlobeFnGestureStateMachine()
+        _ = state.handle(
+            .functionChanged(isDown: true, otherModifiersDown: false),
+            holdDelay: 0.2
+        )
+        XCTAssertEqual(
+            state.handle(.cancel(reason: "system-will-sleep"), holdDelay: 0.2),
+            [.cancelThreshold(reason: "system-will-sleep")]
+        )
+        XCTAssertEqual(state.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2), [])
+
+        _ = state.handle(
+            .functionChanged(isDown: true, otherModifiersDown: false),
+            holdDelay: 0.2
+        )
+        XCTAssertEqual(state.latestGeneration, 2)
+        XCTAssertEqual(state.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2), [])
+        XCTAssertEqual(
+            state.handle(.thresholdElapsed(generation: 2), holdDelay: 0.2),
+            [.activateHold(generation: 2)]
+        )
+        XCTAssertEqual(
+            state.handle(.cancel(reason: "profile-transition"), holdDelay: 0.2),
+            [
+                .cancelThreshold(reason: "profile-transition"),
+                .cancelHold(reason: "profile-transition"),
+            ]
+        )
+    }
+
+    @MainActor
+    func testGlobeFnRuntimeUsesInjectedSchedulerAndExistingHoldPipeline() {
+        let radial = TestGlobeFnRadialTrigger()
+        let scheduler = TestGlobeFnScheduler()
+        let monitor = TestGlobeFnEventMonitor()
+        let controller = GlobeFnHoldActivationController(
+            radialTrigger: radial,
+            scheduler: scheduler,
+            monitorFactory: { eventHandler, interruptionHandler in
+                monitor.eventHandler = eventHandler
+                monitor.interruptionHandler = interruptionHandler
+                return monitor
+            }
+        )
+
+        controller.update(enabled: true, holdDelay: 0.2)
+        XCTAssertEqual(monitor.startCount, 1)
+        XCTAssertFalse(monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false)))
+        XCTAssertEqual(scheduler.pendingCount, 2)
+        scheduler.runNext()
+        XCTAssertEqual(radial.beginRecognizedHoldCount, 1)
+
+        XCTAssertFalse(monitor.send(.flagsChanged(functionDown: false, otherModifiersDown: false)))
+        XCTAssertEqual(radial.events, [.released])
+        XCTAssertTrue(monitor.send(.keyChanged(
+            isDown: true,
+            keyCode: GlobeFnEventNormalizer.nativeGlobeActionKeyCode,
+            isRepeat: false
+        )))
+        XCTAssertTrue(monitor.send(.keyChanged(
+            isDown: false,
+            keyCode: GlobeFnEventNormalizer.nativeGlobeActionKeyCode,
+            isRepeat: false
+        )))
+        XCTAssertEqual(radial.cancelReasons, [])
+    }
+
+    @MainActor
+    func testGlobeFnRuntimeQuickTapChordAndOrdinaryShortcutNeverOpen() {
+        let radial = TestGlobeFnRadialTrigger()
+        let scheduler = TestGlobeFnScheduler()
+        let monitor = TestGlobeFnEventMonitor()
+        let controller = GlobeFnHoldActivationController(
+            radialTrigger: radial,
+            scheduler: scheduler,
+            monitorFactory: { eventHandler, interruptionHandler in
+                monitor.eventHandler = eventHandler
+                monitor.interruptionHandler = interruptionHandler
+                return monitor
+            }
+        )
+        controller.update(enabled: true, holdDelay: 0.2)
+
+        _ = monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
+        _ = monitor.send(.flagsChanged(functionDown: false, otherModifiersDown: false))
+        scheduler.runAll()
+        XCTAssertEqual(radial.beginRecognizedHoldCount, 0)
+        XCTAssertFalse(monitor.send(.keyChanged(
+            isDown: true,
+            keyCode: GlobeFnEventNormalizer.nativeGlobeActionKeyCode,
+            isRepeat: false
+        )))
+
+        _ = monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
+        _ = monitor.send(.keyChanged(isDown: true, keyCode: 123, isRepeat: false))
+        scheduler.runAll()
+        XCTAssertEqual(radial.beginRecognizedHoldCount, 0)
+        _ = monitor.send(.flagsChanged(functionDown: false, otherModifiersDown: false))
+
+        _ = monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
+        controller.ordinaryShortcutWillBegin()
+        scheduler.runAll()
+        XCTAssertEqual(radial.beginRecognizedHoldCount, 0)
+    }
+
+    @MainActor
+    func testGlobeFnRuntimeCancellationMonitorRetryAndDisabledSettingAreSafe() {
+        let radial = TestGlobeFnRadialTrigger()
+        let scheduler = TestGlobeFnScheduler()
+        let firstMonitor = TestGlobeFnEventMonitor(startResults: [false])
+        let secondMonitor = TestGlobeFnEventMonitor(startResults: [true])
+        var monitors = [firstMonitor, secondMonitor]
+        let controller = GlobeFnHoldActivationController(
+            radialTrigger: radial,
+            scheduler: scheduler,
+            monitorFactory: { eventHandler, interruptionHandler in
+                let monitor = monitors.removeFirst()
+                monitor.eventHandler = eventHandler
+                monitor.interruptionHandler = interruptionHandler
+                return monitor
+            }
+        )
+        var issues: [String?] = []
+        controller.runtimeIssueChanged = { issues.append($0) }
+
+        controller.update(enabled: true, holdDelay: 0.2)
+        XCTAssertNotNil(issues.last!)
+        controller.retryMonitor(reason: "wake")
+        XCTAssertNil(issues.last!)
+
+        _ = secondMonitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
+        scheduler.runNext()
+        XCTAssertEqual(radial.beginRecognizedHoldCount, 1)
+        controller.cancel(reason: "system-will-sleep")
+        XCTAssertEqual(radial.cancelReasons.last, "globe-fn-system-will-sleep")
+
+        secondMonitor.reenableResult = true
+        secondMonitor.interrupt(.timedOut)
+        XCTAssertEqual(secondMonitor.reenableCount, 1)
+        XCTAssertNil(issues.last!)
+
+        secondMonitor.reenableResult = false
+        secondMonitor.interrupt(.disabledByUserInput)
+        XCTAssertEqual(secondMonitor.reenableCount, 2)
+        XCTAssertNotNil(issues.last!)
+
+        controller.update(enabled: false, holdDelay: 0.2)
+        XCTAssertGreaterThanOrEqual(secondMonitor.stopCount, 1)
+        XCTAssertFalse(controller.receive(.flagsChanged(
+            functionDown: true,
+            otherModifiersDown: false
+        )))
+    }
+
+    @MainActor
+    func testGlobeFnRuntimeSafetyTimeoutCancelsMissingKeyboardRelease() {
+        let radial = TestGlobeFnRadialTrigger()
+        let scheduler = TestGlobeFnScheduler()
+        let monitor = TestGlobeFnEventMonitor()
+        let controller = GlobeFnHoldActivationController(
+            radialTrigger: radial,
+            scheduler: scheduler,
+            monitorFactory: { handler, interruption in
+                monitor.eventHandler = handler
+                monitor.interruptionHandler = interruption
+                return monitor
+            }
+        )
+
+        controller.update(enabled: true, holdDelay: 0.2)
+        _ = monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
+        XCTAssertEqual(scheduler.pendingDelays, [0.2, 10])
+
+        scheduler.runNext()
+        XCTAssertEqual(radial.beginRecognizedHoldCount, 1)
+        scheduler.runNext()
+
+        XCTAssertEqual(radial.cancelReasons, ["globe-fn-gesture-safety-timeout"])
+        XCTAssertFalse(
+            monitor.send(.flagsChanged(functionDown: false, otherModifiersDown: false))
+        )
+        XCTAssertFalse(radial.events.contains(.released))
+    }
+
+    @MainActor
+    func testGlobeFnDiagnosticsRecordOnlyDeduplicatedSafeStateReasons() {
+        let radial = TestGlobeFnRadialTrigger()
+        let scheduler = TestGlobeFnScheduler()
+        let monitor = TestGlobeFnEventMonitor()
+        let sink = MemoryDiagnosticSink()
+        let controller = GlobeFnHoldActivationController(
+            radialTrigger: radial,
+            scheduler: scheduler,
+            diagnostics: DiagnosticLogger(
+                buildMode: .debug,
+                sink: sink,
+                sessionIdentifier: "fn-test"
+            ),
+            monitorFactory: { handler, interruption in
+                monitor.eventHandler = handler
+                monitor.interruptionHandler = interruption
+                return monitor
+            }
+        )
+
+        controller.cancel(reason: "idle-refresh")
+        XCTAssertTrue(sink.text.isEmpty)
+        controller.update(enabled: true, holdDelay: 0.2)
+        _ = monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
+        _ = monitor.send(.keyChanged(isDown: true, keyCode: 123, isRepeat: false))
+
+        XCTAssertTrue(sink.text.contains("globe-fn-trigger"))
+        XCTAssertTrue(sink.text.contains("competing-key"))
+        XCTAssertFalse(sink.text.localizedCaseInsensitiveContains("keycode"))
+        XCTAssertFalse(sink.text.localizedCaseInsensitiveContains("key-code"))
+        XCTAssertFalse(sink.text.localizedCaseInsensitiveContains("window-title"))
+    }
+
     func testCarbonPressReleaseRoutingDoesNotRunOrdinaryCommandsTwice() {
         XCTAssertTrue(HotKeyManager.shouldDispatchCommand(forEventKind: UInt32(kEventHotKeyPressed)))
         XCTAssertFalse(HotKeyManager.shouldDispatchCommand(forEventKind: UInt32(kEventHotKeyReleased)))
@@ -1605,6 +1997,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             writer.radialMenuEnabled = false
             writer.radialMenuActivationStyle = .holdToShow
             writer.radialMenuHoldDelay = 0.35
+            writer.radialMenuGlobeFnHoldEnabled = true
             writer.setShortcut(
                 LegacyRadialMenuShortcut.controlOptionBackslash.chord,
                 for: .commandWheel
@@ -1619,11 +2012,40 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertFalse(reader.radialMenuEnabled)
         XCTAssertEqual(reader.radialMenuActivationStyle, .holdToShow)
         XCTAssertEqual(reader.radialMenuHoldDelay, 0.35, accuracy: 0.001)
+        XCTAssertTrue(reader.radialMenuGlobeFnHoldEnabled)
         XCTAssertEqual(
             reader.hotKeyConfiguration.chord(for: .commandWheel),
             LegacyRadialMenuShortcut.controlOptionBackslash.chord
         )
         XCTAssertEqual(reader.radialWheelDefinition, .minimalFallback)
+    }
+
+    @MainActor
+    func testGlobeFnHoldDefaultsOffStaysDeviceLocalAndIsSearchable() {
+        let defaults = isolatedDefaults()
+        let cloud = RecordingUbiquitousStore()
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertFalse(store.radialMenuGlobeFnHoldEnabled)
+
+        store.radialMenuGlobeFnHoldEnabled = true
+        XCTAssertEqual(
+            defaults.bool(forKey: "radialMenuGlobeFnHoldEnabled.v1"),
+            true
+        )
+        XCTAssertFalse(cloud.keys.contains("radialMenuGlobeFnHoldEnabled.v1"))
+        XCTAssertTrue(
+            SettingsCatalog.search("Globe Fn emoji", includeDebug: false)
+                .contains { $0.id == "radial-globe-fn" && $0.category == .radialMenu }
+        )
+
+        let profileData = try! JSONEncoder().encode(store.profiles)
+        let profileJSON = String(decoding: profileData, as: UTF8.self)
+        XCTAssertFalse(profileJSON.contains("GlobeFn"))
+        XCTAssertFalse(profileJSON.contains("radialMenuGlobeFnHoldEnabled"))
     }
 
     @MainActor
@@ -1866,6 +2288,133 @@ private final class TestGlobalHotKeyRegistrationService: GlobalHotKeyRegistratio
     func unregister(_ token: HotKeyRegistrationToken) -> OSStatus {
         unregistrations.append(token)
         return unregistrationFailures[token] ?? noErr
+    }
+}
+
+private final class RecordingUbiquitousStore: UbiquitousKeyValueStoring {
+    private var values: [String: Any] = [:]
+    var notificationObject: AnyObject { self }
+    var keys: Set<String> { Set(values.keys) }
+
+    func object(forKey aKey: String) -> Any? { values[aKey] }
+    func string(forKey aKey: String) -> String? { values[aKey] as? String }
+    func data(forKey aKey: String) -> Data? { values[aKey] as? Data }
+    func set(_ anObject: Any?, forKey aKey: String) { values[aKey] = anObject }
+    func removeObject(forKey aKey: String) { values.removeValue(forKey: aKey) }
+    func synchronize() -> Bool { true }
+}
+
+@MainActor
+private final class TestGlobeFnRadialTrigger: GlobeFnRadialTriggerHandling {
+    private(set) var beginRecognizedHoldCount = 0
+    private(set) var events: [RadialMenuTriggerInputEvent] = []
+    private(set) var cancelReasons: [String] = []
+
+    func beginRecognizedHold() {
+        beginRecognizedHoldCount += 1
+    }
+
+    func handle(
+        _ event: RadialMenuTriggerInputEvent,
+        style _: RadialMenuActivationStyle,
+        holdDelay _: TimeInterval
+    ) {
+        events.append(event)
+    }
+
+    func cancel(reason: String) {
+        cancelReasons.append(reason)
+    }
+}
+
+@MainActor
+private final class TestGlobeFnScheduledTask: GlobeFnScheduledTask {
+    private(set) var isCancelled = false
+    let delay: TimeInterval
+    let action: @MainActor () -> Void
+
+    init(delay: TimeInterval, action: @escaping @MainActor () -> Void) {
+        self.delay = delay
+        self.action = action
+    }
+
+    func cancel() {
+        isCancelled = true
+    }
+
+    func run() {
+        guard !isCancelled else { return }
+        action()
+    }
+}
+
+@MainActor
+private final class TestGlobeFnScheduler: GlobeFnScheduling {
+    private var tasks: [TestGlobeFnScheduledTask] = []
+
+    var pendingCount: Int { tasks.filter { !$0.isCancelled }.count }
+    var pendingDelays: [TimeInterval] {
+        tasks.filter { !$0.isCancelled }.map(\.delay)
+    }
+
+    func schedule(
+        after delay: TimeInterval,
+        _ action: @escaping @MainActor () -> Void
+    ) -> GlobeFnScheduledTask {
+        let task = TestGlobeFnScheduledTask(delay: delay, action: action)
+        tasks.append(task)
+        return task
+    }
+
+    func runNext() {
+        while !tasks.isEmpty {
+            let task = tasks.removeFirst()
+            if !task.isCancelled {
+                task.run()
+                return
+            }
+        }
+    }
+
+    func runAll() {
+        while !tasks.isEmpty { runNext() }
+    }
+}
+
+@MainActor
+private final class TestGlobeFnEventMonitor: GlobeFnEventMonitoring {
+    var eventHandler: CGGlobeFnEventMonitor.EventHandler?
+    var interruptionHandler: CGGlobeFnEventMonitor.InterruptionHandler?
+    var reenableResult = true
+    private var startResults: [Bool]
+    private(set) var startCount = 0
+    private(set) var stopCount = 0
+    private(set) var reenableCount = 0
+
+    init(startResults: [Bool] = [true]) {
+        self.startResults = startResults
+    }
+
+    func start() -> Bool {
+        startCount += 1
+        return startResults.isEmpty ? true : startResults.removeFirst()
+    }
+
+    func stop() {
+        stopCount += 1
+    }
+
+    func reenable() -> Bool {
+        reenableCount += 1
+        return reenableResult
+    }
+
+    func send(_ event: GlobeFnObservedEvent) -> Bool {
+        eventHandler?(event) ?? false
+    }
+
+    func interrupt(_ interruption: GlobeFnEventMonitorInterruption) {
+        interruptionHandler?(interruption)
     }
 }
 

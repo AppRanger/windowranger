@@ -60,6 +60,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuController: radialMenuController,
         diagnostics: diagnostics
     )
+    private lazy var globeFnHoldActivationController: GlobeFnHoldActivationController = {
+        let controller = GlobeFnHoldActivationController(
+            radialTrigger: radialMenuTriggerController,
+            diagnostics: diagnostics
+        )
+        controller.runtimeIssueChanged = { [weak self] issue in
+            self?.settingsStore.setGlobeFnRuntimeIssue(issue)
+        }
+        return controller
+    }()
     private lazy var commandFeedbackPresenter: CommandFeedbackPresenting =
         CommandFeedbackOverlayController(diagnostics: diagnostics)
     private lazy var hotKeyManager = HotKeyManager(
@@ -67,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         diagnostics: diagnostics,
         radialMenuTrigger: { [weak self] event in
             guard let self else { return }
+            self.globeFnHoldActivationController.ordinaryShortcutWillBegin()
             self.radialMenuTriggerController.handle(
                 event,
                 style: self.settingsStore.radialMenuActivationStyle,
@@ -111,6 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.settingsStore.assignWorkspaces(assignments)
         }
         registerHotKeys()
+        updateGlobeFnHoldActivation()
         engine.start()
         updateMenuBarPresentation()
 
@@ -137,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             }
             .sink { [weak self] application in
+                self?.globeFnHoldActivationController.cancel(reason: "application-activated")
                 self?.radialMenuTriggerController.cancel(reason: "application-activated")
                 self?.engine.applicationActivated(processIdentifier: application.processIdentifier)
             }
@@ -147,6 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
+                self.globeFnHoldActivationController.cancel(reason: "system-will-sleep")
                 self.radialMenuTriggerController.cancel(reason: "system-will-sleep")
                 self.commandFeedbackPresenter.dismiss(reason: "system-will-sleep")
                 self.engine.prepareForSystemSleep()
@@ -171,6 +185,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.reconcileAfterWake(source: .sessionBecameActive)
+            }
+            .store(in: &cancellables)
+
+        workspaceNotifications.publisher(for: NSWorkspace.sessionDidResignActiveNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.globeFnHoldActivationController.cancel(reason: "session-resigned-active")
+                self?.radialMenuTriggerController.cancel(reason: "session-resigned-active")
             }
             .store(in: &cancellables)
 
@@ -235,15 +257,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .debounce(for: .milliseconds(100), scheduler: RunLoop.main)
         .sink { [weak self] enabled in
             guard let self else { return }
-            if !enabled { self.radialMenuTriggerController.cancel(reason: "wheel-disabled") }
+            if !enabled {
+                self.globeFnHoldActivationController.cancel(reason: "wheel-disabled")
+                self.radialMenuTriggerController.cancel(reason: "wheel-disabled")
+            }
             self.registerHotKeys()
+            self.updateGlobeFnHoldActivation()
         }
         .store(in: &cancellables)
+
+        settingsStore.$radialMenuGlobeFnHoldEnabled
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.updateGlobeFnHoldActivation()
+            }
+            .store(in: &cancellables)
+
+        settingsStore.$radialMenuHoldDelay
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.globeFnHoldActivationController.cancel(reason: "hold-delay-changed")
+                self.radialMenuTriggerController.cancel(reason: "hold-delay-changed")
+                self.updateGlobeFnHoldActivation()
+            }
+            .store(in: &cancellables)
 
         settingsStore.$radialWheelDefinition
             .dropFirst()
             .removeDuplicates()
             .sink { [weak self] _ in
+                self?.globeFnHoldActivationController.cancel(reason: "wheel-definition-changed")
                 self?.radialMenuTriggerController.cancel(reason: "wheel-definition-changed")
             }
             .store(in: &cancellables)
@@ -252,6 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .dropFirst()
             .removeDuplicates()
             .sink { [weak self] _ in
+                self?.globeFnHoldActivationController.cancel(reason: "wheel-activation-style-changed")
                 self?.radialMenuTriggerController.cancel(reason: "wheel-activation-style-changed")
             }
             .store(in: &cancellables)
@@ -286,6 +333,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .debounce(for: .milliseconds(100), scheduler: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
+                self.globeFnHoldActivationController.cancel(reason: "shortcut-configuration-changed")
                 self.radialMenuTriggerController.cancel(reason: "shortcut-configuration-changed")
                 self.registerHotKeys()
             }
@@ -296,6 +344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .compactMap { $0 }
             .sink { [weak self] request in
                 guard let self else { return }
+                self.globeFnHoldActivationController.cancel(reason: "profile-transition")
                 self.radialMenuTriggerController.cancel(reason: "profile-transition")
                 self.commandFeedbackPresenter.dismiss(reason: "profile-transition")
                 self.engine.transitionToProfile(request)
@@ -325,6 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preparedForTermination = true
         pendingMenuBarPresentationUpdate?.cancel()
         pendingMenuBarPresentationUpdate = nil
+        globeFnHoldActivationController.shutdown()
         radialMenuTriggerController.cancel(reason: "application-terminating")
         commandFeedbackPresenter.shutdown()
         settingsWindowCoordinator.shutdown()
@@ -347,15 +397,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard isShortcutRecording != isRecording else { return }
         isShortcutRecording = isRecording
         if isRecording {
+            globeFnHoldActivationController.cancel(reason: "shortcut-recording-began")
             radialMenuTriggerController.cancel(reason: "shortcut-recording-began")
             hotKeyManager.suspendRegistration()
             settingsStore.setHotKeyRuntimeIssues([])
         } else {
             registerHotKeys()
         }
+        updateGlobeFnHoldActivation()
     }
 
     private func reconcileAfterWake(source: WakeReconciliationSource) {
+        globeFnHoldActivationController.resumeAfterLifecycle(reason: source.rawValue)
         radialMenuTriggerController.cancel(reason: source.rawValue)
         commandFeedbackPresenter.dismiss(reason: source.rawValue)
         // Monitor pins/fingerprints must resolve before the engine reconciles workspace homes.
@@ -363,6 +416,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         engine.requestWakeReconciliation(
             source: source,
             workspaceDisplayAssignments: settingsStore.workspaceDisplayHomesForEngine
+        )
+    }
+
+    private func updateGlobeFnHoldActivation() {
+        globeFnHoldActivationController.update(
+            enabled: settingsStore.radialMenuEnabled
+                && settingsStore.radialMenuGlobeFnHoldEnabled
+                && !isShortcutRecording,
+            holdDelay: settingsStore.radialMenuHoldDelay
         )
     }
 

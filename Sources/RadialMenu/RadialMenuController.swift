@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import SwiftUI
 
 struct RadialMenuSessionState: Equatable, Sendable {
@@ -58,6 +59,24 @@ final class RadialMenuTriggerController {
         if effects.isEmpty, menuController.isPresented {
             menuController.dismiss(reason: reason)
         }
+    }
+
+    /// Starts the normal captured-context hold pipeline after a separate hardware gesture has
+    /// already crossed its own threshold. This avoids a second radial implementation and avoids
+    /// applying the configurable delay twice.
+    func beginRecognizedHold() {
+        cancel(reason: "recognized-hold-superseded-existing-trigger")
+        let effects = state.handle(
+            .pressed,
+            style: .holdToShow,
+            holdDelay: RadialMenuHoldDelay.permittedRange.lowerBound
+        )
+        let generation = state.latestGeneration
+        apply(effects.filter { effect in
+            if case .scheduleThreshold = effect { return false }
+            return true
+        })
+        apply(state.thresholdElapsed(generation: generation))
     }
 
     private func apply(_ effects: [RadialMenuTriggerEffect]) {
@@ -158,6 +177,455 @@ final class RadialMenuTriggerController {
         guard state.isIdle else { return }
         capturedContexts.removeAll()
         correlations.removeAll()
+    }
+}
+
+@MainActor
+protocol GlobeFnRadialTriggerHandling: AnyObject {
+    func beginRecognizedHold()
+    func handle(
+        _ event: RadialMenuTriggerInputEvent,
+        style: RadialMenuActivationStyle,
+        holdDelay: TimeInterval
+    )
+    func cancel(reason: String)
+}
+
+extension RadialMenuTriggerController: GlobeFnRadialTriggerHandling {}
+
+@MainActor
+protocol GlobeFnScheduledTask: AnyObject {
+    func cancel()
+}
+
+@MainActor
+protocol GlobeFnScheduling: AnyObject {
+    func schedule(
+        after delay: TimeInterval,
+        _ action: @escaping @MainActor () -> Void
+    ) -> GlobeFnScheduledTask
+}
+
+@MainActor
+private final class DispatchGlobeFnScheduledTask: GlobeFnScheduledTask {
+    private var item: DispatchWorkItem?
+
+    init(item: DispatchWorkItem) {
+        self.item = item
+    }
+
+    func cancel() {
+        item?.cancel()
+        item = nil
+    }
+}
+
+@MainActor
+final class MainQueueGlobeFnScheduler: GlobeFnScheduling {
+    func schedule(
+        after delay: TimeInterval,
+        _ action: @escaping @MainActor () -> Void
+    ) -> GlobeFnScheduledTask {
+        let item = DispatchWorkItem { action() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, delay), execute: item)
+        return DispatchGlobeFnScheduledTask(item: item)
+    }
+}
+
+enum GlobeFnEventMonitorInterruption: String, Equatable, Sendable {
+    case timedOut = "tap-timeout"
+    case disabledByUserInput = "tap-disabled-by-user-input"
+}
+
+@MainActor
+protocol GlobeFnEventMonitoring: AnyObject {
+    func start() -> Bool
+    func stop()
+    func reenable() -> Bool
+}
+
+/// One centrally owned public Quartz event tap. It forwards every event except a synthetic native
+/// Globe action that the pure state machine explicitly associates with an accepted hold. It never
+/// requests permission; failure is reported to Settings and can be retried safely.
+@MainActor
+final class CGGlobeFnEventMonitor: GlobeFnEventMonitoring {
+    typealias EventHandler = @MainActor (GlobeFnObservedEvent) -> Bool
+    typealias InterruptionHandler = @MainActor (GlobeFnEventMonitorInterruption) -> Void
+
+    private let eventHandler: EventHandler
+    private let interruptionHandler: InterruptionHandler
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+    private static let systemDefinedEventType = CGEventType(rawValue: 14)!
+
+    init(
+        eventHandler: @escaping EventHandler,
+        interruptionHandler: @escaping InterruptionHandler
+    ) {
+        self.eventHandler = eventHandler
+        self.interruptionHandler = interruptionHandler
+    }
+
+    deinit {
+        MainActor.assumeIsolated { stop() }
+    }
+
+    func start() -> Bool {
+        if let eventTap, CFMachPortIsValid(eventTap) {
+            CGEvent.tapEnable(tap: eventTap, enable: true)
+            return CGEvent.tapIsEnabled(tap: eventTap)
+        }
+
+        guard AXIsProcessTrusted() else { return false }
+
+        let observedTypes: [CGEventType] = [
+            .flagsChanged,
+            .keyDown,
+            .keyUp,
+            .leftMouseDown,
+            .rightMouseDown,
+            .otherMouseDown,
+            Self.systemDefinedEventType,
+        ]
+        let mask = observedTypes.reduce(CGEventMask(0)) {
+            $0 | (CGEventMask(1) << $1.rawValue)
+        }
+        let callback: CGEventTapCallBack = { _, type, event, userInfo in
+            guard let userInfo else { return Unmanaged.passUnretained(event) }
+            let monitor = Unmanaged<CGGlobeFnEventMonitor>
+                .fromOpaque(userInfo)
+                .takeUnretainedValue()
+            return MainActor.assumeIsolated {
+                if monitor.process(type: type, event: event) {
+                    return nil
+                }
+                return Unmanaged.passUnretained(event)
+            }
+        }
+        guard let eventTap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: callback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ), let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
+        else { return false }
+
+        self.eventTap = eventTap
+        runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: eventTap, enable: true)
+        return CGEvent.tapIsEnabled(tap: eventTap)
+    }
+
+    func stop() {
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
+        if let eventTap {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+            CFMachPortInvalidate(eventTap)
+        }
+        runLoopSource = nil
+        eventTap = nil
+    }
+
+    func reenable() -> Bool {
+        guard let eventTap, CFMachPortIsValid(eventTap) else { return false }
+        CGEvent.tapEnable(tap: eventTap, enable: true)
+        return CGEvent.tapIsEnabled(tap: eventTap)
+    }
+
+    private func process(type: CGEventType, event: CGEvent) -> Bool {
+        switch type {
+        case .tapDisabledByTimeout:
+            interruptionHandler(.timedOut)
+            return false
+        case .tapDisabledByUserInput:
+            interruptionHandler(.disabledByUserInput)
+            return false
+        case .flagsChanged:
+            let flags = event.flags
+            let otherModifiers: CGEventFlags = [
+                .maskAlphaShift,
+                .maskShift,
+                .maskControl,
+                .maskAlternate,
+                .maskCommand,
+                .maskHelp,
+                .maskNumericPad,
+            ]
+            return eventHandler(.flagsChanged(
+                functionDown: flags.contains(.maskSecondaryFn),
+                otherModifiersDown: !flags.intersection(otherModifiers).isEmpty
+            ))
+        case .keyDown, .keyUp:
+            return eventHandler(.keyChanged(
+                isDown: type == .keyDown,
+                keyCode: UInt16(event.getIntegerValueField(.keyboardEventKeycode)),
+                isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            ))
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            return eventHandler(.mouseButtonDown)
+        case let eventType where eventType == Self.systemDefinedEventType:
+            return eventHandler(.systemDefined)
+        default:
+            return false
+        }
+    }
+}
+
+/// Runtime adapter for the pure gesture state. The normal Carbon shortcut and Fn trigger both feed
+/// the same `RadialMenuTriggerController`; only admission, timing and native-event passthrough live
+/// here.
+@MainActor
+final class GlobeFnHoldActivationController {
+    typealias MonitorFactory = @MainActor (
+        @escaping CGGlobeFnEventMonitor.EventHandler,
+        @escaping CGGlobeFnEventMonitor.InterruptionHandler
+    ) -> GlobeFnEventMonitoring
+
+    private let radialTrigger: GlobeFnRadialTriggerHandling
+    private let scheduler: GlobeFnScheduling
+    private let diagnostics: DiagnosticLogger
+    private let monitorFactory: MonitorFactory
+    private var state = GlobeFnGestureStateMachine()
+    private var normalizer = GlobeFnEventNormalizer()
+    private var thresholdTask: GlobeFnScheduledTask?
+    private var safetyTask: GlobeFnScheduledTask?
+    private var suppressionTask: GlobeFnScheduledTask?
+    private var monitor: GlobeFnEventMonitoring?
+    private var desiredEnabled = false
+    private var holdDelay = RadialMenuHoldDelay.defaultValue
+
+    var runtimeIssueChanged: ((String?) -> Void)?
+
+    init(
+        radialTrigger: GlobeFnRadialTriggerHandling,
+        scheduler: GlobeFnScheduling? = nil,
+        diagnostics: DiagnosticLogger = .disabled,
+        monitorFactory: @escaping MonitorFactory = { eventHandler, interruptionHandler in
+            CGGlobeFnEventMonitor(
+                eventHandler: eventHandler,
+                interruptionHandler: interruptionHandler
+            )
+        }
+    ) {
+        self.radialTrigger = radialTrigger
+        self.scheduler = scheduler ?? MainQueueGlobeFnScheduler()
+        self.diagnostics = diagnostics
+        self.monitorFactory = monitorFactory
+    }
+
+    func update(enabled: Bool, holdDelay: TimeInterval) {
+        let clampedDelay = RadialMenuHoldDelay.clamped(holdDelay)
+        if self.holdDelay != clampedDelay {
+            cancel(reason: "hold-delay-changed")
+            self.holdDelay = clampedDelay
+        }
+        desiredEnabled = enabled
+        if enabled {
+            installMonitorIfNeeded(reason: "setting-enabled")
+        } else {
+            cancel(reason: "setting-disabled")
+            monitor?.stop()
+            monitor = nil
+            runtimeIssueChanged?(nil)
+        }
+    }
+
+    func ordinaryShortcutWillBegin() {
+        cancel(reason: "ordinary-shortcut-superseded")
+    }
+
+    func cancel(reason: String) {
+        let before = state.phaseName
+        let effects = state.handle(.cancel(reason: reason), holdDelay: holdDelay)
+        apply(effects)
+        normalizer.reset()
+        if before != state.phaseName || !effects.isEmpty {
+            diagnostics.log(
+                category: "globe-fn-trigger",
+                event: "cancelled",
+                fields: ["reason": reason]
+            )
+        }
+    }
+
+    func retryMonitor(reason: String) {
+        guard desiredEnabled else { return }
+        monitor?.stop()
+        monitor = nil
+        installMonitorIfNeeded(reason: reason)
+    }
+
+    func resumeAfterLifecycle(reason: String) {
+        guard desiredEnabled else { return }
+        cancel(reason: reason)
+        installMonitorIfNeeded(reason: reason)
+    }
+
+    func shutdown() {
+        desiredEnabled = false
+        cancel(reason: "shutdown")
+        monitor?.stop()
+        monitor = nil
+    }
+
+    @discardableResult
+    func receive(_ observedEvent: GlobeFnObservedEvent) -> Bool {
+        guard desiredEnabled, let input = normalizer.normalize(observedEvent) else { return false }
+        let before = state.phaseName
+        let effects = state.handle(input, holdDelay: holdDelay)
+        let shouldSuppress = apply(effects)
+        let after = state.phaseName
+        if before != after || shouldSuppress {
+            diagnostics.log(
+                category: "globe-fn-trigger",
+                event: "state-transition",
+                fields: [
+                    "from": before,
+                    "to": after,
+                    "input": input.diagnosticName,
+                    "suppressed-native-event": String(shouldSuppress),
+                ]
+            )
+        }
+        return shouldSuppress
+    }
+
+    private func installMonitorIfNeeded(reason: String) {
+        guard monitor == nil else { return }
+        let monitor = monitorFactory(
+            { [weak self] event in self?.receive(event) ?? false },
+            { [weak self] interruption in self?.monitorInterrupted(interruption) }
+        )
+        guard monitor.start() else {
+            monitor.stop()
+            runtimeIssueChanged?(
+                "Globe/Fn monitoring is unavailable. WindowManager did not request another permission; turn the option off and on after Accessibility access is available."
+            )
+            diagnostics.log(
+                category: "globe-fn-trigger",
+                event: "monitor-install-failed",
+                fields: ["reason": reason]
+            )
+            return
+        }
+        self.monitor = monitor
+        runtimeIssueChanged?(nil)
+        diagnostics.log(
+            category: "globe-fn-trigger",
+            event: "monitor-installed",
+            fields: ["reason": reason]
+        )
+    }
+
+    private func monitorInterrupted(_ interruption: GlobeFnEventMonitorInterruption) {
+        cancel(reason: interruption.rawValue)
+        let restored = monitor?.reenable() == true
+        if !restored {
+            monitor?.stop()
+            monitor = nil
+        }
+        runtimeIssueChanged?(restored ? nil : "Globe/Fn monitoring stopped and could not be restored. Toggle the option to retry.")
+        diagnostics.log(
+            category: "globe-fn-trigger",
+            event: restored ? "monitor-reenabled" : "monitor-reenable-failed",
+            fields: ["reason": interruption.rawValue]
+        )
+    }
+
+    @discardableResult
+    private func apply(_ effects: [GlobeFnGestureEffect]) -> Bool {
+        var shouldSuppress = false
+        for effect in effects {
+            switch effect {
+            case let .scheduleThreshold(generation, delay):
+                thresholdTask?.cancel()
+                thresholdTask = scheduler.schedule(after: delay) { [weak self] in
+                    guard let self else { return }
+                    self.thresholdTask = nil
+                    _ = self.apply(self.state.handle(
+                        .thresholdElapsed(generation: generation),
+                        holdDelay: self.holdDelay
+                    ))
+                }
+                safetyTask?.cancel()
+                safetyTask = scheduler.schedule(
+                    after: GlobeFnGestureStateMachine.maximumGestureDuration
+                ) { [weak self] in
+                    guard let self else { return }
+                    self.safetyTask = nil
+                    _ = self.apply(self.state.handle(
+                        .cancel(reason: "gesture-safety-timeout"),
+                        holdDelay: self.holdDelay
+                    ))
+                    self.normalizer.reset()
+                    self.diagnostics.log(
+                        category: "globe-fn-trigger",
+                        event: "gesture-safety-timeout",
+                        fields: [:]
+                    )
+                }
+            case let .cancelThreshold(reason):
+                thresholdTask?.cancel()
+                thresholdTask = nil
+                safetyTask?.cancel()
+                safetyTask = nil
+                diagnostics.log(
+                    category: "globe-fn-trigger",
+                    event: "threshold-cancelled",
+                    fields: ["reason": reason]
+                )
+            case .activateHold:
+                radialTrigger.beginRecognizedHold()
+            case .releaseHold:
+                safetyTask?.cancel()
+                safetyTask = nil
+                radialTrigger.handle(
+                    .released,
+                    style: .holdToShow,
+                    holdDelay: holdDelay
+                )
+            case let .cancelHold(reason):
+                safetyTask?.cancel()
+                safetyTask = nil
+                radialTrigger.cancel(reason: "globe-fn-\(reason)")
+            case let .scheduleSuppressionExpiry(generation, delay):
+                suppressionTask?.cancel()
+                suppressionTask = scheduler.schedule(after: delay) { [weak self] in
+                    guard let self else { return }
+                    self.suppressionTask = nil
+                    _ = self.apply(self.state.handle(
+                        .suppressionExpired(generation: generation),
+                        holdDelay: self.holdDelay
+                    ))
+                }
+            case .cancelSuppressionExpiry:
+                suppressionTask?.cancel()
+                suppressionTask = nil
+            case .suppressCurrentEvent:
+                shouldSuppress = true
+            }
+        }
+        return shouldSuppress
+    }
+}
+
+private extension GlobeFnGestureInputEvent {
+    var diagnosticName: String {
+        switch self {
+        case let .functionChanged(isDown, otherModifiersDown):
+            if otherModifiersDown { return isDown ? "fn-down-with-modifier" : "fn-up-with-modifier" }
+            return isDown ? "fn-down" : "fn-up"
+        case let .competingInput(input): return "competing-\(input.rawValue)"
+        case let .nativeGlobeKey(isDown): return isDown ? "native-globe-down" : "native-globe-up"
+        case .thresholdElapsed: return "threshold-elapsed"
+        case .suppressionExpired: return "suppression-expired"
+        case let .cancel(reason): return "cancel-\(reason)"
+        }
     }
 }
 

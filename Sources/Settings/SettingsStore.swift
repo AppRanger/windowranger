@@ -78,6 +78,9 @@ final class SettingsStore: ObservableObject {
         static let radialMenuShortcut = "radialMenuShortcut.v1"
         static let radialMenuActivationStyle = "radialMenuActivationStyle.v1"
         static let radialMenuHoldDelay = "radialMenuHoldDelay.v1"
+        // Hardware trigger preference is intentionally local to this Mac, not profile-backed or
+        // iCloud-synced. Its meaning depends on this Mac's keyboard and Globe configuration.
+        static let radialMenuGlobeFnHoldEnabled = "radialMenuGlobeFnHoldEnabled.v1"
         static let radialWheelDefinition = "radialWheelDefinition.v1"
         static let hotKeyConfiguration = "hotKeyConfiguration.v1"
         static let menuBarPresentationMode = "menuBarPresentationMode.v1"
@@ -133,6 +136,13 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    @Published var radialMenuGlobeFnHoldEnabled: Bool {
+        didSet {
+            guard !isApplyingRemoteChange else { return }
+            defaults.set(radialMenuGlobeFnHoldEnabled, forKey: Keys.radialMenuGlobeFnHoldEnabled)
+        }
+    }
+
     @Published var radialWheelDefinition: RadialWheelDefinition {
         didSet { persistRadialMenuSettings() }
     }
@@ -144,6 +154,10 @@ final class SettingsStore: ObservableObject {
     /// Runtime-only registration failures belong to this process and Mac. They are never persisted
     /// into profile/global preferences or synchronized through iCloud.
     @Published private(set) var hotKeyRuntimeIssues: [HotKeyRuntimeIssue] = []
+
+    /// Runtime-only monitor availability for the current process and Mac. It is never persisted or
+    /// synchronized, just like Carbon registration failures.
+    @Published private(set) var globeFnRuntimeIssue: String?
 
     @Published var menuBarPresentationMode: MenuBarPresentationMode {
         didSet { persistMenuBarPresentationMode() }
@@ -232,6 +246,10 @@ final class SettingsStore: ObservableObject {
             defaults.object(forKey: Keys.radialMenuHoldDelay) as? TimeInterval
                 ?? RadialMenuHoldDelay.defaultValue
         )
+        radialMenuGlobeFnHoldEnabled = defaults.object(
+            forKey: Keys.radialMenuGlobeFnHoldEnabled
+        ) as? Bool ?? false
+        globeFnRuntimeIssue = nil
         radialWheelDefinition = defaults.data(forKey: Keys.radialWheelDefinition)
             .flatMap { try? JSONDecoder().decode(RadialWheelDefinition.self, from: $0) }
             ?? .builtInDefault
@@ -974,6 +992,11 @@ final class SettingsStore: ObservableObject {
     func setHotKeyRuntimeIssues(_ issues: [HotKeyRuntimeIssue]) {
         guard hotKeyRuntimeIssues != issues else { return }
         hotKeyRuntimeIssues = issues
+    }
+
+    func setGlobeFnRuntimeIssue(_ issue: String?) {
+        guard globeFnRuntimeIssue != issue else { return }
+        globeFnRuntimeIssue = issue
     }
 
     func recordActiveWorkspaceState(_ state: WorkspaceEngineState) {

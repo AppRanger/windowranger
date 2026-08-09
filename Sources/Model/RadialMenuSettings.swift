@@ -331,3 +331,303 @@ struct RadialMenuTriggerStateMachine: Equatable, Sendable {
         ]
     }
 }
+
+enum GlobeFnCompetingInput: String, Equatable, Sendable {
+    case modifier
+    case key
+    case escape
+    case mouseButton
+    case systemDefined
+}
+
+/// Public-event facts emitted by the runtime monitor. Keeping these facts free of `CGEvent`
+/// makes Fn/Globe gesture admission deterministic and prevents unit tests from installing a tap.
+enum GlobeFnObservedEvent: Equatable, Sendable {
+    case flagsChanged(functionDown: Bool, otherModifiersDown: Bool)
+    case keyChanged(isDown: Bool, keyCode: UInt16, isRepeat: Bool)
+    case mouseButtonDown
+    case systemDefined
+}
+
+enum GlobeFnGestureInputEvent: Equatable, Sendable {
+    case functionChanged(isDown: Bool, otherModifiersDown: Bool)
+    case competingInput(GlobeFnCompetingInput)
+    case nativeGlobeKey(isDown: Bool)
+    case thresholdElapsed(generation: UInt64)
+    case suppressionExpired(generation: UInt64)
+    case cancel(reason: String)
+}
+
+/// Converts event-tap facts into gesture facts without exposing key content or device identity.
+/// Public Quartz events do not reliably distinguish the built-in Fn key from an external Globe
+/// key, so both intentionally share the same conservative state machine.
+struct GlobeFnEventNormalizer: Equatable, Sendable {
+    /// The public key code emitted for the native Globe/Emoji action after a Globe tap.
+    static let nativeGlobeActionKeyCode: UInt16 = 0xB3
+
+    private(set) var functionDown = false
+
+    mutating func normalize(_ event: GlobeFnObservedEvent) -> GlobeFnGestureInputEvent? {
+        switch event {
+        case let .flagsChanged(isFunctionDown, otherModifiersDown):
+            if isFunctionDown != functionDown {
+                functionDown = isFunctionDown
+                return .functionChanged(
+                    isDown: isFunctionDown,
+                    otherModifiersDown: otherModifiersDown
+                )
+            }
+            if functionDown, otherModifiersDown {
+                return .competingInput(.modifier)
+            }
+            return nil
+
+        case let .keyChanged(isDown, keyCode, _):
+            if keyCode == Self.nativeGlobeActionKeyCode {
+                return .nativeGlobeKey(isDown: isDown)
+            }
+            guard functionDown, isDown else { return nil }
+            return .competingInput(keyCode == 53 ? .escape : .key)
+
+        case .mouseButtonDown:
+            return functionDown ? .competingInput(.mouseButton) : nil
+
+        case .systemDefined:
+            return functionDown ? .competingInput(.systemDefined) : nil
+        }
+    }
+
+    mutating func reset() {
+        functionDown = false
+    }
+}
+
+enum GlobeFnGestureEffect: Equatable, Sendable {
+    case scheduleThreshold(generation: UInt64, delay: TimeInterval)
+    case cancelThreshold(reason: String)
+    case activateHold(generation: UInt64)
+    case releaseHold(generation: UInt64)
+    case cancelHold(reason: String)
+    case scheduleSuppressionExpiry(generation: UInt64, delay: TimeInterval)
+    case cancelSuppressionExpiry
+    case suppressCurrentEvent
+}
+
+/// Pure admission state for the optional Globe/Fn gesture. It never installs a tap, opens a menu,
+/// or synthesizes an event. A quick tap and every chorded sequence therefore remain untouched;
+/// only the native Globe action following an accepted hold can be filtered by the runtime adapter.
+struct GlobeFnGestureStateMachine: Equatable, Sendable {
+    private enum NativeEventProgress: Equatable, Sendable {
+        case none
+        case downSuppressed
+        case completed
+    }
+
+    private enum Phase: Equatable, Sendable {
+        case idle
+        case candidate(generation: UInt64)
+        case held(generation: UInt64, nativeEvent: NativeEventProgress)
+        case blockedAwaitingFunctionRelease
+        case awaitingNativeGlobe(generation: UInt64)
+        case suppressingNativeGlobeKeyUp(generation: UInt64)
+    }
+
+    static let nativeSuppressionWindow: TimeInterval = 0.5
+    /// Last-resort cleanup when a keyboard disappears without delivering Fn-up.
+    /// Normal release and lifecycle events cancel this much sooner.
+    static let maximumGestureDuration: TimeInterval = 10
+
+    private var phase: Phase = .idle
+    private(set) var latestGeneration: UInt64 = 0
+
+    var phaseName: String {
+        switch phase {
+        case .idle: "idle"
+        case .candidate: "candidate"
+        case .held: "held"
+        case .blockedAwaitingFunctionRelease: "blocked"
+        case .awaitingNativeGlobe: "awaiting-native-globe"
+        case .suppressingNativeGlobeKeyUp: "suppressing-native-globe-key-up"
+        }
+    }
+
+    mutating func handle(
+        _ event: GlobeFnGestureInputEvent,
+        holdDelay: TimeInterval
+    ) -> [GlobeFnGestureEffect] {
+        switch event {
+        case let .functionChanged(isDown, otherModifiersDown):
+            return functionChanged(
+                isDown: isDown,
+                otherModifiersDown: otherModifiersDown,
+                holdDelay: holdDelay
+            )
+
+        case let .competingInput(input):
+            return competingInput(input)
+
+        case let .nativeGlobeKey(isDown):
+            return nativeGlobeKey(isDown: isDown)
+
+        case let .thresholdElapsed(generation):
+            guard case let .candidate(current) = phase, current == generation else { return [] }
+            phase = .held(generation: generation, nativeEvent: .none)
+            return [.activateHold(generation: generation)]
+
+        case let .suppressionExpired(generation):
+            switch phase {
+            case .awaitingNativeGlobe(generation), .suppressingNativeGlobeKeyUp(generation):
+                phase = .idle
+                return []
+            default:
+                return []
+            }
+
+        case let .cancel(reason):
+            return cancel(reason: reason)
+        }
+    }
+
+    private mutating func functionChanged(
+        isDown: Bool,
+        otherModifiersDown: Bool,
+        holdDelay: TimeInterval
+    ) -> [GlobeFnGestureEffect] {
+        if isDown {
+            switch phase {
+            case .candidate, .held, .blockedAwaitingFunctionRelease:
+                return []
+            case .awaitingNativeGlobe, .suppressingNativeGlobeKeyUp:
+                phase = .idle
+                return [.cancelSuppressionExpiry] + startCandidate(
+                    otherModifiersDown: otherModifiersDown,
+                    holdDelay: holdDelay
+                )
+            case .idle:
+                return startCandidate(
+                    otherModifiersDown: otherModifiersDown,
+                    holdDelay: holdDelay
+                )
+            }
+        }
+
+        switch phase {
+        case .idle, .awaitingNativeGlobe, .suppressingNativeGlobeKeyUp:
+            return []
+        case .candidate:
+            phase = .idle
+            return [.cancelThreshold(reason: "quick-tap")]
+        case let .held(generation, nativeEvent):
+            let effects: [GlobeFnGestureEffect] = [.releaseHold(generation: generation)]
+            switch nativeEvent {
+            case .completed:
+                phase = .idle
+                return effects
+            case .none:
+                phase = .awaitingNativeGlobe(generation: generation)
+            case .downSuppressed:
+                phase = .suppressingNativeGlobeKeyUp(generation: generation)
+            }
+            return effects + [
+                .scheduleSuppressionExpiry(
+                    generation: generation,
+                    delay: Self.nativeSuppressionWindow
+                ),
+            ]
+        case .blockedAwaitingFunctionRelease:
+            phase = .idle
+            return []
+        }
+    }
+
+    private mutating func startCandidate(
+        otherModifiersDown: Bool,
+        holdDelay: TimeInterval
+    ) -> [GlobeFnGestureEffect] {
+        guard !otherModifiersDown else {
+            phase = .blockedAwaitingFunctionRelease
+            return []
+        }
+        latestGeneration &+= 1
+        let generation = latestGeneration
+        phase = .candidate(generation: generation)
+        return [
+            .scheduleThreshold(
+                generation: generation,
+                delay: RadialMenuHoldDelay.clamped(holdDelay)
+            ),
+        ]
+    }
+
+    private mutating func competingInput(
+        _ input: GlobeFnCompetingInput
+    ) -> [GlobeFnGestureEffect] {
+        switch phase {
+        case .idle, .blockedAwaitingFunctionRelease:
+            return []
+        case .candidate:
+            phase = .blockedAwaitingFunctionRelease
+            return [.cancelThreshold(reason: "competing-\(input.rawValue)")]
+        case .held:
+            phase = .blockedAwaitingFunctionRelease
+            return [
+                .cancelThreshold(reason: "competing-\(input.rawValue)"),
+                .cancelHold(reason: "competing-\(input.rawValue)"),
+            ]
+        case .awaitingNativeGlobe, .suppressingNativeGlobeKeyUp:
+            phase = .idle
+            return [.cancelSuppressionExpiry]
+        }
+    }
+
+    private mutating func nativeGlobeKey(isDown: Bool) -> [GlobeFnGestureEffect] {
+        switch phase {
+        case let .held(generation, _):
+            let next: NativeEventProgress
+            if isDown {
+                next = .downSuppressed
+            } else {
+                next = .completed
+            }
+            phase = .held(generation: generation, nativeEvent: next)
+            return [.suppressCurrentEvent]
+
+        case let .awaitingNativeGlobe(generation):
+            if isDown {
+                phase = .suppressingNativeGlobeKeyUp(generation: generation)
+            } else {
+                phase = .idle
+            }
+            return [.suppressCurrentEvent]
+
+        case .suppressingNativeGlobeKeyUp:
+            if !isDown { phase = .idle }
+            return [.suppressCurrentEvent]
+
+        case .idle, .candidate, .blockedAwaitingFunctionRelease:
+            return []
+        }
+    }
+
+    private mutating func cancel(reason: String) -> [GlobeFnGestureEffect] {
+        switch phase {
+        case .idle:
+            return []
+        case .candidate:
+            phase = .idle
+            return [.cancelThreshold(reason: reason)]
+        case .held:
+            phase = .idle
+            return [
+                .cancelThreshold(reason: reason),
+                .cancelHold(reason: reason),
+            ]
+        case .blockedAwaitingFunctionRelease:
+            phase = .idle
+            return []
+        case .awaitingNativeGlobe, .suppressingNativeGlobeKeyUp:
+            phase = .idle
+            return [.cancelSuppressionExpiry]
+        }
+    }
+}
