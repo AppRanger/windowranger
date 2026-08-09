@@ -11,7 +11,7 @@ enum SettingsWindowOpener {
         navigation: SettingsNavigationModel,
         engine: WorkspaceEngine,
         coordinator: SettingsWindowCoordinator,
-        openSettings: @escaping @MainActor () -> Void
+        openSettings: @escaping @MainActor () -> Bool
     ) {
         if let category { navigation.select(category) }
         let preferredDisplayIdentifier = preferPointerDisplay
@@ -21,6 +21,27 @@ enum SettingsWindowOpener {
             preferredDisplayIdentifier: preferredDisplayIdentifier
         ) { context in
             coordinator.requestOpen(context: context, openSettings: openSettings)
+        }
+    }
+
+    /// AppKit status menus host a real SwiftUI `SettingsLink`. Capture the destination/category
+    /// before that link opens the scene, then let the shared coordinator handle either attachment
+    /// ordering. This remains safe when scene creation wins the race with context resolution.
+    static func prepareForSettingsLink(
+        category: SettingsCategory?,
+        preferPointerDisplay: Bool,
+        navigation: SettingsNavigationModel,
+        engine: WorkspaceEngine,
+        coordinator: SettingsWindowCoordinator
+    ) {
+        if let category { navigation.select(category) }
+        let preferredDisplayIdentifier = preferPointerDisplay
+            ? SettingsWindowCoordinator.pointerDisplayIdentifierForCurrentMouseEvent()
+            : nil
+        engine.settingsSurfaceContext(
+            preferredDisplayIdentifier: preferredDisplayIdentifier
+        ) { context in
+            coordinator.prepareOpen(context: context)
         }
     }
 }
@@ -45,6 +66,19 @@ struct SettingsWindowPlacement: Equatable, Sendable {
     let displayIdentifier: String
     let frame: CGRect
     let resolutionReason: String
+}
+
+enum SettingsSceneOpenResult: Equatable, Sendable {
+    /// Context is ready; a `SettingsLink` owns the actual scene-opening action.
+    case preparedForSettingsLink
+    /// The supported SwiftUI `openSettings` action was invoked for a first open.
+    case sceneRequested
+    /// A rapid request updated the pending destination without requesting a duplicate scene.
+    case coalescedPendingScene
+    /// The existing Settings utility was repositioned and raised directly.
+    case resurfacedExistingWindow
+    /// The injected scene-opening action was unavailable and no pending request remains.
+    case sceneActionUnavailable
 }
 
 enum SettingsWindowGeometry {
@@ -137,12 +171,47 @@ final class SettingsWindowCoordinator {
         self.applicationActivator = applicationActivator
     }
 
-    /// Calls the native SwiftUI Settings action exactly once, then surfaces either the already
-    /// attached window or the window that the Settings scene attaches moments later.
+    /// Uses an injected SwiftUI `openSettings` action for first-scene creation. Existing windows are
+    /// surfaced directly, and rapid pre-attachment requests are coalesced so they cannot create
+    /// duplicate Settings scenes.
+    @discardableResult
     func requestOpen(
         context: SettingsSurfaceContext,
-        openSettings: () -> Void
-    ) {
+        openSettings: () -> Bool
+    ) -> SettingsSceneOpenResult {
+        let preparation = prepareOpen(context: context)
+        switch preparation {
+        case .resurfacedExistingWindow, .coalescedPendingScene:
+            return preparation
+        case .preparedForSettingsLink:
+            let generation = requestGeneration
+            guard openSettings() else {
+                if requestGeneration == generation { pendingContext = nil }
+                diagnostics.log(
+                    category: "settings-window",
+                    event: "scene-action-unavailable",
+                    fields: ["generation": String(generation)]
+                )
+                return .sceneActionUnavailable
+            }
+            diagnostics.log(
+                category: "settings-window",
+                event: "scene-open-requested",
+                fields: ["generation": String(generation), "route": "open-settings-action"]
+            )
+            return .sceneRequested
+        case .sceneRequested, .sceneActionUnavailable:
+            assertionFailure("Unexpected Settings preparation result")
+            return preparation
+        }
+    }
+
+    /// Prepares the shared placement/resurface pipeline for a SwiftUI `SettingsLink`. The link
+    /// remains the sole owner of scene creation; this method is deliberately UI-independent so the
+    /// AppKit status menu can bridge to the supported SwiftUI control without a private selector.
+    @discardableResult
+    func prepareOpen(context: SettingsSurfaceContext) -> SettingsSceneOpenResult {
+        let wasWaitingForScene = pendingContext != nil && surface == nil
         requestGeneration &+= 1
         pendingContext = context
         diagnostics.log(
@@ -156,8 +225,19 @@ final class SettingsWindowCoordinator {
                 "context-resolution": context.resolutionReason,
             ]
         )
-        openSettings()
         surfacePendingRequestIfPossible()
+        if surface != nil {
+            return .resurfacedExistingWindow
+        }
+        if wasWaitingForScene {
+            diagnostics.log(
+                category: "settings-window",
+                event: "scene-open-coalesced",
+                fields: ["generation": String(requestGeneration)]
+            )
+            return .coalescedPendingScene
+        }
+        return .preparedForSettingsLink
     }
 
     func attach(window: NSWindow) {

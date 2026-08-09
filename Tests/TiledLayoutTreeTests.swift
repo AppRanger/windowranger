@@ -208,6 +208,126 @@ final class TiledLayoutTreeTests: XCTestCase {
         XCTAssertNoThrow(try TiledLayoutEngine.validated(reconciled, participants: [a, c, d]))
     }
 
+    func testDirectionalMoveSwapsAuthoritativeLeavesAndActuallyChangesFrames() throws {
+        // Matches the live trace's two-window, wide-display Tiled topology.
+        let bounds = CGRect(x: 0, y: 30, width: 3_360, height: 1_388)
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(a),
+            second: .window(b)
+        )
+        let before = try rects(tree, bounds: bounds, configuration: configuration())
+        let moved = try XCTUnwrap(WorkspaceEngine.directionallyReorderedTiledState(
+            tree: tree,
+            focusedWindow: a,
+            direction: .right,
+            displayBounds: bounds,
+            configuration: configuration()
+        ))
+        let after = try rects(moved.tree, bounds: bounds, configuration: configuration())
+
+        XCTAssertEqual(moved.destinationWindow, b)
+        XCTAssertEqual(moved.tree.windowKeys, [b, a])
+        XCTAssertEqual(after[a], before[b])
+        XCTAssertEqual(after[b], before[a])
+        XCTAssertNotEqual(after, before)
+        XCTAssertEqual(moved.effectiveShares[a], 0.5)
+        XCTAssertEqual(moved.effectiveShares[b], 0.5)
+    }
+
+    func testDirectionalMoveRepeatsInBothDirectionsAndNoOpsAtBoundary() throws {
+        let bounds = CGRect(x: 0, y: 0, width: 1_000, height: 600)
+        let original = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.35,
+            first: .window(a),
+            second: .window(b)
+        )
+        let movedRight = try XCTUnwrap(WorkspaceEngine.directionallyReorderedTiledState(
+            tree: original,
+            focusedWindow: a,
+            direction: .right,
+            displayBounds: bounds,
+            configuration: configuration()
+        ))
+        XCTAssertNil(WorkspaceEngine.directionallyReorderedTiledState(
+            tree: movedRight.tree,
+            focusedWindow: a,
+            direction: .right,
+            displayBounds: bounds,
+            configuration: configuration()
+        ))
+        let movedLeft = try XCTUnwrap(WorkspaceEngine.directionallyReorderedTiledState(
+            tree: movedRight.tree,
+            focusedWindow: a,
+            direction: .left,
+            displayBounds: bounds,
+            configuration: configuration()
+        ))
+        XCTAssertEqual(movedLeft.tree, original)
+        XCTAssertNil(WorkspaceEngine.directionallyReorderedTiledState(
+            tree: movedLeft.tree,
+            focusedWindow: a,
+            direction: .left,
+            displayBounds: bounds,
+            configuration: configuration()
+        ))
+    }
+
+    func testDirectionalMoveUsesNestedVerticalNeighbourWithoutFlatteningTree() throws {
+        let bounds = CGRect(x: 0, y: 0, width: 1_200, height: 900)
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.6,
+            first: .window(a),
+            second: .split(
+                axis: .vertical,
+                ratio: 0.4,
+                first: .window(b),
+                second: .window(c)
+            )
+        )
+        let moved = try XCTUnwrap(WorkspaceEngine.directionallyReorderedTiledState(
+            tree: tree,
+            focusedWindow: b,
+            direction: .down,
+            displayBounds: bounds,
+            configuration: configuration()
+        ))
+
+        XCTAssertEqual(moved.destinationWindow, c)
+        XCTAssertEqual(moved.tree.windowKeys, [a, c, b])
+        guard case let .split(rootAxis, rootRatio, first, second) = moved.tree,
+              case let .split(nestedAxis, nestedRatio, nestedFirst, nestedSecond) = second
+        else { return XCTFail("Directional movement must preserve the placement topology") }
+        XCTAssertEqual(rootAxis, .horizontal)
+        XCTAssertEqual(rootRatio, 0.6)
+        XCTAssertEqual(first, .window(a))
+        XCTAssertEqual(nestedAxis, .vertical)
+        XCTAssertEqual(nestedRatio, 0.4)
+        XCTAssertEqual(nestedFirst, .window(c))
+        XCTAssertEqual(nestedSecond, .window(b))
+    }
+
+    func testLeafSwapRejectsMissingDuplicateOrInvalidParticipants() {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(a),
+            second: .window(b)
+        )
+        XCTAssertNil(TiledLayoutEngine.swappingWindows(a, a, in: tree))
+        XCTAssertNil(TiledLayoutEngine.swappingWindows(a, c, in: tree))
+        let duplicate = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(a),
+            second: .window(a)
+        )
+        XCTAssertNil(TiledLayoutEngine.swappingWindows(a, b, in: duplicate))
+    }
+
     func testNearestSplitResizeMakesNestedTopBottomWindowOnlyTaller() throws {
         let tree = TiledNode.split(
             axis: .horizontal,

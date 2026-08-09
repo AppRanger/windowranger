@@ -1752,31 +1752,75 @@ final class WorkspaceEngine {
                 self.emitCommandFeedback("There is no other layout window to reorder.")
                 return
             }
+            let layout = self.workspaces[workspaceIndex].layout
             let configuration = self.workspaces[workspaceIndex].layoutConfiguration
                 ?? .aeroSpaceUserDefaults
             let orientation = configuration.orientation.resolved(for: display.usableBounds)
-            guard direction.axis == orientation else {
-                self.emitCommandFeedback(
-                    "This \(orientation.rawValue) layout can only move windows \(orientation == .horizontal ? "left or right" : "up or down")."
-                )
-                return
-            }
-            guard let destinationIndex = Self.reorderDestinationIndex(
-                sourceIndex: sourceIndex,
-                count: participants.count,
-                direction: direction,
-                orientation: orientation
-            ) else {
-                self.emitCommandFeedback("The window is already at that edge of the layout.")
-                return
-            }
+            let destinationKey: WindowKey
+            var treeFingerprints: (before: String, after: String)?
 
-            for (index, key) in participants.enumerated() { self.windows[key]?.layoutOrder = index }
-            let destinationKey = participants[destinationIndex]
-            let sourceOrder = self.windows[focused.key]?.layoutOrder ?? sourceIndex
-            let destinationOrder = self.windows[destinationKey]?.layoutOrder ?? destinationIndex
-            self.windows[focused.key]?.layoutOrder = destinationOrder
-            self.windows[destinationKey]?.layoutOrder = sourceOrder
+            switch layout {
+            case .none:
+                // The earlier layout guard makes this unreachable, but keep the mutation boundary
+                // explicit if another layout case is introduced later.
+                self.emitCommandFeedback("Freeform has no window order to change.")
+                return
+            case .accordion:
+                guard direction.axis == orientation else {
+                    self.emitCommandFeedback(
+                        "This \(orientation.rawValue) Accordion can only move windows \(orientation == .horizontal ? "left or right" : "up or down")."
+                    )
+                    return
+                }
+                guard let destinationIndex = Self.reorderDestinationIndex(
+                    sourceIndex: sourceIndex,
+                    count: participants.count,
+                    direction: direction,
+                    orientation: orientation
+                ) else {
+                    self.emitCommandFeedback("The window is already at that edge of the layout.")
+                    return
+                }
+                for (index, key) in participants.enumerated() { self.windows[key]?.layoutOrder = index }
+                destinationKey = participants[destinationIndex]
+                let sourceOrder = self.windows[focused.key]?.layoutOrder ?? sourceIndex
+                let destinationOrder = self.windows[destinationKey]?.layoutOrder ?? destinationIndex
+                self.windows[focused.key]?.layoutOrder = destinationOrder
+                self.windows[destinationKey]?.layoutOrder = sourceOrder
+            case .tiled:
+                let partition = TiledLayoutPartitionKey(
+                    workspaceID: workspaceID,
+                    displayIdentifier: interactionDisplay.identifier
+                )
+                let fallbackWeights = participants.map {
+                    CGFloat(Self.validLayoutWeight(self.windows[$0]?.layoutWeight))
+                }
+                guard let currentTree = TiledLayoutEngine.reconciled(
+                    self.tiledTrees[partition],
+                    windowKeys: participants,
+                    weights: fallbackWeights,
+                    orientation: orientation
+                ), let reordered = Self.directionallyReorderedTiledState(
+                    tree: currentTree,
+                    focusedWindow: focused.key,
+                    direction: direction,
+                    displayBounds: display.usableBounds,
+                    configuration: configuration
+                ) else {
+                    self.emitCommandFeedback("The window is already at that edge of the Tiled layout.")
+                    return
+                }
+                destinationKey = reordered.destinationWindow
+                self.tiledTrees[partition] = reordered.tree
+                for (index, key) in reordered.tree.windowKeys.enumerated() {
+                    self.windows[key]?.layoutOrder = index
+                    self.windows[key]?.layoutWeight = reordered.effectiveShares[key] ?? 1
+                }
+                treeFingerprints = (
+                    TiledLayoutEngine.fingerprint(currentTree),
+                    TiledLayoutEngine.fingerprint(reordered.tree)
+                )
+            }
             if self.workspaces[workspaceIndex].layoutConfiguration == nil {
                 self.workspaces[workspaceIndex].layoutConfiguration = configuration
             }
@@ -1801,17 +1845,23 @@ final class WorkspaceEngine {
                     self?.onWorkspaceLayoutConfigurationChanged?(workspaceID, updatedConfiguration)
                 }
             }
+            var diagnosticFields = [
+                "direction": direction.rawValue,
+                "window": Self.diagnosticWindowKey(focused.key),
+                "swapped-with": Self.diagnosticWindowKey(destinationKey),
+                "workspace": Self.shortIdentifier(workspaceID.uuidString),
+                "display": Self.shortIdentifier(interactionDisplay.identifier),
+                "layout": layout.rawValue,
+            ]
+            if let treeFingerprints {
+                diagnosticFields["tree-before"] = treeFingerprints.before
+                diagnosticFields["tree-after"] = treeFingerprints.after
+            }
             self.diagnostics.log(
                 category: "directional-move",
                 event: "reordered",
                 correlation: correlationID,
-                fields: [
-                    "direction": direction.rawValue,
-                    "window": Self.diagnosticWindowKey(focused.key),
-                    "swapped-with": Self.diagnosticWindowKey(destinationKey),
-                    "workspace": Self.shortIdentifier(workspaceID.uuidString),
-                    "display": Self.shortIdentifier(interactionDisplay.identifier),
-                ]
+                fields: diagnosticFields
             )
             self.emitCommandFeedback("Moved window \(direction.rawValue) in the layout.")
             self.retainFocusAfterKeyboardManipulation(
@@ -2950,6 +3000,65 @@ final class WorkspaceEngine {
             resizedTree,
             participants.map { effectiveShares[$0] ?? 0 }
         )
+    }
+
+    /// Resolves a visual neighbour from the authoritative Tiled tree and exchanges the two leaves.
+    /// This is deliberately spatial rather than limited to the workspace's root orientation: a
+    /// placed tree can contain a vertical split inside a horizontal root (and vice versa).
+    static func directionallyReorderedTiledState(
+        tree: TiledNode,
+        focusedWindow: WindowKey,
+        direction: WindowDirection,
+        displayBounds: CGRect,
+        configuration: WorkspaceLayoutConfiguration
+    ) -> (tree: TiledNode, destinationWindow: WindowKey, effectiveShares: [WindowKey: Double])? {
+        let participants = tree.windowKeys
+        guard Set(participants).count == participants.count,
+              participants.contains(focusedWindow),
+              (try? TiledLayoutEngine.validated(tree, participants: Set(participants))) != nil,
+              let frames = try? TiledLayoutEngine.frames(
+                  for: tree,
+                  in: displayBounds,
+                  configuration: configuration
+              ),
+              let focusedFrame = frames[focusedWindow]
+        else { return nil }
+        let candidates = participants.compactMap { key -> DirectionalWindowCandidate<WindowKey>? in
+            guard key != focusedWindow, let frame = frames[key] else { return nil }
+            return DirectionalWindowCandidate(
+                key: key,
+                frame: CGRect(origin: frame.position, size: frame.size)
+            )
+        }
+        // Prefer a leaf that actually overlaps the focused leaf on the perpendicular axis. In a
+        // nested tree, a full-height sibling can merely touch the focused column's edge and have a
+        // closer centre than the true top/bottom neighbour; treating that corner contact as aligned
+        // would move the window into the wrong branch.
+        let focusedRect = CGRect(origin: focusedFrame.position, size: focusedFrame.size)
+        let axisAlignedCandidates = candidates.filter { candidate in
+            switch direction {
+            case .left, .right:
+                return min(focusedRect.maxY, candidate.frame.maxY)
+                    - max(focusedRect.minY, candidate.frame.minY) > 0.5
+            case .up, .down:
+                return min(focusedRect.maxX, candidate.frame.maxX)
+                    - max(focusedRect.minX, candidate.frame.minX) > 0.5
+            }
+        }
+        let selectionPool = axisAlignedCandidates.isEmpty ? candidates : axisAlignedCandidates
+        guard let destination = directionalCandidateOrder(
+            from: focusedRect,
+            direction: direction,
+            candidates: selectionPool
+        ).first,
+              let reordered = TiledLayoutEngine.swappingWindows(
+                  focusedWindow,
+                  destination,
+                  in: tree
+              ),
+              let effectiveShares = TiledLayoutEngine.leafShares(reordered)
+        else { return nil }
+        return (reordered, destination, effectiveShares)
     }
 
     static func adjustedAccordionPadding(

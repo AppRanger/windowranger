@@ -543,7 +543,11 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             resolutionReason: "test"
         )
 
-        coordinator.requestOpen(context: context) { openCount += 1 }
+        let result = coordinator.requestOpen(context: context) {
+            openCount += 1
+            return true
+        }
+        XCTAssertEqual(result, .sceneRequested)
         XCTAssertEqual(openCount, 1)
         XCTAssertTrue(surface.surfacedFrames.isEmpty)
 
@@ -568,15 +572,15 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             frame: CGRect(x: 100, y: 100, width: 900, height: 640)
         )
         coordinator.attach(surface: surface)
-        coordinator.requestOpen(
+        XCTAssertEqual(coordinator.requestOpen(
             context: SettingsSurfaceContext(
                 workspaceID: workspaceA.id,
                 displayIdentifier: "main",
                 displayMode: .independent,
                 resolutionReason: "first"
             ),
-            openSettings: {}
-        )
+            openSettings: { XCTFail("An attached Settings scene must be resurfaced directly"); return false }
+        ), .resurfacedExistingWindow)
         surface.frame = surface.surfacedFrames.last!
 
         let reopened = SettingsSurfaceContext(
@@ -585,7 +589,10 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             displayMode: .independent,
             resolutionReason: "reopen"
         )
-        coordinator.requestOpen(context: reopened, openSettings: {})
+        XCTAssertEqual(coordinator.requestOpen(
+            context: reopened,
+            openSettings: { XCTFail("Reopen must not request a duplicate scene"); return false }
+        ), .resurfacedExistingWindow)
 
         XCTAssertEqual(activationCount, 2)
         XCTAssertEqual(surface.surfacedFrames.count, 2)
@@ -612,7 +619,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
                 displayMode: .independent,
                 resolutionReason: "test"
             ),
-            openSettings: {}
+            openSettings: { true }
         )
 
         coordinator.workspaceStateDidChange(WorkspaceEngineState(
@@ -637,6 +644,102 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(surface.nonactivatingSurfaceFrames.count, 1)
         XCTAssertEqual(activationCount, 1, "Returning to the workspace must not steal focus")
         XCTAssertFalse(coordinator.isHiddenForWorkspace)
+    }
+
+    @MainActor
+    func testSettingsRapidFirstOpenCoalescesAndSurfacesLatestContextOnce() {
+        let displays = settingsDisplays()
+        var sceneRequestCount = 0
+        let coordinator = SettingsWindowCoordinator(
+            displayProvider: { displays },
+            applicationActivator: {}
+        )
+        let first = SettingsSurfaceContext(
+            workspaceID: workspaceA.id,
+            displayIdentifier: "main",
+            displayMode: .independent,
+            resolutionReason: "first"
+        )
+        let latest = SettingsSurfaceContext(
+            workspaceID: workspaceB.id,
+            displayIdentifier: "external",
+            displayMode: .independent,
+            resolutionReason: "latest"
+        )
+
+        XCTAssertEqual(coordinator.requestOpen(context: first) {
+            sceneRequestCount += 1
+            return true
+        }, .sceneRequested)
+        XCTAssertEqual(coordinator.requestOpen(context: latest) {
+            sceneRequestCount += 1
+            return true
+        }, .coalescedPendingScene)
+        XCTAssertEqual(sceneRequestCount, 1)
+
+        let surface = TestSettingsWindowSurface(
+            frame: CGRect(x: 100, y: 100, width: 900, height: 640)
+        )
+        coordinator.attach(surface: surface)
+        XCTAssertEqual(surface.surfacedFrames.count, 1)
+        XCTAssertEqual(coordinator.assignedContext, latest)
+        XCTAssertTrue(displays[1].visibleFrame.contains(surface.surfacedFrames[0].midpoint))
+    }
+
+    @MainActor
+    func testSettingsUnavailableSceneActionClearsRequestAndCanRetry() {
+        let displays = settingsDisplays()
+        let coordinator = SettingsWindowCoordinator(
+            displayProvider: { displays },
+            applicationActivator: {}
+        )
+        let context = SettingsSurfaceContext(
+            workspaceID: workspaceB.id,
+            displayIdentifier: "external",
+            displayMode: .independent,
+            resolutionReason: "test"
+        )
+
+        XCTAssertEqual(
+            coordinator.requestOpen(context: context, openSettings: { false }),
+            .sceneActionUnavailable
+        )
+        let surface = TestSettingsWindowSurface(
+            frame: CGRect(x: 100, y: 100, width: 900, height: 640)
+        )
+        coordinator.attach(surface: surface)
+        XCTAssertTrue(surface.surfacedFrames.isEmpty)
+
+        XCTAssertEqual(
+            coordinator.requestOpen(context: context, openSettings: { true }),
+            .resurfacedExistingWindow
+        )
+        XCTAssertEqual(surface.surfacedFrames.count, 1)
+    }
+
+    @MainActor
+    func testSettingsLinkPreparationIsRaceSafeWhenSceneAttachesLater() {
+        let displays = settingsDisplays()
+        let coordinator = SettingsWindowCoordinator(
+            displayProvider: { displays },
+            applicationActivator: {}
+        )
+        let context = SettingsSurfaceContext(
+            workspaceID: workspaceB.id,
+            displayIdentifier: "external",
+            displayMode: .independent,
+            resolutionReason: "status-menu-settings-link"
+        )
+
+        XCTAssertEqual(coordinator.prepareOpen(context: context), .preparedForSettingsLink)
+        let surface = TestSettingsWindowSurface(
+            frame: CGRect(x: 100, y: 100, width: 900, height: 640)
+        )
+        coordinator.attach(surface: surface)
+
+        XCTAssertEqual(coordinator.assignedContext, context)
+        XCTAssertEqual(surface.surfacedFrames.count, 1)
+        XCTAssertTrue(displays[1].visibleFrame.contains(surface.surfacedFrames[0].midpoint))
     }
 
     func testSettingsPlacementCentersAcrossDisplaysAndClampsOnSameDisplay() {

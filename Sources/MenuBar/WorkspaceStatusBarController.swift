@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import SwiftUI
 
 @MainActor
 final class MenuBarStateModel: ObservableObject {
@@ -661,27 +662,25 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         }
 
         appMenu.addItem(.separator())
-        let profileSettings = actionMenuItem(
+        let profileSettings = settingsLinkMenuItem(
             title: "Profile Settings…",
-            action: #selector(openProfileSettings)
+            systemImage: "person.crop.rectangle.stack",
+            category: .profiles
         )
-        profileSettings.image = symbol("person.crop.rectangle.stack")
         appMenu.addItem(profileSettings)
 
-        let settings = actionMenuItem(
+        let settings = settingsLinkMenuItem(
             title: "Settings…",
-            action: #selector(openSettings)
+            systemImage: "gearshape",
+            category: nil
         )
-        settings.keyEquivalent = ","
-        settings.keyEquivalentModifierMask = [.command]
-        settings.image = symbol("gearshape")
         appMenu.addItem(settings)
 
-        let wheelSettings = actionMenuItem(
+        let wheelSettings = settingsLinkMenuItem(
             title: "Command Wheel Settings…",
-            action: #selector(openCommandWheelSettings)
+            systemImage: "circle.hexagongrid",
+            category: .radialMenu
         )
-        wheelSettings.image = symbol("circle.hexagongrid")
         appMenu.addItem(wheelSettings)
 
         #if DEBUG
@@ -716,6 +715,36 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         return item
     }
 
+    /// SwiftUI owns the Settings scene, so the AppKit status menu embeds the supported
+    /// `SettingsLink` control instead of invoking the removed `showSettingsWindow:` selector.
+    private func settingsLinkMenuItem(
+        title: String,
+        systemImage: String,
+        category: SettingsCategory?
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let view = SettingsMenuLinkRow(
+            title: title,
+            systemImage: systemImage,
+            prepare: { [weak self] in
+                guard let self else { return }
+                SettingsWindowOpener.prepareForSettingsLink(
+                    category: category,
+                    preferPointerDisplay: true,
+                    navigation: self.settingsNavigation,
+                    engine: self.engine,
+                    coordinator: self.settingsWindowCoordinator
+                )
+            },
+            dismissMenu: { [weak self] in self?.appMenu.cancelTracking() }
+        )
+        let hostingView = NSHostingView(rootView: view)
+        hostingView.frame = CGRect(x: 0, y: 0, width: 270, height: 24)
+        item.view = hostingView
+        item.isEnabled = true
+        return item
+    }
+
     private func disabledMenuItem(title: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
@@ -735,31 +764,6 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func resumeAutomaticProfileSelection() {
         settingsStore.resumeAutomaticProfileSelection()
-    }
-
-    @objc private func openProfileSettings() {
-        openSettingsPane(.profiles)
-    }
-
-    @objc private func openSettings() {
-        openSettingsPane(nil)
-    }
-
-    @objc private func openCommandWheelSettings() {
-        openSettingsPane(.radialMenu)
-    }
-
-    private func openSettingsPane(_ category: SettingsCategory?) {
-        SettingsWindowOpener.open(
-            category: category,
-            preferPointerDisplay: true,
-            navigation: settingsNavigation,
-            engine: engine,
-            coordinator: settingsWindowCoordinator,
-            openSettings: {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-            }
-        )
     }
 
     #if DEBUG
@@ -782,5 +786,82 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         if !isInvalidated {
             NSStatusBar.system.removeStatusItem(statusItem)
         }
+    }
+}
+
+/// A native SwiftUI SettingsLink hosted inside the AppKit status menu. Its primitive style runs
+/// the app's context capture before triggering the link for pointer, keyboard, and accessibility
+/// activation alike; the renderer contains no Settings scene creation workaround of its own.
+@MainActor
+private struct SettingsMenuLinkRow: View {
+    let title: String
+    let systemImage: String
+    let prepare: () -> Void
+    let dismissMenu: () -> Void
+
+    var body: some View {
+        SettingsLink {
+            Label(title, systemImage: systemImage)
+                .font(.system(size: 13))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(SettingsMenuLinkButtonStyle(
+            prepare: prepare,
+            dismissMenu: dismissMenu
+        ))
+        .accessibilityLabel(title)
+        .accessibilityHint("Opens the WindowManager Settings window.")
+        .frame(width: 270, height: 24)
+    }
+}
+
+@MainActor
+private struct SettingsMenuLinkButtonStyle: PrimitiveButtonStyle {
+    let prepare: () -> Void
+    let dismissMenu: () -> Void
+
+    func makeBody(configuration: Configuration) -> some View {
+        SettingsMenuLinkButton(
+            configuration: configuration,
+            prepare: prepare,
+            dismissMenu: dismissMenu
+        )
+    }
+}
+
+@MainActor
+private struct SettingsMenuLinkButton: View {
+    let configuration: PrimitiveButtonStyleConfiguration
+    let prepare: () -> Void
+    let dismissMenu: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        configuration.label
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .foregroundStyle(isHovering ? Color.white : Color.primary)
+            .background {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(isHovering ? Color.accentColor : Color.clear)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+            }
+            .contentShape(Rectangle())
+            .focusable()
+            .onHover { isHovering = $0 }
+            .onTapGesture { activate() }
+            .onKeyPress(.return) {
+                activate()
+                return .handled
+            }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { activate() }
+    }
+
+    private func activate() {
+        prepare()
+        configuration.trigger()
+        DispatchQueue.main.async { dismissMenu() }
     }
 }
