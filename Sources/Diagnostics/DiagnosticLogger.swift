@@ -133,6 +133,7 @@ final class DiagnosticLogger {
     let buildMode: DiagnosticBuildMode
     let sessionIdentifier: String
     let isVerbose: Bool
+    let capturesSupportHistory: Bool
 
     private let sink: DiagnosticSink
     private let lock = NSLock()
@@ -146,12 +147,14 @@ final class DiagnosticLogger {
         buildMode: DiagnosticBuildMode,
         sink: DiagnosticSink,
         sessionIdentifier: String = UUID().uuidString,
-        isVerbose: Bool = true
+        isVerbose: Bool = true,
+        capturesSupportHistory: Bool = false
     ) {
         self.buildMode = buildMode
         self.sink = sink
         self.sessionIdentifier = sessionIdentifier
         self.isVerbose = isVerbose
+        self.capturesSupportHistory = capturesSupportHistory
         timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     }
 
@@ -183,7 +186,12 @@ final class DiagnosticLogger {
         #if DEBUG
         return make(buildMode: .debug, fileURL: defaultFileURL)
         #else
-        return .disabled
+        return DiagnosticLogger(
+            buildMode: .release,
+            sink: NoOpDiagnosticSink(),
+            isVerbose: false,
+            capturesSupportHistory: true
+        )
         #endif
     }
 
@@ -208,7 +216,7 @@ final class DiagnosticLogger {
         correlation: String? = nil,
         fields: [String: String] = [:]
     ) {
-        guard isVerbose else { return }
+        guard isVerbose || capturesSupportHistory else { return }
         lock.lock()
         sequence += 1
         let record = DiagnosticRecord(
@@ -234,8 +242,29 @@ final class DiagnosticLogger {
             correlatedRecordBytes += data.count
             trimCorrelatedRecordsIfNeeded()
         }
-        sink.append(data)
+        if isVerbose { sink.append(data) }
         lock.unlock()
+    }
+
+    func relatedDiagnosticsText(windowToken: String, maxBytes: Int = 20_000) -> String {
+        guard capturesSupportHistory || isVerbose, !windowToken.isEmpty, maxBytes > 0 else { return "" }
+        lock.lock()
+        defer { lock.unlock() }
+
+        var groups: [Data] = []
+        var remaining = maxBytes
+        for correlation in correlationOrder.reversed() {
+            guard let records = correlatedRecords[correlation],
+                  records.contains(where: { String(decoding: $0, as: UTF8.self).contains(windowToken) })
+            else { continue }
+            let group = boundedActionGroup(records, maxBytes: remaining)
+            guard !group.isEmpty else { continue }
+            groups.append(group)
+            remaining -= group.count
+            if remaining < 1_024 { break }
+        }
+        let data = groups.reversed().reduce(into: Data()) { $0.append($1) }
+        return String(decoding: data, as: UTF8.self)
     }
 
     func recentDiagnosticsText(maxBytes: Int = 64_000) -> String {
@@ -281,6 +310,17 @@ final class DiagnosticLogger {
             suffix.removeSubrange(suffix.index(after: lastNewline)..<suffix.endIndex)
         }
         return suffix
+    }
+
+    /// A final fail-closed pass for user-shareable reports. Structured report producers must
+    /// already omit forbidden fields; this catches injected URLs and full user paths at the last
+    /// serialization boundary without enabling the persistent Debug log.
+    static func sanitizedReport(_ report: String) -> String {
+        report.components(separatedBy: .newlines).map { line in
+            guard looksSensitive(line) else { return String(line.prefix(2_048)) }
+            guard let separator = line.firstIndex(of: ":") else { return "[redacted]" }
+            return String(line[...separator]) + " [redacted]"
+        }.joined(separator: "\n")
     }
 
     private static func newlineTerminatedText(_ data: Data) -> String {

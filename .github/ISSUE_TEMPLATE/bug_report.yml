@@ -73,4 +73,5 @@ body:
     id: diagnostics
     attributes:
       label: Privacy-safe diagnostics
-      description: Optional bounded excerpt. Explain what it shows; redact unrelated identifiers and private content.
+      description: Focus the affected window, Option-click the WindowRanger menu, and choose Copy Focused Window Diagnostic Report. Review it before pasting or attaching it, remove unrelated identifiers or private content, and explain what it shows. Debug builds can also copy a broader recent excerpt.
+      placeholder: Paste the reviewed focused-window report or explain why it was unavailable.

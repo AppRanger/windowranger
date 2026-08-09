@@ -158,9 +158,14 @@ structured JSON Lines diagnostics to
 1 MB backups. Release builds do not create this verbose file. Unit tests use memory or no-op loggers
 and never write there.
 
-Option-clicking the status item in a Debug build reveals **Copy Recent Diagnostics** (a bounded recent
-excerpt with its privacy notice) and **Reveal Diagnostics File** for that menu opening. Opening the
-menu normally keeps those support controls hidden. Diagnostics contain action/session
+Option-clicking the status item in every build reveals **Copy Focused Window Diagnostic Report**.
+It snapshots the externally focused window before the menu opens and copies a bounded, versioned,
+read-only report covering Accessibility reads, admission, workspace/layout state, expected versus
+observed geometry, and only related recent in-memory command events. It never focuses, raises,
+moves, resizes, admits, or unparks the subject. Review the privacy header before sharing. Debug
+builds additionally reveal **Copy Recent Diagnostics** (a bounded recent excerpt with its privacy
+notice) and **Reveal Diagnostics File** for that menu opening. Opening the menu normally keeps those
+support controls hidden. Diagnostics contain action/session
 IDs, bundle identifiers, internal window/workspace/display IDs, layout decisions, frames, and AX
 success/failure results. They do not collect window titles, document names, URLs, typed content,
 full file paths, or window contents.

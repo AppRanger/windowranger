@@ -628,6 +628,7 @@ final class WorkspaceEngine {
 
     private struct FocusedWindowSnapshot {
         let key: WindowKey
+        let element: AXUIElement
         let frame: WindowFrame?
     }
 
@@ -717,6 +718,7 @@ final class WorkspaceEngine {
     private var lastKnownWindowLayer: [WindowKey: Int] = [:]
     private var lastFocusedWindow: [UUID: WindowKey] = [:]
     private var lastObservedFocusedWindow: WindowKey?
+    private var lastDiagnosticFocusedWindow: FocusedWindowSnapshot?
     private var programmaticFocusTarget: WindowKey?
     private var programmaticFocusDeadline = Date.distantPast
     private var programmaticFocusCorrelationID: String?
@@ -1435,6 +1437,268 @@ final class WorkspaceEngine {
             )
             DispatchQueue.main.async { completion(records) }
         }
+    }
+
+    /// Creates a read-only support snapshot on the engine queue. It deliberately does not call
+    /// refresh, admission, visibility, focus, or persistence paths, because copying diagnostics
+    /// must never change the subject being diagnosed.
+    func focusedWindowDiagnosticReport(now: Date = Date()) -> String {
+        queue.sync {
+            makeFocusedWindowDiagnosticReport(now: now)
+        }
+    }
+
+    private func makeFocusedWindowDiagnosticReport(now: Date) -> String {
+        let buildMode: String
+        #if DEBUG
+        buildMode = "Debug"
+        #else
+        buildMode = "Release"
+        #endif
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? "unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+            ?? "unknown"
+        let base = (
+            timestamp: now,
+            appVersion: version,
+            appBuild: build,
+            buildMode: buildMode,
+            macOSVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            session: Self.shortIdentifier(WorkspaceStateStore.currentWindowServerSession())
+        )
+
+        guard AXIsProcessTrusted() else {
+            return FocusedWindowDiagnosticReport.render(FocusedWindowDiagnosticSnapshot(
+                timestamp: base.timestamp,
+                appVersion: base.appVersion,
+                appBuild: base.appBuild,
+                buildMode: base.buildMode,
+                macOSVersion: base.macOSVersion,
+                windowServerSession: base.session,
+                targetStatus: "accessibility-unavailable",
+                targetBundleIdentifier: .unavailable("Accessibility permission is not granted"),
+                targetWindowIdentifier: .unavailable("Accessibility permission is not granted"),
+                accessibility: [],
+                management: [],
+                relatedHistory: ""
+            ))
+        }
+        let currentlyFocused = focusedWindowSnapshot().flatMap { snapshot in
+            snapshot.key.processIdentifier == ownProcessIdentifier ? nil : snapshot
+        }
+        guard let focused = currentlyFocused ?? lastDiagnosticFocusedWindow
+        else {
+            return FocusedWindowDiagnosticReport.render(FocusedWindowDiagnosticSnapshot(
+                timestamp: base.timestamp,
+                appVersion: base.appVersion,
+                appBuild: base.appBuild,
+                buildMode: base.buildMode,
+                macOSVersion: base.macOSVersion,
+                windowServerSession: base.session,
+                targetStatus: "no-target",
+                targetBundleIdentifier: .unavailable("no externally focused window"),
+                targetWindowIdentifier: .unavailable("no externally focused window"),
+                accessibility: [],
+                management: [],
+                relatedHistory: ""
+            ))
+        }
+
+        let key = focused.key
+        let usedLastExternalAnchor = currentlyFocused == nil
+        let tracked = windows[key]
+        let cachedDecision = admissionDecisionByWindow[key] ?? tracked?.admissionDecision
+        let cachedMetadata = admissionMetadataByWindow[key]
+        let bundleIdentifier = tracked?.bundleIdentifier
+            ?? cachedMetadata?.bundleIdentifier
+            ?? NSRunningApplication(processIdentifier: key.processIdentifier)?.bundleIdentifier
+        let targetStatus: String
+        if NSRunningApplication(processIdentifier: key.processIdentifier) == nil {
+            targetStatus = "stale"
+        } else if temporarilyDeferredWindowKeys.contains(key) {
+            targetStatus = "deferred"
+        } else if ignoredWindowKeys.contains(key) || cachedDecision?.disposition == .ignoredTransientPopup {
+            targetStatus = "ignored"
+        } else if tracked != nil {
+            targetStatus = "managed"
+        } else {
+            targetStatus = "unmanaged"
+        }
+
+        let appElement = AXUIElementCreateApplication(key.processIdentifier)
+        let observedFrame = Self.diagnosticFrameRead(of: focused.element)
+        let displays = Self.activeDisplays()
+        let actualFrame = AccessibilityWindow.frame(of: focused.element)
+        let resolvedDisplayIndex = actualFrame.flatMap { frame in
+            Self.displayPlacement(for: frame, displays: displays).flatMap { placement in
+                displays.firstIndex(where: { $0.identifier == placement.displayIdentifier })
+            }
+        }
+        let visibleFrame = resolvedDisplayIndex.map { displays[$0].usableBounds }
+
+        var accessibility: [(String, DiagnosticReportValue)] = [
+            ("ax-role", Self.diagnosticAttribute(focused.element, kAXRoleAttribute as CFString, as: String.self)),
+            ("ax-subrole", Self.diagnosticAttribute(focused.element, kAXSubroleAttribute as CFString, as: String.self)),
+            ("cg-window-layer", AccessibilityWindow.windowLayer(for: key.windowIdentifier).map { .value(String($0)) } ?? .unavailable("WindowServer read unavailable")),
+            ("ax-focused", Self.diagnosticAttribute(focused.element, kAXFocusedAttribute as CFString, as: Bool.self)),
+            ("ax-main", Self.diagnosticAttribute(focused.element, kAXMainAttribute as CFString, as: Bool.self)),
+            ("ax-minimized", Self.diagnosticAttribute(focused.element, kAXMinimizedAttribute as CFString, as: Bool.self)),
+            ("ax-fullscreen", Self.diagnosticAttribute(focused.element, "AXFullScreen" as CFString, as: Bool.self)),
+            ("focused-settable", Self.diagnosticSettable(kAXFocusedAttribute as CFString, on: focused.element)),
+            ("main-settable", Self.diagnosticSettable(kAXMainAttribute as CFString, on: focused.element)),
+            ("app-focused-window-settable", Self.diagnosticSettable(kAXFocusedWindowAttribute as CFString, on: appElement)),
+            ("raise-action-supported", Self.diagnosticAction(kAXRaiseAction as CFString, on: focused.element)),
+            ("observed-frame", observedFrame),
+            ("resolved-display", resolvedDisplayIndex.map { .value("display-\($0 + 1)") } ?? .unavailable("frame or display unavailable")),
+            ("resolved-display-visible-frame", visibleFrame.map { .value(Self.diagnosticRect($0)) } ?? .unavailable("frame or display unavailable")),
+        ]
+        if accessibility.isEmpty { accessibility = [] }
+
+        var management: [(String, DiagnosticReportValue)] = [
+            ("capture-source", .value(usedLastExternalAnchor ? "last-external-focus" : "current-external-focus")),
+            ("admission-disposition", cachedDecision.map { .value($0.disposition.rawValue) } ?? .unavailable("no cached admission decision")),
+            ("admission-reason", cachedDecision.map { .value($0.reason.rawValue) } ?? .unavailable("no cached admission decision")),
+            ("temporarily-deferred", .value(String(temporarilyDeferredWindowKeys.contains(key)))),
+        ]
+        if let tracked {
+            let rule = resolvedRule(for: tracked.bundleIdentifier)
+            let layout = workspaceLayout(for: tracked.workspaceID)
+            let layoutDecision = Self.layoutDecision(
+                layoutOverride: tracked.layoutOverride,
+                admissionDecision: tracked.admissionDecision,
+                rule: rule
+            )
+            let workspaceIndex = workspaces.firstIndex(where: { $0.id == tracked.workspaceID })
+            let displayIndex = tracked.displayPlacement.flatMap { placement in
+                displays.firstIndex(where: { $0.identifier == placement.displayIdentifier })
+            }
+            let treeParticipation = tiledTrees.contains { partition, tree in
+                partition.workspaceID == tracked.workspaceID && tree.contains(key)
+            }
+            let shouldBeVisible = Self.shouldWindowBeVisible(
+                workspaceID: tracked.workspaceID,
+                activeWorkspaceIDs: activeWorkspaceIDs,
+                rule: rule
+            )
+            let workspaceMembership: DiagnosticReportValue = workspaceIndex.map {
+                .value("workspace-\($0 + 1)")
+            } ?? .unavailable("workspace absent")
+            let displayMembership: DiagnosticReportValue = displayIndex.map {
+                .value("display-\($0 + 1)")
+            } ?? .unavailable("no stored display placement")
+            let expectedFrame: DiagnosticReportValue = lastSolvedTiledFrames[key].map {
+                .value(Self.diagnosticFrame($0))
+            } ?? .unavailable("no solved layout frame")
+            let expectedFrameMatch: DiagnosticReportValue
+            if let expected = lastSolvedTiledFrames[key], let actualFrame {
+                expectedFrameMatch = .value(String(AccessibilityWindow.framesMatch(actualFrame, expected)))
+            } else {
+                expectedFrameMatch = .unavailable("expected or observed frame unavailable")
+            }
+            management.append(contentsOf: [
+                ("workspace-membership", workspaceMembership),
+                ("display-membership", displayMembership),
+                ("expected-visible", .value(String(shouldBeVisible))),
+                ("parking-state", .value(shouldBeVisible ? "not-expected-parked" : "expected-parked")),
+                ("app-rule-assigned-workspace", .value(String(rule.assignedWorkspaceID != nil))),
+                ("app-rule-keeps-on-all-workspaces", .value(String(rule.keepsOnAllWorkspaces))),
+                ("app-rule-excludes-from-layout", .value(String(rule.excludesFromLayout))),
+                ("app-rule-floats-secondary", .value(String(rule.floatsSecondaryWindows))),
+                ("layout-override", .value(tracked.layoutOverride.rawValue)),
+                ("layout", .value(layout.rawValue)),
+                ("layout-decision", .value(layoutDecision.rawValue)),
+                ("layout-eligible", .value(String(layoutDecision.includesInLayout))),
+                ("tiled-tree-participation", .value(String(treeParticipation))),
+                ("expected-frame", expectedFrame),
+                ("expected-frame-matches-observed", expectedFrameMatch),
+            ])
+        } else {
+            management.append(contentsOf: [
+                ("workspace-membership", .unavailable("window is not managed")),
+                ("display-membership", .unavailable("window is not managed")),
+                ("parking-state", .unavailable("window is not managed")),
+                ("layout-eligible", .unavailable("window is not managed")),
+                ("tiled-tree-participation", .value("false")),
+                ("expected-frame", .unavailable("window is not managed")),
+                ("expected-frame-matches-observed", .unavailable("window is not managed")),
+            ])
+        }
+
+        let token = Self.diagnosticWindowKey(key)
+        return FocusedWindowDiagnosticReport.render(FocusedWindowDiagnosticSnapshot(
+            timestamp: base.timestamp,
+            appVersion: base.appVersion,
+            appBuild: base.appBuild,
+            buildMode: base.buildMode,
+            macOSVersion: base.macOSVersion,
+            windowServerSession: base.session,
+            targetStatus: targetStatus,
+            targetBundleIdentifier: bundleIdentifier.map(DiagnosticReportValue.value) ?? .unavailable("bundle identifier unavailable"),
+            targetWindowIdentifier: .value(token),
+            accessibility: accessibility,
+            management: management,
+            relatedHistory: diagnostics.relatedDiagnosticsText(windowToken: token)
+        ))
+    }
+
+    private static func diagnosticAttribute<T>(
+        _ element: AXUIElement,
+        _ attribute: CFString,
+        as type: T.Type
+    ) -> DiagnosticReportValue {
+        var raw: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &raw)
+        switch result {
+        case .success:
+            guard let value = raw as? T else { return .failed("unexpected value type") }
+            return .value(String(describing: value))
+        case .attributeUnsupported, .noValue:
+            return .unavailable("unsupported")
+        default:
+            return .failed("AXError \(result.rawValue)")
+        }
+    }
+
+    private static func diagnosticSettable(
+        _ attribute: CFString,
+        on element: AXUIElement
+    ) -> DiagnosticReportValue {
+        var settable = DarwinBoolean(false)
+        let result = AXUIElementIsAttributeSettable(element, attribute, &settable)
+        switch result {
+        case .success: return .value(String(settable.boolValue))
+        case .attributeUnsupported, .noValue: return .unavailable("unsupported")
+        default: return .failed("AXError \(result.rawValue)")
+        }
+    }
+
+    private static func diagnosticAction(
+        _ action: CFString,
+        on element: AXUIElement
+    ) -> DiagnosticReportValue {
+        var raw: CFArray?
+        let result = AXUIElementCopyActionNames(element, &raw)
+        switch result {
+        case .success:
+            let names = raw as? [String] ?? []
+            return .value(String(names.contains(action as String)))
+        case .actionUnsupported, .noValue: return .unavailable("unsupported")
+        default: return .failed("AXError \(result.rawValue)")
+        }
+    }
+
+    private static func diagnosticFrameRead(of element: AXUIElement) -> DiagnosticReportValue {
+        let position = diagnosticAttribute(element, kAXPositionAttribute as CFString, as: AXValue.self)
+        let size = diagnosticAttribute(element, kAXSizeAttribute as CFString, as: AXValue.self)
+        guard case .value = position, case .value = size else {
+            if case let .failed(reason) = position { return .failed("position \(reason)") }
+            if case let .failed(reason) = size { return .failed("size \(reason)") }
+            return .unavailable("position or size unsupported")
+        }
+        return AccessibilityWindow.frame(of: element)
+            .map { .value(diagnosticFrame($0)) }
+            ?? .failed("AXValue conversion failed")
     }
 
     func switchToWorkspace(_ id: UUID, correlationID: String? = nil) {
@@ -5124,6 +5388,7 @@ final class WorkspaceEngine {
         lastKnownWindowLayer.removeAll()
         lastFocusedWindow.removeAll()
         lastObservedFocusedWindow = nil
+        lastDiagnosticFocusedWindow = nil
         temporarilyDeferredWindowKeys.removeAll()
         fullscreenSessions.removeAll()
         fullscreenAuthoritativeFalseCounts.removeAll()
@@ -5539,7 +5804,12 @@ final class WorkspaceEngine {
         deferredWindowKeys = deferredWindowKeys.intersection(windows.keys)
         temporarilyDeferredWindowKeys = deferredWindowKeys
 
-        let focused = observeFocus ? focusedWindowKey() : nil
+        let focusedSnapshot = observeFocus ? focusedWindowSnapshot() : nil
+        if let focusedSnapshot,
+           focusedSnapshot.key.processIdentifier != ownProcessIdentifier {
+            lastDiagnosticFocusedWindow = focusedSnapshot
+        }
+        let focused = focusedSnapshot?.key
         if observeFocus {
             reconcileForegroundFullscreenGameSession(focusedWindow: focused)
         } else if let foregroundFullscreenGameSessionKey,
@@ -6740,6 +7010,7 @@ final class WorkspaceEngine {
         ) else { return nil }
         return FocusedWindowSnapshot(
             key: key,
+            element: focusedWindow,
             frame: AccessibilityWindow.frame(of: focusedWindow)
         )
     }
@@ -6759,7 +7030,11 @@ final class WorkspaceEngine {
         let fallbackKeys = [recentInteractionFocusTarget, lastObservedFocusedWindow].compactMap { $0 }
         for key in fallbackKeys {
             guard sendOnlyFocusSuppression[key] == nil, let tracked = windows[key] else { continue }
-            return FocusedWindowSnapshot(key: key, frame: AccessibilityWindow.frame(of: tracked.element))
+            return FocusedWindowSnapshot(
+                key: key,
+                element: tracked.element,
+                frame: AccessibilityWindow.frame(of: tracked.element)
+            )
         }
         return nil
     }

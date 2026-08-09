@@ -24,54 +24,6 @@ None.
 
 ## Ready
 
-### WR-017 — Copy a focused-window diagnostic report for bug reports
-
-- **Type:** Feature / support diagnostics
-- **Priority:** P1
-- **Status:** Ready
-- **Evidence:** Requested
-- **Current behavior:** Debug builds provide a rotating diagnostic log and a live admission view,
-  but users cannot produce one self-contained report explaining why a particular window is being
-  managed, ignored, floated, focused, parked, or laid out unexpectedly.
-- **Requested outcome:** Let a user focus the misbehaving window, Option-click the WindowRanger menu,
-  and copy a bounded, human-reviewable diagnostic report suitable for attaching to a bug report.
-- **Capture boundary:**
-  - target the last externally focused window captured before the status menu opens, so opening the
-    menu cannot replace the subject with WindowRanger UI;
-  - work for both managed and unmanaged/ignored candidate windows when Accessibility permits it;
-  - read only; generating the report must not focus, raise, move, resize, unpark, admit, or otherwise
-    mutate the target window or WindowRanger state;
-  - represent unreadable/unsupported Accessibility attributes as unavailable or failed, never as a
-    confident false value.
-- **Report contents:**
-  - a versioned report schema, timestamp, WindowRanger version/build, macOS version, and a short
-    current WindowServer-session identifier;
-  - target app bundle identifier and privacy-safe session-local window identity;
-  - AX/CG role, subrole, layer and capability/read-result summary; focused, main, minimized and
-    full-screen observations; current frame and resolved display/visible frame;
-  - admission disposition and reasons, workspace/display membership, visibility/parking state,
-    app-rule and floating precedence, layout eligibility, current layout/tree participation, and
-    expected-versus-observed frame when applicable;
-  - bounded recent commands, generation/correlation IDs, frame/focus attempts, AX result codes, and
-    stale/cancellation reasons that relate to that window;
-  - an explicit privacy header telling the user to review the report before sharing.
-- **Privacy boundary:** Never include window titles, document names or paths, URLs, typed text,
-  clipboard contents, screenshots/window pixels, full user paths, profile/workspace names, monitor
-  serial numbers, unrelated windows, or an unbounded log tail. Apply the existing diagnostic
-  sanitizer to the final serialized report as a fail-closed last step.
-- **Availability and UX:**
-  - expose **Copy Focused Window Diagnostic Report** only in the Option-revealed support section from
-    WR-016;
-  - make the privacy-safe focused-window report available in distributable builds without enabling
-    the persistent verbose Debug log or **Reveal Diagnostics File**;
-  - show a clear no-target/Accessibility-unavailable explanation instead of copying a misleading
-    partial success report;
-  - add a bug-report template field explaining how to generate, review, and attach/paste the report.
-- **Acceptance:** Deterministic tests cover managed, ignored, deferred, floating, excluded,
-  minimized, full-screen, parked, stale, failed-AX-read, and no-target cases; prove zero window/state
-  mutations; verify bounds and schema stability; and inject forbidden privacy values through every
-  source to prove none survive the final output.
-
 ### WR-004 — Bound synced profile-library input with recovery UX
 
 - **Type:** Hardening
@@ -299,6 +251,18 @@ second copy of that checklist.
   publishing the reviewed draft each require explicit maintainer action at the final checkpoint.
 
 ## Done
+
+### WR-017 — Copy a focused-window diagnostic report for bug reports
+
+- **Result:** Option-click now exposes a distributable-build focused-window report captured before
+  menu presentation. The 64 KB, schema-versioned report is read-only, distinguishes failed or
+  unavailable AX reads from false values, includes privacy-safe admission/workspace/layout evidence
+  plus only related bounded in-memory events, and receives a final fail-closed privacy scrub.
+- **Automated evidence:** Nine deterministic report tests cover managed, ignored, deferred,
+  floating, excluded, minimized, full-screen, parked, stale, failed-read, no-target, privacy,
+  schema/bounds, release visibility, related-event filtering, and pure rendering. Test isolation,
+  an unsigned universal Release build, and the complete 435-test Debug suite passed on 10 August
+  2026. The bug-report template and privacy documentation describe generation and review.
 
 ### WR-016 — Reveal menu diagnostics only with Option-click
 

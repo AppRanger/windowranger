@@ -55,17 +55,23 @@ Debug app runs can write structured JSON Lines diagnostics to:
 
 `~/Library/Logs/com.windowranger.WindowRanger/diagnostics.jsonl`
 
-The file is bounded at 1 MB with two 1 MB backups. Option-clicking the Debug status item reveals
-controls to copy a bounded, action-aware excerpt or reveal the file for that menu opening; opening
-the menu normally keeps them hidden. Debug Settings retains its Diagnostics destination. Records can
+The file is bounded at 1 MB with two 1 MB backups. Option-clicking the status item in any build
+reveals a read-only focused-window report for that menu opening. The report is capped at 64 KB,
+contains a privacy-review header, uses only session-local or abstract workspace/display identities,
+and includes bounded in-memory events only when they correlate to the subject window. Creating it
+does not perform Accessibility writes or enable the persistent Debug log. Debug builds additionally
+offer controls to copy a broader bounded excerpt or reveal the file. Opening the menu normally keeps
+all support controls hidden. Debug Settings retains its Diagnostics destination. Records can
 include timestamps, session/action IDs, bundle identifiers,
 internal window/workspace/display IDs, short display identifiers, frames, layout decisions and AX
 success/failure results.
 
 The diagnostic privacy filter removes window titles, document names, URLs, typed content, full user
-paths and window contents. These exclusions are code-tested but still require manual review before a
-public release. Release builds do not expose the verbose file controls or create this diagnostic file;
-minimal system fault/error reporting may still be visible through normal macOS facilities.
+paths and window contents. A final fail-closed scrub is applied after focused-report serialization.
+These exclusions are code-tested but still require manual review before a public release. Release
+builds do not expose the verbose file controls or create this diagnostic file; they retain only a
+small bounded in-memory history for the focused report. Minimal system fault/error reporting may
+still be visible through normal macOS facilities.
 
 Unit tests inject memory/no-op sinks and never write diagnostics into the user's home directory.
 
