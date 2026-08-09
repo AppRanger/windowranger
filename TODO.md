@@ -343,12 +343,14 @@ second copy of that checklist.
   artifact upload for the exact commit. The private draft contains the DMG, ZIP, both checksums, and
   manifest; all five assets were downloaded again and checksum-verified. The maintainer installed
   and ran the exact signed DMG successfully after recovering the separate Accessibility trust for
-  the Developer ID copy.
+  the Developer ID copy. Release-hardening commit
+  `e02b34eee5ef7b1dd2150ca4eacfee383a0d16be` independently started and passed automatic
+  [push run 31336143953](https://github.com/windowranger/windowranger/actions/runs/31336143953) and
+  [pull-request run 31336188662](https://github.com/windowranger/windowranger/actions/runs/31336188662),
+  proving both configured event paths without manual dispatch.
 - **Current blockers:**
   - complete the remaining product-identity, repository-publication, manual regression,
     accessibility, privacy, and clean-package gates in `docs/release-checklist.md`;
-  - prove automatic push and pull-request CI events; the exact release checks are green, but all
-    recorded runs so far were manually dispatched;
   - configure branch/tag protection when the repository is public or GitHub Pro makes it available.
 - **Publication gate:** Creating the draft is not publication. Changing repository visibility and
   publishing the reviewed draft each require explicit maintainer action at the final checkpoint.
