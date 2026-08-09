@@ -2300,6 +2300,7 @@ final class WorkspaceEngine {
 
     func setWorkspaceLayout(
         _ layout: WorkspaceLayout,
+        cycleOrientationWhenAlreadySelected: Bool = false,
         correlationID: String? = nil
     ) {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
@@ -2345,7 +2346,12 @@ final class WorkspaceEngine {
                 )
                 return
             }
-            let previousLayout = self.workspaces[index].layout
+            let previousDefinition = self.workspaces[index]
+            let previousLayout = previousDefinition.layout
+            let automaticOrientation = displays
+                .first(where: { $0.identifier == interactionDisplay.identifier })
+                .map { WorkspaceLayoutOrientation.automatic.resolved(for: $0.usableBounds) }
+                ?? .horizontal
             self.diagnostics.log(
                 category: "interaction",
                 event: "layout-target-resolved",
@@ -2359,10 +2365,12 @@ final class WorkspaceEngine {
                 ]
             )
             let updatedDefinition = Self.layoutDefinitionAfterSelection(
-                self.workspaces[index],
-                targetLayout: layout
+                previousDefinition,
+                targetLayout: layout,
+                cycleOrientationWhenAlreadySelected: cycleOrientationWhenAlreadySelected,
+                automaticOrientation: automaticOrientation
             )
-            guard updatedDefinition != self.workspaces[index] else {
+            guard updatedDefinition != previousDefinition else {
                 self.diagnostics.log(
                     category: "layout-command",
                     event: "unchanged",
@@ -2390,6 +2398,23 @@ final class WorkspaceEngine {
                 self.captureCurrentFrames(for: [workspaceID], displays: displays)
             }
             self.workspaces[index] = updatedDefinition
+            let updatedOrientation = updatedDefinition.layoutConfiguration?.orientation
+                ?? WorkspaceLayoutConfiguration.aeroSpaceUserDefaults.orientation
+            let resolvedUpdatedOrientation = updatedOrientation == .automatic
+                ? automaticOrientation
+                : updatedOrientation
+            let repeatedTiledOrientationChange = previousLayout == .tiled &&
+                previousDefinition.layoutConfiguration?.orientation != updatedDefinition.layoutConfiguration?.orientation
+            let newlySelectedExplicitTiled = previousLayout != .tiled && updatedOrientation != .automatic
+            // Automatic is resolved independently for each display during layout. Do not stamp the
+            // interaction display's resolved direction onto every Unified-mode tree partition.
+            if layout == .tiled, repeatedTiledOrientationChange || newlySelectedExplicitTiled {
+                self.tiledTrees = TiledLayoutEngine.reorientedPartitions(
+                    self.tiledTrees,
+                    workspaceID: workspaceID,
+                    orientation: resolvedUpdatedOrientation
+                )
+            }
             if self.isWorkspaceActive(workspaceID) {
                 if let focusedKey = focusContextKey, self.windows[focusedKey] != nil {
                     self.prepareProgrammaticFocusIntent(
@@ -2422,6 +2447,9 @@ final class WorkspaceEngine {
                     "active-after": self.diagnosticActiveWorkspaceMap(),
                     "workspace": Self.shortIdentifier(workspaceID.uuidString),
                     "display": Self.shortIdentifier(interactionDisplay.identifier),
+                    "orientation": resolvedUpdatedOrientation.rawValue,
+                    "selection-mode": cycleOrientationWhenAlreadySelected
+                        ? "direct-shortcut" : "direct-selection",
                 ]
             )
             self.verifyFocusAfterAction(
@@ -2436,7 +2464,9 @@ final class WorkspaceEngine {
 
     static func layoutDefinitionAfterSelection(
         _ definition: WorkspaceDefinition,
-        targetLayout: WorkspaceLayout
+        targetLayout: WorkspaceLayout,
+        cycleOrientationWhenAlreadySelected: Bool = false,
+        automaticOrientation: WorkspaceLayoutOrientation = .horizontal
     ) -> WorkspaceDefinition {
         var updated = definition
         if definition.layout != targetLayout {
@@ -2444,7 +2474,16 @@ final class WorkspaceEngine {
             if updated.layoutConfiguration == nil {
                 updated.layoutConfiguration = .aeroSpaceUserDefaults
             }
+            return updated
         }
+        guard cycleOrientationWhenAlreadySelected, targetLayout != .none else { return updated }
+        let resolvedAutomatic = automaticOrientation == .automatic ? .horizontal : automaticOrientation
+        var configuration = updated.layoutConfiguration ?? .aeroSpaceUserDefaults
+        let visibleOrientation = configuration.orientation == .automatic
+            ? resolvedAutomatic
+            : configuration.orientation
+        configuration.orientation = visibleOrientation == .horizontal ? .vertical : .horizontal
+        updated.layoutConfiguration = configuration
         return updated
     }
 

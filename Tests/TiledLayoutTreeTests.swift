@@ -62,6 +62,94 @@ final class TiledLayoutTreeTests: XCTestCase {
         XCTAssertEqual(frames[b], CGRect(x: -1_140, y: 520, width: 700, height: 450))
     }
 
+    func testExplicitWorkspaceOrientationReorientsTreeWithoutChangingTopologyRatiosOrFocusIdentity() throws {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.62,
+            first: .split(
+                axis: .vertical,
+                ratio: 0.37,
+                first: .window(a),
+                second: .window(b)
+            ),
+            second: .window(c)
+        )
+
+        let vertical = try XCTUnwrap(TiledLayoutEngine.reoriented(tree, orientation: .vertical))
+        XCTAssertEqual(
+            vertical,
+            .split(
+                axis: .vertical,
+                ratio: 0.62,
+                first: .split(
+                    axis: .vertical,
+                    ratio: 0.37,
+                    first: .window(a),
+                    second: .window(b)
+                ),
+                second: .window(c)
+            )
+        )
+        XCTAssertEqual(vertical.windowKeys, tree.windowKeys)
+        XCTAssertTrue(vertical.contains(c), "The focused window identity must survive orientation changes")
+        XCTAssertNoThrow(try TiledLayoutEngine.validated(vertical, participants: [a, b, c]))
+
+        let horizontal = try XCTUnwrap(TiledLayoutEngine.reoriented(vertical, orientation: .horizontal))
+        guard case let .split(rootAxis, rootRatio, first, second) = horizontal,
+              case let .split(childAxis, childRatio, _, _) = first
+        else { return XCTFail("Reorientation must retain the tree structure") }
+        XCTAssertEqual(rootAxis, .horizontal)
+        XCTAssertEqual(childAxis, .horizontal)
+        XCTAssertEqual(rootRatio, 0.62)
+        XCTAssertEqual(childRatio, 0.37)
+        XCTAssertEqual(second, .window(c))
+    }
+
+    func testWorkspaceTreeReorientationIsScopedAndSurvivesNormalReconciliation() throws {
+        let selectedWorkspace = UUID(uuidString: "30000000-0000-0000-0000-000000000011")!
+        let otherWorkspace = UUID(uuidString: "30000000-0000-0000-0000-000000000012")!
+        let selectedMain = TiledLayoutPartitionKey(
+            workspaceID: selectedWorkspace,
+            displayIdentifier: "main"
+        )
+        let selectedExternal = TiledLayoutPartitionKey(
+            workspaceID: selectedWorkspace,
+            displayIdentifier: "external"
+        )
+        let unrelated = TiledLayoutPartitionKey(
+            workspaceID: otherWorkspace,
+            displayIdentifier: "main"
+        )
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.4,
+            first: .window(a),
+            second: .window(b)
+        )
+        let trees = [selectedMain: tree, selectedExternal: tree, unrelated: tree]
+
+        let reoriented = TiledLayoutEngine.reorientedPartitions(
+            trees,
+            workspaceID: selectedWorkspace,
+            orientation: .vertical
+        )
+
+        XCTAssertEqual(reoriented[unrelated], tree)
+        for partition in [selectedMain, selectedExternal] {
+            let changed = try XCTUnwrap(reoriented[partition])
+            XCTAssertEqual(
+                TiledLayoutEngine.reconciled(
+                    changed,
+                    windowKeys: [a, b],
+                    weights: [1, 1],
+                    orientation: .vertical
+                ),
+                changed,
+                "The authoritative oriented tree must win after the production reconciliation step"
+            )
+        }
+    }
+
     func testValidationRejectsDuplicatesParticipantMismatchAndInvalidRatios() {
         let duplicate = TiledNode.split(
             axis: .horizontal,

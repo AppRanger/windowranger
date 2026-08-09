@@ -121,7 +121,7 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertEqual(WorkspaceLayout(rawValue: "none"), Optional(WorkspaceLayout.none))
     }
 
-    func testLayoutSelectionShortcutsRemainDirectIdempotentSelectors() {
+    func testLayoutSelectionShortcutsKeepEstablishedDirectMappings() {
         XCTAssertEqual(HotKeyManager.accordionKeyCode, 43)
         XCTAssertEqual(HotKeyManager.tiledKeyCode, 47)
         XCTAssertEqual(
@@ -134,13 +134,13 @@ final class WorkspaceDefinitionTests: XCTestCase {
         )
     }
 
-    func testRepeatedTiledSelectionIsIdempotentAndPreservesConfiguration() {
+    func testRepeatedTiledShortcutSelectionAlternatesConcreteOrientationAndPreservesGeometrySettings() throws {
         let tiled = WorkspaceDefinition(
             name: "Code",
             key: "c",
             layout: .tiled,
             layoutConfiguration: WorkspaceLayoutConfiguration(
-                orientation: .vertical,
+                orientation: .automatic,
                 accordionPadding: 173,
                 gaps: WorkspaceLayoutGaps(
                     innerHorizontal: 7,
@@ -152,14 +152,33 @@ final class WorkspaceDefinitionTests: XCTestCase {
                 )
             )
         )
-        let first = WorkspaceEngine.layoutDefinitionAfterSelection(tiled, targetLayout: .tiled)
-        let second = WorkspaceEngine.layoutDefinitionAfterSelection(first, targetLayout: .tiled)
+        let first = WorkspaceEngine.layoutDefinitionAfterSelection(
+            tiled,
+            targetLayout: .tiled,
+            cycleOrientationWhenAlreadySelected: true,
+            automaticOrientation: .horizontal
+        )
+        let second = WorkspaceEngine.layoutDefinitionAfterSelection(
+            first,
+            targetLayout: .tiled,
+            cycleOrientationWhenAlreadySelected: true,
+            automaticOrientation: .horizontal
+        )
 
-        XCTAssertEqual(first, tiled)
-        XCTAssertEqual(second, tiled)
+        XCTAssertEqual(first.layoutConfiguration?.orientation, .vertical)
+        XCTAssertEqual(second.layoutConfiguration?.orientation, .horizontal)
+        XCTAssertEqual(first.layoutConfiguration?.accordionPadding, 173)
+        XCTAssertEqual(first.layoutConfiguration?.gaps, tiled.layoutConfiguration?.gaps)
+
+        let restarted = try JSONDecoder().decode(
+            WorkspaceDefinition.self,
+            from: JSONEncoder().encode(second)
+        )
+        XCTAssertEqual(restarted, second)
+        XCTAssertEqual(restarted.layoutConfiguration?.orientation, .horizontal)
     }
 
-    func testRepeatedAccordionSelectionIsIdempotentAndPreservesConfiguration() {
+    func testRepeatedAccordionShortcutSelectionAlternatesOrientationAndPreservesConfiguration() throws {
         let accordion = WorkspaceDefinition(
             name: "Writing",
             key: "w",
@@ -178,10 +197,48 @@ final class WorkspaceDefinitionTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(
-            WorkspaceEngine.layoutDefinitionAfterSelection(accordion, targetLayout: .accordion),
-            accordion
+        let first = WorkspaceEngine.layoutDefinitionAfterSelection(
+            accordion,
+            targetLayout: .accordion,
+            cycleOrientationWhenAlreadySelected: true,
+            automaticOrientation: .horizontal
         )
+        let second = WorkspaceEngine.layoutDefinitionAfterSelection(
+            first,
+            targetLayout: .accordion,
+            cycleOrientationWhenAlreadySelected: true,
+            automaticOrientation: .horizontal
+        )
+
+        XCTAssertEqual(first.layoutConfiguration?.orientation, .vertical)
+        XCTAssertEqual(second.layoutConfiguration?.orientation, .horizontal)
+        XCTAssertEqual(first.layoutConfiguration?.accordionPadding, 321)
+        XCTAssertEqual(first.layoutConfiguration?.gaps, accordion.layoutConfiguration?.gaps)
+
+        let restarted = try JSONDecoder().decode(
+            WorkspaceDefinition.self,
+            from: JSONEncoder().encode(second)
+        )
+        XCTAssertEqual(restarted, second)
+        XCTAssertEqual(restarted.layoutConfiguration?.orientation, .horizontal)
+    }
+
+    func testAutomaticOrientationCyclesToTheOppositeVisiblePortraitDirection() {
+        let tiled = WorkspaceDefinition(
+            name: "Portrait",
+            key: "p",
+            layout: .tiled,
+            layoutConfiguration: .aeroSpaceUserDefaults
+        )
+
+        let cycled = WorkspaceEngine.layoutDefinitionAfterSelection(
+            tiled,
+            targetLayout: .tiled,
+            cycleOrientationWhenAlreadySelected: true,
+            automaticOrientation: .vertical
+        )
+
+        XCTAssertEqual(cycled.layoutConfiguration?.orientation, .horizontal)
     }
 
     func testSelectingDifferentLayoutActivatesModernDefaultsWithoutChangingOrientation() {
@@ -193,11 +250,51 @@ final class WorkspaceDefinitionTests: XCTestCase {
         )
         let tiled = WorkspaceEngine.layoutDefinitionAfterSelection(
             legacy,
-            targetLayout: .tiled
+            targetLayout: .tiled,
+            cycleOrientationWhenAlreadySelected: true,
+            automaticOrientation: .horizontal
         )
 
         XCTAssertEqual(tiled.layout, .tiled)
         XCTAssertEqual(tiled.layoutConfiguration, .aeroSpaceUserDefaults)
+
+        var configured = legacy
+        configured.layoutConfiguration = WorkspaceLayoutConfiguration(
+            orientation: .vertical,
+            accordionPadding: 175,
+            gaps: .aeroSpaceUserDefaults
+        )
+        let configuredTiled = WorkspaceEngine.layoutDefinitionAfterSelection(
+            configured,
+            targetLayout: .tiled,
+            cycleOrientationWhenAlreadySelected: true,
+            automaticOrientation: .horizontal
+        )
+        XCTAssertEqual(configuredTiled.layout, .tiled)
+        XCTAssertEqual(configuredTiled.layoutConfiguration, configured.layoutConfiguration)
+    }
+
+    func testNonShortcutLayoutSelectionDoesNotCycleAnAlreadySelectedLayout() {
+        let tiled = WorkspaceDefinition(
+            name: "Code",
+            key: "c",
+            layout: .tiled,
+            layoutConfiguration: WorkspaceLayoutConfiguration(
+                orientation: .vertical,
+                accordionPadding: 250,
+                gaps: .aeroSpaceUserDefaults
+            )
+        )
+
+        XCTAssertEqual(
+            WorkspaceEngine.layoutDefinitionAfterSelection(
+                tiled,
+                targetLayout: .tiled,
+                cycleOrientationWhenAlreadySelected: false,
+                automaticOrientation: .horizontal
+            ),
+            tiled
+        )
     }
 
     func testFloatingShortcutMatchesAeroSpaceControlOptionF() {

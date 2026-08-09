@@ -58,7 +58,7 @@ Default shortcuts:
 | Previous / next workspace | Control-Option-`[` / `]` |
 | Switch back and forth | Control-Option-Tab |
 | Previous / next window | Option-`[` / `]` |
-| Select Accordion / Tiled | Option-`,` / `.` |
+| Select or rotate Accordion / Tiled | Option-`,` / `.` |
 | Toggle focused window floating | Control-Option-F |
 | Focus left / down / up / right | Option-H / J / K / L |
 | Reorder left / down / up / right | Control-Option-Left / Down / Up / Right |
@@ -276,6 +276,13 @@ and AppKit's main-actor
 Inactive windows are parked at the lower-right desktop edge because public macOS APIs do not provide a per-window hide operation. Unified mode keeps one active workspace across every display. Independent Displays mode gives each display its own active workspace and assigns each workspace an abstract display-role home. Role assignments sync with their profile, while this Mac retains the physical UUID/fingerprint binding locally; a disconnected role falls back safely and returns on reconnect. The Settings recovery button restores every tracked window; if a prior crash or force-stop left only a parked coordinate to recover, it centers that window on the main display without resizing it. A normal app quit performs the same cleanup. Animation suppression is temporary and app-scoped; it does not change macOS system animation or Accessibility settings.
 
 Layout is selected independently for each workspace. **Freeform** preserves manual window frames and stops automatic positioning or resizing; WindowManager still manages workspace visibility, focus, persistence, display assignment, and quit/wake recovery. Tiled is a deliberately flat, non-overlapping split with stable order and per-window weight. Accordion follows the current AeroSpace-style overlapping stack with the focused window promoted to its primary pane. Both automatic layouts can resolve orientation from the display shape or use an explicit horizontal/vertical direction, with per-workspace inner gaps, outer screen padding, and configurable Accordion visible-edge padding. In Unified mode each display's windows are laid out separately according to saved display affinity; Independent Displays mode lays the workspace out only on its assigned display. The persisted raw value remains `none`, so existing and legacy saved definitions migrate without changing behavior.
+
+Option-comma selects Accordion and Option-period selects Tiled. Selecting a different layout keeps
+its saved orientation, or uses Automatic for an unconfigured workspace. Pressing the same direct
+shortcut again alternates the visible layout between horizontal and vertical; an Automatic
+orientation first resolves from the interaction display and then changes to the opposite concrete
+direction. Tiled orientation changes retain the session tree's window identities, topology and
+ratios rather than rebuilding membership or focus.
 
 Control-Option-F toggles only the focused managed window between Floating and the workspace layout, matching the existing AeroSpace binding. Enabling Floating captures the current frame and leaves the window in its workspace while the remaining windows reflow; disabling it immediately returns the window to Tiled or Accordion. The override is restored only when the exact window ID and bundle identifier still match within the same WindowServer session, and is discarded with other stale window state. An app-level layout-exclusion rule is authoritative: the shortcut makes no contradictory override and the menu-bar icon briefly explains why.
 
