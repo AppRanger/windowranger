@@ -1829,7 +1829,23 @@ private struct RadialMenuSettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                if store.radialMenuActivationStyle == .holdToShow {
+                Toggle(
+                    "Hold Globe/Fn to show Command Wheel",
+                    isOn: $store.radialMenuGlobeFnHoldEnabled
+                )
+                .disabled(!store.radialMenuEnabled)
+                .help("A quick Globe/Fn tap remains assigned to macOS. Only a deliberate hold opens WindowManager's command wheel.")
+                Text("Optional and local to this Mac. A quick tap is passed through unchanged to macOS. Fn combined with another key or modifier is never treated as a wheel gesture.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let issue = store.globeFnRuntimeIssue {
+                    Label(issue, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel("Globe or Function key monitoring unavailable. \(issue)")
+                }
+                if store.radialMenuActivationStyle == .holdToShow
+                    || store.radialMenuGlobeFnHoldEnabled {
                     LabeledContent("Hold delay") {
                         HStack {
                             Slider(
@@ -1843,7 +1859,9 @@ private struct RadialMenuSettingsView: View {
                                 .frame(width: 48, alignment: .trailing)
                         }
                     }
-                    Text("A shorter tap does nothing. Hold past the delay, point to an action, then release to run it; releasing with no action selected cancels.")
+                    Text(store.radialMenuGlobeFnHoldEnabled
+                        ? "The same delay applies to Globe/Fn. Hold past it, point to an action, then release to run it; releasing with no action selected cancels."
+                        : "A shorter shortcut tap does nothing. Hold past the delay, point to an action, then release to run it; releasing with no action selected cancels.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -1851,7 +1869,7 @@ private struct RadialMenuSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text("This first version records a modifier plus a non-modifier key. Modifier-only, Fn-only, and left-versus-right modifier triggers are intentionally not captured by the Carbon shortcut path.")
+                Text("The normal shortcut recorder accepts a modifier plus a non-modifier key. Globe/Fn hold is a separate optional hardware gesture, so it does not replace or conflict with that shortcut.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

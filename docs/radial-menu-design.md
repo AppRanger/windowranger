@@ -9,6 +9,7 @@
 - Let a top-level item be direct-only, submenu-only, or expose both an optional primary action and generated children.
 - Generate children from the current workspaces, profiles, layout, focused window, and display state instead of storing child lists.
 - Preserve exact target validation, nonactivation, focus safety, interaction-display placement, Press to Toggle, Hold to Show, keyboard access, native Undo, iCloud sync, and privacy-safe diagnostics.
+- Optionally admit a deliberate Globe/Fn hold through the same captured-context Hold-to-Show path while forwarding a quick tap and every chord unchanged to macOS.
 - Make future command types additive: a provider/catalogue entry supplies metadata and contextual actions; the renderer, geometry, editor, and persistence schema remain generic.
 
 ## Non-goals
@@ -121,6 +122,37 @@ Common cancellation events are Escape, centre selection, outside click, short ho
 7. Release over an outer child commits that child.
 8. Centre, no selection, Escape, stale generation, or invalid context cancels.
 
+### Optional Globe/Fn hold
+
+The hardware gesture is an additional device-local trigger; it does not replace the saved global
+shortcut or change that shortcut's Press-to-Toggle/Hold-to-Show setting. When enabled, a public
+Quartz session event tap observes `maskSecondaryFn`, keyboard, mouse-button, and system-defined
+events. It does not request permission and is installed only when the app already has its normal
+Accessibility trust.
+
+- Fn alone starts a candidate. Crossing the shared hold delay opens the existing Hold-to-Show
+  session exactly once; Fn release uses the normal release-commit/no-selection-cancel path.
+- Releasing before the delay leaves every event untouched, so macOS remains responsible for the
+  configured Globe quick-tap action. WindowManager never invokes or replays the emoji picker.
+- Any key, function/media event, mouse button, or other modifier before or during the candidate
+  cancels it. The entire Fn chord remains untouched.
+- Only the native Globe action event associated with an accepted long hold is filtered, preventing
+  the same release from also invoking the Mac's quick-tap action. Event-tap failure fails open.
+- Escape, the ordinary wheel shortcut, app/session/lifecycle changes, monitor interruption, and
+  configuration changes supersede the gesture. A bounded ten-second safety timeout covers a
+  missing Fn-up after a keyboard disconnect.
+- Public event data does not provide a dependable built-in-versus-external keyboard identity, so
+  compatible external Fn/Globe keys intentionally use the same conservative admission rules.
+
+This is based on Loop's public event-tap implementation pinned at
+[`2467291f3095a571e80fdb0024845d4dedf111c9`](https://github.com/MrKai77/Loop/tree/2467291f3095a571e80fdb0024845d4dedf111c9),
+and Apple's public [`CGEventFlags`](https://developer.apple.com/documentation/coregraphics/cgeventflags),
+[`CGEvent.tapCreate`](https://developer.apple.com/documentation/coregraphics/cgevent/tapcreate(tap:place:options:eventsofinterest:callback:userinfo:)),
+[`CGEvent.tapEnable`](https://developer.apple.com/documentation/coregraphics/cgevent/tapenable(tap:enable:)),
+and [`AXIsProcessTrusted`](https://developer.apple.com/documentation/applicationservices/1460720-axisprocesstrusted)
+interfaces. Loop is evidence for the native special-event/pass-through split, not code or behavior
+imported wholesale.
+
 ### Direct plus submenu precedence
 
 Hover/dwell or outward motion is disclosure. Click/release on the inner wedge is the optional primary action. The outer wedge is always the selected child. A submenu-only item cannot commit from the inner ring. The centre label/hint says either “Release to …”, “Click to …”, or “Move outward for …” so the precedence is not hidden.
@@ -213,7 +245,7 @@ Preview asks the engine for a pure `TiledPlacementProposal` containing the old/p
 
 Command Wheel Settings remains ordered as:
 
-1. enabled state, global shortcut, activation style, and hold delay;
+1. enabled state, global shortcut, activation style, optional device-local Globe/Fn hold, and hold delay;
 2. code-native live preview and interaction help;
 3. ordered top-level catalogue editor; and
 4. Repair and Reset to Defaults.
@@ -248,13 +280,14 @@ The new definition is the sole authoritative saved format after a successful wri
 
 ## Diagnostics and privacy
 
-Debug diagnostics record correlation/session ID, definition version, context-filtered top-level IDs, selected top-level/action IDs, ring/depth, activation mode, workspace/display short IDs, group disclosure source, alternate-action modifier, preview/proposal fingerprint, validation result, and dismissal reason.
+Debug diagnostics record correlation/session ID, definition version, context-filtered top-level IDs, selected top-level/action IDs, ring/depth, activation mode, safe Globe/Fn state/reason, workspace/display short IDs, group disclosure source, alternate-action modifier, preview/proposal fingerprint, validation result, and dismissal reason.
 
 Diagnostics never include window titles, document names, URLs, typed content, full paths, screen contents, profile names, or workspace names. Repeated unchanged hover/preview events are deduplicated.
 
 ## Persistence and profile boundary
 
 - Wheel definition, enabled state, shortcut, activation style, and hold delay are global preferences and may sync through the existing iCloud key-value path.
+- The Globe/Fn opt-in is global rather than profile-owned, but intentionally local to each Mac because it describes that Mac's hardware and Globe configuration. It defaults off and is excluded from profile definitions and iCloud payloads.
 - Profile definitions, selected profile, physical display bindings, and window session state remain separate according to their existing local/synced boundaries.
 - Tiled trees and exact window keys are local WindowServer-session state only and never sync.
 
@@ -275,6 +308,7 @@ Diagnostics never include window titles, document names, URLs, typed content, fu
 - Contextual omission and gap closure for no window, keep-on-all, app-rule exclusion, floating/automatic dialog, ignored, minimized/full-screen/deferred, Unified, and Independent Displays.
 - Direct-only, submenu-only, and primary-plus-submenu click/release precedence; dwell; outward disclosure; inward return; keyboard traversal; Escape/centre/outside cancellation.
 - Press and Hold threshold, short tap, valid release, no-selection release, Option alternate, stale generation, rapid re-entry, and reentrancy.
+- Globe/Fn default-off/local persistence, unchanged quick tap, exact/below/above threshold, one open per hold, release commit, no-selection and Escape cancellation, every chord class/modifier ordering, duplicate flags, monitor failure/retry/timeout, lifecycle/configuration cancellation, missing key-up safety, ordinary-shortcut supersession, and reuse of the nonactivating interaction-display context.
 - Stable workspace/profile ordering, active/current state, Resume Automatic, send-only and Move & Follow, profile transition routing.
 - Freeform omission, Accordion resize, Tiled eight-way proposal, flat-to-tree conversion, edge/corner transformations, preview/commit frame identity, zero AX writes during preview, atomic commit, reset recovery, session invalidation, and display partition isolation.
 - Accessibility labels/hints, Reduce Motion, increased contrast tokens, nonactivation/focus retention, and privacy-safe diagnostics.

@@ -188,8 +188,16 @@ same recorder, conflict detection, and reset behavior as other global commands, 
 interaction. **Hold to Show** waits for the configured 0.15–1.0 second threshold, captures one exact
 window/workspace/display context, and commits the highlighted command on release; a short tap,
 Escape, stale context, or release without a valid selection cancels safely. The initial Carbon-based
-recorder requires a non-modifier key, so modifier-only and Fn-only triggers are intentionally not
-supported without a future, separately reviewed event-input design.
+recorder still requires a modifier plus a non-modifier key.
+
+An additional **Hold Globe/Fn to show Command Wheel** option is available and defaults off. It is
+local to each Mac rather than profile-owned or iCloud-synced. A quick tap and any Fn chord are
+forwarded unchanged so macOS keeps the user's native Globe action; only a deliberate hold past the
+shared delay opens the same nonactivating wheel, and release commits its current selection. The app
+never invokes or replays the emoji picker. Compatible built-in and external keyboards share the
+same public-event behavior because Quartz does not provide a dependable device identity here. The
+implementation follows Apple's public event-tap/Accessibility interfaces and was compared with
+[Loop at pinned revision `2467291f3095a571e80fdb0024845d4dedf111c9`](https://github.com/MrKai77/Loop/tree/2467291f3095a571e80fdb0024845d4dedf111c9).
 
 The wheel definition is versioned, data-driven, global/iCloud-synced, and limited to two levels. It
 stores only an ordered catalogue of top-level type IDs. Each provider resolves an optional primary
