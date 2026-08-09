@@ -150,7 +150,7 @@ final class MoveWindowFocusTests: XCTestCase {
 
     @MainActor
     func testFocusFollowsMovedWindowSettingDefaultsOffAndPersists() {
-        let suite = "WindowManagerTests.MoveFocus.\(UUID().uuidString)"
+        let suite = "WindowRangerTests.MoveFocus.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
         defer { defaults.removePersistentDomain(forName: suite) }

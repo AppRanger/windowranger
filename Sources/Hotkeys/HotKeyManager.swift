@@ -190,7 +190,7 @@ enum ShortcutConflictModel {
 
     static func validationMessage(_ chord: HotKeyChord) -> String? {
         guard chord.keyCode <= 127, !modifierOnlyKeyCodes.contains(chord.keyCode) else {
-            return "the saved key is not supported by WindowManager's global shortcut recorder."
+            return "the saved key is not supported by WindowRanger's global shortcut recorder."
         }
         guard chord.modifiers & ~supportedModifierMask == 0 else {
             return "the saved modifier combination is not supported."

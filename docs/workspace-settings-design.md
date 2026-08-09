@@ -7,7 +7,7 @@ reference is:
 
 `<local-artifact>`
 
-The reference is design evidence only. WindowManager uses native SwiftUI/AppKit controls, materials,
+The reference is design evidence only. WindowRanger uses native SwiftUI/AppKit controls, materials,
 typography, and SF Symbols; the bitmap is not shipped.
 
 ## Goals
@@ -27,7 +27,7 @@ The Settings window has three visible regions while Workspaces is selected:
    Debug-only Diagnostics. Displays and Layouts are retained only as legacy destination aliases and
    resolve to Workspaces.
 2. **Workspace master column:** Unified/Independent Displays control and explanation, ordered
-   workspace list, Add/Duplicate/Delete controls, and Restore WindowManager Defaults.
+   workspace list, Add/Duplicate/Delete controls, and Restore WindowRanger Defaults.
 3. **Workspace inspector:** editable identity, home display role, workspace key and derived shortcut
    summaries, layout-specific controls, reusable-setting reset, and active-workspace window repair.
 
@@ -62,14 +62,14 @@ This milestone does not invent independently recordable per-workspace chords.
 - Add creates a unique name and usable one-character key. Duplicate clones only the selected
   workspace's reusable layout configuration and display role, then resolves name/key uniqueness.
 - Delete is disabled for the only remaining workspace and selects the nearest surviving row.
-- Restore WindowManager Defaults retains the established product wording and uses deterministic
+- Restore WindowRanger Defaults retains the established product wording and uses deterministic
   built-in IDs so surviving references are not needlessly rewritten.
 
 ## Inspector behavior
 
 ### Identity
 
-The header uses a native layout symbol and editable workspace name. WindowManager does not currently
+The header uses a native layout symbol and editable workspace name. WindowRanger does not currently
 persist arbitrary workspace colours or icons, so the reference's illustrative custom icon picker is
 intentionally omitted.
 
@@ -94,7 +94,7 @@ intentionally omitted.
 ### Repair and reset
 
 - **Reset This Workspace** resets the selected workspace's layout to Freeform and its geometry to
-  WindowManager's built-in values. It deliberately preserves name, key, home display role, app rules,
+  WindowRanger's built-in values. It deliberately preserves name, key, home display role, app rules,
   and live window membership. The reusable-setting change participates in native Undo.
 - **Bring Active Workspace Windows Back On Screen** retains the existing safety command: recover
   managed windows in the interaction display's active workspace, clear transient positioning state,

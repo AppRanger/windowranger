@@ -3,7 +3,7 @@ import SwiftUI
 import XCTest
 
 /// An opt-in, non-hosted visual fixture. Normal tests only verify that the production views can be
-/// composed; setting WINDOWMANAGER_MENU_SNAPSHOT_DIR writes Retina PNGs without starting the app,
+/// composed; setting WINDOWRANGER_MENU_SNAPSHOT_DIR writes Retina PNGs without starting the app,
 /// AppDelegate, Accessibility, hotkeys, iCloud, or any live window-management path.
 final class MenuBarVisualSnapshotTests: XCTestCase {
     @MainActor
@@ -12,7 +12,7 @@ final class MenuBarVisualSnapshotTests: XCTestCase {
         XCTAssertEqual(Set(snapshots.map(\.mode)), Set(MenuBarPresentationMode.allCases))
 
         guard let outputPath = ProcessInfo.processInfo.environment[
-            "WINDOWMANAGER_MENU_SNAPSHOT_DIR"
+            "WINDOWRANGER_MENU_SNAPSHOT_DIR"
         ], !outputPath.isEmpty else {
             return
         }
@@ -26,7 +26,7 @@ final class MenuBarVisualSnapshotTests: XCTestCase {
             let view = MenuBarSnapshotCanvas(snapshot: snapshot)
             let data = try renderRetinaPNG(view)
             let url = outputDirectory.appendingPathComponent(
-                "window-manager-menu-bar-\(snapshot.mode.rawValue).png"
+                "windowranger-menu-bar-\(snapshot.mode.rawValue).png"
             )
             try data.write(to: url, options: .atomic)
             XCTAssertGreaterThan(data.count, 1_000)
@@ -129,7 +129,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
 
     @MainActor
     func testOffscreenProductionWorkspaceSettings() throws {
-        let defaultsSuite = "WindowManagerTests.SettingsSnapshot.\(UUID().uuidString)"
+        let defaultsSuite = "WindowRangerTests.SettingsSnapshot.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsSuite))
         defaults.removePersistentDomain(forName: defaultsSuite)
         defaults.set(false, forKey: "iCloudSyncEnabled")
@@ -174,7 +174,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
         workspaces.forEach { store.assignWorkspace($0.id, toRole: roleID) }
 
         let stateURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "WindowManager-SettingsSnapshot-\(UUID().uuidString).json"
+            "WindowRanger-SettingsSnapshot-\(UUID().uuidString).json"
         )
         defer { try? FileManager.default.removeItem(at: stateURL) }
         let engine = WorkspaceEngine(
@@ -209,7 +209,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
         XCTAssertEqual(store.workspaces.first { $0.id == writing.id }?.layout, .accordion)
 
         guard let outputPath = ProcessInfo.processInfo.environment[
-            "WINDOWMANAGER_SETTINGS_SNAPSHOT_DIR"
+            "WINDOWRANGER_SETTINGS_SNAPSHOT_DIR"
         ], !outputPath.isEmpty else { return }
 
         let data = try renderRetinaPNG(
@@ -223,7 +223,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             withIntermediateDirectories: true
         )
         try data.write(
-            to: outputDirectory.appendingPathComponent("window-manager-settings-workspaces.png"),
+            to: outputDirectory.appendingPathComponent("windowranger-settings-workspaces.png"),
             options: .atomic
         )
 
@@ -246,7 +246,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
         )
         XCTAssertGreaterThan(darkData.count, 25_000)
         try darkData.write(
-            to: outputDirectory.appendingPathComponent("window-manager-settings-workspaces-dark.png"),
+            to: outputDirectory.appendingPathComponent("windowranger-settings-workspaces-dark.png"),
             options: .atomic
         )
 
@@ -258,7 +258,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
         let profilesData = try renderRetinaPNG(view, size: Self.snapshotSize)
         XCTAssertGreaterThan(profilesData.count, 25_000)
         try profilesData.write(
-            to: outputDirectory.appendingPathComponent("window-manager-settings-profiles.png"),
+            to: outputDirectory.appendingPathComponent("windowranger-settings-profiles.png"),
             options: .atomic
         )
 
@@ -278,7 +278,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
         )
         try largeTextData.write(
             to: outputDirectory.appendingPathComponent(
-                "window-manager-settings-workspaces-accessibility-text.png"
+                "windowranger-settings-workspaces-accessibility-text.png"
             ),
             options: .atomic
         )

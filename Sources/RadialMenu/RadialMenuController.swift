@@ -556,7 +556,7 @@ final class GlobeFnHoldActivationController {
         guard monitor.start() else {
             monitor.stop()
             runtimeIssueChanged?(
-                "Globe/Fn monitoring is unavailable. WindowManager did not request another permission; turn the option off and on after Accessibility access is available."
+                "Globe/Fn monitoring is unavailable. WindowRanger did not request another permission; turn the option off and on after Accessibility access is available."
             )
             diagnostics.log(
                 category: "globe-fn-trigger",

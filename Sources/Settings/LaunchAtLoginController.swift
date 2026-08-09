@@ -66,9 +66,9 @@ final class LaunchAtLoginController: ObservableObject {
         case .notRegistered:
             nil
         case .enabled:
-            "WindowManager will open automatically when you sign in."
+            "WindowRanger will open automatically when you sign in."
         case .requiresApproval:
-            "Registered, but macOS requires approval in System Settings before WindowManager can open at login."
+            "Registered, but macOS requires approval in System Settings before WindowRanger can open at login."
         case .notFound:
             "macOS could not find a login item for this build. Quit and relaunch the current signed app, then try again."
         }

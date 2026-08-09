@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @main
-struct WindowManagerApp: App {
+struct WindowRangerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
@@ -22,7 +22,7 @@ struct WindowManagerApp: App {
         )
         .windowResizability(.contentMinSize)
         .commands {
-            WindowManagerSettingsCommands(
+            WindowRangerSettingsCommands(
                 navigation: appDelegate.settingsNavigation,
                 engine: appDelegate.engine,
                 coordinator: appDelegate.settingsWindowCoordinator,
@@ -32,7 +32,7 @@ struct WindowManagerApp: App {
     }
 }
 
-private struct WindowManagerSettingsCommands: Commands {
+private struct WindowRangerSettingsCommands: Commands {
     @ObservedObject var navigation: SettingsNavigationModel
     let engine: WorkspaceEngine
     let coordinator: SettingsWindowCoordinator

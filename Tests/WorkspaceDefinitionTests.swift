@@ -488,7 +488,7 @@ final class WorkspaceDefinitionTests: XCTestCase {
 
     @MainActor
     func testSettingsStoreRestoresAppRulesFromLocalPreferences() {
-        let suiteName = "WindowManagerTests.AppRules.\(UUID().uuidString)"
+        let suiteName = "WindowRangerTests.AppRules.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
             return XCTFail("Could not create isolated preferences")
         }
@@ -520,7 +520,7 @@ final class WorkspaceDefinitionTests: XCTestCase {
 
     @MainActor
     func testApplicationRuleChangeAppliesImmediatelyAndCanBeUndone() {
-        let suiteName = "WindowManagerTests.AppRuleUndo.\(UUID().uuidString)"
+        let suiteName = "WindowRangerTests.AppRuleUndo.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
             return XCTFail("Could not create isolated preferences")
         }
@@ -2202,7 +2202,7 @@ final class WorkspaceDefinitionTests: XCTestCase {
 
     private func temporaryStateURL() -> URL {
         FileManager.default.temporaryDirectory
-            .appendingPathComponent("WindowManagerTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("WindowRangerTests-\(UUID().uuidString)", isDirectory: true)
             .appendingPathComponent("workspace-state.json")
     }
 

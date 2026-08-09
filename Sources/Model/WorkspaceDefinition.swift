@@ -89,7 +89,7 @@ struct WorkspaceLayoutGaps: Codable, Equatable, Sendable {
 
 /// Settings are optional for migration. A decoded workspace without this object keeps the exact
 /// pre-layout-controls geometry until the user explicitly changes its layout or geometry. Newly
-/// created workspaces use WindowManager's built-in defaults. Their initial values were informed
+/// created workspaces use WindowRanger's built-in defaults. Their initial values were informed
 /// by the user's prior configuration, but they are now owned by this product.
 struct WorkspaceLayoutConfiguration: Codable, Equatable, Sendable {
     var orientation: WorkspaceLayoutOrientation

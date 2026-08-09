@@ -312,7 +312,7 @@ final class ProfileTransferTests: XCTestCase {
 
     @MainActor
     private func makeStore(_ suffix: String) -> (SettingsStore, UserDefaults, String) {
-        let suite = "WindowManagerTests.ProfileTransfer.\(suffix).\(UUID().uuidString)"
+        let suite = "WindowRangerTests.ProfileTransfer.\(suffix).\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defaults.set(false, forKey: "iCloudSyncEnabled")
         let store = SettingsStore(

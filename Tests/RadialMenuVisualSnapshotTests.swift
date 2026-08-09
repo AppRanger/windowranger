@@ -4,7 +4,7 @@ import XCTest
 
 /// Opt-in production-view snapshots. Normal tests only build the fixture; an explicit output
 /// directory writes Retina PNGs without AppDelegate, Accessibility, global hotkeys, iCloud, or a
-/// WindowManager.app process.
+/// WindowRanger.app process.
 final class RadialMenuVisualSnapshotTests: XCTestCase {
     private static let snapshotSize = CGSize(width: 620, height: 620)
 
@@ -20,7 +20,7 @@ final class RadialMenuVisualSnapshotTests: XCTestCase {
         XCTAssertTrue(snapshots.allSatisfy { !$0.1.activeChildren.isEmpty })
 
         guard let outputPath = ProcessInfo.processInfo.environment[
-            "WINDOWMANAGER_RADIAL_SNAPSHOT_DIR"
+            "WINDOWRANGER_RADIAL_SNAPSHOT_DIR"
         ], !outputPath.isEmpty else {
             return
         }
@@ -30,7 +30,7 @@ final class RadialMenuVisualSnapshotTests: XCTestCase {
             let view = RadialMenuSnapshotCanvas(model: model)
             let data = try renderRetinaPNG(view)
             try data.write(
-                to: outputDirectory.appendingPathComponent("window-manager-radial-\(name).png"),
+                to: outputDirectory.appendingPathComponent("windowranger-radial-\(name).png"),
                 options: .atomic
             )
             XCTAssertGreaterThan(data.count, 10_000)

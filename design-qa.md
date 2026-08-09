@@ -2,7 +2,7 @@
 
 ## Scope
 
-This QA covers only WindowManager's native status component. Wallpaper, neighbouring macOS status
+This QA covers only WindowRanger's native status component. Wallpaper, neighbouring macOS status
 items, the clock, and the generated images' presentation scaling are context rather than app assets.
 Production uses one persistent AppKit status item, a shared production content view, and real SF
 Symbols; none of the reference bitmaps ship in the app.
@@ -19,7 +19,7 @@ Symbols; none of the reference bitmaps ship in the app.
 
 `Tests/MenuBarVisualSnapshotTests.swift` renders the same production content view used by the live
 status item at Retina scale. The fixture does not construct `AppDelegate`, start Accessibility,
-register global shortcuts, launch `WindowManager.app`, or touch live windows.
+register global shortcuts, launch `WindowRanger.app`, or touch live windows.
 
 | Mode | Native canvas | Production render | Same-height reference comparison |
 | --- | --- | --- | --- |
@@ -80,7 +80,7 @@ This QA covers the native Workspaces Settings destination selected from:
 
 `<local-artifact>`
 
-The reference supplies the master-list-plus-inspector hierarchy. WindowManager uses the real
+The reference supplies the master-list-plus-inspector hierarchy. WindowRanger uses the real
 profile-backed workspace/display/layout models, native SwiftUI/AppKit controls and SF Symbols; the
 bitmap and its illustrative unsupported Window behavior toggles are not included in the product.
 The complete information and persistence contract is in `docs/workspace-settings-design.md`.
@@ -152,7 +152,7 @@ final result: passed
 ## Scope
 
 This QA covers the production two-ring radial component, not the reference wallpaper, pointer,
-sample app window, or image-generation scale. WindowManager renders the result with SwiftUI/AppKit,
+sample app window, or image-generation scale. WindowRanger renders the result with SwiftUI/AppKit,
 native materials, and SF Symbols; the reference bitmap is not included in the app.
 
 ## Reference mapping
@@ -169,7 +169,7 @@ native materials, and SF Symbols; the reference bitmap is not included in the ap
 `Tests/RadialMenuVisualSnapshotTests.swift` renders the real production `RadialMenuView` at Retina
 scale from the genuinely non-hosted test bundle. It does not construct `AppDelegate`, request
 Accessibility, install hotkeys/event taps, contact iCloud, start login services, or launch
-`WindowManager.app`.
+`WindowRanger.app`.
 
 - Place: `<local-artifact>`
 - Move to Space: `<local-artifact>`

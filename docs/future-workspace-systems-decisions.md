@@ -14,7 +14,7 @@ Tiled, and Accordion.
   excluding menu bar, Dock, and camera housing, and also must not be cached. ([screens](https://developer.apple.com/documentation/appkit/nsscreen/screens), [visibleFrame](https://developer.apple.com/documentation/appkit/nsscreen/visibleframe))
 - Core Graphics can report before/after display-reconfiguration callbacks. Apple says display state
   is current in the post-change callback and removed IDs must no longer be queried. ([display reconfiguration callback](https://developer.apple.com/documentation/coregraphics/cgdisplayreconfigurationcallback))
-- Accessibility exposes a window's global top-left position; WindowManager already validates and
+- Accessibility exposes a window's global top-left position; WindowRanger already validates and
   writes position/size through its existing trusted boundary. ([`kAXPositionAttribute`](https://developer.apple.com/documentation/applicationservices/kaxpositionattribute))
 - ScreenCaptureKit can enumerate shareable displays/apps/windows and capture individual frames, but
   Apple requires an explicit Screen Recording permission request and usage description for capture.
@@ -81,7 +81,7 @@ workspace moves, profile changes, wake, menu presentation, and no rewrite of syn
 ### Product distinction and value
 
 An arrangement would capture a recoverable **desired desk state** for the apps/windows that exist,
-whereas a profile defines how WindowManager behaves over time. Examples are “Writing session”,
+whereas a profile defines how WindowRanger behaves over time. Examples are “Writing session”,
 “Customer call”, or “Presentation”. Applying one could place eligible current windows into chosen
 workspaces/displays/layout slots. It must not turn transient AX/WindowServer IDs into durable data.
 
@@ -235,7 +235,7 @@ after apps reject a frame.
 1. Are presets global, profile-owned, or embedded per workspace?
 2. Which initial presets are worth naming, and how do they handle extra/fewer windows?
 3. Do direct handles appear only in an explicit edit mode, on hover, or while a modifier is held?
-4. Is manipulation limited to the overview/WindowManager overlays, or should it observe drags that
+4. Is manipulation limited to the overview/WindowRanger overlays, or should it observe drags that
    begin on third-party title bars?
 5. Does Freeform gain snap presets, or are presets Tiled-only initially?
 6. Which tree/order/weight state persists across restart without guessing window identity?
