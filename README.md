@@ -15,7 +15,7 @@ general-purpose command language.
 - [Pre-release checklist](docs/release-checklist.md)
 - [Portable profile transfer design](docs/profile-transfer-design.md)
 - [Future workspace systems decision brief](docs/future-workspace-systems-decisions.md)
-- [Two-arrow Tiled placement recommendation](docs/two-arrow-tiled-placement-recommendation.md)
+- [Two-arrow Tiled placement](docs/two-arrow-tiled-placement-recommendation.md)
 - [2026-08-08 code review](docs/code-review-2026-08-08.md)
 - [Third-party reference notices](THIRD_PARTY_NOTICES.md)
 - [MIT license](LICENSE)
@@ -62,6 +62,7 @@ Default shortcuts:
 | Toggle focused window floating | Control-Option-F |
 | Focus left / down / up / right | Option-H / J / K / L |
 | Reorder left / down / up / right | Control-Option-Left / Down / Up / Right |
+| Place at a Tiled corner | Control-Option plus two perpendicular arrows within 200 ms |
 | Smart resize smaller / larger | Control-Option-`-` / `=` |
 | Move current workspace to next display | Option-Shift-Tab |
 | Open contextual command wheel | Control-Option-Space (configurable) |
@@ -75,6 +76,15 @@ registered. If the shared event handler itself cannot be installed, registration
 than reporting shortcuts that cannot dispatch. Recording temporarily unregisters the app's bindings
 and restores them as one clean generation when recording ends; a rare failed OS unregistration is
 kept retryable while its old action is made inert immediately.
+
+The four configurable Reorder bindings also form one optional two-arrow family when they use the
+same modifiers, have distinct keys, and all register successfully. A first direction waits for its
+release or a perpendicular partner for at most 200 ms, so it never moves and then replays a corner
+placement. Up+Right, Up+Left, Down+Right, and Down+Left use the command wheel's matching Tiled
+placement transaction. Accordion and Freeform report an honest no-op. If the family is incompatible
+or macOS cannot observe the bounded gesture, Settings explains why and the ordinary single-arrow
+commands continue to work. A successful compass placement is registered with native Undo; the app
+menu exposes Undo/Redo while that exact participant set and tree remain current.
 
 ## Build
 

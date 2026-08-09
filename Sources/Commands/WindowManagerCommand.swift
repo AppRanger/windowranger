@@ -15,6 +15,9 @@ enum WindowManagerCommand: Hashable, Sendable {
     case resetAllWindows
     case focusDirection(WindowDirection)
     case moveWindowDirection(WindowDirection)
+    case beginDirectionalMoveGesture(String, WindowDirection)
+    case commitDirectionalMoveGesture(String, DirectionalMoveGestureResolution)
+    case cancelDirectionalMoveGesture(String, reason: String)
     case smartResize(Int)
     case moveCurrentWorkspaceToNextDisplay
     case moveCurrentWorkspaceToDisplay(String)
@@ -52,6 +55,24 @@ enum WindowManagerCommand: Hashable, Sendable {
             ["action": "focus-direction", "direction": direction.rawValue]
         case let .moveWindowDirection(direction):
             ["action": "move-window-direction", "direction": direction.rawValue]
+        case let .beginDirectionalMoveGesture(identifier, direction):
+            [
+                "action": "begin-directional-move-gesture",
+                "gesture": String(identifier.prefix(16)),
+                "direction": direction.rawValue,
+            ]
+        case let .commitDirectionalMoveGesture(identifier, resolution):
+            [
+                "action": "commit-directional-move-gesture",
+                "gesture": String(identifier.prefix(16)),
+                "resolution": resolution.diagnosticValue,
+            ]
+        case let .cancelDirectionalMoveGesture(identifier, reason):
+            [
+                "action": "cancel-directional-move-gesture",
+                "gesture": String(identifier.prefix(16)),
+                "reason": reason,
+            ]
         case let .smartResize(delta):
             ["action": "smart-resize", "delta": String(delta)]
         case .moveCurrentWorkspaceToNextDisplay:
@@ -127,6 +148,24 @@ final class WindowManagerCommandDispatcher {
                 engine?.focusWindow(direction, correlationID: correlationID)
             case let .moveWindowDirection(direction):
                 engine?.moveWindow(direction, correlationID: correlationID)
+            case let .beginDirectionalMoveGesture(identifier, direction):
+                engine?.beginDirectionalMoveGesture(
+                    identifier: identifier,
+                    firstDirection: direction,
+                    correlationID: correlationID
+                )
+            case let .commitDirectionalMoveGesture(identifier, resolution):
+                engine?.commitDirectionalMoveGesture(
+                    identifier: identifier,
+                    resolution: resolution,
+                    correlationID: correlationID
+                )
+            case let .cancelDirectionalMoveGesture(identifier, reason):
+                engine?.cancelDirectionalMoveGesture(
+                    identifier: identifier,
+                    reason: reason,
+                    correlationID: correlationID
+                )
             case let .smartResize(delta):
                 engine?.smartResize(by: delta, correlationID: correlationID)
             case .moveCurrentWorkspaceToNextDisplay:

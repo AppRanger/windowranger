@@ -240,6 +240,169 @@ final class TiledLayoutTreeTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(preview.frames[c]).rect.minY, 0)
     }
 
+    func testThreeEqualColumnsMiddleToTopRightMatchesApprovedKeyboardPlacement() throws {
+        let before = try XCTUnwrap(TiledLayoutEngine.flatTree(
+            windowKeys: [a, b, c],
+            orientation: .horizontal
+        ))
+        let bounds = CGRect(x: 0, y: 0, width: 1_200, height: 800)
+        let preview = try TiledLayoutEngine.placing(
+            b,
+            at: .topRight,
+            in: before,
+            bounds: bounds,
+            configuration: configuration()
+        )
+
+        guard case let .split(axis, ratio, first, second) = preview.proposedTree,
+              case let .split(rightAxis, rightRatio, upper, lower) = second
+        else { return XCTFail("Top Right must preserve the left column and create a right branch") }
+        XCTAssertEqual(axis, .horizontal)
+        XCTAssertEqual(ratio, 1.0 / 3.0, accuracy: 0.000_001)
+        XCTAssertEqual(first, .window(a))
+        XCTAssertEqual(rightAxis, .vertical)
+        XCTAssertEqual(rightRatio, 0.5)
+        XCTAssertEqual(upper, .window(b))
+        XCTAssertEqual(lower, .window(c))
+        XCTAssertEqual(preview.proposedTree.windowKeys, [a, b, c])
+
+        let focusedFrame = try XCTUnwrap(preview.frames[b]).rect
+        let formerRightFrame = try XCTUnwrap(preview.frames[c]).rect
+        XCTAssertEqual(focusedFrame.maxX, bounds.maxX)
+        XCTAssertEqual(focusedFrame.minY, bounds.minY)
+        XCTAssertEqual(formerRightFrame.maxX, bounds.maxX)
+        XCTAssertEqual(formerRightFrame.maxY, bounds.maxY)
+        XCTAssertEqual(focusedFrame.maxY, formerRightFrame.minY)
+    }
+
+    func testKeyboardCornerMappingAndPlacementCoversAllFourDestinations() throws {
+        let tree = try XCTUnwrap(TiledLayoutEngine.flatTree(
+            windowKeys: [a, b, c],
+            orientation: .horizontal
+        ))
+        let bounds = CGRect(x: -900, y: 24, width: 1_800, height: 1_000)
+        let cases: [(WindowDirection, WindowDirection, VisualPlacement)] = [
+            (.up, .left, .topLeft),
+            (.up, .right, .topRight),
+            (.down, .left, .bottomLeft),
+            (.down, .right, .bottomRight),
+        ]
+        for (vertical, horizontal, placement) in cases {
+            XCTAssertEqual(VisualPlacement.corner(vertical, horizontal), placement)
+            XCTAssertEqual(VisualPlacement.corner(horizontal, vertical), placement)
+            let preview = try TiledLayoutEngine.placing(
+                b,
+                at: placement,
+                in: tree,
+                bounds: bounds,
+                configuration: configuration()
+            )
+            let frame = try XCTUnwrap(preview.frames[b]).rect
+            if horizontal == .left {
+                XCTAssertEqual(frame.minX, bounds.minX)
+            } else {
+                XCTAssertEqual(frame.maxX, bounds.maxX)
+            }
+            if vertical == .up {
+                XCTAssertEqual(frame.minY, bounds.minY)
+            } else {
+                XCTAssertEqual(frame.maxY, bounds.maxY)
+            }
+            XCTAssertEqual(Set(preview.proposedTree.windowKeys), [a, b, c])
+        }
+        XCTAssertNil(VisualPlacement.corner(.left, .right))
+        XCTAssertNil(VisualPlacement.corner(.up, .down))
+        XCTAssertNil(VisualPlacement.corner(.left, .left))
+    }
+
+    func testPlacementHistoryUndoRedoRequiresExactTreeAndParticipantIdentity() throws {
+        let before = try XCTUnwrap(TiledLayoutEngine.flatTree(
+            windowKeys: [a, b, c],
+            orientation: .horizontal
+        ))
+        let preview = try TiledLayoutEngine.placing(
+            b,
+            at: .topRight,
+            in: before,
+            bounds: CGRect(x: 0, y: 0, width: 1_200, height: 800),
+            configuration: configuration()
+        )
+        let transaction = TiledPlacementUndoTransaction(
+            partition: TiledLayoutPartitionKey(workspaceID: UUID(), displayIdentifier: "external"),
+            focusedWindow: b,
+            participantKeys: [a, b, c],
+            beforeTree: before,
+            afterTree: preview.proposedTree,
+            actionName: "Place Window Top Right"
+        )
+
+        XCTAssertEqual(
+            TiledLayoutEngine.historyTarget(
+                currentTree: preview.proposedTree,
+                currentParticipants: [a, b, c],
+                transaction: transaction,
+                direction: .undo
+            ),
+            before
+        )
+        XCTAssertEqual(
+            TiledLayoutEngine.historyTarget(
+                currentTree: before,
+                currentParticipants: [a, b, c],
+                transaction: transaction,
+                direction: .redo
+            ),
+            preview.proposedTree
+        )
+        XCTAssertNil(TiledLayoutEngine.historyTarget(
+            currentTree: before,
+            currentParticipants: [a, b, c],
+            transaction: transaction,
+            direction: .undo
+        ))
+        XCTAssertNil(TiledLayoutEngine.historyTarget(
+            currentTree: preview.proposedTree,
+            currentParticipants: [a, b],
+            transaction: transaction,
+            direction: .undo
+        ))
+    }
+
+    func testCornerPlacementKeepsUnrelatedNestedSubtreeTopologyAndRatios() throws {
+        let untouched = TiledNode.split(
+            axis: .vertical,
+            ratio: 0.63,
+            first: .window(a),
+            second: .window(d)
+        )
+        let before = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.41,
+            first: untouched,
+            second: .split(
+                axis: .horizontal,
+                ratio: 0.52,
+                first: .window(b),
+                second: .window(c)
+            )
+        )
+        let preview = try TiledLayoutEngine.placing(
+            b,
+            at: .bottomRight,
+            in: before,
+            bounds: CGRect(x: 0, y: 0, width: 1_600, height: 1_000),
+            configuration: configuration()
+        )
+
+        guard case let .split(axis, ratio, first, _) = preview.proposedTree else {
+            return XCTFail("Outer structure should remain")
+        }
+        XCTAssertEqual(axis, .horizontal)
+        XCTAssertEqual(ratio, 0.41)
+        XCTAssertEqual(first, untouched)
+        XCTAssertEqual(Set(preview.proposedTree.windowKeys), [a, b, c, d])
+    }
+
     func testOneAndTwoWindowCornerPlacementsAreHonestAndDeterministic() throws {
         let bounds = CGRect(x: 0, y: 0, width: 900, height: 600)
         let one = TiledNode.window(a)

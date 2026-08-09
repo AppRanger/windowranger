@@ -1600,6 +1600,33 @@ private struct ShortcutSettingsView: View {
         })
     }
 
+    private var directionalMoveCornerStatus: (available: Bool, message: String) {
+        if let issue = store.directionalMoveGestureRuntimeIssue {
+            return (false, issue)
+        }
+        switch DirectionalMoveChordFamily.resolve(
+            configuration: store.hotKeyConfiguration,
+            report: configurationReport
+        ) {
+        case let .failure(issue):
+            return (false, issue.message)
+        case .success:
+            let directionalActions = Set(DirectionalMoveChordFamily.actionDirections.map(\.0))
+            if store.hotKeyRuntimeIssues.contains(where: {
+                $0.owner.configurableAction.map(directionalActions.contains) == true
+            }) {
+                return (
+                    false,
+                    "macOS must successfully register all four Reorder shortcuts before two-arrow corner placement is available."
+                )
+            }
+            return (
+                true,
+                "In Tiled workspaces, press two perpendicular Reorder directions within 200 ms to place the focused window in that corner. A single direction keeps its normal reorder behavior."
+            )
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -1644,6 +1671,21 @@ private struct ShortcutSettingsView: View {
                         Color.clear.frame(width: 1, height: 1)
                     }
                 }
+                Label(
+                    directionalMoveCornerStatus.message,
+                    systemImage: directionalMoveCornerStatus.available
+                        ? "arrow.up.left.and.arrow.down.right"
+                        : "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(
+                    directionalMoveCornerStatus.available ? Color.secondary : Color.orange
+                )
+                .accessibilityLabel(
+                    directionalMoveCornerStatus.available
+                        ? "Two-arrow corner placement available. \(directionalMoveCornerStatus.message)"
+                        : "Two-arrow corner placement unavailable. \(directionalMoveCornerStatus.message)"
+                )
                 if let conflictMessage {
                     Label(conflictMessage, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)

@@ -206,6 +206,64 @@ enum ShortcutConflictModel {
     }
 }
 
+enum DirectionalMoveChordFamilyIssue: Error, Equatable, Sendable {
+    case shortcutConflict
+    case modifierMismatch
+    case duplicateKeys
+
+    var message: String {
+        switch self {
+        case .shortcutConflict:
+            "All four Reorder shortcuts must be valid and conflict-free before corner placement can be enabled."
+        case .modifierMismatch:
+            "All four Reorder shortcuts must use the same modifier keys for two-arrow corner placement."
+        case .duplicateKeys:
+            "Each Reorder direction needs a different key for two-arrow corner placement."
+        }
+    }
+}
+
+struct DirectionalMoveChordFamily: Equatable, Sendable {
+    static let actionDirections: [(ConfigurableHotKeyAction, WindowDirection)] = [
+        (.moveLeft, .left),
+        (.moveDown, .down),
+        (.moveUp, .up),
+        (.moveRight, .right),
+    ]
+
+    let modifiers: UInt32
+    let directionByKeyCode: [UInt32: WindowDirection]
+
+    static func resolve(
+        configuration: HotKeyConfiguration,
+        report: ShortcutConfigurationReport? = nil
+    ) -> Result<Self, DirectionalMoveChordFamilyIssue> {
+        if let report,
+           actionDirections.contains(where: { !report.issues(for: $0.0).isEmpty }) {
+            return .failure(.shortcutConflict)
+        }
+        let bindings = actionDirections.map { action, direction in
+            (configuration.chord(for: action), direction)
+        }
+        guard let modifiers = bindings.first?.0.modifiers,
+              bindings.allSatisfy({ $0.0.modifiers == modifiers })
+        else { return .failure(.modifierMismatch) }
+        guard Set(bindings.map { $0.0.keyCode }).count == bindings.count else {
+            return .failure(.duplicateKeys)
+        }
+        return .success(DirectionalMoveChordFamily(
+            modifiers: modifiers,
+            directionByKeyCode: Dictionary(
+                uniqueKeysWithValues: bindings.map { ($0.0.keyCode, $0.1) }
+            )
+        ))
+    }
+
+    func direction(for keyCode: UInt32) -> WindowDirection? {
+        directionByKeyCode[keyCode]
+    }
+}
+
 struct HotKeyRegistrationToken: Hashable, Sendable {
     let id: UUID
 
@@ -280,6 +338,81 @@ struct HotKeyRegistrationReport: Equatable, Sendable {
     )
 }
 
+protocol DirectionalMoveGestureScheduledTask: AnyObject {
+    func cancel()
+}
+
+protocol DirectionalMoveGestureScheduling: AnyObject {
+    func schedule(after delay: TimeInterval, action: @escaping () -> Void) -> DirectionalMoveGestureScheduledTask
+}
+
+private final class DispatchDirectionalMoveGestureTask: DirectionalMoveGestureScheduledTask {
+    private let workItem: DispatchWorkItem
+
+    init(workItem: DispatchWorkItem) { self.workItem = workItem }
+    func cancel() { workItem.cancel() }
+}
+
+final class DispatchDirectionalMoveGestureScheduler: DirectionalMoveGestureScheduling {
+    func schedule(
+        after delay: TimeInterval,
+        action: @escaping () -> Void
+    ) -> DirectionalMoveGestureScheduledTask {
+        let workItem = DispatchWorkItem(block: action)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        return DispatchDirectionalMoveGestureTask(workItem: workItem)
+    }
+}
+
+enum DirectionalMoveObservedInput: Equatable, Sendable {
+    case keyDown(keyCode: UInt32, modifiers: UInt32, isRepeat: Bool)
+    case modifiersChanged(modifiers: UInt32, functionDown: Bool)
+    case pointerDown
+}
+
+protocol DirectionalMoveGestureMonitoring: AnyObject {
+    func start(handler: @escaping (DirectionalMoveObservedInput) -> Void) -> Bool
+    func stop()
+}
+
+final class AppKitDirectionalMoveGestureMonitor: DirectionalMoveGestureMonitoring {
+    private var monitor: Any?
+
+    func start(handler: @escaping (DirectionalMoveObservedInput) -> Void) -> Bool {
+        stop()
+        monitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.keyDown, .flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { event in
+            switch event.type {
+            case .keyDown:
+                handler(.keyDown(
+                    keyCode: UInt32(event.keyCode),
+                    modifiers: HotKeyManager.carbonModifiers(from: event.modifierFlags),
+                    isRepeat: event.isARepeat
+                ))
+            case .flagsChanged:
+                handler(.modifiersChanged(
+                    modifiers: HotKeyManager.carbonModifiers(from: event.modifierFlags),
+                    functionDown: event.modifierFlags.contains(.function)
+                ))
+            case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+                handler(.pointerDown)
+            default:
+                break
+            }
+        }
+        return monitor != nil
+    }
+
+    func stop() {
+        guard let monitor else { return }
+        NSEvent.removeMonitor(monitor)
+        self.monitor = nil
+    }
+
+    deinit { stop() }
+}
+
 final class HotKeyManager {
     typealias EventHandlerInstaller = (
         _ userData: UnsafeMutableRawPointer,
@@ -302,6 +435,8 @@ final class HotKeyManager {
     private let diagnostics: DiagnosticLogger
     private let radialMenuTrigger: (RadialMenuTriggerInputEvent) -> Void
     private let registrationService: GlobalHotKeyRegistrationService
+    private let directionalGestureScheduler: DirectionalMoveGestureScheduling
+    private let directionalGestureMonitor: DirectionalMoveGestureMonitoring
     private var eventHandler: EventHandlerRef?
     private var eventHandlerInstallationFailure: OSStatus?
     private var hotKeys: [(
@@ -311,12 +446,20 @@ final class HotKeyManager {
     )] = []
     private var actions: [UInt32: Action] = [:]
     private var nextRegistrationIdentifier: UInt32 = 1
+    private var directionalMoveChordFamily: DirectionalMoveChordFamily?
+    private var directionalMoveGesture = DirectionalMoveGestureStateMachine()
+    private var directionalMoveGestureTimeout: DirectionalMoveGestureScheduledTask?
+
+    static let directionalMoveChordWindow: TimeInterval = 0.2
+    var directionalMoveGestureRuntimeIssueChanged: ((String?) -> Void)?
 
     init(
         dispatcher: WindowManagerCommandDispatcher,
         diagnostics: DiagnosticLogger = .disabled,
         radialMenuTrigger: @escaping (RadialMenuTriggerInputEvent) -> Void = { _ in },
         registrationService: GlobalHotKeyRegistrationService = CarbonGlobalHotKeyRegistrationService(),
+        directionalGestureScheduler: DirectionalMoveGestureScheduling = DispatchDirectionalMoveGestureScheduler(),
+        directionalGestureMonitor: DirectionalMoveGestureMonitoring = AppKitDirectionalMoveGestureMonitor(),
         installsEventHandler: Bool = true,
         eventHandlerInstaller: EventHandlerInstaller? = nil
     ) {
@@ -324,6 +467,8 @@ final class HotKeyManager {
         self.diagnostics = diagnostics
         self.radialMenuTrigger = radialMenuTrigger
         self.registrationService = registrationService
+        self.directionalGestureScheduler = directionalGestureScheduler
+        self.directionalGestureMonitor = directionalGestureMonitor
         guard installsEventHandler else { return }
         let installer = eventHandlerInstaller ?? Self.installCarbonEventHandler
         let status = installer(Unmanaged.passUnretained(self).toOpaque(), &eventHandler)
@@ -339,11 +484,13 @@ final class HotKeyManager {
     }
 
     deinit {
+        cancelDirectionalMoveGesture(reason: "hotkey-manager-deinitialized", awaitRelease: false)
         unregisterAll()
         if let eventHandler { RemoveEventHandler(eventHandler) }
     }
 
     func suspendRegistration() {
+        cancelDirectionalMoveGesture(reason: "hotkeys-suspended", awaitRelease: false)
         unregisterAll()
     }
 
@@ -352,6 +499,7 @@ final class HotKeyManager {
         hotKeyConfiguration: HotKeyConfiguration = HotKeyConfiguration(),
         radialMenuEnabled: Bool = false
     ) -> HotKeyRegistrationReport {
+        cancelDirectionalMoveGesture(reason: "hotkeys-reconfigured", awaitRelease: false)
         unregisterAll()
         let configuration = ShortcutConflictModel.evaluate(
             configuration: hotKeyConfiguration,
@@ -391,6 +539,19 @@ final class HotKeyManager {
             } else {
                 registeredOwners.append(binding.owner)
             }
+        }
+        let registeredActions = Set(registeredOwners.compactMap(\.configurableAction))
+        let requiredDirectionalActions = Set(DirectionalMoveChordFamily.actionDirections.map(\.0))
+        if requiredDirectionalActions.isSubset(of: registeredActions),
+           case let .success(family) = DirectionalMoveChordFamily.resolve(
+               configuration: hotKeyConfiguration,
+               report: configuration
+           ) {
+            directionalMoveChordFamily = family
+            directionalMoveGestureRuntimeIssueChanged?(nil)
+        } else {
+            directionalMoveChordFamily = nil
+            directionalMoveGestureRuntimeIssueChanged?(nil)
         }
         return HotKeyRegistrationReport(
             configurationIssues: configuration.issues,
@@ -472,6 +633,7 @@ final class HotKeyManager {
     }
 
     private func unregisterAll() {
+        directionalMoveChordFamily = nil
         var failedUnregistrations: [(
             token: HotKeyRegistrationToken,
             identifier: UInt32,
@@ -549,8 +711,16 @@ final class HotKeyManager {
         )
         guard result == noErr, let action = actions[identifier.id] else { return result }
         let eventKind = GetEventKind(event)
+        if case let .command(.moveWindowDirection(direction)) = action,
+           directionalMoveChordFamily != nil {
+            handleDirectionalMoveHotKey(direction: direction, eventKind: eventKind)
+            return noErr
+        }
         if case .command = action, !Self.shouldDispatchCommand(forEventKind: eventKind) {
             return noErr
+        }
+        if eventKind == UInt32(kEventHotKeyPressed) {
+            cancelDirectionalMoveGesture(reason: "competing-hotkey", awaitRelease: true)
         }
         let correlation = diagnostics.makeCorrelationID()
         diagnostics.log(
@@ -570,8 +740,181 @@ final class HotKeyManager {
         return noErr
     }
 
+    func cancelDirectionalMoveGesture(reason: String, awaitRelease: Bool = false) {
+        applyDirectionalMoveEffects(directionalMoveGesture.handle(.cancel(
+            reason: reason,
+            awaitRelease: awaitRelease
+        )))
+        if !awaitRelease {
+            directionalMoveGestureTimeout?.cancel()
+            directionalMoveGestureTimeout = nil
+            directionalGestureMonitor.stop()
+        }
+    }
+
+    func handleDirectionalMoveHotKey(direction: WindowDirection, eventKind: UInt32) {
+        guard directionalMoveChordFamily != nil else {
+            // A partial/conflicting registration must never leave a hidden composite gesture.
+            // Preserve the successfully registered shortcut's established single-arrow action.
+            guard Self.shouldDispatchCommand(forEventKind: eventKind) else { return }
+            dispatcher.dispatch(
+                .moveWindowDirection(direction),
+                source: .hotkey,
+                correlationID: diagnostics.makeCorrelationID()
+            )
+            return
+        }
+        let effects: [DirectionalMoveGestureEffect]
+        switch eventKind {
+        case UInt32(kEventHotKeyPressed):
+            effects = directionalMoveGesture.handle(.pressed(
+                direction,
+                correlationID: diagnostics.makeCorrelationID()
+            ))
+        case UInt32(kEventHotKeyReleased):
+            effects = directionalMoveGesture.handle(.released(direction))
+        default:
+            return
+        }
+        applyDirectionalMoveEffects(effects)
+    }
+
+    private func applyDirectionalMoveEffects(_ effects: [DirectionalMoveGestureEffect]) {
+        for effect in effects {
+            switch effect {
+            case let .capture(correlationID, firstDirection):
+                guard startDirectionalMoveGestureMonitor() else {
+                    directionalMoveGestureRuntimeIssueChanged?(
+                        "macOS could not observe the 200 ms two-arrow gesture. Single-arrow Reorder shortcuts still work."
+                    )
+                    diagnostics.log(
+                        category: "directional-chord",
+                        event: "monitor-unavailable",
+                        correlation: correlationID,
+                        fields: ["fallback": "immediate-single"]
+                    )
+                    // No engine context has been captured yet, so reset the recognizer locally
+                    // without dispatching a meaningless cancellation command.
+                    _ = directionalMoveGesture.handle(.cancel(
+                        reason: "event-monitor-unavailable",
+                        awaitRelease: false
+                    ))
+                    finishDirectionalMoveObservation()
+                    dispatcher.dispatch(
+                        .moveWindowDirection(firstDirection),
+                        source: .hotkey,
+                        correlationID: correlationID
+                    )
+                    continue
+                }
+                diagnostics.log(
+                    category: "directional-chord",
+                    event: "admitted",
+                    correlation: correlationID,
+                    fields: [
+                        "first-direction": firstDirection.rawValue,
+                        "window-ms": String(Int(Self.directionalMoveChordWindow * 1_000)),
+                    ]
+                )
+                dispatcher.dispatch(
+                    .beginDirectionalMoveGesture(correlationID, firstDirection),
+                    source: .hotkey,
+                    correlationID: correlationID
+                )
+                directionalMoveGestureTimeout?.cancel()
+                directionalMoveGestureTimeout = directionalGestureScheduler.schedule(
+                    after: Self.directionalMoveChordWindow
+                ) { [weak self] in
+                    guard let self else { return }
+                    self.applyDirectionalMoveEffects(self.directionalMoveGesture.handle(
+                        .timeout(correlationID: correlationID)
+                    ))
+                }
+
+            case let .commitSingle(correlationID, direction, reason):
+                finishDirectionalMoveObservation()
+                diagnostics.log(
+                    category: "directional-chord",
+                    event: "single-resolved",
+                    correlation: correlationID,
+                    fields: ["direction": direction.rawValue, "reason": reason]
+                )
+                dispatcher.dispatch(
+                    .commitDirectionalMoveGesture(correlationID, .single(direction)),
+                    source: .hotkey,
+                    correlationID: correlationID
+                )
+
+            case let .commitCorner(correlationID, placement):
+                finishDirectionalMoveObservation()
+                diagnostics.log(
+                    category: "directional-chord",
+                    event: "corner-resolved",
+                    correlation: correlationID,
+                    fields: ["placement": placement.rawValue]
+                )
+                dispatcher.dispatch(
+                    .commitDirectionalMoveGesture(correlationID, .corner(placement)),
+                    source: .hotkey,
+                    correlationID: correlationID
+                )
+
+            case let .cancel(correlationID, reason):
+                finishDirectionalMoveObservation()
+                diagnostics.log(
+                    category: "directional-chord",
+                    event: "cancelled",
+                    correlation: correlationID,
+                    fields: ["reason": reason]
+                )
+                dispatcher.dispatch(
+                    .cancelDirectionalMoveGesture(correlationID, reason: reason),
+                    source: .hotkey,
+                    correlationID: correlationID
+                )
+            }
+        }
+    }
+
+    private func startDirectionalMoveGestureMonitor() -> Bool {
+        let started = directionalGestureMonitor.start { [weak self] input in
+            self?.handleDirectionalMoveObservedInput(input)
+        }
+        if started { directionalMoveGestureRuntimeIssueChanged?(nil) }
+        return started
+    }
+
+    private func handleDirectionalMoveObservedInput(_ input: DirectionalMoveObservedInput) {
+        guard directionalMoveGesture.isPending, let family = directionalMoveChordFamily else { return }
+        switch input {
+        case let .keyDown(keyCode, modifiers, _):
+            if modifiers == family.modifiers, family.direction(for: keyCode) != nil { return }
+            cancelDirectionalMoveGesture(
+                reason: keyCode == 53 ? "escape" : "competing-key",
+                awaitRelease: true
+            )
+        case let .modifiersChanged(modifiers, functionDown):
+            guard modifiers == family.modifiers, !functionDown else {
+                cancelDirectionalMoveGesture(reason: "modifier-changed", awaitRelease: true)
+                return
+            }
+        case .pointerDown:
+            cancelDirectionalMoveGesture(reason: "pointer-input", awaitRelease: true)
+        }
+    }
+
+    private func finishDirectionalMoveObservation() {
+        directionalMoveGestureTimeout?.cancel()
+        directionalMoveGestureTimeout = nil
+        directionalGestureMonitor.stop()
+    }
+
     static func shouldDispatchCommand(forEventKind eventKind: UInt32) -> Bool {
         eventKind == UInt32(kEventHotKeyPressed)
+    }
+
+    var directionalMoveCornerGestureEnabled: Bool {
+        directionalMoveChordFamily != nil
     }
 
     static func radialTriggerInput(forEventKind eventKind: UInt32) -> RadialMenuTriggerInputEvent? {
@@ -580,6 +923,16 @@ final class HotKeyManager {
         case UInt32(kEventHotKeyReleased): .released
         default: nil
         }
+    }
+
+    static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
+        let flags = flags.intersection(.deviceIndependentFlagsMask)
+        var modifiers: UInt32 = 0
+        if flags.contains(.control) { modifiers |= UInt32(controlKey) }
+        if flags.contains(.option) { modifiers |= UInt32(optionKey) }
+        if flags.contains(.shift) { modifiers |= UInt32(shiftKey) }
+        if flags.contains(.command) { modifiers |= UInt32(cmdKey) }
+        return modifiers
     }
 
     static let toggleFloatingKeyCode: UInt32 = 3

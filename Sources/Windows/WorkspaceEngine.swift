@@ -525,6 +525,7 @@ final class WorkspaceEngine {
     var onStateChanged: ((WorkspaceEngineState) -> Void)?
     var onWorkspaceLayoutChanged: ((UUID, WorkspaceLayout) -> Void)?
     var onWorkspaceLayoutConfigurationChanged: ((UUID, WorkspaceLayoutConfiguration) -> Void)?
+    var onTiledPlacementCommitted: ((TiledPlacementUndoTransaction) -> Void)?
     var onCommandFeedback: ((CommandFeedbackRequest) -> Void)?
     var onWorkspaceDisplayAssignmentsChanged: (([UUID: String]) -> Void)?
 
@@ -563,13 +564,25 @@ final class WorkspaceEngine {
         let frame: WindowFrame
     }
 
-    private struct RadialPlacementCommitContext {
+    private struct TiledPlacementCommitContext {
         let validationToken: String
         let createdAt: Date
         let focusedWindow: WindowKey
         let partition: TiledLayoutPartitionKey
         let participantKeys: Set<WindowKey>
+        let originalTree: TiledNode
         let previews: [VisualPlacement: TiledPlacementPreview]
+    }
+
+    private struct DirectionalMoveGestureContext {
+        let identifier: String
+        let createdAt: Date
+        let firstDirection: WindowDirection
+        let focusedWindow: WindowKey?
+        let workspaceID: UUID?
+        let displayIdentifier: String?
+        let layout: WorkspaceLayout?
+        let placement: TiledPlacementCommitContext?
     }
 
     private let queue = DispatchQueue(label: "com.chris.WindowManager.workspace-engine", qos: .userInitiated)
@@ -588,7 +601,8 @@ final class WorkspaceEngine {
     private var lastDisplays: [DisplaySnapshot] = []
     private var windows: [WindowKey: TrackedWindow] = [:]
     private var tiledTrees: [TiledLayoutPartitionKey: TiledNode]
-    private var radialPlacementCommitContext: RadialPlacementCommitContext? = nil
+    private var radialPlacementCommitContext: TiledPlacementCommitContext? = nil
+    private var directionalMoveGestureContext: DirectionalMoveGestureContext? = nil
     private var ignoredWindowKeys = Set<WindowKey>()
     private var admissionDecisionByWindow: [WindowKey: WindowAdmissionDecision] = [:]
     private var admissionMetadataByWindow: [WindowKey: WindowAdmissionMetadata] = [:]
@@ -739,6 +753,7 @@ final class WorkspaceEngine {
             lastWakeCompletionDate = .distantPast
             wakeReconciliationWorkItem?.cancel()
             wakeReconciliationWorkItem = nil
+            directionalMoveGestureContext = nil
             invalidateFocusWorkForLifecycle()
             persistState(preservingPendingRestores: true, waitForCompletion: true)
             diagnostics.log(
@@ -811,6 +826,7 @@ final class WorkspaceEngine {
                 self.lastDisplays.isEmpty ? Self.activeDisplays() : self.lastDisplays
             )
             self.wakeReceivedAdditionalSignal = false
+            self.directionalMoveGestureContext = nil
             self.invalidateFocusWorkForLifecycle()
             self.lastBackgroundLayoutSignature = nil
             self.diagnostics.log(
@@ -836,6 +852,7 @@ final class WorkspaceEngine {
             timer = nil
             wakeReconciliationWorkItem?.cancel()
             wakeReconciliationWorkItem = nil
+            directionalMoveGestureContext = nil
             // Preserve workspace membership and original frames before the safety escape hatch
             // places every managed window on the main display.
             persistState(preservingPendingRestores: true, waitForCompletion: true)
@@ -857,6 +874,7 @@ final class WorkspaceEngine {
                 return workspace.id
             })
             self.captureCurrentFrames(for: crossingManagedLayoutBoundary, displays: Self.activeDisplays())
+            self.directionalMoveGestureContext = nil
             self.workspaces = definitions
 
             if !validIDs.contains(self.currentWorkspaceID) {
@@ -894,6 +912,7 @@ final class WorkspaceEngine {
                 return
             }
             let switchingProfile = self.currentProfileID != configuration.profileID
+            self.directionalMoveGestureContext = nil
             self.invalidateFocusWorkForLifecycle()
             self.pendingFocusVerification?.cancel()
             self.pendingFocusVerification = nil
@@ -1023,6 +1042,7 @@ final class WorkspaceEngine {
                 self.lastFocusedWindow.removeAll()
                 self.tiledTrees.removeAll()
                 self.radialPlacementCommitContext = nil
+                self.directionalMoveGestureContext = nil
             } else {
                 self.lastFocusedWindow = self.lastFocusedWindow.filter {
                     validWorkspaceIDs.contains($0.key) && self.windows[$0.value] != nil
@@ -1159,6 +1179,7 @@ final class WorkspaceEngine {
             guard self.displayMode != mode ||
                     self.workspaceDisplayAssignments != workspaceDisplayAssignments
             else { return }
+            self.directionalMoveGestureContext = nil
             if self.wakeReconciliationState.isPending {
                 self.displayMode = mode
                 self.activeWorkspaceIDByDisplay = Self.remappedActiveWorkspaceDisplayIdentifiers(
@@ -1749,24 +1770,245 @@ final class WorkspaceEngine {
         }
     }
 
-    func moveWindow(_ direction: WindowDirection, correlationID: String? = nil) {
+    func beginDirectionalMoveGesture(
+        identifier: String,
+        firstDirection: WindowDirection,
+        correlationID: String? = nil
+    ) {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self else { return }
-            let rawFocusedBefore = self.focusedWindowSnapshot()
-            self.refreshWindows(correlationID: correlationID)
-            guard let focused = self.interactionFocusedWindowSnapshot(rawFocusedBefore),
-                  let tracked = self.windows[focused.key]
+            let displays = Self.activeDisplays()
+            let focused = self.interactionFocusedWindowSnapshot(self.focusedWindowSnapshot())
+            let interactionDisplay = self.interactionDisplayResolution(
+                focused: focused,
+                displays: displays
+            )
+            let workspaceID = self.interactionWorkspaceResolution(
+                focusedKey: focused?.key,
+                displayIdentifier: interactionDisplay.identifier
+            ).workspaceID
+            let workspace = self.workspaces.first(where: { $0.id == workspaceID })
+            let placement = focused.flatMap { focused in
+                self.makeTiledPlacementCommitContext(
+                    validationToken: identifier,
+                    createdAt: Date(),
+                    focusedWindow: focused.key,
+                    workspaceID: workspaceID,
+                    displayIdentifier: interactionDisplay.identifier,
+                    displays: displays,
+                    correlationID: correlationID
+                )
+            }
+            if let previous = self.directionalMoveGestureContext,
+               previous.identifier != identifier {
+                self.diagnostics.log(
+                    category: "directional-chord",
+                    event: "context-superseded",
+                    correlation: correlationID,
+                    fields: ["previous-gesture": String(previous.identifier.prefix(16))]
+                )
+            }
+            self.directionalMoveGestureContext = DirectionalMoveGestureContext(
+                identifier: identifier,
+                createdAt: Date(),
+                firstDirection: firstDirection,
+                focusedWindow: focused?.key,
+                workspaceID: workspace?.id,
+                displayIdentifier: interactionDisplay.identifier,
+                layout: workspace?.layout,
+                placement: placement
+            )
+            self.diagnostics.log(
+                category: "directional-chord",
+                event: "context-captured",
+                correlation: correlationID,
+                fields: [
+                    "gesture": String(identifier.prefix(16)),
+                    "direction": firstDirection.rawValue,
+                    "window": focused.map { Self.diagnosticWindowKey($0.key) } ?? "none",
+                    "workspace": workspace.map { Self.shortIdentifier($0.id.uuidString) } ?? "none",
+                    "display": Self.shortIdentifier(interactionDisplay.identifier),
+                    "layout": workspace?.layout.rawValue ?? "none",
+                    "corner-proposals": String(placement?.previews.count ?? 0),
+                    "proposal-fingerprints": placement?.previews
+                        .sorted { $0.key.rawValue < $1.key.rawValue }
+                        .map { "\($0.key.rawValue)=\($0.value.fingerprint.prefix(16))" }
+                        .joined(separator: ",") ?? "none",
+                ]
+            )
+        }
+    }
+
+    func commitDirectionalMoveGesture(
+        identifier: String,
+        resolution: DirectionalMoveGestureResolution,
+        correlationID: String? = nil
+    ) {
+        let correlationID = correlationID ?? diagnostics.makeCorrelationID()
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard let context = self.directionalMoveGestureContext,
+                  context.identifier == identifier
             else {
-                self.emitCommandFeedback("No managed window is available to reorder.")
+                self.diagnostics.log(
+                    category: "directional-chord",
+                    event: "commit-rejected",
+                    correlation: correlationID,
+                    fields: [
+                        "gesture": String(identifier.prefix(16)),
+                        "reason": "missing-or-superseded-context",
+                        "resolution": resolution.diagnosticValue,
+                    ]
+                )
+                return
+            }
+            self.directionalMoveGestureContext = nil
+            switch resolution {
+            case let .single(direction):
+                self.performMoveWindow(
+                    direction,
+                    expectedContext: context,
+                    correlationID: correlationID
+                )
+            case let .corner(placement):
+                guard context.layout == .tiled else {
+                    self.emitCommandFeedback(
+                        "Corner placement is available only in Tiled workspaces.",
+                        correlationID: correlationID
+                    )
+                    self.diagnostics.log(
+                        category: "directional-chord",
+                        event: "commit-no-op",
+                        correlation: correlationID,
+                        fields: [
+                            "placement": placement.rawValue,
+                            "reason": "layout-not-tiled",
+                            "layout": context.layout?.rawValue ?? "none",
+                        ]
+                    )
+                    return
+                }
+                guard let placementContext = context.placement else {
+                    self.emitCommandFeedback(
+                        "This window cannot be placed in the Tiled layout.",
+                        correlationID: correlationID
+                    )
+                    self.diagnostics.log(
+                        category: "directional-chord",
+                        event: "commit-no-op",
+                        correlation: correlationID,
+                        fields: ["placement": placement.rawValue, "reason": "no-valid-proposal"]
+                    )
+                    return
+                }
+                _ = self.commitTiledPlacement(
+                    placementContext,
+                    placement: placement,
+                    maximumAge: 2,
+                    diagnosticCategory: "directional-chord",
+                    focusAction: "keyboard-corner-place",
+                    feedback: "Placed window \(placement.title).",
+                    correlationID: correlationID,
+                    usesKeyboardFocusRetention: true
+                )
+            }
+        }
+    }
+
+    func cancelDirectionalMoveGesture(
+        identifier: String,
+        reason: String,
+        correlationID: String? = nil
+    ) {
+        let correlationID = correlationID ?? diagnostics.makeCorrelationID()
+        queue.async { [weak self] in
+            guard let self,
+                  self.directionalMoveGestureContext?.identifier == identifier
+            else { return }
+            self.directionalMoveGestureContext = nil
+            self.diagnostics.log(
+                category: "directional-chord",
+                event: "engine-context-cancelled",
+                correlation: correlationID,
+                fields: ["gesture": String(identifier.prefix(16)), "reason": reason]
+            )
+        }
+    }
+
+    private func rejectDirectionalMoveGesture(
+        _ context: DirectionalMoveGestureContext,
+        reason: String,
+        correlationID: String
+    ) {
+        diagnostics.log(
+            category: "directional-chord",
+            event: "commit-rejected",
+            correlation: correlationID,
+            fields: [
+                "gesture": String(context.identifier.prefix(16)),
+                "reason": reason,
+                "first-direction": context.firstDirection.rawValue,
+            ]
+        )
+        emitCommandFeedback("Window move cancelled because its context changed.", correlationID: correlationID)
+    }
+
+    func moveWindow(_ direction: WindowDirection, correlationID: String? = nil) {
+        let correlationID = correlationID ?? diagnostics.makeCorrelationID()
+        queue.async { [weak self] in
+            self?.performMoveWindow(direction, expectedContext: nil, correlationID: correlationID)
+        }
+    }
+
+    private func performMoveWindow(
+        _ direction: WindowDirection,
+        expectedContext: DirectionalMoveGestureContext?,
+        correlationID: String
+    ) {
+            if let expectedContext,
+               Date().timeIntervalSince(expectedContext.createdAt) > 2 {
+                rejectDirectionalMoveGesture(
+                    expectedContext,
+                    reason: "gesture-expired",
+                    correlationID: correlationID
+                )
+                return
+            }
+            let rawFocusedBefore = focusedWindowSnapshot()
+            refreshWindows(correlationID: correlationID)
+            guard let focused = interactionFocusedWindowSnapshot(rawFocusedBefore),
+                  let tracked = windows[focused.key]
+            else {
+                if let expectedContext {
+                    rejectDirectionalMoveGesture(
+                        expectedContext,
+                        reason: "focused-window-unavailable",
+                        correlationID: correlationID
+                    )
+                } else {
+                    emitCommandFeedback("No managed window is available to reorder.")
+                }
                 return
             }
             let displays = Self.activeDisplays()
-            let interactionDisplay = self.interactionDisplayResolution(focused: focused, displays: displays)
-            let workspaceID = self.interactionWorkspaceResolution(
+            let interactionDisplay = interactionDisplayResolution(focused: focused, displays: displays)
+            let workspaceID = interactionWorkspaceResolution(
                 focusedKey: focused.key,
                 displayIdentifier: interactionDisplay.identifier
             ).workspaceID
+            if let expectedContext,
+               expectedContext.focusedWindow != focused.key ||
+               expectedContext.workspaceID != workspaceID ||
+               expectedContext.displayIdentifier != interactionDisplay.identifier ||
+               expectedContext.layout != workspaceLayout(for: workspaceID) {
+                rejectDirectionalMoveGesture(
+                    expectedContext,
+                    reason: "captured-context-changed",
+                    correlationID: correlationID
+                )
+                return
+            }
             guard let workspaceIndex = self.workspaces.firstIndex(where: { $0.id == workspaceID }),
                   self.workspaces[workspaceIndex].layout != .none,
                   Self.shouldIncludeInLayout(
@@ -1914,7 +2156,6 @@ final class WorkspaceEngine {
                 action: "directional-move",
                 token: token
             )
-        }
     }
 
     func smartResize(by delta: Int, correlationID: String? = nil) {
@@ -3457,6 +3698,69 @@ final class WorkspaceEngine {
     }
 
     /// Returns a read-only command snapshot for contextual UI. This deliberately does not call
+    private func makeTiledPlacementCommitContext(
+        validationToken: String,
+        createdAt: Date,
+        focusedWindow: WindowKey,
+        workspaceID: UUID,
+        displayIdentifier: String,
+        displays: [DisplaySnapshot],
+        correlationID: String?
+    ) -> TiledPlacementCommitContext? {
+        guard let workspace = workspaces.first(where: { $0.id == workspaceID }),
+              workspace.layout == .tiled,
+              let display = displays.first(where: { $0.identifier == displayIdentifier }),
+              let tracked = windows[focusedWindow],
+              tracked.workspaceID == workspaceID,
+              Self.shouldIncludeInLayout(
+                  layoutOverride: tracked.layoutOverride,
+                  admissionDecision: tracked.admissionDecision,
+                  rule: resolvedRule(for: tracked.bundleIdentifier)
+              )
+        else { return nil }
+        let participants = orderedLayoutParticipants(
+            workspaceID: workspaceID,
+            displayIdentifier: displayIdentifier,
+            displays: displays,
+            correlationID: correlationID
+        )
+        guard participants.count > 1, participants.contains(focusedWindow) else { return nil }
+        let configuration = workspace.layoutConfiguration ?? .aeroSpaceUserDefaults
+        let partition = TiledLayoutPartitionKey(
+            workspaceID: workspaceID,
+            displayIdentifier: displayIdentifier
+        )
+        guard let tree = TiledLayoutEngine.reconciled(
+            tiledTrees[partition],
+            windowKeys: participants,
+            weights: participants.map {
+                CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
+            },
+            orientation: configuration.orientation.resolved(for: display.usableBounds)
+        ) else { return nil }
+        let previews = Dictionary(
+            uniqueKeysWithValues: VisualPlacement.compassOrder.compactMap { placement in
+                (try? TiledLayoutEngine.placing(
+                    focusedWindow,
+                    at: placement,
+                    in: tree,
+                    bounds: display.usableBounds,
+                    configuration: configuration
+                )).map { (placement, $0) }
+            }
+        )
+        guard !previews.isEmpty else { return nil }
+        return TiledPlacementCommitContext(
+            validationToken: validationToken,
+            createdAt: createdAt,
+            focusedWindow: focusedWindow,
+            partition: partition,
+            participantKeys: Set(participants),
+            originalTree: tree,
+            previews: previews
+        )
+    }
+
     /// `refreshWindows`: merely previewing the wheel must never trigger discovery-driven layout or
     /// visibility writes. The normal engine poll remains responsible for keeping tracking current.
     func radialCommandContext(completion: @escaping (RadialCommandContext) -> Void) {
@@ -3610,36 +3914,21 @@ final class WorkspaceEngine {
                 displays.map(\.identifier).sorted().joined(separator: ","),
             ].joined(separator: "|")
 
-            let tiledPlacementPreviews: [TiledPlacementPreview]
-            if workspace.layout == .tiled,
-               let focusedKey,
-               layoutParticipants.count > 1,
-               let tiledTree,
-               tiledTree.contains(focusedKey) {
-                tiledPlacementPreviews = VisualPlacement.compassOrder.compactMap {
-                    try? TiledLayoutEngine.placing(
-                        focusedKey,
-                        at: $0,
-                        in: tiledTree,
-                        bounds: display.usableBounds,
-                        configuration: layoutConfiguration
-                    )
-                }
-                self.radialPlacementCommitContext = RadialPlacementCommitContext(
+            let placementContext = focusedKey.flatMap { focusedKey in
+                self.makeTiledPlacementCommitContext(
                     validationToken: token,
                     createdAt: Date(),
                     focusedWindow: focusedKey,
-                    partition: partition,
-                    participantKeys: Set(layoutParticipants),
-                    previews: Dictionary(
-                        tiledPlacementPreviews.map { ($0.placement, $0) },
-                        uniquingKeysWith: { first, _ in first }
-                    )
+                    workspaceID: workspace.id,
+                    displayIdentifier: interactionDisplay.identifier,
+                    displays: displays,
+                    correlationID: nil
                 )
-            } else {
-                tiledPlacementPreviews = []
-                self.radialPlacementCommitContext = nil
             }
+            let tiledPlacementPreviews = VisualPlacement.compassOrder.compactMap {
+                placementContext?.previews[$0]
+            }
+            self.radialPlacementCommitContext = placementContext
 
             let context = RadialCommandContext(
                 focusedWindow: focusedWindow,
@@ -3879,8 +4168,7 @@ final class WorkspaceEngine {
             guard let self else { return }
             guard let commit = self.radialPlacementCommitContext,
                   commit.validationToken == validationToken,
-                  Date().timeIntervalSince(commit.createdAt) <= 30,
-                  let preview = commit.previews[placement]
+                  Date().timeIntervalSince(commit.createdAt) <= 30
             else {
                 self.diagnostics.log(
                     category: "radial-menu",
@@ -3890,80 +4178,329 @@ final class WorkspaceEngine {
                 )
                 return
             }
-            defer { self.radialPlacementCommitContext = nil }
+            self.radialPlacementCommitContext = nil
+            _ = self.commitTiledPlacement(
+                commit,
+                placement: placement,
+                maximumAge: 30,
+                diagnosticCategory: "radial-menu",
+                focusAction: "radial-place",
+                feedback: "Place: \(placement.title)",
+                correlationID: correlationID,
+                usesKeyboardFocusRetention: false
+            )
+        }
+    }
 
-            let displays = Self.activeDisplays()
-            guard displays.contains(where: { $0.identifier == commit.partition.displayIdentifier }),
-                  self.isWorkspaceActive(commit.partition.workspaceID),
-                  self.workspaceLayout(for: commit.partition.workspaceID) == .tiled,
-                  self.interactionFocusedWindowSnapshot()?.key == commit.focusedWindow
-            else {
-                self.diagnostics.log(
-                    category: "radial-menu",
-                    event: "placement-rejected",
-                    correlation: correlationID,
-                    fields: ["placement": placement.rawValue, "reason": "runtime-context-changed"]
+    /// The sole frame-writing boundary for radial and keyboard compass placement. Both inputs
+    /// carry a pure proposal produced by `makeTiledPlacementCommitContext`; this method validates
+    /// that captured identity before replacing the tree and applying one normal layout pass.
+    @discardableResult
+    private func commitTiledPlacement(
+        _ commit: TiledPlacementCommitContext,
+        placement: VisualPlacement,
+        maximumAge: TimeInterval,
+        diagnosticCategory: String,
+        focusAction: String,
+        feedback: String,
+        correlationID: String,
+        usesKeyboardFocusRetention: Bool
+    ) -> Bool {
+        guard Date().timeIntervalSince(commit.createdAt) <= maximumAge,
+              let preview = commit.previews[placement]
+        else {
+            diagnostics.log(
+                category: diagnosticCategory,
+                event: "placement-rejected",
+                correlation: correlationID,
+                fields: ["placement": placement.rawValue, "reason": "stale-context"]
+            )
+            return false
+        }
+        let displays = Self.activeDisplays()
+        guard displays.contains(where: { $0.identifier == commit.partition.displayIdentifier }),
+              isWorkspaceActive(commit.partition.workspaceID),
+              workspaceLayout(for: commit.partition.workspaceID) == .tiled,
+              interactionFocusedWindowSnapshot()?.key == commit.focusedWindow
+        else {
+            diagnostics.log(
+                category: diagnosticCategory,
+                event: "placement-rejected",
+                correlation: correlationID,
+                fields: ["placement": placement.rawValue, "reason": "runtime-context-changed"]
+            )
+            if usesKeyboardFocusRetention {
+                emitCommandFeedback(
+                    "Corner placement cancelled because its context changed.",
+                    correlationID: correlationID
                 )
-                return
             }
-            let participants = self.orderedLayoutParticipants(
+            return false
+        }
+        let participants = orderedLayoutParticipants(
+            workspaceID: commit.partition.workspaceID,
+            displayIdentifier: commit.partition.displayIdentifier,
+            displays: displays,
+            correlationID: correlationID
+        )
+        let participantKeys = Set(participants)
+        guard participantKeys == commit.participantKeys else {
+            diagnostics.log(
+                category: diagnosticCategory,
+                event: "placement-rejected",
+                correlation: correlationID,
+                fields: ["placement": placement.rawValue, "reason": "participant-set-changed"]
+            )
+            if usesKeyboardFocusRetention {
+                emitCommandFeedback(
+                    "Corner placement cancelled because the Tiled windows changed.",
+                    correlationID: correlationID
+                )
+            }
+            return false
+        }
+
+        guard let display = displays.first(where: {
+            $0.identifier == commit.partition.displayIdentifier
+        }), let workspace = workspaces.first(where: {
+            $0.id == commit.partition.workspaceID
+        }) else {
+            diagnostics.log(
+                category: diagnosticCategory,
+                event: "placement-rejected",
+                correlation: correlationID,
+                fields: ["placement": placement.rawValue, "reason": "partition-unavailable"]
+            )
+            return false
+        }
+        let configuration = workspace.layoutConfiguration ?? .aeroSpaceUserDefaults
+        guard let currentTree = TiledLayoutEngine.reconciled(
+            tiledTrees[commit.partition],
+            windowKeys: participants,
+            weights: participants.map {
+                CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
+            },
+            orientation: configuration.orientation.resolved(for: display.usableBounds)
+        ), currentTree == commit.originalTree else {
+            diagnostics.log(
+                category: diagnosticCategory,
+                event: "placement-rejected",
+                correlation: correlationID,
+                fields: ["placement": placement.rawValue, "reason": "tree-changed"]
+            )
+            if usesKeyboardFocusRetention {
+                emitCommandFeedback(
+                    "Corner placement cancelled because the Tiled layout changed.",
+                    correlationID: correlationID
+                )
+            }
+            return false
+        }
+        guard (try? TiledLayoutEngine.validated(
+            preview.proposedTree,
+            participants: participantKeys
+        )) != nil else {
+            diagnostics.log(
+                category: diagnosticCategory,
+                event: "placement-rejected",
+                correlation: correlationID,
+                fields: ["placement": placement.rawValue, "reason": "invalid-proposal"]
+            )
+            return false
+        }
+
+        let previousFingerprint = TiledLayoutEngine.fingerprint(currentTree)
+        let focusToken = beginCorrelatedAction(
+            correlationID: correlationID,
+            interactionDisplayIdentifier: commit.partition.displayIdentifier,
+            expectedFocusTarget: commit.focusedWindow
+        )
+        prepareProgrammaticFocusIntent(commit.focusedWindow, correlationID: correlationID, duration: 0.8)
+        tiledTrees[commit.partition] = preview.proposedTree
+        let effectiveShares = TiledLayoutEngine.leafShares(preview.proposedTree) ?? [:]
+        for (index, key) in preview.proposedTree.windowKeys.enumerated() {
+            windows[key]?.layoutOrder = index
+            windows[key]?.layoutWeight = effectiveShares[key] ?? 1
+        }
+        lastFocusedWindow[commit.partition.workspaceID] = commit.focusedWindow
+        lastBackgroundLayoutSignature = nil
+        let affectedWindows = windows.values.filter { tracked in
+            guard tracked.workspaceID == commit.partition.workspaceID else { return false }
+            return targetDisplay(
+                for: tracked,
                 workspaceID: commit.partition.workspaceID,
-                displayIdentifier: commit.partition.displayIdentifier,
+                displays: displays,
+                correlationID: correlationID
+            )?.identifier == commit.partition.displayIdentifier
+        }
+        applyVisibleWindows(
+            affectedWindows,
+            displays: displays,
+            correlationID: correlationID
+        )
+        lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
+        persistState(preservingPendingRestores: true)
+        emitState()
+        emitCommandFeedback(feedback, correlationID: correlationID)
+        diagnostics.log(
+            category: diagnosticCategory,
+            event: "placement-committed",
+            correlation: correlationID,
+            fields: [
+                "placement": placement.rawValue,
+                "workspace": Self.shortIdentifier(commit.partition.workspaceID.uuidString),
+                "display": Self.shortIdentifier(commit.partition.displayIdentifier),
+                "window": Self.diagnosticWindowKey(commit.focusedWindow),
+                "tree-before": String(previousFingerprint.prefix(96)),
+                "tree-after": String(preview.fingerprint.prefix(96)),
+                "window-count": String(participantKeys.count),
+            ]
+        )
+        if commit.originalTree != preview.proposedTree {
+            let transaction = TiledPlacementUndoTransaction(
+                partition: commit.partition,
+                focusedWindow: commit.focusedWindow,
+                participantKeys: commit.participantKeys,
+                beforeTree: commit.originalTree,
+                afterTree: preview.proposedTree,
+                actionName: "Place Window \(placement.title)"
+            )
+            DispatchQueue.main.async { [weak self] in
+                self?.onTiledPlacementCommitted?(transaction)
+            }
+        }
+        if usesKeyboardFocusRetention {
+            retainFocusAfterKeyboardManipulation(
+                expected: commit.focusedWindow,
+                correlationID: correlationID,
+                action: focusAction,
+                token: focusToken
+            )
+        } else {
+            verifyFocusAfterAction(
+                expected: commit.focusedWindow,
+                correlationID: correlationID,
+                action: focusAction,
+                token: focusToken,
+                mayRecoverNilFocus: true
+            )
+        }
+        return true
+    }
+
+    /// Applies one NSUndoManager-owned placement history step. The caller is an app-owned menu
+    /// action on the main thread; the synchronous queue hop lets UndoManager register the inverse
+    /// only after the exact tree/participant validation has succeeded.
+    func applyTiledPlacementHistory(
+        _ transaction: TiledPlacementUndoTransaction,
+        direction: TiledPlacementHistoryDirection,
+        correlationID: String? = nil
+    ) -> Bool {
+        let correlationID = correlationID ?? diagnostics.makeCorrelationID()
+        return queue.sync { () -> Bool in
+            let displays = Self.activeDisplays()
+            guard displays.contains(where: {
+                $0.identifier == transaction.partition.displayIdentifier
+            }), isWorkspaceActive(transaction.partition.workspaceID),
+            workspaceLayout(for: transaction.partition.workspaceID) == .tiled
+            else {
+                diagnostics.log(
+                    category: "tiled-placement-history",
+                    event: "rejected",
+                    correlation: correlationID,
+                    fields: ["direction": direction.rawValue, "reason": "inactive-partition"]
+                )
+                return false
+            }
+            let participants = orderedLayoutParticipants(
+                workspaceID: transaction.partition.workspaceID,
+                displayIdentifier: transaction.partition.displayIdentifier,
                 displays: displays,
                 correlationID: correlationID
             )
             let participantKeys = Set(participants)
-            guard participantKeys == commit.participantKeys,
-                  (try? TiledLayoutEngine.validated(
-                    preview.proposedTree,
-                    participants: participantKeys
-                  )) != nil
+            guard let currentTree = tiledTrees[transaction.partition],
+                  let targetTree = TiledLayoutEngine.historyTarget(
+                      currentTree: currentTree,
+                      currentParticipants: participantKeys,
+                      transaction: transaction,
+                      direction: direction
+                  )
             else {
-                self.diagnostics.log(
-                    category: "radial-menu",
-                    event: "placement-rejected",
+                diagnostics.log(
+                    category: "tiled-placement-history",
+                    event: "rejected",
                     correlation: correlationID,
-                    fields: ["placement": placement.rawValue, "reason": "participant-set-changed"]
+                    fields: ["direction": direction.rawValue, "reason": "tree-or-membership-changed"]
                 )
-                return
+                return false
             }
 
-            let focusToken = self.beginCorrelatedAction(
-                correlationID: correlationID,
-                interactionDisplayIdentifier: commit.partition.displayIdentifier,
-                expectedFocusTarget: commit.focusedWindow
-            )
-            self.tiledTrees[commit.partition] = preview.proposedTree
-            self.lastBackgroundLayoutSignature = nil
-            self.applyVisibleWindows(
-                self.windows.values.filter { $0.workspaceID == commit.partition.workspaceID },
+            let focusTarget = interactionFocusedWindowSnapshot().flatMap { snapshot in
+                participantKeys.contains(snapshot.key) ? snapshot.key : nil
+            }
+            let focusToken = focusTarget.map { key in
+                beginCorrelatedAction(
+                    correlationID: correlationID,
+                    interactionDisplayIdentifier: transaction.partition.displayIdentifier,
+                    expectedFocusTarget: key
+                )
+            }
+            if let focusTarget {
+                prepareProgrammaticFocusIntent(focusTarget, correlationID: correlationID, duration: 0.8)
+                lastFocusedWindow[transaction.partition.workspaceID] = focusTarget
+            }
+
+            tiledTrees[transaction.partition] = targetTree
+            let effectiveShares = TiledLayoutEngine.leafShares(targetTree) ?? [:]
+            for (index, key) in targetTree.windowKeys.enumerated() {
+                windows[key]?.layoutOrder = index
+                windows[key]?.layoutWeight = effectiveShares[key] ?? 1
+            }
+            lastBackgroundLayoutSignature = nil
+            let affectedWindows = windows.values.filter { tracked in
+                guard tracked.workspaceID == transaction.partition.workspaceID else { return false }
+                return targetDisplay(
+                    for: tracked,
+                    workspaceID: transaction.partition.workspaceID,
+                    displays: displays,
+                    correlationID: correlationID
+                )?.identifier == transaction.partition.displayIdentifier
+            }
+            applyVisibleWindows(
+                affectedWindows,
                 displays: displays,
                 correlationID: correlationID
             )
-            self.lastBackgroundLayoutSignature = self.backgroundLayoutSignature(displays: displays)
-            self.persistState(preservingPendingRestores: true)
-            self.emitState()
-            self.emitCommandFeedback("Place: \(placement.title)", correlationID: correlationID)
-            self.diagnostics.log(
-                category: "radial-menu",
-                event: "placement-committed",
+            lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
+            persistState(preservingPendingRestores: true)
+            emitState()
+            emitCommandFeedback(
+                direction == .undo
+                    ? "Undid \(transaction.actionName.lowercased())."
+                    : "Redid \(transaction.actionName.lowercased()).",
+                correlationID: correlationID
+            )
+            diagnostics.log(
+                category: "tiled-placement-history",
+                event: "applied",
                 correlation: correlationID,
                 fields: [
-                    "placement": placement.rawValue,
-                    "workspace": Self.shortIdentifier(commit.partition.workspaceID.uuidString),
-                    "display": Self.shortIdentifier(commit.partition.displayIdentifier),
-                    "window": Self.diagnosticWindowKey(commit.focusedWindow),
-                    "tree": String(preview.fingerprint.prefix(96)),
-                    "window-count": String(participantKeys.count),
+                    "direction": direction.rawValue,
+                    "workspace": Self.shortIdentifier(transaction.partition.workspaceID.uuidString),
+                    "display": Self.shortIdentifier(transaction.partition.displayIdentifier),
+                    "tree": String(TiledLayoutEngine.fingerprint(targetTree).prefix(96)),
                 ]
             )
-            self.verifyFocusAfterAction(
-                expected: commit.focusedWindow,
-                correlationID: correlationID,
-                action: "radial-place",
-                token: focusToken,
-                mayRecoverNilFocus: true
-            )
+            if let focusTarget, let focusToken {
+                retainFocusAfterKeyboardManipulation(
+                    expected: focusTarget,
+                    correlationID: correlationID,
+                    action: "tiled-placement-\(direction.rawValue)",
+                    token: focusToken
+                )
+            }
+            return true
         }
     }
 
@@ -4237,6 +4774,7 @@ final class WorkspaceEngine {
         lastAutomaticUnhideAttemptByProcess.removeAll()
         tiledTrees.removeAll()
         radialPlacementCommitContext = nil
+        directionalMoveGestureContext = nil
         invalidateFocusWorkForLifecycle()
     }
 
@@ -4520,6 +5058,17 @@ final class WorkspaceEngine {
                 !$0.participantKeys.isDisjoint(with: removedTrackedWindowKeys)
             }) == true {
                 radialPlacementCommitContext = nil
+            }
+            if let gestureContext = directionalMoveGestureContext {
+                let removedFocus = gestureContext.focusedWindow.map {
+                    removedTrackedWindowKeys.contains($0)
+                } ?? false
+                let removedParticipant = gestureContext.placement.map {
+                    !$0.participantKeys.isDisjoint(with: removedTrackedWindowKeys)
+                } ?? false
+                if removedFocus || removedParticipant {
+                    directionalMoveGestureContext = nil
+                }
             }
 
             let removedFocusState = [

@@ -52,6 +52,19 @@ enum VisualPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
         .top, .topRight, .right, .bottomRight,
         .bottom, .bottomLeft, .left, .topLeft,
     ]
+
+    /// Maps an order-independent perpendicular directional pair to the matching destination
+    /// corner. Parallel/opposite directions deliberately have no composite meaning.
+    static func corner(_ first: WindowDirection, _ second: WindowDirection) -> Self? {
+        let directions = Set([first, second])
+        switch directions {
+        case Set([.up, .left]): return .topLeft
+        case Set([.up, .right]): return .topRight
+        case Set([.down, .left]): return .bottomLeft
+        case Set([.down, .right]): return .bottomRight
+        default: return nil
+        }
+    }
 }
 
 indirect enum TiledNode: Codable, Equatable, Sendable {
@@ -143,6 +156,30 @@ struct TiledPlacementPreview: Equatable, Sendable {
     let fingerprint: String
 }
 
+enum TiledPlacementHistoryDirection: String, Equatable, Sendable {
+    case undo
+    case redo
+}
+
+/// One WindowServer-session-local reversible placement. It contains layout identities only and is
+/// never persisted or synced as reusable profile configuration.
+struct TiledPlacementUndoTransaction: Equatable, Sendable {
+    let partition: TiledLayoutPartitionKey
+    let focusedWindow: WindowKey
+    let participantKeys: Set<WindowKey>
+    let beforeTree: TiledNode
+    let afterTree: TiledNode
+    let actionName: String
+
+    func expectedTree(for direction: TiledPlacementHistoryDirection) -> TiledNode {
+        direction == .undo ? afterTree : beforeTree
+    }
+
+    func targetTree(for direction: TiledPlacementHistoryDirection) -> TiledNode {
+        direction == .undo ? beforeTree : afterTree
+    }
+}
+
 enum TiledLayoutError: Error, Equatable {
     case emptyTree
     case missingFocusedWindow
@@ -156,6 +193,23 @@ enum TiledLayoutEngine {
     static let initialSplitRatio = 0.5
     static let minimumSplitRatio = 0.1
     static let maximumSplitRatio = 0.9
+
+    /// Resolves Undo/Redo only when the exact committed tree and participant set are still current.
+    /// A later placement, membership change, orientation edit, profile transition, or session reset
+    /// therefore makes a stale history item a safe no-op instead of overwriting newer intent.
+    static func historyTarget(
+        currentTree: TiledNode,
+        currentParticipants: Set<WindowKey>,
+        transaction: TiledPlacementUndoTransaction,
+        direction: TiledPlacementHistoryDirection
+    ) -> TiledNode? {
+        guard currentParticipants == transaction.participantKeys,
+              currentTree == transaction.expectedTree(for: direction)
+        else { return nil }
+        let target = transaction.targetTree(for: direction)
+        guard (try? validated(target, participants: currentParticipants)) != nil else { return nil }
+        return target
+    }
 
     /// Converts the existing stable flat order into nested same-axis splits. Ratios are derived
     /// from the existing weights so the first tree solve reproduces the flat layout instead of

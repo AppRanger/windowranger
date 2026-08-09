@@ -1,14 +1,14 @@
-# Two-Arrow Tiled Placement Recommendation
+# Two-Arrow Tiled Placement
 
-**Status:** Research and product recommendation only; no shortcut or runtime gesture is implemented
+**Status:** Implemented and automated-test verified; live timing/keyboard validation pending
 
-## Decision to make
+## Implemented decision
 
-The proposed gesture combines Control-Option with two arrow directions to express a structural
+The approved gesture combines Control-Option with two arrow directions to express a structural
 Tiled placement without adding Shift. The open example starts with three columns, focuses the
 middle window, and inserts it above the right-hand window.
 
-The recommendation is:
+The implemented contract is:
 
 - Treat the pair as a **destination corner**, not as the selected window's source relationship.
 - Make the two arrows order-independent: Up+Right means **Top Right**.
@@ -17,7 +17,9 @@ The recommendation is:
 - Reuse the existing `VisualPlacement.topRight` detach/collapse/find-corner/insert transaction and
   its zero-write preview. Do not create a second tree-reinsertion algorithm.
 
-This is a recommendation for user confirmation, not a shipped default.
+The four existing configurable Reorder bindings remain the only registered arrows. The composite is
+derived only when all four use the same modifier family, have distinct keys, are conflict-free, and
+register successfully; no hidden or competing shortcut is added.
 
 ## Evidence from established models
 
@@ -60,9 +62,9 @@ meaning match the command wheel's compass language.
 Using Up+Left for that result would encode an invisible source or insertion relationship and would
 conflict with the visible meaning of the existing Top Left placement.
 
-## Recommended input state machine
+## Input state machine
 
-If approved, implement this as a separate pure chord recognizer feeding `VisualPlacement`:
+The pure recognizer feeds the existing `VisualPlacement` proposal and commit path:
 
 1. Control and Option must already be held.
 2. The first arrow arms a candidate and captures the focused window, workspace/display partition,
@@ -72,14 +74,17 @@ If approved, implement this as a separate pure chord recognizer feeding `VisualP
 4. A same-axis or opposite arrow is not a composite. It cancels the candidate safely.
 5. Releasing the first arrow or reaching the 200 ms timeout without a valid second arrow dispatches
    the ordinary single-arrow structural move exactly once. This retains boundary/no-op feedback.
-6. A valid pair previews the proposed placement while both modifiers remain held. Commit occurs on
-   release of either arrow after validation; releasing in a stale context cancels.
+6. A valid pair commits the already-captured proposal when the second direction arrives. This is one
+   tree mutation and one normal layout pass; the first direction is never applied and undone.
 7. Escape, modifier release, focus/workspace/display/profile change, sleep, or a newer action cancels
    without committing. Auto-repeat cannot create another candidate while one is pending.
 
-The 200 ms value is a proposed starting point for live tuning, not a fixed product decision. The
-recognizer needs injected time/input tests and must never install another event monitor if the
-central keyboard owner can supply the required press/release facts.
+The 200 ms value is the migration-safe starting point for live tuning. Carbon supplies the existing
+registered arrows' public press/release events. A temporary public AppKit global monitor observes
+only competing input while a candidate is pending and is removed immediately afterward; it does not
+suppress or replay keys and uses the app's existing Accessibility trust path. If observation cannot
+start, the app fails closed to the normal single-arrow command and reports the limitation in
+Settings rather than requesting another permission.
 
 ## Why not target-direction plus insertion-side?
 
@@ -94,11 +99,11 @@ If future workflows need “insert relative to this exact neighbour” rather th
 visible corner,” that should be a separately named reinsert command with preview, not an overloaded
 two-arrow default.
 
-## Acceptance tests if approved
+## Verified acceptance boundary
 
 - Every orthogonal pair maps to the matching `VisualPlacement` corner in either key order.
 - The three-column Top Right example produces the focused middle window above the former right leaf.
-- Preview and commit have the same tree fingerprint; preview performs zero Accessibility writes.
+- Proposal and commit have the same tree fingerprint; proposal performs zero Accessibility writes.
 - A timeout/release dispatches one and only one existing single-arrow move.
 - Same-axis, opposite, repeat, stale-context, workspace/display change, and Escape cases cancel or
   fall back deterministically.
@@ -106,3 +111,7 @@ two-arrow default.
 - Floating, excluded, ignored, minimized, full-screen, parked, and other-display windows remain
   outside the placement transaction.
 
+Automated coverage exercises both arrow orders, all four corners, release and timeout fallback,
+invalid/repeated/competing input, shortcut-family failure, the three-column middle-to-Top-Right case,
+nested subtree preservation, WindowServer-session persistence, display-partition scoping, and exact
+focus retention. The remaining boundary is physical-keyboard timing and feel in the signed Debug app.

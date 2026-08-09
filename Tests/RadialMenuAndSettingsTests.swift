@@ -1300,6 +1300,12 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertNotNil(dynamic?.workspaceID)
     }
 
+    func testTwoArrowTiledPlacementSearchRoutesToShortcuts() {
+        let result = SettingsCatalog.search("top right BSP", includeDebug: false).first
+        XCTAssertEqual(result?.id, "directional-move")
+        XCTAssertEqual(result?.category, .shortcuts)
+    }
+
     func testWorkspaceSelectionSurvivesReorderAndChoosesNearestAfterDelete() {
         let ids = [workspaceA.id, workspaceB.id, workspaceC.id]
         XCTAssertEqual(
@@ -1917,7 +1923,9 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             chord: .init(keyCode: 30, modifiers: UInt32(optionKey)),
             status: -9_878
         )])
+        first.setDirectionalMoveGestureRuntimeIssue("gesture monitor unavailable")
         XCTAssertEqual(first.hotKeyRuntimeIssues.count, 1)
+        XCTAssertEqual(first.directionalMoveGestureRuntimeIssue, "gesture monitor unavailable")
 
         let restored = SettingsStore(
             defaults: defaults,
@@ -1925,7 +1933,9 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             connectedDisplaysProvider: { [] }
         )
         XCTAssertTrue(restored.hotKeyRuntimeIssues.isEmpty)
+        XCTAssertNil(restored.directionalMoveGestureRuntimeIssue)
         XCTAssertNil(defaults.object(forKey: "hotKeyRuntimeIssues"))
+        XCTAssertNil(defaults.object(forKey: "directionalMoveGestureRuntimeIssue"))
     }
 
     func testShortcutRecorderConvertsNativeEventToCarbonChord() {

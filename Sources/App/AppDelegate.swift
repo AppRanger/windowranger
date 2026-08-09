@@ -72,24 +72,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }()
     private lazy var commandFeedbackPresenter: CommandFeedbackPresenting =
         CommandFeedbackOverlayController(diagnostics: diagnostics)
-    private lazy var hotKeyManager = HotKeyManager(
-        dispatcher: commandDispatcher,
-        diagnostics: diagnostics,
-        radialMenuTrigger: { [weak self] event in
-            guard let self else { return }
-            self.globeFnHoldActivationController.ordinaryShortcutWillBegin()
-            self.radialMenuTriggerController.handle(
-                event,
-                style: self.settingsStore.radialMenuActivationStyle,
-                holdDelay: self.settingsStore.radialMenuHoldDelay
-            )
+    private lazy var hotKeyManager: HotKeyManager = {
+        let manager = HotKeyManager(
+            dispatcher: commandDispatcher,
+            diagnostics: diagnostics,
+            radialMenuTrigger: { [weak self] event in
+                guard let self else { return }
+                self.globeFnHoldActivationController.ordinaryShortcutWillBegin()
+                self.radialMenuTriggerController.handle(
+                    event,
+                    style: self.settingsStore.radialMenuActivationStyle,
+                    holdDelay: self.settingsStore.radialMenuHoldDelay
+                )
+            }
+        )
+        manager.directionalMoveGestureRuntimeIssueChanged = { [weak self] issue in
+            self?.settingsStore.setDirectionalMoveGestureRuntimeIssue(issue)
         }
-    )
+        return manager
+    }()
     private var workspaceStatusBarController: WorkspaceStatusBarController?
     private var cancellables = Set<AnyCancellable>()
     private var preparedForTermination = false
     private var isShortcutRecording = false
     private var pendingMenuBarPresentationUpdate: DispatchWorkItem?
+    private let tiledPlacementUndoManager = UndoManager()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -115,6 +122,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         engine.onWorkspaceLayoutConfigurationChanged = { [weak self] workspaceID, configuration in
             self?.settingsStore.setLayoutConfiguration(configuration, for: workspaceID)
         }
+        engine.onTiledPlacementCommitted = { [weak self] transaction in
+            self?.registerTiledPlacementHistory(transaction, direction: .undo)
+        }
         engine.onCommandFeedback = { [weak self] request in
             self?.commandFeedbackPresenter.present(request)
         }
@@ -132,6 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .debounce(for: .milliseconds(150), scheduler: RunLoop.main)
             .sink { [weak self] workspaces in
                 guard let self else { return }
+                self.clearTiledPlacementHistory()
                 self.engine.updateWorkspaces(workspaces)
                 self.registerHotKeys()
                 self.menuBarState.updateConfiguration(
@@ -149,6 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             }
             .sink { [weak self] application in
+                self?.hotKeyManager.cancelDirectionalMoveGesture(reason: "application-activated")
                 self?.globeFnHoldActivationController.cancel(reason: "application-activated")
                 self?.radialMenuTriggerController.cancel(reason: "application-activated")
                 self?.engine.applicationActivated(processIdentifier: application.processIdentifier)
@@ -160,6 +172,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
+                self.clearTiledPlacementHistory()
+                self.hotKeyManager.cancelDirectionalMoveGesture(reason: "system-will-sleep")
                 self.globeFnHoldActivationController.cancel(reason: "system-will-sleep")
                 self.radialMenuTriggerController.cancel(reason: "system-will-sleep")
                 self.commandFeedbackPresenter.dismiss(reason: "system-will-sleep")
@@ -191,6 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         workspaceNotifications.publisher(for: NSWorkspace.sessionDidResignActiveNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
+                self?.hotKeyManager.cancelDirectionalMoveGesture(reason: "session-resigned-active")
                 self?.globeFnHoldActivationController.cancel(reason: "session-resigned-active")
                 self?.radialMenuTriggerController.cancel(reason: "session-resigned-active")
             }
@@ -199,6 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
+                self?.hotKeyManager.cancelDirectionalMoveGesture(reason: "display-configuration-changed")
                 self?.commandFeedbackPresenter.screenParametersDidChange()
                 self?.settingsWindowCoordinator.screenParametersDidChange()
                 self?.reconcileAfterWake(source: .displayConfigurationChanged)
@@ -214,6 +230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .debounce(for: .milliseconds(100), scheduler: RunLoop.main)
         .sink { [weak self] configuration in
             guard let self else { return }
+            self.clearTiledPlacementHistory()
             let (mode, workspaceDisplayHomes) = configuration
             self.engine.updateDisplayConfiguration(
                 mode: mode,
@@ -347,6 +364,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .compactMap { $0 }
             .sink { [weak self] request in
                 guard let self else { return }
+                self.clearTiledPlacementHistory()
+                self.hotKeyManager.cancelDirectionalMoveGesture(reason: "profile-transition")
                 self.globeFnHoldActivationController.cancel(reason: "profile-transition")
                 self.radialMenuTriggerController.cancel(reason: "profile-transition")
                 self.commandFeedbackPresenter.dismiss(reason: "profile-transition")
@@ -377,6 +396,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preparedForTermination = true
         pendingMenuBarPresentationUpdate?.cancel()
         pendingMenuBarPresentationUpdate = nil
+        tiledPlacementUndoManager.removeAllActions()
+        hotKeyManager.cancelDirectionalMoveGesture(reason: "application-terminating")
         globeFnHoldActivationController.shutdown()
         radialMenuTriggerController.cancel(reason: "application-terminating")
         commandFeedbackPresenter.shutdown()
@@ -400,6 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard isShortcutRecording != isRecording else { return }
         isShortcutRecording = isRecording
         if isRecording {
+            hotKeyManager.cancelDirectionalMoveGesture(reason: "shortcut-recording-began")
             globeFnHoldActivationController.cancel(reason: "shortcut-recording-began")
             radialMenuTriggerController.cancel(reason: "shortcut-recording-began")
             hotKeyManager.suspendRegistration()
@@ -411,6 +433,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func reconcileAfterWake(source: WakeReconciliationSource) {
+        hotKeyManager.cancelDirectionalMoveGesture(reason: source.rawValue)
         globeFnHoldActivationController.resumeAfterLifecycle(reason: source.rawValue)
         radialMenuTriggerController.cancel(reason: source.rawValue)
         commandFeedbackPresenter.dismiss(reason: source.rawValue)
@@ -468,6 +491,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 settingsNavigation: settingsNavigation,
                 settingsWindowCoordinator: settingsWindowCoordinator,
                 diagnostics: diagnostics,
+                tiledPlacementUndoManager: tiledPlacementUndoManager,
                 initialMode: settingsStore.menuBarPresentationMode
             )
         } else {
@@ -475,5 +499,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 settingsStore.menuBarPresentationMode
             )
         }
+    }
+
+    private func registerTiledPlacementHistory(
+        _ transaction: TiledPlacementUndoTransaction,
+        direction: TiledPlacementHistoryDirection
+    ) {
+        tiledPlacementUndoManager.registerUndo(withTarget: self) { target in
+            guard target.engine.applyTiledPlacementHistory(
+                transaction,
+                direction: direction
+            ) else {
+                target.workspaceStatusBarController?.rebuild()
+                return
+            }
+            target.registerTiledPlacementHistory(
+                transaction,
+                direction: direction == .undo ? .redo : .undo
+            )
+        }
+        tiledPlacementUndoManager.setActionName(transaction.actionName)
+        workspaceStatusBarController?.rebuild()
+    }
+
+    private func clearTiledPlacementHistory() {
+        guard tiledPlacementUndoManager.canUndo || tiledPlacementUndoManager.canRedo else { return }
+        tiledPlacementUndoManager.removeAllActions()
+        workspaceStatusBarController?.rebuild()
     }
 }

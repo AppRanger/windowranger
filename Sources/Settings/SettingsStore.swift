@@ -154,6 +154,7 @@ final class SettingsStore: ObservableObject {
     /// Runtime-only registration failures belong to this process and Mac. They are never persisted
     /// into profile/global preferences or synchronized through iCloud.
     @Published private(set) var hotKeyRuntimeIssues: [HotKeyRuntimeIssue] = []
+    @Published private(set) var directionalMoveGestureRuntimeIssue: String?
 
     /// Runtime-only monitor availability for the current process and Mac. It is never persisted or
     /// synchronized, just like Carbon registration failures.
@@ -992,6 +993,11 @@ final class SettingsStore: ObservableObject {
     func setHotKeyRuntimeIssues(_ issues: [HotKeyRuntimeIssue]) {
         guard hotKeyRuntimeIssues != issues else { return }
         hotKeyRuntimeIssues = issues
+    }
+
+    func setDirectionalMoveGestureRuntimeIssue(_ issue: String?) {
+        guard directionalMoveGestureRuntimeIssue != issue else { return }
+        directionalMoveGestureRuntimeIssue = issue
     }
 
     func setGlobeFnRuntimeIssue(_ issue: String?) {
