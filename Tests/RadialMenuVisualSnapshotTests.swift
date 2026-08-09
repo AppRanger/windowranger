@@ -57,11 +57,16 @@ final class RadialMenuVisualSnapshotTests: XCTestCase {
         let siblingA = WindowKey(processIdentifier: 43, windowIdentifier: 901)
         let siblingB = WindowKey(processIdentifier: 44, windowIdentifier: 902)
         let bounds = CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
-        let workspaces = (1...6).map { index in
-            RadialWorkspaceOption(
-                id: UUID(uuidString: String(format: "40000000-0000-0000-0000-%012d", index))!,
-                name: index == 4 ? "Writing" : String(index),
-                layout: index == 1 ? .tiled : .none,
+        let workspaceIndexes = Array(1...6)
+        let workspaces: [RadialWorkspaceOption] = workspaceIndexes.map { index in
+            let identifier = String(format: "40000000-0000-0000-0000-%012d", index)
+            let workspaceID = UUID(uuidString: identifier)!
+            let name = index == 4 ? "Writing" : String(index)
+            let layout: WorkspaceLayout = index == 1 ? .tiled : .none
+            return RadialWorkspaceOption(
+                id: workspaceID,
+                name: name,
+                layout: layout,
                 homeDisplayIdentifier: "external"
             )
         }

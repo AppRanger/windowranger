@@ -740,7 +740,12 @@ enum RadialMenuGeometry {
         // `parentIndex` remains in the API because selection correlation records the owning wedge.
         _ = parentIndex
         _ = geometry
-        return (0..<childCount).map { CGFloat($0) * (.pi * 2 / CGFloat(childCount)) - .pi / 2 }
+        let fullCircle = CGFloat.pi * 2
+        let angleStep = fullCircle / CGFloat(childCount)
+        let startingAngle = -CGFloat.pi / 2
+        return (0..<childCount).map { index -> CGFloat in
+            CGFloat(index) * angleStep + startingAngle
+        }
     }
 
     static func outerItemCenter(

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - develop
+      - "release/**"
+      - "hotfix/**"
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    name: Test and unsigned Release build
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen --version
+          xcodebuild -version
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Verify non-hosted test isolation
+        run: ./scripts/verify-test-isolation.sh
+
+      - name: Run tests
+        run: |
+          xcodebuild \
+            -project WindowRanger.xcodeproj \
+            -scheme WindowRanger \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+      - name: Run static analysis
+        run: |
+          xcodebuild \
+            -project WindowRanger.xcodeproj \
+            -scheme WindowRanger \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            analyze
+
+      - name: Build unsigned Release configuration
+        run: |
+          xcodebuild \
+            -project WindowRanger.xcodeproj \
+            -scheme WindowRanger \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            build

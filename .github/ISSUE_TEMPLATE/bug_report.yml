@@ -1,0 +1,76 @@
+name: Bug report
+description: Report reproducible behaviour that does not match the documented outcome.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve WindowRanger. Do not include vulnerabilities or private data here.
+        Search existing issues first, and use the Security Policy for suspected vulnerabilities.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: This is not a security vulnerability or conduct report.
+          required: true
+        - label: I removed window titles, document names, URLs, user paths, credentials, and other private data.
+          required: true
+  - type: input
+    id: build
+    attributes:
+      label: WindowRanger build
+      description: Commit hash, version, or Xcode build identity.
+      placeholder: e.g. main at abc1234, Debug
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS and hardware
+      description: macOS version, Mac model, and display topology relevant to the problem.
+      placeholder: e.g. macOS 15.6, MacBook Pro, built-in plus one external display
+    validations:
+      required: true
+  - type: dropdown
+    id: evidence
+    attributes:
+      label: Evidence level
+      options:
+        - Observed once
+        - Reproduced consistently
+        - Supported by privacy-safe diagnostics
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: Describe the visible result and relevant workspace, layout, display, and focused app context.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Include the smallest sequence that reproduces the problem and whether the old build was gracefully quit first.
+      placeholder: |
+        1. Quit the previous build using Quit WindowRanger.
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Privacy-safe diagnostics
+      description: Optional bounded excerpt. Explain what it shows; redact unrelated identifiers and private content.

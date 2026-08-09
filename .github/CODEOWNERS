@@ -1,0 +1,14 @@
+# Default review owner. Keep this file protected because it controls review routing.
+* @VeniVidiVici
+
+# Community, security, and repository policy changes require maintainer review.
+/.github/ @VeniVidiVici
+/CODE_OF_CONDUCT.md @VeniVidiVici
+/CONTRIBUTING.md @VeniVidiVici
+/GOVERNANCE.md @VeniVidiVici
+/SECURITY.md @VeniVidiVici
+/.github/workflows/ @VeniVidiVici
+/config/ExportOptions-DeveloperID.plist @VeniVidiVici
+/docs/first-github-release.md @VeniVidiVici
+/scripts/build-distribution.sh @VeniVidiVici
+/scripts/create-github-release.sh @VeniVidiVici

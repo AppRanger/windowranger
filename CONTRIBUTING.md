@@ -1,39 +1,81 @@
 # Contributing to WindowRanger
 
-WindowRanger is a pre-release native macOS project. The
-repository is being prepared for later open sourcing; these instructions document the current safe
-development workflow, not a promise of public compatibility.
+Thank you for considering a contribution. WindowRanger is a pre-release native macOS project that
+controls real windows through Accessibility APIs, so changes must favour user safety, predictable
+behaviour, and honest validation over breadth.
 
-## Requirements
+Please read the [Code of Conduct](CODE_OF_CONDUCT.md) before participating. For help using or
+building the project, see [Support](SUPPORT.md). Do not report vulnerabilities in a public issue;
+follow the [Security Policy](SECURITY.md) instead.
 
-- macOS 14 or later
-- Xcode matching the checked-in project settings
-- [XcodeGen](https://github.com/yonaskolb/XcodeGen) only when `project.yml` or source membership changes
-- A personal Development Team for an interactive signed build
+## Before you start
 
-Generate the project only when needed:
+- Search the existing issues and the [work queue](TODO.md) before opening a duplicate.
+- Use an issue to propose new features, broad refactors, new dependencies, persistence changes, or
+  changes to window-management behaviour before investing in an implementation.
+- Small, well-scoped bug fixes, tests, and documentation improvements may go directly to a pull
+  request.
+- Keep pull requests focused on one coherent outcome. Maintainers may ask for unrelated changes to
+  be split out.
+- Native macOS Spaces integration is an explicit non-goal. Items in the work queue marked
+  **Needs decision** or **Held** are not approved implementation work.
+- Read the [release channels and branching](docs/release-channels-and-branching.md) contract before
+  choosing a branch base or proposing release, versioning, update, or packaging changes.
+
+Opening an issue does not guarantee that a proposal will be accepted. Early discussion is intended
+to avoid wasted effort and establish the product and safety boundaries first.
+
+## Development setup
+
+You need:
+
+- macOS 14 or later;
+- Xcode compatible with the checked-in project settings;
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) when `project.yml` or source membership changes;
+- a personal Apple Development Team for interactive signed builds.
+
+Clone the repository, then generate the Xcode project only when needed:
 
 ```sh
+git clone https://github.com/windowranger/windowranger.git
+cd windowranger
 xcodegen generate
+open WindowRanger.xcodeproj
 ```
 
-Do not change the bundle identifier or create a parallel Debug identifier merely for convenience.
-Accessibility trust is attached to the signed app identity, and duplicate/stale products make live
-testing unreliable.
+Select your Development Team and run the `WindowRanger` scheme. The app requests Accessibility
+access on first launch. iCloud key-value sync requires a signed build with the iCloud capability
+available to the selected team.
 
-## Code style
+If you also use an installed daily copy on the same Mac, follow the
+[daily development workflow](docs/daily-development-workflow.md) so only one copy runs at a time.
 
-- Prefer small typed models and pure decision functions before AppKit/AX side effects.
-- Keep workspace, display, focus and layout business rules out of renderers.
+Do not change the bundle identifier or create a parallel Debug identifier for convenience.
+Accessibility trust is attached to the signed app identity, and duplicate or stale products make
+live testing unreliable. Quit AeroSpace or other window managers before testing overlapping global
+shortcuts.
+
+## Implementation principles
+
+- Prefer small typed models and pure decision functions before AppKit or Accessibility side effects.
+- Keep workspace, display, focus, and layout business rules out of renderers.
 - Inject system and filesystem boundaries so unit tests stay deterministic and non-hosted.
-- Preserve user-owned windows on uncertainty: ignore/defer rather than guessing a destructive frame.
-- Use privacy-safe identifiers in diagnostics; never add titles, document names, URLs, typed content,
-  full user paths or window contents.
-- Keep synced profile content and machine-local/session state explicitly separate.
+- Preserve user-owned windows on uncertainty: ignore or defer rather than guessing a destructive
+  frame.
+- Never write a frame before central admission and current-context validation.
+- Keep reusable synced profile content, machine-local settings, and WindowServer-session state
+  explicitly separate.
+- Use privacy-safe identifiers in diagnostics. Never add window titles, document names, URLs, typed
+  content, full user paths, or window contents.
+- Add deterministic tests for new decisions and regressions. Update documentation when behaviour or
+  safety boundaries change.
 
-## Safe test workflow
+The [architecture guide](ARCHITECTURE.md) documents the system boundaries and invariants in more
+detail.
 
-Use focused non-hosted tests while iterating, then the full suite once at a checkpoint:
+## Test safely
+
+Run focused non-hosted tests while iterating, then run the full suite at a coherent checkpoint:
 
 ```sh
 ./scripts/verify-test-isolation.sh
@@ -45,40 +87,68 @@ xcodebuild -project WindowRanger.xcodeproj \
   test
 ```
 
-The Test action must continue to report only `WindowRangerTests` in its dependency graph. It must
-not build, host or macro-expand `WindowRanger.app`. Tests must not register Carbon hotkeys, prompt
-for Accessibility, change login items, access iCloud, write diagnostics in the user's home directory,
-or inspect/move live windows.
+The Test action must report only `WindowRangerTests` in its dependency graph. It must not build,
+host, or macro-expand `WindowRanger.app`. Tests must not register Carbon hotkeys, prompt for
+Accessibility, change login items, access iCloud, write diagnostics in the user's home directory,
+or inspect or move live windows.
 
 For implementation checkpoints:
 
-1. run the smallest relevant test class;
-2. run the complete non-hosted suite once the subsystem is coherent;
-3. build signed Debug only for a live-test candidate;
-4. reserve universal Release, signature, LaunchServices and privacy-boundary checks for a milestone.
+1. Run the smallest relevant test class.
+2. Run the complete non-hosted suite once the subsystem is coherent.
+3. Build signed Debug only for a deliberate live-test candidate.
+4. Reserve universal Release, signature, LaunchServices, notarization, and privacy-boundary checks
+   for a release milestone.
 
-Do not use disposable app build directories: macOS/Xcode can register every built app with
+Do not use disposable app build directories. macOS and Xcode can register every built app with
 LaunchServices. Use the canonical Xcode DerivedData product for app builds and the non-hosted target
 for background tests.
 
 ## Live-window safety
 
-Never launch, stop, replace or automate a user's running WindowRanger while doing background
-verification. Do not reset TCC, alter Accessibility permissions, mutate the real login-item state or
-move/resize user windows from tests. A human live test must begin by gracefully quitting the old
-build through its menu, then running the intended signed Debug product from Xcode.
+Never launch, stop, replace, or automate a contributor's running WindowRanger during background
+verification. Do not reset TCC, alter Accessibility permissions, mutate the real login-item state,
+or move or resize user windows from tests.
 
-Xcode Stop is a hard termination and does not test graceful window restoration. Use **Quit
-WindowRanger** when validating quit recovery.
+A human live test must begin by gracefully quitting the old build through its menu, then running the
+intended signed Debug product from Xcode. Xcode Stop is a hard termination and does not test graceful
+window restoration. Use **Quit WindowRanger** when validating quit recovery.
 
-## Changes and review
+When a pull request still needs signed-app or multi-display testing, say so plainly. Passing unit
+tests is not evidence that live Accessibility behaviour, packaging, notarization, or distribution
+has been validated.
 
-- Add deterministic tests for each new decision and regression.
-- Update README/docs and the canonical feature roadmap with built/tested/live-pending truth.
-- Keep commits scoped to one logical checkpoint and do not include DerivedData, `.build`, app bundles,
-  logs, screenshots not intended as docs, credentials or machine-specific paths.
-- Treat crashes, data loss, privacy/security and testing blockers as immediate; otherwise group bugs
-  at a safe subsystem checkpoint.
+GitHub Actions repeats project generation, isolated tests, static analysis, and an unsigned Release
+compile. It deliberately has no Apple signing or notarization secrets. Maintainer-only distribution
+uses the [first-release runbook](docs/first-github-release.md), not the daily installer.
 
-Before a public contribution process is announced, issue/PR templates, support channels and release
-expectations remain intentionally unspecified.
+## Pull request workflow
+
+1. Fork the repository and create a short-lived topic branch from `develop`. Use
+   `fix/<wr-id>-<topic>`, `feature/<wr-id>-<topic>`, `docs/<wr-id>-<topic>`, or
+   `chore/<wr-id>-<topic>` in lowercase kebab-case; omit the work-item ID when none exists.
+2. Make the smallest coherent change and add or update tests and documentation.
+3. Run the isolation check and the relevant tests.
+4. Open a pull request using the repository template. Link the issue when one exists.
+5. Describe user-visible behaviour, risk, automated evidence, and any live validation still needed.
+6. Address review feedback with additional commits; maintainers may squash when merging.
+
+Ordinary pull requests target `develop`. Only reviewed `release/*` and `hotfix/*` promotion work
+targets `main`; contributors must not retarget feature work to Stable to bypass the release flow.
+
+Before requesting review, confirm that the change:
+
+- contains no credentials, private diagnostics, machine-specific paths, DerivedData, `.build`, app
+  bundles, or accidental screenshots;
+- preserves the non-hosted test boundary and the safety invariants in `ARCHITECTURE.md`;
+- includes tests proportionate to the risk;
+- updates README, architecture, privacy, or release documentation when those claims changed;
+- leaves unrelated formatting or generated-project churn out of the diff.
+
+Contributors are responsible for understanding and reviewing everything they submit, including code
+produced with automated or AI-assisted tools.
+
+## Licensing
+
+By submitting a contribution, you agree that it may be distributed under the repository's
+[MIT License](LICENSE). No contributor licence agreement is currently required.

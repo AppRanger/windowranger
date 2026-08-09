@@ -1,0 +1,49 @@
+name: Feature request
+description: Propose a focused product improvement or new capability.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Explain the problem before the solution. Proposals are evaluated against safety, privacy,
+        product scope, macOS platform constraints, and long-term maintenance cost.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and the canonical work queue.
+          required: true
+        - label: This proposal does not assume native macOS Spaces integration.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: What user need is not met today? Include concrete context.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the smallest useful result without prescribing implementation details unless necessary.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing WindowRanger behaviour, macOS features, or other workflows you tried.
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety, privacy, and compatibility
+      description: Note effects on real windows, Accessibility, persistence, displays, profiles, shortcuts, or diagnostics.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Acceptance boundary
+      description: What would make the request complete, and what should remain out of scope?

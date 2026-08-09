@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "product": "WindowRanger",
+  "generatedAt": "2026-08-09",
+  "generator": "OpenAI built-in image generation",
+  "selectedDirection": "helmet-signal",
+  "characterIdentityReference": "../characters/canonical/windowranger-robot.png",
+  "concepts": {
+    "helmet-signal": {
+      "default": "concepts/helmet-signal/default.png",
+      "dark": "concepts/helmet-signal/dark.png",
+      "status": "selected"
+    },
+    "ranger-portrait": {
+      "default": "concepts/ranger-portrait/default.png",
+      "dark": "concepts/ranger-portrait/dark.png",
+      "status": "retained"
+    },
+    "window-portal": {
+      "default": "concepts/window-portal/default.png",
+      "dark": "concepts/window-portal/dark.png",
+      "status": "retained"
+    }
+  },
+  "productionMasters": {
+    "default": "production/source/default-1024.png",
+    "dark": "production/source/dark-1024.png",
+    "mono": "production/source/mono-1024.png"
+  },
+  "iconComposer": "../../../Sources/Resources/AppIcon.icon",
+  "macOSSizes": [16, 32, 64, 128, 256, 512, 1024],
+  "exports": {
+    "defaultIconset": "exports/macos/default.iconset",
+    "darkIconset": "exports/macos/dark.iconset",
+    "monoIconset": "exports/macos/mono.iconset",
+    "defaultICNS": "exports/macos/WindowRanger.icns",
+    "darkICNS": "exports/macos/WindowRanger-dark.icns",
+    "monoICNS": "exports/macos/WindowRanger-mono.icns"
+  },
+  "notes": [
+    "The macOS system applies the final icon mask; source artwork is square and unmasked.",
+    "Default, Dark, and Mono preserve the same core character features.",
+    "AppIcon.icon is the modern editable source; the asset catalog remains the deterministic raster fallback.",
+    "Dark and Mono masters are retained for future art-direction changes and manual export."
+  ]
+}

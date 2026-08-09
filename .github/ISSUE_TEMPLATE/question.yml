@@ -1,0 +1,39 @@
+name: Question or support request
+description: Ask for help building, testing, or using the pre-release project.
+title: "[Question]: "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Support is best effort. Read SUPPORT.md and search existing issues before posting. Do not
+        include vulnerabilities, credentials, private diagnostics, or personal window content.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I read SUPPORT.md and searched existing issues.
+          required: true
+        - label: This is not a security vulnerability or conduct report.
+          required: true
+  - type: input
+    id: build
+    attributes:
+      label: WindowRanger build
+      description: Commit hash, version, or state that this is a general project question.
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Include what you are trying to do and where you are blocked.
+    validations:
+      required: true
+  - type: textarea
+    id: attempts
+    attributes:
+      label: What have you tried?
+      description: Include relevant commands and privacy-safe output.
