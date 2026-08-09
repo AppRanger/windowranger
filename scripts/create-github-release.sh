@@ -7,11 +7,13 @@ script_name="${0:t}"
 release_root="${WINDOWRANGER_RELEASE_ROOT:-$repository_root/.build/releases}"
 version=""
 notes_file=""
+verify_existing=false
 
 usage() {
-    print "Usage: $script_name --version VERSION [--notes-file PATH]"
+    print "Usage: $script_name --version VERSION [--notes-file PATH] [--verify-existing]"
     print ""
     print "Creates a draft GitHub release from an already pushed tag and notarized local artifacts."
+    print "Use --verify-existing to download and verify an existing release without changing it."
     print "It never publishes the draft or changes repository visibility."
 }
 
@@ -27,6 +29,7 @@ while (( $# > 0 )); do
             notes_file="$2"
             shift
             ;;
+        --verify-existing) verify_existing=true ;;
         -h|--help)
             usage
             exit 0
@@ -54,6 +57,83 @@ checksum="$archive.sha256"
 dmg="$release_directory/WindowRanger-$version.dmg"
 dmg_checksum="$dmg.sha256"
 manifest="$release_directory/WindowRanger-$version.release.txt"
+verifier="$repository_root/scripts/verify-release-assets.sh"
+typeset -a expected_assets
+expected_assets=(
+    "WindowRanger-$version.dmg"
+    "WindowRanger-$version.dmg.sha256"
+    "WindowRanger-$version.release.txt"
+    "WindowRanger-$version.zip"
+    "WindowRanger-$version.zip.sha256"
+)
+
+[[ -x "$verifier" ]] || { print -u2 "Release verifier is not executable: $verifier"; exit 1; }
+
+tag_commit="$(/usr/bin/git -C "$repository_root" rev-list -n 1 "$tag" 2>/dev/null || true)"
+[[ -n "$tag_commit" ]] || { print -u2 "Local tag does not exist: $tag"; exit 1; }
+
+remote_tag_commit="$(
+    /usr/bin/git -C "$repository_root" ls-remote --tags origin "refs/tags/$tag^{}" |
+        /usr/bin/awk '{ print $1 }'
+)"
+if [[ -z "$remote_tag_commit" ]]; then
+    remote_tag_commit="$(
+        /usr/bin/git -C "$repository_root" ls-remote --tags origin "refs/tags/$tag" |
+            /usr/bin/awk '{ print $1 }'
+    )"
+fi
+[[ -n "$remote_tag_commit" ]] || { print -u2 "Tag has not been pushed to origin: $tag"; exit 1; }
+[[ "$remote_tag_commit" == "$tag_commit" ]] || {
+    print -u2 "Remote tag $tag does not resolve to the local tag commit"
+    exit 1
+}
+
+repo_name="$(cd "$repository_root" && gh repo view --json nameWithOwner --jq .nameWithOwner)"
+
+verify_github_assets() {
+    local download_directory
+    local expected_asset_list
+    local remote_asset_list
+
+    expected_asset_list="$(printf '%s\n' "${expected_assets[@]}" | LC_ALL=C /usr/bin/sort)"
+    remote_asset_list="$(
+        gh release view "$tag" --repo "$repo_name" --json assets --jq '.assets[].name' |
+            LC_ALL=C /usr/bin/sort
+    )"
+    [[ "$remote_asset_list" == "$expected_asset_list" ]] || {
+        print -u2 "GitHub release assets do not match the expected five-file set"
+        print -u2 "Expected:"
+        print -u2 -r -- "$expected_asset_list"
+        print -u2 "Found:"
+        print -u2 -r -- "$remote_asset_list"
+        return 1
+    }
+
+    download_directory="$(/usr/bin/mktemp -d /tmp/windowranger-release-download.XXXXXX)"
+    if ! gh release download "$tag" --repo "$repo_name" --dir "$download_directory"; then
+        /bin/rm -R -- "$download_directory"
+        return 1
+    fi
+    if ! "$verifier" \
+        --version "$version" \
+        --release-directory "$download_directory" \
+        --expected-commit "$tag_commit"; then
+        /bin/rm -R -- "$download_directory"
+        return 1
+    fi
+    /bin/rm -R -- "$download_directory"
+}
+
+if [[ "$verify_existing" == true ]]; then
+    gh release view "$tag" --repo "$repo_name" >/dev/null 2>&1 || {
+        print -u2 "No GitHub release exists for $tag"
+        exit 1
+    }
+    print "Downloading and verifying the existing GitHub release for $tag..."
+    verify_github_assets
+    print "GitHub release assets round-trip verified: $tag"
+    exit 0
+fi
 
 [[ -f "$archive" ]] || { print -u2 "Missing notarized release archive: $archive"; exit 1; }
 [[ -f "$checksum" ]] || { print -u2 "Missing release checksum: $checksum"; exit 1; }
@@ -66,17 +146,14 @@ manifest="$release_directory/WindowRanger-$version.release.txt"
     exit 1
 }
 
-tag_commit="$(/usr/bin/git -C "$repository_root" rev-list -n 1 "$tag" 2>/dev/null || true)"
 head_commit="$(/usr/bin/git -C "$repository_root" rev-parse HEAD)"
-[[ -n "$tag_commit" ]] || { print -u2 "Local tag does not exist: $tag"; exit 1; }
 [[ "$tag_commit" == "$head_commit" ]] || { print -u2 "$tag does not point to HEAD"; exit 1; }
+"$verifier" --version "$version" --release-directory "$release_directory" --expected-commit "$head_commit"
 
-remote_tag="$(/usr/bin/git -C "$repository_root" ls-remote --tags origin "refs/tags/$tag" | /usr/bin/awk '{ print $1 }')"
-[[ -n "$remote_tag" ]] || { print -u2 "Tag has not been pushed to origin: $tag"; exit 1; }
-
-repo_name="$(cd "$repository_root" && gh repo view --json nameWithOwner --jq .nameWithOwner)"
 if gh release view "$tag" --repo "$repo_name" >/dev/null 2>&1; then
     print -u2 "A GitHub release already exists for $tag"
+    print -u2 "Verify it without changing it using:"
+    print -u2 "  ./$script_name --version $version --verify-existing"
     exit 1
 fi
 
@@ -100,5 +177,12 @@ fi
 
 print "Creating a draft GitHub release for $tag..."
 release_url="$(gh "${release_arguments[@]}")"
+print "Round-trip verifying the uploaded GitHub assets..."
+verify_github_assets || {
+    print -u2 "The draft exists, but its downloaded assets did not pass verification."
+    print -u2 "Inspect the draft and rerun with --verify-existing after correcting it."
+    exit 1
+}
 print "Draft release created: $release_url"
-print "Review the attached DMG, ZIP, checksums, title, and notes on GitHub before publishing it."
+print "The downloaded DMG, ZIP, checksums, and manifest match the tag and local provenance."
+print "Review the title, notes, and remaining human release gates on GitHub before publishing it."

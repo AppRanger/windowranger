@@ -1,7 +1,8 @@
 # WindowRanger
 
-> **Pre-release:** WindowRanger is under active development, has not been packaged or published,
-> and still has live-validation work outstanding.
+> **Pre-release:** WindowRanger is under active development. The first signed and notarized Beta is
+> packaged as a private draft, but it is not publicly available and still has live-validation work
+> outstanding.
 
 A small, native macOS virtual-workspace manager built around one workflow rather than a
 general-purpose command language.
@@ -10,10 +11,10 @@ WindowRanger will use three release channels: Stable from `main`, Beta from rele
 rolling Dev builds from `develop`. Stable and opt-in Beta updates will use Sparkle later; Dev builds
 will remain outside automatic updates. No public release artifacts exist yet.
 
-The planned first download is the signed and notarized `v0.1.0-beta.1` DMG attached to a GitHub
-prerelease, with a notarized ZIP as a fallback. Until it appears under GitHub Releases, source
-checkouts and local development builds are the only available forms; generated GitHub source
-archives are not an installable macOS app.
+The prepared first download is the signed and notarized `v0.1.0-beta.1` DMG in a private draft
+GitHub prerelease, with a notarized ZIP as a fallback. Until the maintainer explicitly makes the
+repository public and publishes that draft, source checkouts and local development builds are the
+only available forms; generated GitHub source archives are not an installable macOS app.
 
 ## Project documentation
 
@@ -26,6 +27,7 @@ archives are not an installable macOS app.
 - [Release channels and branching](docs/release-channels-and-branching.md)
 - [First GitHub release runbook](docs/first-github-release.md)
 - [Release notes template](docs/release-notes-template.md)
+- [WindowRanger 0.1.0 Beta 1 release notes](docs/releases/v0.1.0-beta.1.md)
 - [Daily use and local development](docs/daily-development-workflow.md)
 - [Permissions and privacy](docs/permissions-and-privacy.md)
 - [Security policy](SECURITY.md)
@@ -145,9 +147,13 @@ The selected three-column Workspaces Settings screen has the same isolated produ
 
 The current selected-reference review and durable output paths are recorded in `design-qa.md`.
 
-The scheme runs as **Debug** from Xcode and archives as **Release**. Both configurations use the
-same signed `com.windowranger.WindowRanger` identity, so Debug does not create a second Accessibility
-client. Debug app runs write structured JSON Lines diagnostics to
+The scheme runs as **Debug** from Xcode and archives as **Release**. Both configurations currently
+use the `com.windowranger.WindowRanger` bundle identifier, but Apple Development and Developer ID
+signatures have different designated requirements. macOS can therefore require separate
+Accessibility approval when switching between the Xcode Debug product and the installed release;
+only one copy should run at a time. A distinct development-only app identity is tracked separately
+and will not change the Stable/Beta identity without an explicit decision. Debug app runs write
+structured JSON Lines diagnostics to
 `~/Library/Logs/com.windowranger.WindowRanger/diagnostics.jsonl`; the file rotates at 1 MB and retains two
 1 MB backups. Release builds do not create this verbose file. Unit tests use memory or no-op loggers
 and never write there.

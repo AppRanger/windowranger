@@ -117,6 +117,30 @@ smallest useful outcome and acceptance boundary.
   mutations; verify bounds and schema stability; and inject forbidden privacy values through every
   source to prove none survive the final output.
 
+### WR-019 — Separate the local Xcode development identity
+
+- **Type:** Development workflow / signing
+- **Priority:** P2
+- **Status:** Needs decision
+- **Evidence:** User-observed and signing-requirement backed during the first Beta smoke test.
+- **Current behavior:** Xcode Debug and the installed Developer ID app use the same
+  `com.windowranger.WindowRanger` bundle identifier but different designated requirements. macOS can
+  therefore treat them as separate Accessibility clients while LaunchServices still sees the same
+  bundle identifier, making handoff and permission recovery ambiguous.
+- **Smallest useful outcome:** Decide whether the local Xcode product should use a clearly named
+  development-only bundle identifier and app name while Stable and Beta retain the canonical public
+  identity.
+- **Acceptance:**
+  - the installed public app and Xcode development app are unambiguous in Accessibility settings,
+    LaunchServices, process inspection, and menus;
+  - the required development App ID, provisioning profile, and iCloud capability are configured
+    before changing the project;
+  - Xcode handoff scripts quit and resume only the intended product;
+  - public Stable/Beta bundle identity, preferences, update continuity, and release provenance do
+    not change;
+  - migration guidance avoids global TCC or LaunchServices resets and is live-tested on the
+    maintainer's Mac.
+
 ## Ready
 
 ### WR-004 — Bound synced profile-library input with recovery UX
@@ -308,22 +332,24 @@ second copy of that checklist.
 - **Implemented groundwork:** Unprivileged GitHub Actions verification, Hardened Runtime build
   setting, Developer ID export configuration, approved Stable and construction-themed Beta DMG
   artwork, deterministic headless DMG packaging, local build/notarize/package script, draft-release
-  script, release-notes template, and first-release runbook.
-- **Automated evidence:** Stable Xcode 26.6 passes the non-hosted test-isolation check and the current
-  local 419-test suite. GitHub Actions run
-  [31330255231](https://github.com/windowranger/windowranger/actions/runs/31330255231) independently
-  passes isolation, 417 committed tests, Release static analysis, an unsigned universal
-  `arm64 x86_64` Release build, Stable/Beta DMG creation and verification, and artifact upload on
-  macOS 26 with Xcode 26.6. Both exact hosted DMGs also pass local read-only disk-image, bundle
-  identity, `/Applications` shortcut, background, and Finder-metadata verification without launching
-  the app. The intended `44NAD22AK6` team has a local Developer ID Application identity with private
-  key, an installed all-device Developer ID profile authorizing the public bundle ID and iCloud
-  key-value entitlement through August 2044, and a validated `WindowRanger` notary Keychain profile.
-  The credentialed archive/export/notarization path remains untested.
+  script with local/uploaded asset verification, tracked release notes, and first-release runbook.
+- **Verified evidence:** Tag `v0.1.0-beta.1`, `develop`, and `release/0.1.0` resolve to exact artifact
+  commit `59cea61a920dfa1459c3f05718fb2127b5cba0b0`. Stable Xcode 26.6 passed clean project
+  generation, non-hosted tests, static analysis, universal archive/export, exact team/bundle/signing
+  checks, app and DMG notarization with zero Apple log issues, stapling, Gatekeeper assessment, DMG
+  structure verification, checksums, and provenance. Manually dispatched GitHub Actions run
+  [31334467211](https://github.com/windowranger/windowranger/actions/runs/31334467211) independently
+  passed isolation, committed tests, Release analysis/build, Stable/Beta DMG smoke verification, and
+  artifact upload for the exact commit. The private draft contains the DMG, ZIP, both checksums, and
+  manifest; all five assets were downloaded again and checksum-verified. The maintainer installed
+  and ran the exact signed DMG successfully after recovering the separate Accessibility trust for
+  the Developer ID copy.
 - **Current blockers:**
   - complete the remaining product-identity, repository-publication, manual regression,
     accessibility, privacy, and clean-package gates in `docs/release-checklist.md`;
-  - build and test the exact artifact from a clean `release/0.1.0` branch using stable Xcode.
+  - prove automatic push and pull-request CI events; the exact release checks are green, but all
+    recorded runs so far were manually dispatched;
+  - configure branch/tag protection when the repository is public or GitHub Pro makes it available.
 - **Publication gate:** Creating the draft is not publication. Changing repository visibility and
   publishing the reviewed draft each require explicit maintainer action at the final checkpoint.
 

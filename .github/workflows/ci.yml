@@ -4,11 +4,6 @@ name: CI
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - develop
-      - "release/**"
-      - "hotfix/**"
   pull_request:
     branches:
       - main
@@ -41,6 +36,9 @@ jobs:
 
       - name: Generate Xcode project
         run: xcodegen generate
+
+      - name: Check release script syntax
+        run: zsh -n scripts/*.sh
 
       - name: Verify non-hosted test isolation
         run: ./scripts/verify-test-isolation.sh
