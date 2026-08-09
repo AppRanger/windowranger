@@ -293,6 +293,57 @@ enum TiledLayoutEngine {
             ?? flatTree(windowKeys: windowKeys, weights: weights, orientation: orientation)
     }
 
+    /// Applies an explicit workspace orientation to every split while retaining the exact BSP
+    /// topology, ratios and window identities. A direct layout shortcut is intentionally a whole-
+    /// workspace orientation command: horizontal means a column flow and vertical means a row
+    /// flow, including a tree that was originally created from the session-local placement model.
+    static func reoriented(
+        _ tree: TiledNode,
+        orientation: WorkspaceLayoutOrientation
+    ) -> TiledNode? {
+        guard orientation != .automatic,
+              (try? validated(tree, participants: Set(tree.windowKeys))) != nil
+        else { return nil }
+        let targetAxis: SplitAxis = orientation == .vertical ? .vertical : .horizontal
+
+        func transform(_ node: TiledNode) -> TiledNode {
+            switch node {
+            case .window:
+                return node
+            case let .split(_, ratio, first, second):
+                return .split(
+                    axis: targetAxis,
+                    ratio: ratio,
+                    first: transform(first),
+                    second: transform(second)
+                )
+            }
+        }
+
+        let result = transform(tree)
+        return (try? validated(result, participants: Set(tree.windowKeys))).map { result }
+    }
+
+    /// Workspace orientation is profile-backed, while placement trees are partitioned by physical
+    /// display for the current WindowServer session. Update every retained partition for only the
+    /// selected workspace so Unified displays and a disconnected Independent home agree after it
+    /// reconnects, without touching another workspace.
+    static func reorientedPartitions(
+        _ trees: [TiledLayoutPartitionKey: TiledNode],
+        workspaceID: UUID,
+        orientation: WorkspaceLayoutOrientation
+    ) -> [TiledLayoutPartitionKey: TiledNode] {
+        guard orientation != .automatic else { return trees }
+        return trees.reduce(into: [:]) { result, entry in
+            if entry.key.workspaceID == workspaceID,
+               let changed = reoriented(entry.value, orientation: orientation) {
+                result[entry.key] = changed
+            } else {
+                result[entry.key] = entry.value
+            }
+        }
+    }
+
     /// Exchanges the two window leaves without changing any split, ratio, or other leaf. Tiled
     /// directional movement must mutate this placement tree because it is the authoritative
     /// geometry model once a workspace has one; changing only the legacy flat order is invisible
