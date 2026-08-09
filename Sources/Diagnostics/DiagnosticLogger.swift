@@ -192,7 +192,7 @@ final class DiagnosticLogger {
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library")
         return library
             .appendingPathComponent("Logs", isDirectory: true)
-            .appendingPathComponent("com.chris.WindowManager", isDirectory: true)
+            .appendingPathComponent("com.windowranger.WindowRanger", isDirectory: true)
             .appendingPathComponent("diagnostics.jsonl")
     }
 

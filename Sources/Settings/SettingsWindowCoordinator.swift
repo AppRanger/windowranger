@@ -474,7 +474,7 @@ private final class AppKitSettingsWindowSurface: SettingsWindowSurface {
 
     func prepareAsFloatingUtility() {
         guard let window else { return }
-        window.identifier = NSUserInterfaceItemIdentifier("com.chris.WindowManager.settings")
+        window.identifier = NSUserInterfaceItemIdentifier("com.windowranger.WindowRanger.settings")
         window.level = .floating
         window.collectionBehavior.insert(.moveToActiveSpace)
     }

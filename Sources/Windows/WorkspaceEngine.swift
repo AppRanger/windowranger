@@ -420,7 +420,7 @@ final class WorkspaceStateStore {
     let fileURL: URL
     private(set) var windowServerSession: String
 
-    private let writeQueue = DispatchQueue(label: "com.chris.WindowManager.workspace-state")
+    private let writeQueue = DispatchQueue(label: "com.windowranger.WindowRanger.workspace-state")
     private let stateLock = NSLock()
     private var lastScheduledState: PersistedWorkspaceState?
     private var pendingWriteStates: [PersistedWorkspaceState] = []
@@ -539,7 +539,7 @@ final class WorkspaceStateStore {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
         return caches
-            .appendingPathComponent("com.chris.WindowManager", isDirectory: true)
+            .appendingPathComponent("com.windowranger.WindowRanger", isDirectory: true)
             .appendingPathComponent("workspace-state.json", isDirectory: false)
     }
 
@@ -692,7 +692,7 @@ final class WorkspaceEngine {
         case swapped
     }
 
-    private let queue = DispatchQueue(label: "com.chris.WindowManager.workspace-engine", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.windowranger.WindowRanger.workspace-engine", qos: .userInitiated)
     private var timer: DispatchSourceTimer?
     private var workspaces: [WorkspaceDefinition]
     private var currentProfileID: UUID?

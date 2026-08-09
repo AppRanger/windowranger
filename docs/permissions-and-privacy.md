@@ -51,7 +51,7 @@ that synchronous cleanup.
 
 Debug app runs can write structured JSON Lines diagnostics to:
 
-`~/Library/Logs/com.chris.WindowManager/diagnostics.jsonl`
+`~/Library/Logs/com.windowranger.WindowRanger/diagnostics.jsonl`
 
 The file is bounded at 1 MB with two 1 MB backups. Debug Settings can copy a bounded, action-aware
 excerpt or reveal the file. Records can include timestamps, session/action IDs, bundle identifiers,
