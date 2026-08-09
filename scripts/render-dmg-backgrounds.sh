@@ -20,8 +20,15 @@ renderer="$repository_root/scripts/render-dmg-background.swift"
 
 for background in "$output_root"/*-background.png; do
     dimensions="$(/usr/bin/sips -g pixelWidth -g pixelHeight "$background")"
-    [[ "$dimensions" == *"pixelWidth: 1440"* && "$dimensions" == *"pixelHeight: 900"* ]] || {
+    [[ "$dimensions" == *"pixelWidth: 720"* && "$dimensions" == *"pixelHeight: 450"* ]] || {
         print -u2 "Unexpected DMG background dimensions: $background"
+        exit 1
+    }
+
+    retina_background="${background:r}@2x.${background:e}"
+    retina_dimensions="$(/usr/bin/sips -g pixelWidth -g pixelHeight "$retina_background")"
+    [[ "$retina_dimensions" == *"pixelWidth: 1440"* && "$retina_dimensions" == *"pixelHeight: 900"* ]] || {
+        print -u2 "Unexpected Retina DMG background dimensions: $retina_background"
         exit 1
     }
 done

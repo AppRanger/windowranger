@@ -64,7 +64,23 @@ applications_link="$mount_root/Applications"
     exit 1
 }
 [[ -f "$mount_root/.DS_Store" ]] || { print -u2 "Finder layout metadata is missing"; exit 1; }
-[[ -f "$mount_root/.background.png" ]] || { print -u2 "DMG background image is missing"; exit 1; }
+
+background_png="$mount_root/.background.png"
+background_tiff="$mount_root/.background.tiff"
+if [[ -f "$background_tiff" ]]; then
+    background_info="$(/usr/bin/tiffutil -info "$background_tiff")"
+    [[ "$background_info" == *"Image Width: 720 Image Length: 450"* ]] || {
+        print -u2 "DMG background is missing its 720x450 standard representation"
+        exit 1
+    }
+    [[ "$background_info" == *"Image Width: 1440 Image Length: 900"* ]] || {
+        print -u2 "DMG background is missing its 1440x900 Retina representation"
+        exit 1
+    }
+elif [[ ! -f "$background_png" ]]; then
+    print -u2 "DMG background image is missing"
+    exit 1
+fi
 
 bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
 [[ "$bundle_identifier" == "com.windowranger.WindowRanger" ]] || {
