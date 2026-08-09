@@ -57,6 +57,25 @@ enum WorkspaceIdentityPolicy {
     }
 }
 
+struct ICloudProfileLibraryIssue: Equatable, Identifiable, Sendable {
+    enum Source: String, Sendable {
+        case remote
+        case local
+    }
+
+    let source: Source
+    let rejection: SyncedProfileLibraryRejection
+    let canReplaceCloudCopy: Bool
+
+    var id: String { "\(source.rawValue):\(rejection.userMessage)" }
+    var message: String {
+        let retained = source == .remote
+            ? "This Mac's local profiles were kept unchanged."
+            : "Local profiles remain available on this Mac but were not written to iCloud."
+        return rejection.userMessage + " " + retained
+    }
+}
+
 @MainActor
 final class SettingsStore: ObservableObject {
     private enum Keys {
@@ -115,9 +134,12 @@ final class SettingsStore: ObservableObject {
             if iCloudSyncEnabled {
                 pushToICloud()
                 ubiquitousStore?.synchronize()
+            } else {
+                iCloudProfileLibraryIssue = nil
             }
         }
     }
+    @Published private(set) var iCloudProfileLibraryIssue: ICloudProfileLibraryIssue?
 
     @Published var radialMenuEnabled: Bool {
         didSet { persistRadialMenuSettings() }
@@ -250,6 +272,7 @@ final class SettingsStore: ObservableObject {
         )
 
         iCloudSyncEnabled = defaults.object(forKey: Keys.iCloudSync) as? Bool ?? false
+        iCloudProfileLibraryIssue = nil
         radialMenuEnabled = defaults.object(forKey: Keys.radialMenuEnabled) as? Bool ?? true
         radialMenuActivationStyle = defaults.string(forKey: Keys.radialMenuActivationStyle)
             .flatMap(RadialMenuActivationStyle.init(rawValue:)) ?? .pressToToggle
@@ -1360,8 +1383,10 @@ final class SettingsStore: ObservableObject {
         guard let data = try? JSONEncoder().encode(library) else { return }
         defaults.set(data, forKey: Keys.profileLibrary)
         guard syncToCloud, !isApplyingRemoteChange, iCloudSyncEnabled, let ubiquitousStore else { return }
-        ubiquitousStore.set(data, forKey: Keys.profileLibrary)
-        ubiquitousStore.synchronize()
+        if validateLocalLibraryForSync(data) {
+            ubiquitousStore.set(data, forKey: Keys.profileLibrary)
+            ubiquitousStore.synchronize()
+        }
     }
 
     private func persistLocalProfileState() {
@@ -1372,7 +1397,9 @@ final class SettingsStore: ObservableObject {
     private func pushToICloud() {
         guard let ubiquitousStore else { return }
         if let data = try? JSONEncoder().encode(ProfileLibrary(profiles: profiles)) {
-            ubiquitousStore.set(data, forKey: Keys.profileLibrary)
+            if validateLocalLibraryForSync(data) {
+                ubiquitousStore.set(data, forKey: Keys.profileLibrary)
+            }
         }
         ubiquitousStore.set(radialMenuEnabled, forKey: Keys.radialMenuEnabled)
         ubiquitousStore.set(radialMenuActivationStyle.rawValue, forKey: Keys.radialMenuActivationStyle)
@@ -1400,7 +1427,31 @@ final class SettingsStore: ObservableObject {
     private func pullFromICloud() {
         guard iCloudSyncEnabled, let ubiquitousStore else { return }
         let remoteLibraryData = ubiquitousStore.data(forKey: Keys.profileLibrary)
-        let remoteLibrary = Self.decodedRemoteProfileLibrary(remoteLibraryData)
+        let remoteValidation = SyncedProfileLibraryPolicy.validate(remoteLibraryData)
+        let remoteLibrary: ProfileLibrary?
+        switch remoteValidation {
+        case .absent:
+            remoteLibrary = nil
+        case let .accepted(library):
+            remoteLibrary = library
+            iCloudProfileLibraryIssue = nil
+        case let .rejected(rejection):
+            remoteLibrary = nil
+            let localCanReplace = encodedLocalProfileLibrary().map {
+                if case .accepted = SyncedProfileLibraryPolicy.validate($0) { return true }
+                return false
+            } ?? false
+            iCloudProfileLibraryIssue = ICloudProfileLibraryIssue(
+                source: .remote,
+                rejection: rejection,
+                canReplaceCloudCopy: localCanReplace
+            )
+            diagnostics.log(
+                category: "profile",
+                event: "icloud-library-rejected",
+                fields: ["reason": String(describing: rejection)]
+            )
+        }
         let remoteRadialEnabled = ubiquitousStore.object(forKey: Keys.radialMenuEnabled) as? Bool
         let remoteRadialActivationStyle = ubiquitousStore.string(forKey: Keys.radialMenuActivationStyle)
             .flatMap(RadialMenuActivationStyle.init(rawValue:))
@@ -1609,10 +1660,56 @@ final class SettingsStore: ObservableObject {
     /// ignored. Machine-local activation, triggers, runtime state, and role bindings are never part
     /// of this decision.
     static func decodedRemoteProfileLibrary(_ data: Data?) -> ProfileLibrary? {
-        guard let data,
-              let decoded = try? JSONDecoder().decode(ProfileLibrary.self, from: data)
-        else { return nil }
-        return decoded.normalized()
+        guard case let .accepted(library) = SyncedProfileLibraryPolicy.validate(data) else {
+            return nil
+        }
+        return library
+    }
+
+    @discardableResult
+    func replaceICloudProfileLibraryWithLocalCopy() -> Bool {
+        guard iCloudSyncEnabled,
+              let ubiquitousStore,
+              let data = encodedLocalProfileLibrary(),
+              case .accepted = SyncedProfileLibraryPolicy.validate(data)
+        else { return false }
+        ubiquitousStore.set(data, forKey: Keys.profileLibrary)
+        ubiquitousStore.synchronize()
+        iCloudProfileLibraryIssue = nil
+        return true
+    }
+
+    private func encodedLocalProfileLibrary() -> Data? {
+        try? JSONEncoder().encode(ProfileLibrary(profiles: profiles))
+    }
+
+    private func validateLocalLibraryForSync(_ data: Data) -> Bool {
+        // A rejected remote value remains untouched until the user chooses the explicit recovery
+        // action. Ordinary local edits must not turn a failed pull into an implicit cloud replace.
+        if iCloudProfileLibraryIssue?.source == .remote {
+            return false
+        }
+        switch SyncedProfileLibraryPolicy.validate(data) {
+        case .accepted:
+            if iCloudProfileLibraryIssue?.source == .local {
+                iCloudProfileLibraryIssue = nil
+            }
+            return true
+        case let .rejected(rejection):
+            iCloudProfileLibraryIssue = ICloudProfileLibraryIssue(
+                source: .local,
+                rejection: rejection,
+                canReplaceCloudCopy: false
+            )
+            diagnostics.log(
+                category: "profile",
+                event: "icloud-library-write-skipped",
+                fields: ["reason": String(describing: rejection)]
+            )
+            return false
+        case .absent:
+            return false
+        }
     }
 
     private func persistRadialMenuSettings() {

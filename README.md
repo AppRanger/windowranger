@@ -192,6 +192,14 @@ per-profile active workspace state, conservative monitor fingerprints, and role-
 locally. A missing, disconnected, or ambiguous role safely falls back without rewriting the synced
 role assignment.
 
+The atomic synced profile-library value is limited to 750,000 encoded bytes, 128 profiles, 128
+workspaces and 64 display roles per profile, 512 app rules per profile, and 256 characters per
+user-facing name. These deliberately leave room inside iCloud key-value storage's shared 1 MB quota.
+Existing local private-install data is never deleted or truncated to meet a sync limit. If a local
+or remote library exceeds a limit, the local library remains authoritative and General Settings
+shows the reason; when the local copy is valid, recovery requires the explicit **Replace iCloud
+Profile Library with This Mac** action.
+
 Automatic selection resolves in a fixed order: a manual pin; an exact known display topology; a
 generic docked or undocked rule on portable Macs; then this Mac's default profile. A manual selection
 cannot be cleared by wake, timers, or later display events—choose **Resume Automatic** in Profiles

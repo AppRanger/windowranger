@@ -256,6 +256,16 @@ private struct GeneralSettingsView: View {
                 Text("Off by default. When enabled, named profile definitions and supported global preferences sync through your private iCloud key-value store. The active profile, automatic trigger mappings, live window state, and physical monitor bindings always remain local to each Mac.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if store.iCloudSyncEnabled, let issue = store.iCloudProfileLibraryIssue {
+                    Label(issue.message, systemImage: "exclamationmark.icloud")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    if issue.canReplaceCloudCopy {
+                        Button("Replace iCloud Profile Library with This Mac") {
+                            store.replaceICloudProfileLibraryWithLocalCopy()
+                        }
+                    }
+                }
                 if let errorMessage = launchAtLogin.errorMessage {
                     Text(errorMessage).font(.caption).foregroundStyle(.red)
                 }

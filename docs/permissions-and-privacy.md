@@ -33,6 +33,14 @@ geometry, abstract display-role names and typed app rules including app bundle i
 not contain open window IDs, titles, frames, focus, monitor serials/fingerprints, the active profile
 or automatic trigger assignments.
 
+The one atomic synced profile-library document is bounded to 750,000 encoded bytes, 128 profiles,
+128 workspaces and 64 display roles per profile, 512 app rules per profile, and 256 characters per
+user-facing name. WindowRanger checks the byte bound before decoding and validates version, counts,
+names and structure before replacing local definitions. Rejected remote data remains untouched in
+iCloud, existing local/private-install profiles remain available without silent truncation, and
+General Settings presents the rejection plus an explicit replace-cloud-with-local recovery action
+when the local document is eligible.
+
 An explicitly requested profile export contains the same reusable definition boundary in a local
 JSON file chosen by the user. Import is additive and does not read or write physical monitor
 identities, runtime workspace/window state, permissions, diagnostics, or the active profile.

@@ -110,9 +110,244 @@ final class ICloudSyncSettingsTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: "menuBarPresentationMode.v1"), "medium")
     }
 
+    func testSyncedLibraryAcceptsDocumentAtCountAndNameBoundaries() throws {
+        let name = String(repeating: "n", count: SyncedProfileLibraryPolicy.maximumNameCharacters)
+        let profiles = (0..<SyncedProfileLibraryPolicy.maximumProfiles).map {
+            profile(name: "\(name.dropLast(String($0).count))\($0)")
+        }
+        let data = try JSONEncoder().encode(ProfileLibrary(profiles: profiles))
+
+        guard case let .accepted(library) = SyncedProfileLibraryPolicy.validate(data) else {
+            return XCTFail("Expected the documented boundary to be accepted")
+        }
+        XCTAssertEqual(library.profiles.count, SyncedProfileLibraryPolicy.maximumProfiles)
+    }
+
+    func testSyncedLibraryRejectsOversizedDocumentBeforeDecoding() {
+        let data = Data(repeating: 0x20, count: SyncedProfileLibraryPolicy.maximumDocumentBytes + 1)
+
+        XCTAssertEqual(SyncedProfileLibraryPolicy.validate(data), .rejected(.documentTooLarge(
+            actualBytes: data.count,
+            maximumBytes: SyncedProfileLibraryPolicy.maximumDocumentBytes
+        )))
+    }
+
+    func testSyncedLibraryRejectsExcessCountsAndNamesWithoutTruncating() throws {
+        let tooMany = (0...SyncedProfileLibraryPolicy.maximumProfiles).map {
+            profile(name: "Profile \($0)")
+        }
+        XCTAssertEqual(
+            SyncedProfileLibraryPolicy.validate(try JSONEncoder().encode(ProfileLibrary(profiles: tooMany))),
+            .rejected(.profileCount(
+                actual: tooMany.count,
+                maximum: SyncedProfileLibraryPolicy.maximumProfiles
+            ))
+        )
+
+        let longName = String(repeating: "x", count: SyncedProfileLibraryPolicy.maximumNameCharacters + 1)
+        XCTAssertEqual(
+            SyncedProfileLibraryPolicy.validate(try JSONEncoder().encode(ProfileLibrary(
+                profiles: [profile(name: longName)]
+            ))),
+            .rejected(.nameTooLong(
+                kind: "profile",
+                maximumCharacters: SyncedProfileLibraryPolicy.maximumNameCharacters
+            ))
+        )
+    }
+
+    func testSyncedLibraryRejectsEveryNestedCollectionLimit() throws {
+        var workspaceHeavy = profile(name: "Workspaces")
+        workspaceHeavy.workspaces = (0...SyncedProfileLibraryPolicy.maximumWorkspacesPerProfile).map {
+            WorkspaceDefinition(name: "Workspace \($0)", key: "1")
+        }
+        XCTAssertEqual(
+            SyncedProfileLibraryPolicy.validate(try JSONEncoder().encode(ProfileLibrary(
+                profiles: [workspaceHeavy]
+            ))),
+            .rejected(.workspaceCount(
+                profileIndex: 0,
+                actual: workspaceHeavy.workspaces.count,
+                maximum: SyncedProfileLibraryPolicy.maximumWorkspacesPerProfile
+            ))
+        )
+
+        var roleHeavy = profile(name: "Roles")
+        roleHeavy.displayRoles = (0...SyncedProfileLibraryPolicy.maximumDisplayRolesPerProfile).map {
+            ProfileDisplayRole(name: "Role \($0)")
+        }
+        XCTAssertEqual(
+            SyncedProfileLibraryPolicy.validate(try JSONEncoder().encode(ProfileLibrary(
+                profiles: [roleHeavy]
+            ))),
+            .rejected(.displayRoleCount(
+                profileIndex: 0,
+                actual: roleHeavy.displayRoles.count,
+                maximum: SyncedProfileLibraryPolicy.maximumDisplayRolesPerProfile
+            ))
+        )
+
+        var ruleHeavy = profile(name: "Rules")
+        ruleHeavy.appRules = (0...SyncedProfileLibraryPolicy.maximumAppRulesPerProfile).map {
+            AppRule(bundleIdentifier: "com.example.app\($0)", displayName: "App \($0)")
+        }
+        XCTAssertEqual(
+            SyncedProfileLibraryPolicy.validate(try JSONEncoder().encode(ProfileLibrary(
+                profiles: [ruleHeavy]
+            ))),
+            .rejected(.appRuleCount(
+                profileIndex: 0,
+                actual: ruleHeavy.appRules.count,
+                maximum: SyncedProfileLibraryPolicy.maximumAppRulesPerProfile
+            ))
+        )
+    }
+
+    @MainActor
+    func testRejectedRemoteLibraryKeepsLocalProfilesAndOffersRecovery() throws {
+        let (defaults, suite) = isolatedDefaults("RejectedRemote")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+        let local = ProfileLibrary(profiles: [profile(name: "Local")])
+        defaults.set(try JSONEncoder().encode(local), forKey: "profileLibrary.v1")
+        let cloud = InspectableUbiquitousStore()
+        let rejectedRemote = Data(repeating: 0x20, count: SyncedProfileLibraryPolicy.maximumDocumentBytes + 1)
+        cloud.seed(rejectedRemote, forKey: "profileLibrary.v1")
+
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+
+        XCTAssertEqual(store.profiles.map(\.name), ["Local"])
+        XCTAssertEqual(store.iCloudProfileLibraryIssue?.source, .remote)
+        XCTAssertTrue(store.iCloudProfileLibraryIssue?.canReplaceCloudCopy == true)
+        XCTAssertEqual(cloud.peekData(forKey: "profileLibrary.v1"), rejectedRemote)
+    }
+
+    @MainActor
+    func testRecoveryExplicitlyReplacesRejectedRemoteWithValidLocalCopy() throws {
+        let (defaults, suite) = isolatedDefaults("RecoverRemote")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+        let local = ProfileLibrary(profiles: [profile(name: "Kept Local")])
+        defaults.set(try JSONEncoder().encode(local), forKey: "profileLibrary.v1")
+        let cloud = InspectableUbiquitousStore()
+        cloud.seed(Data("not-json".utf8), forKey: "profileLibrary.v1")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+
+        XCTAssertTrue(store.replaceICloudProfileLibraryWithLocalCopy())
+        let cloudData = try XCTUnwrap(cloud.peekData(forKey: "profileLibrary.v1"))
+        XCTAssertEqual(SettingsStore.decodedRemoteProfileLibrary(cloudData)?.profiles.map(\.name), ["Kept Local"])
+        XCTAssertNil(store.iCloudProfileLibraryIssue)
+    }
+
+    @MainActor
+    func testLocalEditsCannotImplicitlyReplaceARejectedRemoteLibrary() throws {
+        let (defaults, suite) = isolatedDefaults("RejectedRemoteEdit")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+        let local = ProfileLibrary(profiles: [profile(name: "Local")])
+        defaults.set(try JSONEncoder().encode(local), forKey: "profileLibrary.v1")
+        let cloud = InspectableUbiquitousStore()
+        let rejectedRemote = Data("not-json".utf8)
+        cloud.seed(rejectedRemote, forKey: "profileLibrary.v1")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+
+        store.renameProfile(store.activeProfileID, to: "Edited Local")
+
+        XCTAssertEqual(store.profiles.map(\.name), ["Edited Local"])
+        XCTAssertEqual(cloud.peekData(forKey: "profileLibrary.v1"), rejectedRemote)
+        XCTAssertEqual(store.iCloudProfileLibraryIssue?.source, .remote)
+    }
+
+    @MainActor
+    func testExistingOversizedLocalPrivateLibraryRemainsAvailableWhenSyncIsOff() throws {
+        let (defaults, suite) = isolatedDefaults("ExistingLocal")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let profiles = (0...SyncedProfileLibraryPolicy.maximumProfiles).map {
+            profile(name: "Private \($0)")
+        }
+        defaults.set(
+            try JSONEncoder().encode(ProfileLibrary(profiles: profiles)),
+            forKey: "profileLibrary.v1"
+        )
+
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+
+        XCTAssertFalse(store.iCloudSyncEnabled)
+        XCTAssertEqual(store.profiles.count, profiles.count)
+        XCTAssertNil(store.iCloudProfileLibraryIssue)
+    }
+
+    @MainActor
+    func testEnablingSyncWithOversizedLocalLibraryDoesNotOverwriteCloudProfiles() throws {
+        let (defaults, suite) = isolatedDefaults("OversizedLocalEnable")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let oversized = (0...SyncedProfileLibraryPolicy.maximumProfiles).map {
+            profile(name: "Private \($0)")
+        }
+        defaults.set(
+            try JSONEncoder().encode(ProfileLibrary(profiles: oversized)),
+            forKey: "profileLibrary.v1"
+        )
+        let cloud = InspectableUbiquitousStore()
+        let existingCloud = try JSONEncoder().encode(ProfileLibrary(
+            profiles: [profile(name: "Existing Cloud")]
+        ))
+        cloud.seed(existingCloud, forKey: "profileLibrary.v1")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+
+        store.iCloudSyncEnabled = true
+
+        XCTAssertEqual(store.profiles.count, oversized.count)
+        XCTAssertEqual(store.iCloudProfileLibraryIssue?.source, .local)
+        XCTAssertEqual(cloud.peekData(forKey: "profileLibrary.v1"), existingCloud)
+    }
+
+    func testMalformedAndFutureSyncedDocumentsHaveDistinctRecoveryReasons() throws {
+        XCTAssertEqual(
+            SyncedProfileLibraryPolicy.validate(Data("not-json".utf8)),
+            .rejected(.malformedDocument)
+        )
+        let future = ProfileLibrary(version: 999, profiles: [profile(name: "Future")])
+        XCTAssertEqual(
+            SyncedProfileLibraryPolicy.validate(try JSONEncoder().encode(future)),
+            .rejected(.unsupportedVersion(999))
+        )
+    }
+
     private func isolatedDefaults(_ suffix: String) -> (UserDefaults, String) {
         let suite = "ICloudSyncSettingsTests.\(suffix).\(UUID().uuidString)"
         return (UserDefaults(suiteName: suite)!, suite)
+    }
+
+    private func profile(name: String) -> WindowManagerProfile {
+        WindowManagerProfile(
+            name: name,
+            workspaces: [WorkspaceDefinition(name: "Workspace", key: "1")],
+            displayMode: .unified,
+            displayRoles: [ProfileDisplayRole(name: "Main")],
+            workspaceRoleAssignments: [:],
+            appRules: []
+        )
     }
 }
 
@@ -159,6 +394,10 @@ private final class InspectableUbiquitousStore: UbiquitousKeyValueStoring {
 
     func peekString(forKey key: String) -> String? {
         values[key] as? String
+    }
+
+    func peekData(forKey key: String) -> Data? {
+        values[key] as? Data
     }
 
     func resetCounters() {
