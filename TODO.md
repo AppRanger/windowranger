@@ -230,8 +230,8 @@ second copy of that checklist.
   setting, Developer ID export configuration, approved Stable and construction-themed Beta DMG
   artwork, deterministic headless DMG packaging, local build/notarize/package script, draft-release
   script with local/uploaded asset verification, tracked release notes, and first-release runbook.
-- **Verified evidence:** Tag `v0.1.0-beta.1`, `develop`, and `release/0.1.0` resolve to exact artifact
-  commit `04b5750b1fe3b183c1259d132a0a8e985f8b4e0e`. Stable Xcode 26.6 passed clean project
+- **Verified evidence:** Tag `v0.1.0-beta.1` and `release/0.1.0` resolve to exact artifact commit
+  `04b5750b1fe3b183c1259d132a0a8e985f8b4e0e`. Stable Xcode 26.6 passed clean project
   generation, non-hosted tests, static analysis, universal archive/export, exact team/bundle/signing
   checks, app and DMG notarization with zero Apple log issues, stapling, Gatekeeper assessment, DMG
   structure verification, checksums, and provenance. Manually dispatched GitHub Actions run
@@ -244,13 +244,22 @@ second copy of that checklist.
   `e02b34eee5ef7b1dd2150ca4eacfee383a0d16be` independently started and passed automatic
   [push run 31336143953](https://github.com/windowranger/windowranger/actions/runs/31336143953) and
   [pull-request run 31336188662](https://github.com/windowranger/windowranger/actions/runs/31336188662),
-  proving both configured event paths without manual dispatch.
+  proving both configured event paths without manual dispatch. Immediately before publication on
+  10 August, all five draft assets were downloaded again and passed checksums and the tracked
+  provenance verifier; the app and DMG independently passed signature, stapling, notarization, and
+  Gatekeeper assessment. A redacted Gitleaks 8.30.1 scan of all 92 commits found only four false
+  positives on local settings keys; dependency, artwork-provenance, tracked-object, personal-path,
+  and authorship reviews found no publication blocker.
 - **Current blockers:**
-  - complete the remaining product-identity, repository-publication, manual regression,
-    accessibility, privacy, and clean-package gates in `docs/release-checklist.md`;
-  - configure branch/tag protection when the repository is public or GitHub Pro makes it available.
-- **Publication gate:** Creating the draft is not publication. Changing repository visibility and
-  publishing the reviewed draft each require explicit maintainer action at the final checkpoint.
+  - make the repository public, enable the documented private reporting form, and configure
+    branch/tag protection;
+  - publish the reviewed draft and verify its public release page and assets.
+- **Known Beta limitations:** The remaining manual regression, accessibility, privacy, clean-user,
+  LaunchServices, update, and rollback work stays explicit in the release notes and checklist. It is
+  not represented as complete or silently promoted to Stable evidence.
+- **Publication gate:** The maintainer explicitly authorized public visibility and a new Beta release
+  on 10 August 2026. Creating the draft alone was not publication; the authorized visibility and
+  release mutations still require verified execution.
 
 ## Done
 
