@@ -10,6 +10,7 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
+    WINDOWRANGER_GIT_COMMIT: unknown
 targets:
   WindowRanger:
     type: application

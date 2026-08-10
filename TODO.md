@@ -28,22 +28,6 @@ None.
 
 ## Live validation
 
-### WR-021 — Allow manual workspace moves to override App Rules
-
-- **Type:** Behavior correction
-- **Priority:** P1
-- **Status:** Live validation
-- **Scope:** Treat a workspace assignment as initial and reset placement rather than a permanent
-  lock. A manual move to another workspace must succeed and survive routine refreshes, while moving
-  back clears the override. New discovery or reopening, App Rule and profile changes, Reset Current
-  Workspace, and Reset All Windows reapply the assignment. Keep-on-all behavior remains unchanged.
-- **Automated evidence:** Deterministic tests cover contradictory moves, clearing an override by
-  moving back, and refresh behavior with and without an override. The 16 focused tests and complete
-  isolated 448-test suite passed on 10 August 2026.
-- **Remaining live boundary:** In the intended signed development build, assign an app to one
-  workspace, move one of its windows elsewhere, exercise an ordinary refresh/workspace round trip,
-  then verify the stated rule, profile, reset, and reopen boundaries before Beta 2.
-
 ### WR-005 — Measure Debug diagnostic logging under slow storage
 
 - **Type:** Performance measurement
@@ -226,6 +210,42 @@ second copy of that checklist.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-024 — Show exact build identity in Settings
+
+- **Result:** Settings now shows the app version, build number, source commit, and Dev marker in an
+  unobtrusive sidebar footer. Daily builds append `-dirty` when their working tree differs from the
+  displayed commit; clean distributable builds embed their exact source commit.
+- **Evidence:** The complete 451-test suite passed, an unsigned app build embedded the expected
+  values, and the maintainer confirmed the footer in the signed daily build on 10 August 2026.
+
+### WR-022 — Make the Settings window resizable and large enough for its content
+
+- **Result:** Settings now uses stable explicit AppKit minimum/maximum constraints rather than
+  allowing a tall active pane to replace them. The detail hierarchy follows available geometry,
+  undersized restored frames grow safely, and larger frames remain user-controlled.
+- **Evidence:** Focused AppKit/SwiftUI host regressions and the complete 451-test suite passed; the
+  maintainer confirmed resizing and the corrected Profiles layout in the signed daily build on
+  10 August 2026.
+
+### WR-023 — Delegate windowranger.com DNS to Cloudflare
+
+- **Result:** Added `windowranger.com` to Cloudflare on the Free plan, preserved the existing
+  Namecheap parking and email-forwarding DNS records, and changed the registrar delegation to the
+  assigned Cloudflare nameservers. DNSSEC remains disabled with no DS record.
+- **Evidence:** Cloudflare reported the zone active on 10 August 2026. Cloudflare's API retained all
+  eight discovered A, CNAME, MX, and TXT records; public recursive resolvers returned the assigned
+  `carmelo.ns.cloudflare.com` and `magnolia.ns.cloudflare.com` delegation, the proxied apex and
+  `www` addresses, all five Namecheap forwarding MX records, and the matching SPF TXT record.
+
+### WR-021 — Allow manual workspace moves to override App Rules
+
+- **Result:** App Rule workspace assignments now provide initial and reset placement without
+  permanently locking an individual window. Manual moves survive routine refreshes; moving back
+  clears the override; rule/profile changes, resets, and reopen boundaries reapply the assignment.
+- **Evidence:** Deterministic tests cover the decision boundaries, the complete isolated 448-test
+  suite passed, and the maintainer confirmed the behavior in the signed daily build on 10 August
+  2026.
 
 ### WR-018 — Publish the first GitHub Beta
 
