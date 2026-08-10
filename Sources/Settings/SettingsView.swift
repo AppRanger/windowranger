@@ -535,6 +535,42 @@ private struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Window focus") {
+                Toggle(
+                    "Highlight the focused window",
+                    isOn: $store.focusedWindowHighlightEnabled
+                )
+                LabeledContent("Border Colour") {
+                    ColorPicker(
+                        "Border Colour",
+                        selection: Binding(
+                            get: { store.focusedWindowHighlightColor.color },
+                            set: { color in
+                                if let resolved = MenuBarHighlightColor(nsColor: NSColor(color)) {
+                                    store.focusedWindowHighlightColor = resolved
+                                }
+                            }
+                        ),
+                        supportsOpacity: false
+                    )
+                    .labelsHidden()
+                }
+                .disabled(!store.focusedWindowHighlightEnabled)
+                Toggle(
+                    "Only in Tiled workspaces",
+                    isOn: $store.focusedWindowHighlightTiledOnly
+                )
+                .disabled(!store.focusedWindowHighlightEnabled)
+                Toggle(
+                    "Only when the workspace has multiple windows",
+                    isOn: $store.focusedWindowHighlightMultipleWindowsOnly
+                )
+                .disabled(!store.focusedWindowHighlightEnabled)
+                Text("Off by default and local to this Mac. Workspace filters hide the border when their condition is not met. Tiled and Accordion layouts still reserve four points at screen edges while highlighting is enabled. The click-through border never takes focus or intercepts input.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Compatibility") {
                 Toggle(
                     "Automatically unhide applications when focusing their windows",
@@ -2192,7 +2228,7 @@ private struct AppRulesSettingsView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
 
-            Text("Changes apply immediately, support Command-Z, and sync through iCloud when enabled.")
+            Text("Behavior changes apply immediately, support Command-Z, and sync through iCloud when enabled. This-Mac appearance overrides stay local.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)
@@ -2205,6 +2241,7 @@ private struct AppRulesSettingsView: View {
     private var ruleInspectorColumn: some View {
         if let rule = selectedRule {
             AppRuleEditor(
+                store: store,
                 rule: Binding(
                     get: { store.appRules.first(where: { $0.id == rule.id }) ?? rule },
                     set: { store.updateAppRule($0, undoManager: undoManager) }
@@ -2304,8 +2341,10 @@ private struct AppRulesSettingsView: View {
 }
 
 private struct AppRuleEditor: View {
+    @ObservedObject var store: SettingsStore
     @Binding var rule: AppRule
     let workspaces: [WorkspaceDefinition]
+    @Environment(\.undoManager) private var undoManager
 
     var body: some View {
         Form {
@@ -2338,6 +2377,29 @@ private struct AppRuleEditor: View {
             }
             .disabled(!rule.isEnabled)
             .opacity(rule.isEnabled ? 1 : 0.62)
+
+            Section("Focused Window Border") {
+                Toggle("Use a custom corner radius", isOn: customCornerRadiusBinding)
+                if let radius = cornerRadiusOverride {
+                    LabeledContent("Corner radius") {
+                        HStack(spacing: 8) {
+                            Text("\(radius, specifier: "%.0f") pt")
+                                .monospacedDigit()
+                                .frame(minWidth: 42, alignment: .trailing)
+                            Stepper(
+                                "Corner radius",
+                                value: cornerRadiusBinding,
+                                in: FocusedWindowHighlightPolicy.cornerRadiusRange,
+                                step: 1
+                            )
+                            .labelsHidden()
+                        }
+                    }
+                }
+                Text("Automatic uses \(automaticCornerRadius, specifier: "%.0f") pt on macOS \(ProcessInfo.processInfo.operatingSystemVersion.majorVersion). A custom value applies only to this app on this Mac and does not sync with the profile.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             if !rule.isEnabled || rule.keepsOnAllWorkspaces || rule.floatsSecondaryWindows {
                 Section("Status") {
@@ -2397,6 +2459,40 @@ private struct AppRuleEditor: View {
         Binding(
             get: { rule.floatsSecondaryWindows },
             set: { rule.floatsSecondaryWindows = $0 }
+        )
+    }
+
+    private var automaticCornerRadius: Double {
+        Double(FocusedWindowHighlightPolicy.automaticCornerRadius())
+    }
+
+    private var cornerRadiusOverride: Double? {
+        store.focusedWindowHighlightCornerRadiusOverride(for: rule.bundleIdentifier)
+    }
+
+    private var customCornerRadiusBinding: Binding<Bool> {
+        Binding(
+            get: { cornerRadiusOverride != nil },
+            set: { enabled in
+                store.setFocusedWindowHighlightCornerRadiusOverride(
+                    enabled ? automaticCornerRadius : nil,
+                    for: rule.bundleIdentifier,
+                    undoManager: undoManager
+                )
+            }
+        )
+    }
+
+    private var cornerRadiusBinding: Binding<Double> {
+        Binding(
+            get: { cornerRadiusOverride ?? automaticCornerRadius },
+            set: { radius in
+                store.setFocusedWindowHighlightCornerRadiusOverride(
+                    radius,
+                    for: rule.bundleIdentifier,
+                    undoManager: undoManager
+                )
+            }
         )
     }
 

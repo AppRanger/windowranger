@@ -572,6 +572,8 @@ struct WorkspaceEngineState: Equatable {
     let accessibilityGranted: Bool
     let profileID: UUID?
     let activeWorkspaceIDByDisplay: [String: UUID]
+    let focusedWindowHighlightWorkspaceContexts:
+        [WindowKey: FocusedWindowHighlightWorkspaceContext]
 
     init(
         currentWorkspaceID: UUID,
@@ -580,7 +582,9 @@ struct WorkspaceEngineState: Equatable {
         managedWindowCount: Int,
         accessibilityGranted: Bool,
         profileID: UUID? = nil,
-        activeWorkspaceIDByDisplay: [String: UUID] = [:]
+        activeWorkspaceIDByDisplay: [String: UUID] = [:],
+        focusedWindowHighlightWorkspaceContexts:
+            [WindowKey: FocusedWindowHighlightWorkspaceContext] = [:]
     ) {
         self.currentWorkspaceID = currentWorkspaceID
         self.activeWorkspaceIDs = activeWorkspaceIDs
@@ -589,6 +593,8 @@ struct WorkspaceEngineState: Equatable {
         self.accessibilityGranted = accessibilityGranted
         self.profileID = profileID
         self.activeWorkspaceIDByDisplay = activeWorkspaceIDByDisplay
+        self.focusedWindowHighlightWorkspaceContexts =
+            focusedWindowHighlightWorkspaceContexts
     }
 }
 
@@ -706,6 +712,7 @@ final class WorkspaceEngine {
     private var appRulesByBundleIdentifier: [String: AppRule]
     private var focusFollowsMovedWindow: Bool
     private var automaticallyUnhideApplications: Bool
+    private var focusedWindowHighlightEnabled: Bool
     private var lastDisplays: [DisplaySnapshot] = []
     private var windows: [WindowKey: TrackedWindow] = [:]
     private var tiledTrees: [TiledLayoutPartitionKey: TiledNode]
@@ -766,6 +773,7 @@ final class WorkspaceEngine {
         appRules: [AppRule] = [],
         focusFollowsMovedWindow: Bool = false,
         automaticallyUnhideApplications: Bool = false,
+        focusedWindowHighlightEnabled: Bool = false,
         stateStore: WorkspaceStateStore = WorkspaceStateStore(),
         diagnostics: DiagnosticLogger = .disabled
     ) {
@@ -777,6 +785,7 @@ final class WorkspaceEngine {
         appRulesByBundleIdentifier = Self.indexedAppRules(appRules)
         self.focusFollowsMovedWindow = focusFollowsMovedWindow
         self.automaticallyUnhideApplications = automaticallyUnhideApplications
+        self.focusedWindowHighlightEnabled = focusedWindowHighlightEnabled
         self.stateStore = stateStore
         self.diagnostics = diagnostics
         let restoredState = stateStore.load()
@@ -1427,6 +1436,17 @@ final class WorkspaceEngine {
         queue.async { [weak self] in
             self?.automaticallyUnhideApplications = enabled
             if !enabled { self?.lastAutomaticUnhideAttemptByProcess.removeAll() }
+        }
+    }
+
+    func updateFocusedWindowHighlight(enabled: Bool) {
+        queue.async { [weak self] in
+            guard let self, self.focusedWindowHighlightEnabled != enabled else { return }
+            self.focusedWindowHighlightEnabled = enabled
+            self.lastBackgroundLayoutSignature = nil
+            self.applyVisibility(displays: Self.activeDisplays())
+            self.persistState(preservingPendingRestores: true)
+            self.emitState()
         }
     }
 
@@ -2433,7 +2453,8 @@ final class WorkspaceEngine {
             let layout = self.workspaces[workspaceIndex].layout
             let configuration = self.workspaces[workspaceIndex].layoutConfiguration
                 ?? .aeroSpaceUserDefaults
-            let orientation = configuration.orientation.resolved(for: display.usableBounds)
+            let managedBounds = self.managedLayoutBounds(display.usableBounds)
+            let orientation = configuration.orientation.resolved(for: managedBounds)
             let destinationKey: WindowKey
             var treeFingerprints: (before: String, after: String)?
             var tiledMoveStrategy: TiledDirectionalMoveStrategy?
@@ -2483,7 +2504,7 @@ final class WorkspaceEngine {
                     tree: currentTree,
                     focusedWindow: focused.key,
                     direction: direction,
-                    displayBounds: display.usableBounds,
+                    displayBounds: managedBounds,
                     configuration: configuration
                 ) else {
                     self.emitCommandFeedback("The window is already at that edge of the Tiled layout.")
@@ -2599,7 +2620,8 @@ final class WorkspaceEngine {
                 self.emitCommandFeedback("Resize needs at least two layout windows.")
                 return
             }
-            let layoutBounds = Self.insetLayoutBounds(display.usableBounds, gaps: configuration.gaps)
+            let managedBounds = self.managedLayoutBounds(display.usableBounds)
+            let layoutBounds = Self.insetLayoutBounds(managedBounds, gaps: configuration.gaps)
             let orientation = configuration.orientation.resolved(for: layoutBounds)
             let availableLength = Double(
                 orientation == .horizontal ? layoutBounds.width : layoutBounds.height
@@ -2639,7 +2661,7 @@ final class WorkspaceEngine {
                     participants: participants,
                     focusedIndex: focusedIndex,
                     deltaPoints: Double(delta),
-                    displayBounds: display.usableBounds,
+                    displayBounds: managedBounds,
                     configuration: configuration
                 ) else {
                     self.emitCommandFeedback("That Tiled split is already at its safe limit.")
@@ -4016,6 +4038,7 @@ final class WorkspaceEngine {
         )
         let configuration = workspaceLayoutConfiguration(for: tracked.workspaceID)
             ?? .aeroSpaceUserDefaults
+        let managedBounds = managedLayoutBounds(display.usableBounds)
         let partition = TiledLayoutPartitionKey(
             workspaceID: tracked.workspaceID,
             displayIdentifier: display.identifier
@@ -4028,10 +4051,10 @@ final class WorkspaceEngine {
                   weights: participants.map {
                       CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
                   },
-                  orientation: configuration.orientation.resolved(for: display.usableBounds)
+                  orientation: configuration.orientation.resolved(for: managedBounds)
               ), let expectedFrames = try? TiledLayoutEngine.frames(
                   for: currentTree,
-                  in: display.usableBounds,
+                  in: managedBounds,
                   configuration: configuration
               ), let expectedFocusedFrame = expectedFrames[focusedWindow],
               let lastSolvedFrame = lastSolvedTiledFrames[focusedWindow],
@@ -4152,6 +4175,7 @@ final class WorkspaceEngine {
 
         let configuration = workspaceLayoutConfiguration(for: tracked.workspaceID)
             ?? .aeroSpaceUserDefaults
+        let managedBounds = managedLayoutBounds(display.usableBounds)
         let partition = TiledLayoutPartitionKey(
             workspaceID: tracked.workspaceID,
             displayIdentifier: display.identifier
@@ -4162,10 +4186,10 @@ final class WorkspaceEngine {
             weights: participants.map {
                 CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
             },
-            orientation: configuration.orientation.resolved(for: display.usableBounds)
+            orientation: configuration.orientation.resolved(for: managedBounds)
         ), let expectedFrames = try? TiledLayoutEngine.frames(
             for: currentTree,
-            in: display.usableBounds,
+            in: managedBounds,
             configuration: configuration
         ), let expectedFocusedFrame = expectedFrames[focusedWindow],
               let lastSolvedFrame = lastSolvedTiledFrames[focusedWindow],
@@ -4174,7 +4198,7 @@ final class WorkspaceEngine {
                   currentTree,
                   focusedWindow: focusedWindow,
                   observedFrame: observedFrame,
-                  displayBounds: display.usableBounds,
+                  displayBounds: managedBounds,
                   configuration: configuration
               ), let effectiveShares = TiledLayoutEngine.leafShares(resizedTree)
         else { return }
@@ -4350,6 +4374,7 @@ final class WorkspaceEngine {
         )
         guard participants.count > 1, participants.contains(focusedWindow) else { return nil }
         let configuration = workspace.layoutConfiguration ?? .aeroSpaceUserDefaults
+        let managedBounds = managedLayoutBounds(display.usableBounds)
         let partition = TiledLayoutPartitionKey(
             workspaceID: workspaceID,
             displayIdentifier: displayIdentifier
@@ -4360,7 +4385,7 @@ final class WorkspaceEngine {
             weights: participants.map {
                 CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
             },
-            orientation: configuration.orientation.resolved(for: display.usableBounds)
+            orientation: configuration.orientation.resolved(for: managedBounds)
         ) else { return nil }
         let previews = Dictionary(
             uniqueKeysWithValues: VisualPlacement.compassOrder.compactMap { placement in
@@ -4368,7 +4393,7 @@ final class WorkspaceEngine {
                     focusedWindow,
                     at: placement,
                     in: tree,
-                    bounds: display.usableBounds,
+                    bounds: managedBounds,
                     configuration: configuration
                 )).map { (placement, $0) }
             }
@@ -4487,8 +4512,9 @@ final class WorkspaceEngine {
                 correlationID: nil
             )
             let participantIndex = focusedKey.flatMap { layoutParticipants.firstIndex(of: $0) }
+            let managedBounds = self.managedLayoutBounds(display.usableBounds)
             let resolvedOrientation = (workspace.layoutConfiguration?.orientation ?? .automatic)
-                .resolved(for: display.usableBounds)
+                .resolved(for: managedBounds)
             var availableMoveDirections = Set<WindowDirection>()
             if workspace.layout != .none,
                let participantIndex,
@@ -4513,7 +4539,7 @@ final class WorkspaceEngine {
                 weights: layoutParticipants.map {
                     CGFloat(Self.validLayoutWeight(self.windows[$0]?.layoutWeight))
                 },
-                orientation: layoutConfiguration.orientation.resolved(for: display.usableBounds)
+                orientation: layoutConfiguration.orientation.resolved(for: managedBounds)
             ) : nil
             let tiledTreeFingerprint = tiledTree.map(TiledLayoutEngine.fingerprint) ?? "none"
             let focusedToken = focusedWindow.map {
@@ -4911,13 +4937,14 @@ final class WorkspaceEngine {
             return false
         }
         let configuration = workspace.layoutConfiguration ?? .aeroSpaceUserDefaults
+        let managedBounds = managedLayoutBounds(display.usableBounds)
         guard let currentTree = TiledLayoutEngine.reconciled(
             tiledTrees[commit.partition],
             windowKeys: participants,
             weights: participants.map {
                 CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
             },
-            orientation: configuration.orientation.resolved(for: display.usableBounds)
+            orientation: configuration.orientation.resolved(for: managedBounds)
         ), currentTree == commit.originalTree else {
             diagnostics.log(
                 category: diagnosticCategory,
@@ -6275,7 +6302,11 @@ final class WorkspaceEngine {
                 .sorted()
                 .joined(separator: ",")
         }
-        var parts = ["mode=\(displayMode.rawValue)", "active=\(fullActiveMap)"]
+        var parts = [
+            "mode=\(displayMode.rawValue)",
+            "active=\(fullActiveMap)",
+            "focused-window-highlight=\(focusedWindowHighlightEnabled)",
+        ]
         parts.append(contentsOf: displays.sorted { $0.identifier < $1.identifier }.map {
             "display=\($0.identifier)|\(Self.diagnosticRect($0.bounds))|\(Self.diagnosticRect($0.usableBounds))|\($0.isMain)"
         })
@@ -7375,9 +7406,10 @@ final class WorkspaceEngine {
                     ordered.firstIndex(where: { $0.key == key })
                 }
                 let layoutConfiguration = self.workspaceLayoutConfiguration(for: workspaceID)
-                let layoutBounds = layout == .accordion || layoutConfiguration != nil
+                let rawLayoutBounds = layout == .accordion || layoutConfiguration != nil
                     ? display.usableBounds
                     : display.bounds
+                let layoutBounds = managedLayoutBounds(rawLayoutBounds)
                 if layout == .tiled {
                     let configuration = layoutConfiguration ?? .aeroSpaceUserDefaults
                     let partition = TiledLayoutPartitionKey(
@@ -7435,6 +7467,13 @@ final class WorkspaceEngine {
 
     private func workspaceLayout(for workspaceID: UUID) -> WorkspaceLayout {
         workspaces.first(where: { $0.id == workspaceID })?.layout ?? .none
+    }
+
+    private func managedLayoutBounds(_ bounds: CGRect) -> CGRect {
+        FocusedWindowHighlightPolicy.reservingScreenEdgeClearance(
+            in: bounds,
+            enabled: focusedWindowHighlightEnabled
+        )
     }
 
     private func workspaceLayoutConfiguration(
@@ -9455,6 +9494,22 @@ final class WorkspaceEngine {
     }
 
     private func emitState() {
+        let windowCountByWorkspace = Dictionary(grouping: windows.values, by: \.workspaceID)
+            .mapValues(\.count)
+        let layoutByWorkspace = Dictionary(
+            uniqueKeysWithValues: workspaces.map { ($0.id, $0.layout) }
+        )
+        let highlightContexts = Dictionary(uniqueKeysWithValues: windows.values.compactMap {
+            tracked -> (WindowKey, FocusedWindowHighlightWorkspaceContext)? in
+            guard let layout = layoutByWorkspace[tracked.workspaceID] else { return nil }
+            return (
+                tracked.key,
+                FocusedWindowHighlightWorkspaceContext(
+                    layout: layout,
+                    windowCount: windowCountByWorkspace[tracked.workspaceID] ?? 0
+                )
+            )
+        })
         let state = WorkspaceEngineState(
             currentWorkspaceID: currentWorkspaceID,
             activeWorkspaceIDs: activeWorkspaceIDs,
@@ -9463,7 +9518,8 @@ final class WorkspaceEngine {
             accessibilityGranted: AXIsProcessTrusted(),
             profileID: currentProfileID,
             activeWorkspaceIDByDisplay: displayMode == .independent
-                ? activeWorkspaceIDByDisplay : [:]
+                ? activeWorkspaceIDByDisplay : [:],
+            focusedWindowHighlightWorkspaceContexts: highlightContexts
         )
         DispatchQueue.main.async { [weak self] in self?.onStateChanged?(state) }
     }

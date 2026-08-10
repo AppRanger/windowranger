@@ -105,6 +105,13 @@ final class SettingsStore: ObservableObject {
         static let menuBarPresentationMode = "menuBarPresentationMode.v1"
         static let menuBarWorkspaceLabelMode = "menuBarWorkspaceLabelMode.v1"
         static let menuBarHighlightColor = "menuBarHighlightColor.v1"
+        static let focusedWindowHighlightEnabled = "focusedWindowHighlightEnabled.v1"
+        static let focusedWindowHighlightColor = "focusedWindowHighlightColor.v1"
+        static let focusedWindowHighlightTiledOnly = "focusedWindowHighlightTiledOnly.v1"
+        static let focusedWindowHighlightMultipleWindowsOnly =
+            "focusedWindowHighlightMultipleWindowsOnly.v1"
+        static let focusedWindowHighlightCornerRadiusOverrides =
+            "focusedWindowHighlightCornerRadiusOverrides.v1"
         static let focusFollowsMovedWindow = "focusFollowsMovedWindow.v1"
         static let automaticallyUnhideApplications = "automaticallyUnhideApplications.v1"
     }
@@ -194,6 +201,32 @@ final class SettingsStore: ObservableObject {
 
     @Published var menuBarHighlightColor: MenuBarHighlightColor {
         didSet { persistMenuBarHighlightColor() }
+    }
+
+    /// This presentation choice is deliberately local to one Mac. It changes how often this Mac
+    /// reads focused-window geometry and should not silently enable an overlay on another device.
+    @Published var focusedWindowHighlightEnabled: Bool {
+        didSet { persistFocusedWindowHighlightEnabled() }
+    }
+
+    /// The border colour stays local with the presentation toggle and defaults independently to
+    /// white rather than inheriting a potentially unrelated menu-bar accent.
+    @Published var focusedWindowHighlightColor: MenuBarHighlightColor {
+        didSet { persistFocusedWindowHighlightColor() }
+    }
+
+    @Published var focusedWindowHighlightTiledOnly: Bool {
+        didSet { persistFocusedWindowHighlightTiledOnly() }
+    }
+
+    @Published var focusedWindowHighlightMultipleWindowsOnly: Bool {
+        didSet { persistFocusedWindowHighlightMultipleWindowsOnly() }
+    }
+
+    /// Visual matching depends on the local AppKit generation, so these bundle-specific overrides
+    /// deliberately stay outside the synced profile's behavior rules.
+    @Published private(set) var focusedWindowHighlightCornerRadiusOverrides: [String: Double] {
+        didSet { persistFocusedWindowHighlightCornerRadiusOverrides() }
     }
 
     @Published var focusFollowsMovedWindow: Bool {
@@ -317,6 +350,23 @@ final class SettingsStore: ObservableObject {
             .flatMap(MenuBarHighlightColor.init(hex:)) ?? .default
         menuBarHighlightColor = initialMenuBarHighlightColor
         defaults.set(initialMenuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
+        focusedWindowHighlightEnabled = defaults.object(
+            forKey: Keys.focusedWindowHighlightEnabled
+        ) as? Bool ?? false
+        focusedWindowHighlightColor = defaults.string(
+            forKey: Keys.focusedWindowHighlightColor
+        ).flatMap(MenuBarHighlightColor.init(hex:)) ?? .default
+        focusedWindowHighlightTiledOnly = defaults.object(
+            forKey: Keys.focusedWindowHighlightTiledOnly
+        ) as? Bool ?? false
+        focusedWindowHighlightMultipleWindowsOnly = defaults.object(
+            forKey: Keys.focusedWindowHighlightMultipleWindowsOnly
+        ) as? Bool ?? false
+        focusedWindowHighlightCornerRadiusOverrides = Self.normalizedCornerRadiusOverrides(
+            defaults.data(forKey: Keys.focusedWindowHighlightCornerRadiusOverrides).flatMap {
+                try? JSONDecoder().decode([String: Double].self, from: $0)
+            } ?? [:]
+        )
         focusFollowsMovedWindow = defaults.object(forKey: Keys.focusFollowsMovedWindow) as? Bool ?? false
         automaticallyUnhideApplications = defaults.object(
             forKey: Keys.automaticallyUnhideApplications
@@ -970,6 +1020,40 @@ final class SettingsStore: ObservableObject {
 
     func removeAppRule(bundleIdentifier: String) {
         appRules.removeAll { $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame }
+        setFocusedWindowHighlightCornerRadiusOverride(nil, for: bundleIdentifier, undoManager: nil)
+    }
+
+    func focusedWindowHighlightCornerRadiusOverride(for bundleIdentifier: String) -> Double? {
+        focusedWindowHighlightCornerRadiusOverrides[Self.normalizedBundleIdentifier(bundleIdentifier)]
+    }
+
+    func setFocusedWindowHighlightCornerRadiusOverride(
+        _ radius: Double?,
+        for bundleIdentifier: String,
+        undoManager: UndoManager?
+    ) {
+        let key = Self.normalizedBundleIdentifier(bundleIdentifier)
+        guard !key.isEmpty else { return }
+        let normalizedRadius = radius.map(FocusedWindowHighlightPolicy.normalizedCornerRadius)
+        let previousRadius = focusedWindowHighlightCornerRadiusOverrides[key]
+        guard previousRadius != normalizedRadius else { return }
+        if let undoManager {
+            undoManager.registerUndo(withTarget: self) { [weak undoManager] target in
+                target.setFocusedWindowHighlightCornerRadiusOverride(
+                    previousRadius,
+                    for: key,
+                    undoManager: undoManager
+                )
+            }
+            undoManager.setActionName("Change Highlight Corner Radius")
+        }
+        var updated = focusedWindowHighlightCornerRadiusOverrides
+        if let normalizedRadius {
+            updated[key] = normalizedRadius
+        } else {
+            updated.removeValue(forKey: key)
+        }
+        focusedWindowHighlightCornerRadiusOverrides = updated
     }
 
     func updateAppRule(_ updatedRule: AppRule, undoManager: UndoManager?) {
@@ -1758,6 +1842,45 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    private func persistFocusedWindowHighlightEnabled() {
+        guard !isApplyingRemoteChange else { return }
+        defaults.set(
+            focusedWindowHighlightEnabled,
+            forKey: Keys.focusedWindowHighlightEnabled
+        )
+    }
+
+    private func persistFocusedWindowHighlightColor() {
+        guard !isApplyingRemoteChange else { return }
+        defaults.set(
+            focusedWindowHighlightColor.hex,
+            forKey: Keys.focusedWindowHighlightColor
+        )
+    }
+
+    private func persistFocusedWindowHighlightTiledOnly() {
+        guard !isApplyingRemoteChange else { return }
+        defaults.set(
+            focusedWindowHighlightTiledOnly,
+            forKey: Keys.focusedWindowHighlightTiledOnly
+        )
+    }
+
+    private func persistFocusedWindowHighlightMultipleWindowsOnly() {
+        guard !isApplyingRemoteChange else { return }
+        defaults.set(
+            focusedWindowHighlightMultipleWindowsOnly,
+            forKey: Keys.focusedWindowHighlightMultipleWindowsOnly
+        )
+    }
+
+    private func persistFocusedWindowHighlightCornerRadiusOverrides() {
+        guard !isApplyingRemoteChange,
+              let data = try? JSONEncoder().encode(focusedWindowHighlightCornerRadiusOverrides)
+        else { return }
+        defaults.set(data, forKey: Keys.focusedWindowHighlightCornerRadiusOverrides)
+    }
+
     private func persistHotKeyConfiguration() {
         guard !isApplyingRemoteChange,
               let data = try? JSONEncoder().encode(hotKeyConfiguration)
@@ -1838,6 +1961,23 @@ final class SettingsStore: ObservableObject {
         return rules.filter { rule in
             !rule.bundleIdentifier.isEmpty && seen.insert(rule.bundleIdentifier.lowercased()).inserted
         }
+    }
+
+    private static func normalizedBundleIdentifier(_ bundleIdentifier: String) -> String {
+        bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func normalizedCornerRadiusOverrides(
+        _ overrides: [String: Double]
+    ) -> [String: Double] {
+        Dictionary(
+            overrides.compactMap { bundleIdentifier, radius -> (String, Double)? in
+                let key = normalizedBundleIdentifier(bundleIdentifier)
+                guard !key.isEmpty, radius.isFinite else { return nil }
+                return (key, FocusedWindowHighlightPolicy.normalizedCornerRadius(radius))
+            },
+            uniquingKeysWith: { _, latest in latest }
+        )
     }
 
     private static func bootstrapProfiles(
