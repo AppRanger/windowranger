@@ -122,6 +122,26 @@ enum WakeReconciliationPolicy {
     }
 }
 
+enum WakeLayoutVerificationPolicy {
+    static let verificationDelaysMilliseconds = [120, 300, 650]
+
+    static func mismatchedWindowKeys<Key: Hashable>(
+        expectedFrames: [Key: WindowFrame],
+        observedFrames: [Key: WindowFrame],
+        tolerance: CGFloat = 1
+    ) -> Set<Key> {
+        Set(expectedFrames.compactMap { key, expected in
+            guard let observed = observedFrames[key],
+                  abs(observed.position.x - expected.position.x) < tolerance,
+                  abs(observed.position.y - expected.position.y) < tolerance,
+                  abs(observed.size.width - expected.size.width) < tolerance,
+                  abs(observed.size.height - expected.size.height) < tolerance
+            else { return key }
+            return nil
+        })
+    }
+}
+
 struct WakeFocusCandidate<Key: Hashable & Sendable>: Equatable, Sendable {
     let key: Key
     let isActiveWorkspace: Bool

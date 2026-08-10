@@ -323,10 +323,12 @@ Sleep/wake recovery is lifecycle-driven rather than left to the background windo
 the app persists workspace intent and invalidates delayed focus/layout work. Wake, screen-wake, user-
 session activation, and display-topology notifications coalesce into one generation: portable monitor
 homes resolve first, fresh Accessibility window lists are acquired next, and visibility/layout is
-applied once from the stable snapshot. A changed topology or temporarily incomplete AX enumeration
-gets at most two bounded retries. Minimized, full-screen, ignored, disappeared, or still-unresponsive
-windows are left untouched rather than being moved from stale AX elements. A changed WindowServer
-session keeps the active workspace intent but discards unsafe exact window IDs.
+applied from the stable snapshot. A changed topology or temporarily incomplete AX enumeration gets
+at most two bounded retries. The resulting Tiled and Accordion frames are then read back over a
+bounded period; only split windows that remain eligible and do not match the solved frame are retried.
+Minimized, full-screen, floating, ignored, disappeared, or still-unresponsive windows are left
+untouched rather than being moved from stale AX elements. A changed WindowServer session keeps the
+active workspace intent but discards unsafe exact window IDs.
 
 Native macOS full-screen windows use an explicit fail-closed session. A true Accessibility full-screen
 observation enters immediately; failed or unsupported reads retain an existing session, and two
@@ -410,5 +412,6 @@ Use the primary app menu's **Quit WindowRanger** command when testing quit recov
    the external display immediately around sleep. The laptop/main display is the temporary fallback;
    reconnecting must restore the external workspace home and its prior active selection.
 6. If anything is wrong, reproduce once, Option-click the status item, and use **Copy Recent Diagnostics**. The correlated
-   `lifecycle` records include the wake generation, topology, bounded attempts, deferred windows, and
-   final active-workspace map without window titles or document content.
+   `lifecycle` records include the wake generation, topology, bounded enumeration and frame-verification
+   attempts, deferred windows, expected/observed mismatch geometry, and final active-workspace map
+   without window titles or document content.

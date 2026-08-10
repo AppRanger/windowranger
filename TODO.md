@@ -54,6 +54,36 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-034 — Reconcile every split window after wake
+
+- **Type:** Wake/layout bug
+- **Priority:** P1
+- **Status:** Live validation
+- **User-observed:** After waking from sleep, some but not all windows in a Tiled split are
+  occasionally returned to their expected frames. The report is intermittent; the available rotated
+  diagnostics do not contain the failing physical sleep/wake sequence, so this remains
+  user-observed rather than reproduced.
+- **Expected:** Once displays and managed AX windows are ready after wake, every eligible Tiled or
+  Accordion participant should match the layout calculated from the stable display snapshot. A
+  temporarily unready app must not leave one split participant in stale geometry indefinitely.
+- **Code-supported cause:** Wake reconciliation proved fresh `AXWindows` enumeration and performed
+  one layout pass, but then accepted the immediately observed frames as its background-layout
+  baseline. AX write success only means macOS accepted the attributes; it does not prove that the app
+  retained the target frame. A late or ignored write could therefore become the baseline and suppress
+  the normal background retry. The missing physical sleep/wake diagnostic means this remains the
+  strongest code-supported cause rather than a reproduced cause.
+- **Implemented:** Wake now retains the authoritative Tiled and Accordion solution, reads those
+  frames back three times over a bounded period, and reapplies only mismatched windows that are still
+  active layout participants. New lifecycle signals supersede the check. Deferred, full-screen,
+  floating, removed, and newly ineligible windows receive no retry. A final mismatch is diagnostic
+  and leaves the normal background layout baseline invalid so recovery can continue later.
+- **Automated evidence:** Local quick verification passes 467 tests, including retained-frame,
+  missing-frame, mismatch-tolerance, and bounded-verification policy coverage.
+- **Remaining validation:** Install a signed daily build and exercise ordinary and topology-changing
+  physical sleep/wake with multi-window Tiled and Accordion workspaces. Confirm every participant
+  returns to its split, focus remains stable, and diagnostics show bounded verification rather than
+  repeated layout traffic.
+
 ### WR-033 — Respect the auto-hidden Dock edge after leaving a game
 
 - **Type:** Platform geometry bug
