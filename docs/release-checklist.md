@@ -76,8 +76,10 @@ promotion and versioning. It is a design authority, not evidence that the releas
       made public; the current private plan rejects rulesets and branch protection.
 - [x] Choose the initial distribution: a signed, notarized channel-specific DMG attached to a
       GitHub prerelease, with a notarized ZIP fallback; Homebrew remains a later Stable channel.
-- [x] Choose a local-first release pipeline: GitHub Actions performs unprivileged verification, and
-      the maintainer's Mac performs Developer ID signing, notarization, stapling, and packaging.
+- [x] Choose a local-first release pipeline: repository-managed local checks perform private-phase
+      unprivileged verification; standard GitHub Actions independently repeat it when public or
+      explicitly dispatched; and the maintainer's Mac performs Developer ID signing, notarization,
+      stapling, and packaging.
 - [x] Validate `scripts/build-distribution.sh` with the intended Developer ID identity and
       `WindowRanger` notary profile; test the exact installed DMG on the maintainer's Mac.
 - [ ] Test the exact packaged artifact on another supported Mac or a clean macOS user account.

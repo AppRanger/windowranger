@@ -13,7 +13,8 @@ This runbook uses a local-first release pipeline:
 
 | Owner | Responsibility |
 | --- | --- |
-| GitHub Actions | Generate the project, verify test isolation, run tests and static analysis, compile an unsigned universal Release configuration, and smoke-test both DMG layouts. |
+| Local verification | While private, run exact-commit non-hosted checks through the opt-in pre-push hook and run the full uncredentialed checkpoint explicitly at integration/release boundaries. |
+| GitHub Actions | Once public—or on an explicit private manual dispatch—generate the project, verify test isolation, run tests and static analysis, compile an unsigned universal Release configuration, and smoke-test both DMG layouts. |
 | Maintainer's Mac | Use the Developer ID private key, archive/export, notarize, staple, package, and verify the exact release app and DMG. |
 | GitHub Releases | Hold the immutable tag, draft notes, notarized DMG and ZIP, SHA-256 checksums, and provenance manifest. |
 
@@ -61,7 +62,8 @@ Never place the certificate, private key, app-specific password, App Store Conne
 For the first Beta, complete and record these repository steps:
 
 1. Create `develop` from the accepted `main` checkpoint, push it, and make it the default branch.
-2. Prove automatic push and pull-request CI events, not only manual `workflow_dispatch` runs.
+2. Preserve the recorded proof of automatic push and pull-request events. While private, automatic
+   hosted jobs now skip to protect the included allowance; they resume when public.
 3. Configure required checks and protection for `main`, `develop`, and release tags when GitHub Pro
    or public visibility makes rulesets available.
 4. Cut `release/0.1.0` from `develop` and allow only release fixes, documentation, versioning, and
