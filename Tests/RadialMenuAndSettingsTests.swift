@@ -1552,6 +1552,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(SettingsWindowMetrics.masterListWidth, 300)
         XCTAssertEqual(SettingsWindowMetrics.masterRowMinimumHeight, 44)
         XCTAssertEqual(SettingsWindowMetrics.masterActionRowVerticalPadding, 9)
+        XCTAssertEqual(SettingsWindowMetrics.masterActionIconSize, 16)
         XCTAssertEqual(SettingsWindowMetrics.appRuleTrailingControlWidth, 220)
         XCTAssertGreaterThan(
             SettingsWindowMetrics.minimumSize.width - SettingsWindowMetrics.sidebarWidth,

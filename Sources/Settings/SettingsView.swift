@@ -9,6 +9,7 @@ enum SettingsWindowMetrics {
     static let masterListWidth: CGFloat = 300
     static let masterRowMinimumHeight: CGFloat = 44
     static let masterActionRowVerticalPadding: CGFloat = 9
+    static let masterActionIconSize: CGFloat = 16
     static let appRuleTrailingControlWidth: CGFloat = 220
 
     static func constrainedFrameSize(
@@ -348,6 +349,34 @@ private struct SettingsActionRow<Action: View>: View {
                 action()
             }
         }
+    }
+}
+
+private struct SettingsMasterActionButton: View {
+    let systemImage: String
+    let role: ButtonRole?
+    let action: () -> Void
+
+    init(
+        systemImage: String,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) {
+        self.systemImage = systemImage
+        self.role = role
+        self.action = action
+    }
+
+    var body: some View {
+        Button(role: role, action: action) {
+            Image(systemName: systemImage)
+                .frame(
+                    width: SettingsWindowMetrics.masterActionIconSize,
+                    height: SettingsWindowMetrics.masterActionIconSize
+                )
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
     }
 }
 
@@ -777,24 +806,18 @@ private struct ProfilesSettingsView: View {
             Divider()
 
             HStack(spacing: 8) {
-                Button { isCreatingProfile = true } label: {
-                    Image(systemName: "plus")
-                }
+                SettingsMasterActionButton(systemImage: "plus") { isCreatingProfile = true }
                 .help("New profile")
                 .accessibilityLabel("New profile")
 
-                Button {
+                SettingsMasterActionButton(systemImage: "pencil") {
                     profileBeingRenamed = ProfileRenameRequest(profile: store.activeProfile)
-                } label: {
-                    Image(systemName: "pencil")
                 }
                 .help("Rename selected profile")
                 .accessibilityLabel("Rename selected profile")
 
-                Button(role: .destructive) {
+                SettingsMasterActionButton(systemImage: "trash", role: .destructive) {
                     pendingProfileDeletion = store.activeProfileID
-                } label: {
-                    Image(systemName: "trash")
                 }
                 .disabled(store.profiles.count == 1)
                 .help("Delete selected profile")
@@ -802,8 +825,6 @@ private struct ProfilesSettingsView: View {
 
                 Spacer()
             }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
             .padding(.horizontal, 12)
             .padding(.vertical, SettingsWindowMetrics.masterActionRowVerticalPadding)
 
@@ -1531,24 +1552,22 @@ struct WorkspaceSettingsView: View {
             Divider()
 
             HStack(spacing: 8) {
-                Button {
+                SettingsMasterActionButton(systemImage: "plus") {
                     selectedWorkspaceID = store.addWorkspace()
                     if showsDisclosure { showsCompactInspector = true }
-                } label: {
-                    Image(systemName: "plus")
                 }
                 .help("Add workspace")
                 .accessibilityLabel("Add workspace")
 
-                Button { duplicateSelectedWorkspace() } label: {
-                    Image(systemName: "square.on.square")
+                SettingsMasterActionButton(systemImage: "square.on.square") {
+                    duplicateSelectedWorkspace()
                 }
                 .disabled(selectedWorkspace == nil)
                 .help("Duplicate selected workspace")
                 .accessibilityLabel("Duplicate selected workspace")
 
-                Button(role: .destructive) { deleteSelectedWorkspace() } label: {
-                    Image(systemName: "trash")
+                SettingsMasterActionButton(systemImage: "trash", role: .destructive) {
+                    deleteSelectedWorkspace()
                 }
                 .disabled(store.workspaces.count <= 1 || selectedWorkspace == nil)
                 .help("Delete selected workspace")
@@ -1556,8 +1575,6 @@ struct WorkspaceSettingsView: View {
 
                 Spacer()
             }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
             .padding(.horizontal, 20)
             .padding(.vertical, SettingsWindowMetrics.masterActionRowVerticalPadding)
 
@@ -2204,21 +2221,19 @@ private struct AppRulesSettingsView: View {
             Divider()
 
             HStack(spacing: 8) {
-                Button { showsAppPicker = true } label: {
-                    Image(systemName: "plus")
-                }
+                SettingsMasterActionButton(systemImage: "plus") { showsAppPicker = true }
                 .help("Add application rule")
                 .accessibilityLabel("Add application rule")
 
-                Button(role: .destructive) { removeSelectedRule() } label: {
-                    Image(systemName: "trash")
+                SettingsMasterActionButton(systemImage: "trash", role: .destructive) {
+                    removeSelectedRule()
                 }
                 .disabled(selectedRule == nil)
                 .help("Remove selected rule")
                 .accessibilityLabel("Remove selected rule")
 
-                Button { undoManager?.undo() } label: {
-                    Image(systemName: "arrow.uturn.backward")
+                SettingsMasterActionButton(systemImage: "arrow.uturn.backward") {
+                    undoManager?.undo()
                 }
                 .disabled(!(undoManager?.canUndo ?? false))
                 .help("Undo last rule change")
@@ -2226,8 +2241,6 @@ private struct AppRulesSettingsView: View {
 
                 Spacer()
             }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
             .padding(.horizontal, 12)
             .padding(.vertical, SettingsWindowMetrics.masterActionRowVerticalPadding)
 
@@ -2386,9 +2399,15 @@ private struct AppRuleEditor: View {
                             .textSelection(.enabled)
                     }
                     Spacer()
-                    Toggle("Enabled", isOn: $rule.isEnabled)
-                        .toggleStyle(.switch)
-                        .help(rule.isEnabled ? "Pause this rule" : "Resume this rule")
+                    HStack(spacing: 10) {
+                        Text("Enabled")
+                        Toggle("Enabled", isOn: $rule.isEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .accessibilityLabel("Enabled")
+                    }
+                    .fixedSize()
+                    .help(rule.isEnabled ? "Pause this rule" : "Resume this rule")
                 }
             }
 
