@@ -106,6 +106,7 @@ done
 )
 
 current_branch="$(/usr/bin/git -C "$repository_root" branch --show-current)"
+source_revision="$(/usr/bin/git -C "$repository_root" rev-parse --short=12 HEAD)"
 [[ "$current_branch" == "$expected_branch" ]] || blockers+=(
     "$channel version $version must be built from $expected_branch, not ${current_branch:-detached HEAD}"
 )
@@ -256,6 +257,7 @@ DEVELOPER_DIR="$developer_directory" /usr/bin/xcodebuild \
     -allowProvisioningUpdates \
     MARKETING_VERSION="$base_version" \
     CURRENT_PROJECT_VERSION="$build_number" \
+    WINDOWRANGER_GIT_COMMIT="$source_revision" \
     archive
 
 print "Exporting with Developer ID..."

@@ -5,6 +5,53 @@ import SwiftUI
 enum SettingsWindowMetrics {
     static let minimumSize = CGSize(width: 1120, height: 680)
     static let defaultSize = CGSize(width: 1280, height: 780)
+
+    static func constrainedFrameSize(
+        currentSize: CGSize,
+        availableSize: CGSize
+    ) -> CGSize {
+        CGSize(
+            width: min(max(currentSize.width, minimumSize.width), availableSize.width),
+            height: min(max(currentSize.height, minimumSize.height), availableSize.height)
+        )
+    }
+}
+
+struct SettingsBuildIdentity: Equatable, Sendable {
+    let version: String
+    let build: String
+    let commit: String
+    let isDebugBuild: Bool
+
+    static var current: SettingsBuildIdentity {
+        let info = Bundle.main.infoDictionary ?? [:]
+        return SettingsBuildIdentity(
+            version: info["CFBundleShortVersionString"] as? String ?? "Unknown",
+            build: info["CFBundleVersion"] as? String ?? "Unknown",
+            commit: normalizedCommit(info["WindowRangerGitCommit"] as? String),
+            isDebugBuild: _isDebugAssertConfiguration()
+        )
+    }
+
+    var versionText: String {
+        "Version \(version) (\(build))"
+    }
+
+    var sourceText: String {
+        [isDebugBuild ? "Dev" : nil, commit].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    var accessibilityText: String {
+        "\(versionText), \(sourceText.replacingOccurrences(of: " · ", with: ", "))"
+    }
+
+    private static func normalizedCommit(_ value: String?) -> String {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty,
+              !value.contains("$(")
+        else { return "unknown commit" }
+        return value
+    }
 }
 
 struct SettingsView: View {
@@ -21,15 +68,24 @@ struct SettingsView: View {
             settingsSidebar
                 .navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 300)
         } detail: {
-            detail
-                .frame(minWidth: 860, maxWidth: .infinity, maxHeight: .infinity)
+            GeometryReader { geometry in
+                detail
+                    .frame(
+                        width: geometry.size.width,
+                        height: geometry.size.height,
+                        alignment: .topLeading
+                    )
+            }
+            .frame(minWidth: 860, maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationSplitViewStyle(.balanced)
         .frame(
             minWidth: SettingsWindowMetrics.minimumSize.width,
             idealWidth: SettingsWindowMetrics.defaultSize.width,
+            maxWidth: .infinity,
             minHeight: SettingsWindowMetrics.minimumSize.height,
-            idealHeight: SettingsWindowMetrics.defaultSize.height
+            idealHeight: SettingsWindowMetrics.defaultSize.height,
+            maxHeight: .infinity
         )
         .background {
             SettingsWindowReader { window in
@@ -41,56 +97,72 @@ struct SettingsView: View {
     }
 
     private var settingsSidebar: some View {
-        Group {
-            if navigation.searchText.isEmpty {
-                List(selection: Binding(
-                    get: { Optional(navigation.selectedCategory) },
-                    set: {
-                        if let category = $0, category != navigation.selectedCategory {
-                            DispatchQueue.main.async {
-                                navigation.select(category)
+        VStack(spacing: 0) {
+            Group {
+                if navigation.searchText.isEmpty {
+                    List(selection: Binding(
+                        get: { Optional(navigation.selectedCategory) },
+                        set: {
+                            if let category = $0, category != navigation.selectedCategory {
+                                DispatchQueue.main.async {
+                                    navigation.select(category)
+                                }
                             }
                         }
-                    }
-                )) {
-                    Section("WindowRanger") {
-                        sidebarRow(.general)
-                        sidebarRow(.profiles)
-                        sidebarRow(.workspaces)
-                    }
-                    Section("Behavior") {
-                        sidebarRow(.appRules)
-                        sidebarRow(.shortcuts)
-                        sidebarRow(.radialMenu)
-                    }
-                    #if DEBUG
-                    Section("Development") { sidebarRow(.diagnostics) }
-                    #endif
-                }
-                .listStyle(.sidebar)
-            } else if searchResults.isEmpty {
-                ContentUnavailableView.search(text: navigation.searchText)
-            } else {
-                List(searchResults) { result in
-                    Button {
-                        navigation.select(result)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Label(result.title, systemImage: result.category.systemImage)
-                                .font(.body.weight(.medium))
-                            Text(result.description)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
+                    )) {
+                        Section("WindowRanger") {
+                            sidebarRow(.general)
+                            sidebarRow(.profiles)
+                            sidebarRow(.workspaces)
                         }
-                        .padding(.vertical, 3)
-                        .contentShape(Rectangle())
+                        Section("Behavior") {
+                            sidebarRow(.appRules)
+                            sidebarRow(.shortcuts)
+                            sidebarRow(.radialMenu)
+                        }
+                        #if DEBUG
+                        Section("Development") { sidebarRow(.diagnostics) }
+                        #endif
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityHint("Opens \(result.category.title) settings")
+                    .listStyle(.sidebar)
+                } else if searchResults.isEmpty {
+                    ContentUnavailableView.search(text: navigation.searchText)
+                } else {
+                    List(searchResults) { result in
+                        Button {
+                            navigation.select(result)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Label(result.title, systemImage: result.category.systemImage)
+                                    .font(.body.weight(.medium))
+                                Text(result.description)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                            .padding(.vertical, 3)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens \(result.category.title) settings")
+                    }
+                    .listStyle(.sidebar)
                 }
-                .listStyle(.sidebar)
             }
+            .frame(maxHeight: .infinity)
+
+            Divider()
+            VStack(alignment: .leading, spacing: 2) {
+                Text(SettingsBuildIdentity.current.versionText)
+                Text(SettingsBuildIdentity.current.sourceText)
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(SettingsBuildIdentity.current.accessibilityText)
         }
         .searchable(
             text: $navigation.searchText,

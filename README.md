@@ -48,7 +48,10 @@ not an installable macOS app.
 - Switching parks windows from inactive workspaces at the edge of the desktop and restores their previous frames when returning.
 - Workspace switches restore the destination before parking the source, touch only those two workspaces, issue position-only Accessibility writes, and suppress participating apps' own move animation for the duration of each batch.
 - Global shortcuts matching the current AeroSpace configuration.
-- Native sidebar-based, searchable Settings with one consolidated Workspaces master list and inspector for workspace identity, display mode/home, layout geometry, derived shortcuts, reset, and recovery.
+- Native sidebar-based, searchable and resizable Settings with one consolidated Workspaces master
+  list and inspector for workspace identity, display mode/home, layout geometry, derived shortcuts,
+  reset, and recovery. Its sidebar footer identifies the running version, build, source commit, and
+  Dev configuration when applicable.
 - Two multiple-display modes: unified switching across all displays, or independent active workspaces assigned per display.
 - Workspace-local window focus cycling with `Option-[` and `Option-]`, wrapping without selecting parked windows.
 - Automatic workspace following when a managed window is focused through the Dock or another macOS route.

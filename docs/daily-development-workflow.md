@@ -38,6 +38,10 @@ The installed app is `/Applications/WindowRanger.app`. If it replaces an existin
 previous bundle is retained at `/Applications/.WindowRanger.previous` without an `.app` suffix so
 LaunchServices cannot select it as a runnable app.
 
+The Settings sidebar footer identifies the running version, build, source commit, and Dev
+configuration. A daily build made from uncommitted changes appends `-dirty` to the commit so live
+validation cannot accidentally be attributed to the clean commit alone.
+
 If the installed Developer ID build is already trusted but the Xcode build is not, open **System
 Settings > Privacy & Security > Accessibility**, remove only the stale WindowRanger entry when
 necessary, launch the intended exact build, and grant that copy. Repeat the handoff for the installed
