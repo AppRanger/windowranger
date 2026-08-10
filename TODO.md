@@ -360,8 +360,12 @@ second copy of that checklist.
   universal Release build, and Stable/Beta DMG smoke gate. Local stable-Xcode verification then
   passed 478 tests, static analysis, universal archive, and Developer ID export before exposing a
   release-script defect: the notarization result parser assigned to zsh's read-only `status`
-  parameter. The partial output is preserved outside the candidate path; the parser correction must
-  be reviewed and promoted before repeating packaging and recording exact-artifact evidence.
+  parameter. The partial output is preserved outside the candidate path. After the parser correction
+  was reviewed and promoted, repeated preflight exposed a second shell defect: with `pipefail`
+  enabled, piping the two-line `xcodebuild -version` output through `head` could intermittently exit
+  141 when `head` closed the pipe early. The correction consumes the complete output with `sed` while
+  selecting its first line, preserving strict pipeline failure handling. It must be reviewed and
+  promoted before repeating packaging and recording exact-artifact evidence.
 - **Testing boundary:** Install and test the packaged Beta 2 DMG itself. Exercise the remaining live
   validation items in this queue, with particular attention to Settings resizing, multi-display
   workspace routing, focused-window borders, sleep/wake, Dock auto-hide, native glass feedback, and

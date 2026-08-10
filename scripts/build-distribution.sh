@@ -141,7 +141,7 @@ if (( ${#blockers} > 0 )); then
     exit 1
 fi
 
-xcode_version="$(DEVELOPER_DIR="$developer_directory" /usr/bin/xcodebuild -version | /usr/bin/head -n 1)"
+xcode_version="$(DEVELOPER_DIR="$developer_directory" /usr/bin/xcodebuild -version | /usr/bin/sed -n '1p')"
 print "Release preflight passed:"
 print "  Channel: $channel"
 print "  Version: $version"
