@@ -28,6 +28,21 @@ None.
 
 ## Live validation
 
+### WR-025 — Reflow Settings across useful window sizes
+
+- **Type:** Change
+- **Priority:** P1
+- **Status:** Live validation
+- **Implemented:** Settings now resize down to 760 x 560. Wide Profiles and Workspaces retain their
+  split layouts; compact widths expose explicit segmented sections, and narrow geometry, App Rule,
+  and footer controls stack instead of clipping. Long forms remain scrollable.
+- **Automated evidence:** Deterministic compact/wide resolution, AppKit window bounds, and placement
+  tests pass in the complete 451-test non-hosted suite. Production fixtures render every primary
+  Settings pane at the compact minimum, plus Profiles and Workspaces at wide size.
+- **Remaining live boundary:** In the signed daily build, resize continuously across the breakpoint;
+  confirm both compact sections in Profiles and Workspaces remain reachable and retain selection;
+  check App Rules, Shortcuts, and Command Wheel at 760 x 560; then expand back to the wide layout.
+
 ### WR-005 — Measure Debug diagnostic logging under slow storage
 
 - **Type:** Performance measurement

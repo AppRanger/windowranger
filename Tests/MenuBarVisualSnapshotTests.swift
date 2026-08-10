@@ -168,6 +168,11 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             diagnostics: .disabled
         )
         store.workspaces = workspaces
+        store.appRules = [AppRule(
+            bundleIdentifier: "com.example.Writer",
+            displayName: "Writer",
+            actions: [.assignWorkspace(writing.id), .floatSecondaryWindows]
+        )]
         store.multiDisplayMode = .independent
         let roleID = store.activeProfile.displayRoles[0].id
         store.renameDisplayRole(roleID, to: "Studio Display")
@@ -261,6 +266,88 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             to: outputDirectory.appendingPathComponent("windowranger-settings-profiles.png"),
             options: .atomic
         )
+
+        let compactSize = SettingsWindowMetrics.minimumSize
+        let compactProfilesView = SettingsView(
+            store: store,
+            engine: engine,
+            navigation: navigation,
+            windowCoordinator: coordinator,
+            diagnostics: .disabled,
+            shortcutRecordingStateChanged: { _ in }
+        )
+        .frame(width: compactSize.width, height: compactSize.height)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, .light)
+        .environment(\.controlActiveState, .key)
+        let compactProfilesData = try renderRetinaPNG(
+            compactProfilesView,
+            size: compactSize
+        )
+        XCTAssertGreaterThan(compactProfilesData.count, 15_000)
+        try compactProfilesData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-profiles-compact.png"
+            ),
+            options: .atomic
+        )
+
+        navigation.selectWorkspace(writing.id)
+        let compactWorkspacesView = SettingsView(
+            store: store,
+            engine: engine,
+            navigation: navigation,
+            windowCoordinator: coordinator,
+            diagnostics: .disabled,
+            shortcutRecordingStateChanged: { _ in }
+        )
+        .frame(width: compactSize.width, height: compactSize.height)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, .light)
+        .environment(\.controlActiveState, .key)
+        let compactWorkspacesData = try renderRetinaPNG(
+            compactWorkspacesView,
+            size: compactSize
+        )
+        XCTAssertGreaterThan(compactWorkspacesData.count, 15_000)
+        try compactWorkspacesData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-workspaces-compact.png"
+            ),
+            options: .atomic
+        )
+
+        for category in [
+            SettingsCategory.general,
+            .appRules,
+            .shortcuts,
+            .radialMenu,
+        ] {
+            navigation.select(category)
+            let compactCategoryView = SettingsView(
+                store: store,
+                engine: engine,
+                navigation: navigation,
+                windowCoordinator: coordinator,
+                diagnostics: .disabled,
+                shortcutRecordingStateChanged: { _ in }
+            )
+            .frame(width: compactSize.width, height: compactSize.height)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, .light)
+            .environment(\.controlActiveState, .key)
+            let compactCategoryData = try renderRetinaPNG(
+                compactCategoryView,
+                size: compactSize
+            )
+            XCTAssertGreaterThan(compactCategoryData.count, 15_000)
+            try compactCategoryData.write(
+                to: outputDirectory.appendingPathComponent(
+                    "windowranger-settings-\(category.rawValue)-compact.png"
+                ),
+                options: .atomic
+            )
+        }
 
         let largeTextSize = CGSize(width: 1_180, height: 900)
         let largeTextData = try renderRetinaPNG(

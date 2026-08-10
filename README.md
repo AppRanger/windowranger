@@ -50,8 +50,9 @@ not an installable macOS app.
 - Global shortcuts matching the current AeroSpace configuration.
 - Native sidebar-based, searchable and resizable Settings with one consolidated Workspaces master
   list and inspector for workspace identity, display mode/home, layout geometry, derived shortcuts,
-  reset, and recovery. Its sidebar footer identifies the running version, build, source commit, and
-  Dev configuration when applicable.
+  reset, and recovery. Wide panes keep their multi-column hierarchy; at compact sizes they switch to
+  explicit sections and stack dense controls instead of clipping them. Its sidebar footer identifies
+  the running version, build, source commit, and Dev configuration when applicable.
 - Two multiple-display modes: unified switching across all displays, or independent active workspaces assigned per display.
 - Workspace-local window focus cycling with `Option-[` and `Option-]`, wrapping without selecting parked windows.
 - Automatic workspace following when a managed window is focused through the Dock or another macOS route.
@@ -215,7 +216,9 @@ portable Mac with an external display is docked. Desktop Macs skip that generic 
 
 The Profiles Settings pane can create a profile from the current reusable configuration, duplicate,
 rename, select, and safely delete profiles; it also manages this Mac's triggers and physical role
-bindings. Switching profiles first recovers eligible managed windows to meaningful visible frames,
+bindings. At compact window widths, **Profiles** and **Selection & Displays** become explicit
+segments rather than two squeezed columns. Switching profiles first recovers eligible managed
+windows to meaningful visible frames,
 then applies the destination workspaces, display state, and app rules. Still-open windows are routed
 by destination app rules or conservatively placed on an active destination workspace rather than
 retaining membership from the old profile. Ignored panels and temporarily unsafe minimized or
@@ -231,7 +234,9 @@ sole configuration authority.
 
 Workspaces is the single place for workspace-specific configuration. The normal Settings sidebar
 stays on the left, a reorderable workspace master list sits in the centre, and the selected
-workspace's inspector fills the right. The page owns Unified versus Independent Displays, workspace
+workspace's inspector fills the right. At compact widths the master list and selected inspector
+become switchable segments, and paired geometry controls stack when horizontal room runs out. The
+page owns Unified versus Independent Displays, workspace
 names/order/keys, abstract Home Display roles, Freeform/Tiled/Accordion choice, orientation, Tiled
 gaps and screen padding, Accordion visible-edge padding, and both reusable-setting reset and live
 window recovery. Profiles remains separate for reusable profile management and this Mac's physical
