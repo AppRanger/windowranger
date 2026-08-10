@@ -124,6 +124,11 @@ For side-effect-free automated tests:
 xcodebuild -project WindowRanger.xcodeproj -scheme WindowRanger -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
 ```
 
+`./scripts/verify-local-ci.sh --quick` packages those checks into one command. Contributors may opt
+this clone into exact-commit pre-push verification with `./scripts/install-git-hooks.sh`; the hook
+uses an isolated worktree and never builds or launches the app. See [Contributing](CONTRIBUTING.md)
+for the full local checkpoint and hosted-CI policy.
+
 The unit-test bundle is deliberately non-hosted: it compiles the shared sources directly and
 excludes `AppDelegate`, so tests never launch WindowRanger, request Accessibility access, register
 hotkeys, manage live windows, or build/register a `WindowRanger.app`. Do not give automated tests a

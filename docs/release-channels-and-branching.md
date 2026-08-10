@@ -8,9 +8,13 @@ WindowRanger will use three release channels—Stable, Beta, and Dev—on a ligh
 branch model. Stable and Beta will use Sparkle later. Dev is a rolling development-build stream and
 will not be an auto-update channel.
 
-The initial pipeline is intentionally local-first: GitHub Actions verifies clean generation, tests,
-analysis, an unsigned Release build, and Stable/Beta DMG packaging; the maintainer's Mac owns
-Developer ID signing, notarization, stapling, and release packaging. See
+The initial pipeline is intentionally local-first. While the repository is private, an opt-in
+pre-push hook runs the non-hosted checkpoint against the exact pushed commit, and the maintainer can
+run the full uncredentialed analysis/build/DMG checkpoint locally. Automatic hosted jobs remain
+skipped so a free open-source app does not exhaust the private-repository allowance. Once the
+repository is public, standard GitHub-hosted runners become free and independently verify pull
+requests plus full integration/release pushes. The maintainer's Mac always owns Developer ID
+signing, notarization, stapling, and release packaging. See
 [First GitHub release](first-github-release.md). After the process is proven, the credentialed
 portion may move to a protected CI environment.
 
@@ -151,9 +155,11 @@ published or they deliberately install an older Stable build using a documented 
 ## Repository protections and current GitHub settings
 
 The repository currently uses `develop` as its default branch. Actions are enabled with a read-only
-default workflow token, and the CI workflow supplies explicit `contents: read` permission. The
-private repository's current GitHub plan does not expose branch protection or rulesets; GitHub's API
-requires either GitHub Pro while private or a public repository for these controls.
+default workflow token, and the CI workflow supplies explicit `contents: read` permission. The CI
+job skips automatic private-repository events and permits a private hosted run only through explicit
+`workflow_dispatch`; public pull requests and selected integration/release pushes run automatically.
+The private repository's current GitHub plan does not expose branch protection or rulesets;
+GitHub's API requires either GitHub Pro while private or a public repository for these controls.
 
 Before accepting public contributions—or immediately after the explicit visibility change if the
 private plan prevents advance configuration—configure rulesets for `main` and `develop`:
