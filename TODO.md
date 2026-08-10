@@ -40,9 +40,9 @@ None.
   it does not establish that the normal Debug log volume or the maintainer's filesystem causes a
   perceptible interaction problem.
 - **Automated evidence:** Test isolation and the complete 446-test suite passed on 10 August 2026.
-- **Pull-request blocker:** [PR #7](https://github.com/windowranger/windowranger/pull/7) is open, but
-  GitHub cannot start its post-fix CI because the account reports failed payments or an Actions
-  spending-limit requirement. Re-run the failed workflow and merge only after it passes.
+- **Private CI evidence:** [PR #7](https://github.com/windowranger/windowranger/pull/7) uses WR-020's
+  exact-commit local pre-push gate; its hosted pull-request job skips successfully before runner
+  allocation while the repository remains private.
 - **Remaining live boundary:** Gracefully quit the installed copy, run the intended signed Debug
   build, reproduce a sustained noisy window/workspace session on the target slow-storage setup, and
   record command latency plus diagnostic event rate. Keep ordered synchronous writes unless that
