@@ -54,6 +54,53 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-036 — Swipe between workspaces
+
+- **Type:** Feature
+- **Priority:** P2
+- **Status:** Live validation
+- **Implemented:** General Settings now has an off-by-default, per-Mac three- or four-finger
+  horizontal workspace swipe. A read-only HID event tap passes generic gesture contacts to a pure
+  finger-count, coherence, axis, and threshold state machine. One accepted swipe dispatches the
+  existing workspace-cycle command and latches until every finger lifts, so ordered wraparound and
+  Independent Displays interaction routing remain owned by the existing engine. The monitor never
+  suppresses or modifies events and suspends for full-screen games, system sleep, inactive login
+  sessions, shortcut recording, and shutdown; display, profile, and app activation changes cancel
+  an in-flight gesture. Settings reports a runtime issue when macOS does not expose the stream.
+- **Automated evidence:** The unsigned Debug app target builds and local quick verification passes
+  478 non-hosted tests. New coverage verifies left/right direction, three/four-finger admission,
+  vertical and changed-contact rejection, one dispatch per gesture, monitor enable/suppression
+  lifecycle, fail-closed availability, local-only persistence, and Settings search.
+- **Installed evidence:** The signed universal Debug daily build for `b6d5762caeb7-dirty` is
+  installed and running from `/Applications/WindowRanger.app`; its Apple Development signature,
+  bundle identity, embedded revision, version `0.1.0 (1)`, and running executable path were verified.
+- **Remaining validation:** Test three- and four-finger choices on the physical trackpad in both
+  directions. Confirm one switch per swipe, wraparound at each end,
+  interaction-display routing in Independent Displays, no interference with chosen macOS gestures,
+  and safe pause/resume across a full-screen game and sleep/wake. The generic gesture event bridge is
+  not a named public Core Graphics event type, so live behavior across supported macOS releases
+  remains a required compatibility boundary.
+
+### WR-035 — Use native glass for command feedback
+
+- **Type:** Visual refinement
+- **Priority:** P2
+- **Status:** Live validation
+- **Requested:** Make the centered command-feedback toast feel closer to the native macOS glass HUD
+  without changing its short-lived, click-through, nonactivating behavior.
+- **Implemented:** On macOS 26 and later, the toast uses Apple's public `NSGlassEffectView` with the
+  regular style, a pill radius derived from half its live height, and its label installed through the
+  glass-owned content view. It remains static rather than interactive because the panel deliberately
+  ignores pointer events. macOS 14–25 retain the existing `NSVisualEffectView` HUD material with the
+  same pill shape. The radius follows any display-driven height clamp. Placement, timing, coalescing,
+  reduced-motion dismissal, VoiceOver announcements, shadow, and nonactivating panel policy are
+  unchanged.
+- **Automated evidence:** Local quick verification passes 470 tests, including native-glass versus
+  fallback selection, correct content ownership, and pill curvature following a clamped live height.
+- **Remaining validation:** Install a signed daily build on macOS 27 and compare short and wrapped
+  feedback in light and dark appearances over varied backgrounds. Confirm the optical effect,
+  curvature, text contrast, shadow, and dismissal feel native without stealing focus.
+
 ### WR-034 — Reconcile every split window after wake
 
 - **Type:** Wake/layout bug

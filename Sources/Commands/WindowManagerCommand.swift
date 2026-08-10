@@ -96,6 +96,7 @@ enum WindowManagerCommand: Hashable, Sendable {
 enum WindowManagerCommandSource: String, Sendable {
     case hotkey
     case radialMenu = "radial-menu"
+    case workspaceSwipe = "workspace-swipe"
 }
 
 enum WindowManagerCommandDispatchResult: Equatable, Sendable {

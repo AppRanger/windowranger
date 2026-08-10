@@ -100,6 +100,11 @@ final class SettingsStore: ObservableObject {
         // Hardware trigger preference is intentionally local to this Mac, not profile-backed or
         // iCloud-synced. Its meaning depends on this Mac's keyboard and Globe configuration.
         static let radialMenuGlobeFnHoldEnabled = "radialMenuGlobeFnHoldEnabled.v1"
+        // Trackpad finger count and activation are hardware preferences for this Mac. They are
+        // deliberately excluded from profiles and iCloud so one Mac cannot silently install a
+        // global input monitor on another.
+        static let workspaceSwipeEnabled = "workspaceSwipeEnabled.v1"
+        static let workspaceSwipeFingerCount = "workspaceSwipeFingerCount.v1"
         static let radialWheelDefinition = "radialWheelDefinition.v1"
         static let hotKeyConfiguration = "hotKeyConfiguration.v1"
         static let menuBarPresentationMode = "menuBarPresentationMode.v1"
@@ -174,6 +179,20 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    @Published var workspaceSwipeEnabled: Bool {
+        didSet {
+            guard !isApplyingRemoteChange else { return }
+            defaults.set(workspaceSwipeEnabled, forKey: Keys.workspaceSwipeEnabled)
+        }
+    }
+
+    @Published var workspaceSwipeFingerCount: WorkspaceSwipeFingerCount {
+        didSet {
+            guard !isApplyingRemoteChange else { return }
+            defaults.set(workspaceSwipeFingerCount.rawValue, forKey: Keys.workspaceSwipeFingerCount)
+        }
+    }
+
     @Published var radialWheelDefinition: RadialWheelDefinition {
         didSet { persistRadialMenuSettings() }
     }
@@ -190,6 +209,7 @@ final class SettingsStore: ObservableObject {
     /// Runtime-only monitor availability for the current process and Mac. It is never persisted or
     /// synchronized, just like Carbon registration failures.
     @Published private(set) var globeFnRuntimeIssue: String?
+    @Published private(set) var workspaceSwipeRuntimeIssue: String?
 
     @Published var menuBarPresentationMode: MenuBarPresentationMode {
         didSet { persistMenuBarPresentationMode() }
@@ -317,6 +337,11 @@ final class SettingsStore: ObservableObject {
             forKey: Keys.radialMenuGlobeFnHoldEnabled
         ) as? Bool ?? false
         globeFnRuntimeIssue = nil
+        workspaceSwipeEnabled = defaults.object(forKey: Keys.workspaceSwipeEnabled) as? Bool ?? false
+        workspaceSwipeFingerCount = WorkspaceSwipeFingerCount(
+            rawValue: defaults.integer(forKey: Keys.workspaceSwipeFingerCount)
+        ) ?? .three
+        workspaceSwipeRuntimeIssue = nil
         radialWheelDefinition = defaults.data(forKey: Keys.radialWheelDefinition)
             .flatMap { try? JSONDecoder().decode(RadialWheelDefinition.self, from: $0) }
             ?? .builtInDefault
@@ -1161,6 +1186,11 @@ final class SettingsStore: ObservableObject {
     func setGlobeFnRuntimeIssue(_ issue: String?) {
         guard globeFnRuntimeIssue != issue else { return }
         globeFnRuntimeIssue = issue
+    }
+
+    func setWorkspaceSwipeRuntimeIssue(_ issue: String?) {
+        guard workspaceSwipeRuntimeIssue != issue else { return }
+        workspaceSwipeRuntimeIssue = issue
     }
 
     func recordActiveWorkspaceState(_ state: WorkspaceEngineState) {

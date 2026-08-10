@@ -108,6 +108,15 @@ or macOS cannot observe the bounded gesture, Settings explains why and the ordin
 commands continue to work. A successful compass placement is registered with native Undo; the app
 menu exposes Undo/Redo while that exact participant set and tree remain current.
 
+General Settings also offers an off-by-default, per-Mac trackpad gesture. Choose three or four
+fingers, then swipe horizontally once to move to the adjacent workspace; cycling wraps at both ends.
+The gesture dispatches through the same workspace-cycle command as the keyboard, so Independent
+Displays continues to use the interaction display. WindowRanger observes without suppressing the
+original trackpad event, switches at most once before every finger lifts, and pauses the monitor
+during full-screen game, sleep, inactive-session, and shortcut-recording states. This optional path
+depends on macOS exposing generic gesture contacts to an Accessibility-authorized event tap; if the
+OS does not provide them, Settings reports that workspace swiping is inactive.
+
 ## Build
 
 Generate the Xcode project:
@@ -383,7 +392,7 @@ Long names remain available to tooltips and VoiceOver while visible labels are b
 
 The choices deliberately combine a few proven patterns rather than copying a single product: AeroSpace exposes the current workspace in its tray icon, AeroSpork renders active per-monitor workspace chips, Loop uses a compact icon-led menu, and BetterStage allows selectable status content. WindowRanger keeps one always-accessible primary menu target in every mode so presentation choices cannot strand Settings or Quit. The production component is owned by one persistent AppKit status item; changing Compact, Medium, or Full reconfigures that item instead of disconnecting and recreating status scenes.
 
-High-frequency command feedback uses one centered, click-through nonactivating overlay rather than a status-item popover or notification banner. It follows the resolved interaction display, never becomes key or main, coalesces rapid updates, and cleans itself up across display changes, sleep, and quit. Debug diagnostics record the overlay lifecycle and display decision without recording its message text. In Debug Settings, **Window Admission** can also show the engine's existing privacy-safe managed/floating/deferred/ignored classifications and reasons; refreshing that view does not re-enumerate, move, resize, or focus windows.
+High-frequency command feedback uses one centered, pill-shaped, click-through nonactivating overlay rather than a status-item popover or notification banner. On macOS 26 and later it uses AppKit's native regular Liquid Glass surface; macOS 14–25 use the system HUD material fallback. It follows the resolved interaction display, never becomes key or main, coalesces rapid updates, and cleans itself up across display changes, sleep, and quit. Debug diagnostics record the overlay lifecycle and display decision without recording its message text. In Debug Settings, **Window Admission** can also show the engine's existing privacy-safe managed/floating/deferred/ignored classifications and reasons; refreshing that view does not re-enumerate, move, resize, or focus windows.
 
 Switching to a workspace focuses an eligible window in that workspace on the resolved destination display. In Independent Displays mode, the workspace's logical home chooses which active-workspace slot changes, while its currently connected home or safe physical fallback chooses where focus is attempted; other displays remain untouched. Local focus history is preferred, then deterministic visible local order. An empty workspace does not focus a parked window or steal focus from another display. Unified mode retains the actual interaction display rather than defaulting to the main display.
 

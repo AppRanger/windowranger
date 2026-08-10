@@ -618,6 +618,56 @@ final class DiagnosticLoggerTests: XCTestCase {
         XCTAssertFalse(policy.participatesInWindowCycle)
     }
 
+    @MainActor
+    func testCommandFeedbackUsesNativeGlassWhenAvailableAndSystemMaterialOtherwise() throws {
+        let surface = CommandFeedbackSurfaceFactory.make(
+            frame: CGRect(x: 0, y: 0, width: 360, height: 72)
+        )
+
+        if #available(macOS 26.0, *) {
+            let glass = try XCTUnwrap(surface as? NSGlassEffectView)
+            XCTAssertEqual(glass.style, .regular)
+            XCTAssertEqual(glass.cornerRadius, 36)
+        } else {
+            let material = try XCTUnwrap(surface as? NSVisualEffectView)
+            XCTAssertEqual(material.material, .hudWindow)
+            XCTAssertEqual(material.layer?.cornerRadius, 36)
+        }
+    }
+
+    @MainActor
+    func testCommandFeedbackPillTracksClampedToastHeight() throws {
+        let surface = CommandFeedbackSurfaceFactory.make(
+            frame: CGRect(x: 0, y: 0, width: 220, height: 60)
+        )
+
+        surface.frame.size.height = 40
+        CommandFeedbackSurfaceFactory.updatePillShape(surface)
+
+        if #available(macOS 26.0, *) {
+            let glass = try XCTUnwrap(surface as? NSGlassEffectView)
+            XCTAssertEqual(glass.cornerRadius, 20)
+        } else {
+            XCTAssertEqual(surface.layer?.cornerRadius, 20)
+        }
+    }
+
+    @MainActor
+    func testCommandFeedbackInstallsContentInsideTheSystemSurface() {
+        let surface = CommandFeedbackSurfaceFactory.make(
+            frame: CGRect(x: 0, y: 0, width: 360, height: 72)
+        )
+        let content = NSView()
+
+        CommandFeedbackSurfaceFactory.installContent(content, in: surface)
+
+        if #available(macOS 26.0, *), let glass = surface as? NSGlassEffectView {
+            XCTAssertTrue(glass.contentView === content)
+        } else {
+            XCTAssertTrue(content.superview === surface)
+        }
+    }
+
     func testFloatingToggleFeedbackUsesSharedCommandFeedbackMessage() {
         XCTAssertEqual(FloatingToggleResult.enabled.commandFeedbackMessage, "Window is floating")
         XCTAssertEqual(
