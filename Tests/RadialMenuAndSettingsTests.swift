@@ -980,7 +980,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             applicationActivator: { activationCount += 1 }
         )
         let surface = TestSettingsWindowSurface(
-            frame: CGRect(x: 100, y: 100, width: 900, height: 640)
+            frame: CGRect(x: 100, y: 100, width: 600, height: 480)
         )
         let context = SettingsSurfaceContext(
             workspaceID: workspaceB.id,
@@ -1009,7 +1009,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     @MainActor
-    func testSettingsAppKitHostUsesStableExplicitResizeConstraints() {
+    func testSettingsAppKitHostUsesStableExplicitResizeConstraints() async {
         let hostingView = NSHostingView(
             rootView: Text("Tall Settings content")
                 .frame(minWidth: 1_800, minHeight: 1_200)
@@ -1033,11 +1033,27 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 
         XCTAssertTrue(window.styleMask.contains(.resizable))
         XCTAssertEqual(window.contentMinSize, SettingsWindowMetrics.minimumSize)
-        XCTAssertEqual(hostingView.sizingOptions, [.intrinsicContentSize])
+        XCTAssertEqual(hostingView.sizingOptions, [])
         XCTAssertGreaterThan(window.contentMaxSize.width, 10_000)
         XCTAssertGreaterThan(window.contentMaxSize.height, 10_000)
         XCTAssertGreaterThanOrEqual(window.contentLayoutRect.width, SettingsWindowMetrics.minimumSize.width)
         XCTAssertGreaterThanOrEqual(window.contentLayoutRect.height, SettingsWindowMetrics.minimumSize.height)
+
+        window.setContentSize(CGSize(width: 1_000, height: 700))
+        XCTAssertEqual(window.contentLayoutRect.size, CGSize(width: 1_000, height: 700))
+        window.setContentSize(CGSize(width: 800, height: 600))
+        XCTAssertEqual(window.contentLayoutRect.size, CGSize(width: 800, height: 600))
+
+        window.styleMask.remove(.resizable)
+        window.contentMaxSize = SettingsWindowMetrics.minimumSize
+        window.standardWindowButton(.zoomButton)?.isEnabled = false
+        NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: window)
+        await Task.yield()
+
+        XCTAssertTrue(window.styleMask.contains(.resizable))
+        XCTAssertGreaterThan(window.contentMaxSize.width, 10_000)
+        XCTAssertGreaterThan(window.contentMaxSize.height, 10_000)
+        XCTAssertEqual(window.standardWindowButton(.zoomButton)?.isEnabled, true)
         window.close()
     }
 
@@ -1293,7 +1309,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
         XCTAssertEqual(crossing?.displayIdentifier, "external")
         XCTAssertEqual(crossing?.resolutionReason, "requested-display-centered")
-        XCTAssertEqual(crossing?.frame.size, SettingsWindowMetrics.minimumSize)
+        XCTAssertEqual(crossing?.frame.size, CGSize(width: 900, height: 640))
         XCTAssertTrue(displays[1].visibleFrame.contains(try! XCTUnwrap(crossing).frame.midpoint))
 
         let clamped = SettingsWindowGeometry.placement(
@@ -1319,7 +1335,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
                 currentSize: CGSize(width: 800, height: 500),
                 availableSize: CGSize(width: 1000, height: 620)
             ),
-            CGSize(width: 1000, height: 620)
+            CGSize(width: 800, height: 560)
         )
     }
 
@@ -1530,10 +1546,20 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     func testWorkspaceSettingsWindowHasRoomForSidebarListAndInspector() {
-        XCTAssertEqual(SettingsWindowMetrics.minimumSize, CGSize(width: 1120, height: 680))
+        XCTAssertEqual(SettingsWindowMetrics.minimumSize, CGSize(width: 760, height: 560))
         XCTAssertEqual(SettingsWindowMetrics.defaultSize, CGSize(width: 1280, height: 780))
+        XCTAssertEqual(SettingsWindowMetrics.sidebarWidth, 240)
+        XCTAssertEqual(SettingsWindowMetrics.masterListWidth, 300)
+        XCTAssertEqual(SettingsWindowMetrics.masterRowMinimumHeight, 44)
+        XCTAssertGreaterThan(
+            SettingsWindowMetrics.minimumSize.width - SettingsWindowMetrics.sidebarWidth,
+            500
+        )
         XCTAssertGreaterThan(SettingsWindowMetrics.defaultSize.width, SettingsWindowMetrics.minimumSize.width)
         XCTAssertGreaterThan(SettingsWindowMetrics.defaultSize.height, SettingsWindowMetrics.minimumSize.height)
+        XCTAssertEqual(SettingsDetailLayout.resolve(availableWidth: 899), .compact)
+        XCTAssertEqual(SettingsDetailLayout.resolve(availableWidth: 900), .wide)
+        XCTAssertEqual(SettingsDetailLayout.resolve(availableWidth: 1_200), .wide)
     }
 
     @MainActor

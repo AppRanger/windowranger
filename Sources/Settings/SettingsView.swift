@@ -3,8 +3,11 @@ import ApplicationServices
 import SwiftUI
 
 enum SettingsWindowMetrics {
-    static let minimumSize = CGSize(width: 1120, height: 680)
+    static let minimumSize = CGSize(width: 760, height: 560)
     static let defaultSize = CGSize(width: 1280, height: 780)
+    static let sidebarWidth: CGFloat = 240
+    static let masterListWidth: CGFloat = 300
+    static let masterRowMinimumHeight: CGFloat = 44
 
     static func constrainedFrameSize(
         currentSize: CGSize,
@@ -14,6 +17,17 @@ enum SettingsWindowMetrics {
             width: min(max(currentSize.width, minimumSize.width), availableSize.width),
             height: min(max(currentSize.height, minimumSize.height), availableSize.height)
         )
+    }
+}
+
+enum SettingsDetailLayout: Equatable, Sendable {
+    case compact
+    case wide
+
+    static let wideBreakpoint: CGFloat = 900
+
+    static func resolve(availableWidth: CGFloat) -> SettingsDetailLayout {
+        availableWidth >= wideBreakpoint ? .wide : .compact
     }
 }
 
@@ -61,24 +75,24 @@ struct SettingsView: View {
     let windowCoordinator: SettingsWindowCoordinator
     let diagnostics: DiagnosticLogger
     let shortcutRecordingStateChanged: (Bool) -> Void
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            settingsSidebar
-                .navigationSplitViewColumnWidth(min: 230, ideal: 260, max: 300)
-        } detail: {
-            GeometryReader { geometry in
-                detail
-                    .frame(
-                        width: geometry.size.width,
-                        height: geometry.size.height,
-                        alignment: .topLeading
-                    )
+        NavigationStack {
+            HStack(spacing: 0) {
+                settingsSidebar
+                    .frame(width: SettingsWindowMetrics.sidebarWidth)
+                Divider()
+                GeometryReader { geometry in
+                    detail
+                        .frame(
+                            width: geometry.size.width,
+                            height: geometry.size.height,
+                            alignment: .topLeading
+                        )
+                }
+                .frame(minWidth: 500, maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(minWidth: 860, maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationSplitViewStyle(.balanced)
         .frame(
             minWidth: SettingsWindowMetrics.minimumSize.width,
             idealWidth: SettingsWindowMetrics.defaultSize.width,
@@ -98,6 +112,12 @@ struct SettingsView: View {
 
     private var settingsSidebar: some View {
         VStack(spacing: 0) {
+            SettingsSearchField(text: $navigation.searchText)
+                .frame(height: 28)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+
             Group {
                 if navigation.searchText.isEmpty {
                     List(selection: Binding(
@@ -125,6 +145,7 @@ struct SettingsView: View {
                         #endif
                     }
                     .listStyle(.sidebar)
+                    .scrollContentBackground(.hidden)
                 } else if searchResults.isEmpty {
                     ContentUnavailableView.search(text: navigation.searchText)
                 } else {
@@ -147,6 +168,7 @@ struct SettingsView: View {
                         .accessibilityHint("Opens \(result.category.title) settings")
                     }
                     .listStyle(.sidebar)
+                    .scrollContentBackground(.hidden)
                 }
             }
             .frame(maxHeight: .infinity)
@@ -164,12 +186,7 @@ struct SettingsView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(SettingsBuildIdentity.current.accessibilityText)
         }
-        .searchable(
-            text: $navigation.searchText,
-            placement: .sidebar,
-            prompt: "Search Settings"
-        )
-        .navigationTitle("Settings")
+        .background(Color(nsColor: .underPageBackgroundColor))
     }
 
     private func sidebarRow(_ category: SettingsCategory) -> some View {
@@ -243,6 +260,43 @@ struct SettingsView: View {
     }
 }
 
+private struct SettingsSearchField: NSViewRepresentable {
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let searchField = NSSearchField()
+        searchField.placeholderString = "Search"
+        searchField.setAccessibilityLabel("Search Settings")
+        searchField.sendsSearchStringImmediately = true
+        searchField.delegate = context.coordinator
+        return searchField
+    }
+
+    func updateNSView(_ searchField: NSSearchField, context: Context) {
+        if searchField.stringValue != text {
+            searchField.stringValue = text
+        }
+        context.coordinator.text = $text
+    }
+
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let searchField = notification.object as? NSSearchField else { return }
+            text.wrappedValue = searchField.stringValue
+        }
+    }
+}
+
 private struct SettingsDetailContainer<Content: View>: View {
     let category: SettingsCategory
     let highlightedEntry: SettingsSearchEntry?
@@ -250,36 +304,78 @@ private struct SettingsDetailContainer<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 5) {
-                Label(category.title, systemImage: category.systemImage)
-                    .font(.title.bold())
-                    .accessibilityAddTraits(.isHeader)
-                if let highlightedEntry {
-                    Label {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(highlightedEntry.title).font(.subheadline.weight(.semibold))
-                            Text(highlightedEntry.description)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: "magnifyingglass")
+            if let highlightedEntry {
+                Label {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(highlightedEntry.title).font(.subheadline.weight(.semibold))
+                        Text(highlightedEntry.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 9))
-                    .accessibilityLabel("Search result: \(highlightedEntry.title). \(highlightedEntry.description)")
+                } icon: {
+                    Image(systemName: "magnifyingglass")
                 }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 9))
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .accessibilityLabel("Search result: \(highlightedEntry.title). \(highlightedEntry.description)")
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
-            .padding(.bottom, 12)
-
-            Divider()
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .navigationTitle(category.title)
+    }
+}
+
+private struct SettingsActionRow<Action: View>: View {
+    let title: String
+    let description: String
+    @ViewBuilder let action: () -> Action
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+            Text(description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                action()
+            }
+        }
+    }
+}
+
+private struct SettingsCompactDetailHeader: View {
+    let backTitle: String
+    let title: String
+    let goBack: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: goBack) {
+                Label(backTitle, systemImage: "chevron.left")
+            }
+            .buttonStyle(.borderless)
+            .help("Back to \(backTitle)")
+
+            Spacer()
+
+            Text(title)
+                .font(.headline)
+                .lineLimit(1)
+
+            Spacer()
+
+            Color.clear
+                .frame(width: 72, height: 1)
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
     }
 }
 
@@ -344,33 +440,56 @@ private struct GeneralSettingsView: View {
             }
 
             Section("Menu Bar") {
-                Picker("Presentation", selection: $store.menuBarPresentationMode) {
-                    ForEach(MenuBarPresentationMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
+                LabeledContent("Presentation") {
+                    HStack {
+                        Spacer()
+                        Picker("Presentation", selection: $store.menuBarPresentationMode) {
+                            ForEach(MenuBarPresentationMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
                     }
+                    .frame(width: 280)
                 }
-                .pickerStyle(.segmented)
-                Picker("Workspace Labels", selection: $store.menuBarWorkspaceLabelMode) {
-                    ForEach(MenuBarWorkspaceLabelMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
+                LabeledContent("Workspace Labels") {
+                    HStack {
+                        Spacer()
+                        Picker("Workspace Labels", selection: $store.menuBarWorkspaceLabelMode) {
+                            ForEach(MenuBarWorkspaceLabelMode.allCases) { mode in
+                                Text(mode.title).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
                     }
+                    .frame(width: 280)
                 }
-                .pickerStyle(.segmented)
                 Text("Show each workspace's full name or its single shortcut key. Full names may still compact when menu-bar space is limited.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                ColorPicker(
-                    "Highlight Colour",
-                    selection: Binding(
-                        get: { store.menuBarHighlightColor.color },
-                        set: { color in
-                            if let resolved = MenuBarHighlightColor(nsColor: NSColor(color)) {
-                                store.menuBarHighlightColor = resolved
-                            }
-                        }
-                    ),
-                    supportsOpacity: false
-                )
+                LabeledContent("Highlight Colour") {
+                    HStack {
+                        Spacer()
+                        ColorPicker(
+                            "Highlight Colour",
+                            selection: Binding(
+                                get: { store.menuBarHighlightColor.color },
+                                set: { color in
+                                    if let resolved = MenuBarHighlightColor(nsColor: NSColor(color)) {
+                                        store.menuBarHighlightColor = resolved
+                                    }
+                                }
+                            ),
+                            supportsOpacity: false
+                        )
+                        .labelsHidden()
+                    }
+                    .frame(width: 280)
+                }
                 Text("Choose one highlight colour. WindowRanger automatically derives readable labels, borders, and secondary active states. White keeps the menu bar monochrome.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -397,12 +516,14 @@ private struct GeneralSettingsView: View {
             }
 
             Section("Recovery") {
-                Button("Bring All Managed Windows Back On Screen") {
-                    engine.restoreAllWindows()
+                SettingsActionRow(
+                    title: "All managed windows",
+                    description: "Use this if the app or a display change leaves a managed window parked at the edge of the desktop."
+                ) {
+                    Button("Bring Back On Screen") {
+                        engine.restoreAllWindows()
+                    }
                 }
-                Text("Use this if the app or a display change leaves a managed window parked at the edge of the desktop.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Section("Moving windows") {
@@ -424,9 +545,6 @@ private struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section {
-                Button("Quit WindowRanger") { NSApp.terminate(nil) }
-            }
         }
         .formStyle(.grouped)
         .onAppear {
@@ -448,6 +566,7 @@ private struct ProfilesSettingsView: View {
     @State private var transferNotice: ProfileTransferNotice?
     @State private var isCreatingProfile = false
     @State private var profileBeingRenamed: ProfileRenameRequest?
+    @State private var showsCompactDetails = false
 
     init(store: SettingsStore) {
         self.store = store
@@ -457,182 +576,8 @@ private struct ProfilesSettingsView: View {
     }
 
     var body: some View {
-        HSplitView {
-            Form {
-                Section("Your Profiles") {
-                    ForEach(store.profiles) { profile in
-                        profileRow(profile)
-                    }
-                    Button("New Profile…", systemImage: "plus") {
-                        isCreatingProfile = true
-                    }
-                    LabeledContent("Selection", value: store.activeProfileSelectionReason.title)
-                    if store.manualPinnedProfileID != nil {
-                        Button("Resume Automatic", systemImage: "arrow.triangle.2.circlepath") {
-                            store.resumeAutomaticProfileSelection()
-                        }
-                        Text("The active profile is pinned on this Mac until you resume automatic selection.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("Automatic selection uses exact display mappings, dock state, then this Mac's default profile.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text("Profiles sync workspace definitions, layouts, display roles, assignments, and app rules. Open windows and physical display bindings stay local.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Import & Export") {
-                    HStack {
-                        Button("Import Profiles…", systemImage: "square.and.arrow.down") {
-                            Task {
-                                do {
-                                    pendingProfileImport = try await transferCoordinator.prepareImport(
-                                        existingProfiles: store.profiles
-                                    )
-                                } catch {
-                                    transferNotice = ProfileTransferNotice(
-                                        title: "Could Not Import Profiles",
-                                        message: error.localizedDescription
-                                    )
-                                }
-                            }
-                        }
-                        Button("Export All Profiles…", systemImage: "square.and.arrow.up") {
-                            Task {
-                                do {
-                                    if try await transferCoordinator.exportProfiles(store.profiles) {
-                                        transferNotice = ProfileTransferNotice(
-                                            title: "Profiles Exported",
-                                            message: "The portable file contains reusable profile definitions only."
-                                        )
-                                    }
-                                } catch {
-                                    transferNotice = ProfileTransferNotice(
-                                        title: "Could Not Export Profiles",
-                                        message: error.localizedDescription
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    Text("Imported profiles are added without changing the active profile, local triggers, monitor bindings, or open windows.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .formStyle(.grouped)
-            .frame(minWidth: 390, idealWidth: 430, maxWidth: 500, maxHeight: .infinity)
-
-            Form {
-                Section("Automatic Selection") {
-                    profilePicker("Default profile", selection: Binding(
-                        get: { Optional(store.defaultProfileID) },
-                        set: { if let id = $0 { store.setDefaultProfile(id) } }
-                    ), permitsNone: false)
-                    profilePicker("When docked", selection: Binding(
-                        get: { store.dockedProfileID },
-                        set: { store.setDockedProfile($0) }
-                    ))
-                    profilePicker("When undocked", selection: Binding(
-                        get: { store.undockedProfileID },
-                        set: { store.setUndockedProfile($0) }
-                    ))
-                    Text("Dock rules apply to portable Macs. Desktop Macs fall through to an exact display mapping or the local default.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Divider()
-                    HStack {
-                        Text("Exact display setups").font(.headline)
-                        Spacer()
-                        Button("Map Current Displays", systemImage: "display.2") {
-                            _ = store.addExactTriggerForCurrentDisplays()
-                        }
-                        .disabled(store.connectedDisplays.isEmpty)
-                    }
-                    if store.exactProfileTriggers.isEmpty {
-                        Text("No exact display setup mappings on this Mac.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(store.exactProfileTriggers) { trigger in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(trigger.name)
-                                    Text("\(trigger.displayPins.count) conservative monitor identities")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Picker("Profile", selection: Binding(
-                                    get: { trigger.profileID },
-                                    set: { store.setExactTrigger(trigger.id, profileID: $0) }
-                                )) {
-                                    ForEach(store.profiles) { profile in
-                                        Text(profile.name).tag(profile.id)
-                                    }
-                                }
-                                .labelsHidden()
-                                .frame(width: 170)
-                                Button(role: .destructive) {
-                                    store.removeExactTrigger(trigger.id)
-                                } label: {
-                                    Image(systemName: "minus.circle")
-                                }
-                                .buttonStyle(.borderless)
-                            }
-                        }
-                    }
-                    Text("Automatic selection rules and the active profile are local to this Mac and never cause another Mac to switch profiles.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Display Roles") {
-                    ForEach(store.activeProfile.displayRoles) { role in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                TextField("Role name", text: Binding(
-                                    get: {
-                                        store.activeProfile.displayRoles.first(where: { $0.id == role.id })?.name
-                                            ?? role.name
-                                    },
-                                    set: { store.renameDisplayRole(role.id, to: $0) }
-                                ))
-                                Button(role: .destructive) {
-                                    _ = store.deleteDisplayRole(role.id)
-                                } label: {
-                                    Image(systemName: "trash")
-                                }
-                                .buttonStyle(.borderless)
-                                .disabled(store.activeProfile.displayRoles.count == 1)
-                            }
-                            Picker("This Mac", selection: Binding<String?>(
-                                get: { store.roleBindings[role.id]?.lastKnownIdentifier },
-                                set: { store.bindDisplayRole(role.id, to: $0) }
-                            )) {
-                                Text("Unbound — safe main-display fallback").tag(nil as String?)
-                                ForEach(roleDisplayOptions(role.id)) { display in
-                                    Text(display.name).tag(Optional(display.identifier))
-                                }
-                            }
-                            if let note = roleBindingNote(role.id) {
-                                Text(note).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    Button("Add Display Role", systemImage: "plus") {
-                        _ = store.addDisplayRole()
-                    }
-                    Text("Role names and workspace assignments sync with the profile. Their physical monitor bindings stay on this Mac.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .formStyle(.grouped)
-            .frame(minWidth: 430, maxWidth: .infinity, maxHeight: .infinity)
+        GeometryReader { geometry in
+            responsiveContent(for: SettingsDetailLayout.resolve(availableWidth: geometry.size.width))
         }
         .confirmationDialog(
             "Delete this profile?",
@@ -707,63 +652,364 @@ private struct ProfilesSettingsView: View {
         }
     }
 
-    private func profileRow(_ profile: WindowManagerProfile) -> some View {
-        HStack(spacing: 10) {
-            Button {
-                if profile.id != store.activeProfileID {
-                    store.selectProfile(profile.id)
+    @ViewBuilder
+    private func responsiveContent(for layout: SettingsDetailLayout) -> some View {
+        switch layout {
+        case .wide:
+            HStack(spacing: 0) {
+                profileListColumn()
+                    .frame(width: SettingsWindowMetrics.masterListWidth)
+                    .frame(maxHeight: .infinity)
+                Divider()
+                automaticSelectionForm(includesProfileManagement: true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        case .compact:
+            VStack(spacing: 0) {
+                if showsCompactDetails {
+                    SettingsCompactDetailHeader(
+                        backTitle: "Profiles",
+                        title: store.activeProfile.name,
+                        goBack: { showsCompactDetails = false }
+                    )
+                    Divider()
+                    automaticSelectionForm(includesProfileManagement: true)
+                } else {
+                    profileListColumn(showsDisclosure: true)
                 }
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: profile.id == store.activeProfileID
-                        ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(
-                            profile.id == store.activeProfileID ? Color.accentColor : .secondary
-                        )
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(profile.name)
-                            .font(.body.weight(.medium))
-                            .foregroundStyle(.primary)
-                        Text(profileSummary(profile))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+            }
+        }
+    }
+
+    private func profileListColumn(showsDisclosure: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Profiles")
+                    .font(.headline)
+                Text("Choose the reusable configuration active on this Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            List(selection: Binding(
+                get: { Optional(store.activeProfileID) },
+                set: { profileID in
+                    if let profileID {
+                        if profileID != store.activeProfileID {
+                            store.selectProfile(profileID)
+                        }
+                        if showsDisclosure { showsCompactDetails = true }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+            )) {
+                ForEach(store.profiles) { profile in
+                    profileListRow(profile, showsDisclosure: showsDisclosure)
+                        .tag(profile.id)
+                        .onTapGesture {
+                            if profile.id != store.activeProfileID {
+                                store.selectProfile(profile.id)
+                            }
+                            if showsDisclosure { showsCompactDetails = true }
+                        }
+                        .contextMenu {
+                            Button("Use Profile") { store.selectProfile(profile.id) }
+                                .disabled(profile.id == store.activeProfileID)
+                            Button("Rename…") {
+                                profileBeingRenamed = ProfileRenameRequest(profile: profile)
+                            }
+                            Divider()
+                            Button("Delete", role: .destructive) {
+                                pendingProfileDeletion = profile.id
+                            }
+                            .disabled(store.profiles.count == 1)
+                        }
+                }
             }
-            .buttonStyle(.plain)
-            .help(profile.id == store.activeProfileID ? "Active profile" : "Use this profile")
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .environment(
+                \.defaultMinListRowHeight,
+                SettingsWindowMetrics.masterRowMinimumHeight
+            )
 
-            Button {
-                profileBeingRenamed = ProfileRenameRequest(profile: profile)
-            } label: {
-                Image(systemName: "pencil")
-            }
-            .buttonStyle(.borderless)
-            .help("Rename profile")
-
-            Button(role: .destructive) {
-                pendingProfileDeletion = profile.id
-            } label: {
-                Image(systemName: "trash")
-            }
-            .buttonStyle(.borderless)
-            .disabled(store.profiles.count == 1)
-            .help("Delete profile")
-        }
-        .contextMenu {
-            Button("Use Profile") { store.selectProfile(profile.id) }
-                .disabled(profile.id == store.activeProfileID)
-            Button("Rename…") {
-                profileBeingRenamed = ProfileRenameRequest(profile: profile)
-            }
             Divider()
-            Button("Delete", role: .destructive) {
-                pendingProfileDeletion = profile.id
+
+            HStack(spacing: 8) {
+                Button { isCreatingProfile = true } label: {
+                    Image(systemName: "plus")
+                }
+                .help("New profile")
+                .accessibilityLabel("New profile")
+
+                Button {
+                    profileBeingRenamed = ProfileRenameRequest(profile: store.activeProfile)
+                } label: {
+                    Image(systemName: "pencil")
+                }
+                .help("Rename selected profile")
+                .accessibilityLabel("Rename selected profile")
+
+                Button(role: .destructive) {
+                    pendingProfileDeletion = store.activeProfileID
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .disabled(store.profiles.count == 1)
+                .help("Delete selected profile")
+                .accessibilityLabel("Delete selected profile")
+
+                Spacer()
             }
-            .disabled(store.profiles.count == 1)
+            .buttonStyle(.bordered)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+
+            Divider()
+
+            SettingsActionRow(
+                title: "Profile library",
+                description: "Import adds reusable profiles without changing the active profile or this Mac's local bindings. Export includes every profile."
+            ) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        Button("Import…", systemImage: "square.and.arrow.down") {
+                            prepareProfileImport()
+                        }
+                        Button("Export All…", systemImage: "square.and.arrow.up") {
+                            exportProfiles()
+                        }
+                    }
+                    VStack(alignment: .trailing, spacing: 8) {
+                        Button("Import…", systemImage: "square.and.arrow.down") {
+                            prepareProfileImport()
+                        }
+                        Button("Export All…", systemImage: "square.and.arrow.up") {
+                            exportProfiles()
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private func automaticSelectionForm(includesProfileManagement: Bool) -> some View {
+        Form {
+            if includesProfileManagement {
+                Section("Selection") {
+                    LabeledContent("Active profile", value: store.activeProfile.name)
+                    LabeledContent("Selection mode", value: store.activeProfileSelectionReason.title)
+                    if store.manualPinnedProfileID != nil {
+                        Button("Resume Automatic", systemImage: "arrow.triangle.2.circlepath") {
+                            store.resumeAutomaticProfileSelection()
+                        }
+                        Text("This profile remains pinned on this Mac until automatic selection resumes.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Automatic selection uses exact display mappings, dock state, then this Mac's default profile.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Section("Automatic Selection") {
+                profilePicker("Default profile", selection: Binding(
+                    get: { Optional(store.defaultProfileID) },
+                    set: { if let id = $0 { store.setDefaultProfile(id) } }
+                ), permitsNone: false)
+                profilePicker("When docked", selection: Binding(
+                    get: { store.dockedProfileID },
+                    set: { store.setDockedProfile($0) }
+                ))
+                profilePicker("When undocked", selection: Binding(
+                    get: { store.undockedProfileID },
+                    set: { store.setUndockedProfile($0) }
+                ))
+                Text("Dock rules apply to portable Macs. Desktop Macs fall through to an exact display mapping or the local default.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Divider()
+                HStack {
+                    Text("Exact display setups").font(.headline)
+                    Spacer()
+                    Button("Map Current Displays", systemImage: "display.2") {
+                        _ = store.addExactTriggerForCurrentDisplays()
+                    }
+                    .disabled(store.connectedDisplays.isEmpty)
+                }
+                if store.exactProfileTriggers.isEmpty {
+                    Text("No exact display setup mappings on this Mac.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(store.exactProfileTriggers) { trigger in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(trigger.name)
+                                Text("\(trigger.displayPins.count) conservative monitor identities")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Picker("Profile", selection: Binding(
+                                get: { trigger.profileID },
+                                set: { store.setExactTrigger(trigger.id, profileID: $0) }
+                            )) {
+                                ForEach(store.profiles) { profile in Text(profile.name).tag(profile.id) }
+                            }
+                            .labelsHidden()
+                            .frame(width: 170)
+                            Button(role: .destructive) {
+                                store.removeExactTrigger(trigger.id)
+                            } label: {
+                                Image(systemName: "minus.circle")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+                Text("Automatic selection rules and the active profile are local to this Mac and never cause another Mac to switch profiles.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Display Roles") {
+                ForEach(store.activeProfile.displayRoles) { role in
+                    VStack(alignment: .leading, spacing: 8) {
+                        LabeledContent("Role name") {
+                            HStack(spacing: 8) {
+                            TextField("Role name", text: Binding(
+                                get: {
+                                    store.activeProfile.displayRoles.first(where: { $0.id == role.id })?.name
+                                        ?? role.name
+                                },
+                                set: { store.renameDisplayRole(role.id, to: $0) }
+                            ))
+                                .labelsHidden()
+                                .textFieldStyle(.roundedBorder)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 220)
+
+                                Button(role: .destructive) {
+                                    _ = store.deleteDisplayRole(role.id)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .frame(width: 20)
+                                .disabled(store.activeProfile.displayRoles.count == 1)
+                            }
+                        }
+
+                        LabeledContent("This Mac's display") {
+                            HStack(spacing: 8) {
+                                Picker("This Mac's display", selection: Binding<String?>(
+                                    get: { store.roleBindings[role.id]?.lastKnownIdentifier },
+                                    set: { store.bindDisplayRole(role.id, to: $0) }
+                                )) {
+                                    Text("Unbound — safe main-display fallback").tag(nil as String?)
+                                    ForEach(roleDisplayOptions(role.id)) { display in
+                                        Text(display.name).tag(Optional(display.identifier))
+                                    }
+                                }
+                                .labelsHidden()
+                                .frame(width: 220)
+                                Color.clear.frame(width: 20, height: 1)
+                            }
+                        }
+                        if let note = roleBindingNote(role.id) {
+                            Text(note).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                HStack {
+                    Spacer()
+                    Button("Add Display Role", systemImage: "plus") {
+                        _ = store.addDisplayRole()
+                    }
+                }
+                Text("Role names and workspace assignments sync with the profile. Their physical monitor bindings stay on this Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func profileListRow(
+        _ profile: WindowManagerProfile,
+        showsDisclosure: Bool
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: profile.id == store.activeProfileID
+                ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(profile.id == store.activeProfileID ? Color.accentColor : .secondary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(profile.name)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                Text(profileSummary(profile))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            if showsDisclosure {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.vertical, 3)
+        .frame(minHeight: SettingsWindowMetrics.masterRowMinimumHeight)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(profile.name), \(profileSummary(profile))")
+        .accessibilityHint(showsDisclosure
+            ? "Opens profile details"
+            : profile.id == store.activeProfileID ? "Active profile" : "Selects this profile")
+    }
+
+    private func prepareProfileImport() {
+        Task {
+            do {
+                pendingProfileImport = try await transferCoordinator.prepareImport(
+                    existingProfiles: store.profiles
+                )
+            } catch {
+                transferNotice = ProfileTransferNotice(
+                    title: "Could Not Import Profiles",
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
+    private func exportProfiles() {
+        Task {
+            do {
+                if try await transferCoordinator.exportProfiles(store.profiles) {
+                    transferNotice = ProfileTransferNotice(
+                        title: "Profiles Exported",
+                        message: "The portable file contains reusable profile definitions only."
+                    )
+                }
+            } catch {
+                transferNotice = ProfileTransferNotice(
+                    title: "Could Not Export Profiles",
+                    message: error.localizedDescription
+                )
+            }
         }
     }
 
@@ -1097,6 +1343,7 @@ struct WorkspaceSettingsView: View {
     let requestedWorkspaceID: UUID?
     @Environment(\.undoManager) private var undoManager
     @State private var selectedWorkspaceID: UUID?
+    @State private var showsCompactInspector: Bool
 
     init(
         store: SettingsStore,
@@ -1109,18 +1356,17 @@ struct WorkspaceSettingsView: View {
         self.engine = engine
         self.highlightedEntry = highlightedEntry
         self.requestedWorkspaceID = requestedWorkspaceID
+        let initialWorkspaceID = requestedWorkspaceID ?? highlightedEntry?.workspaceID
+            ?? initiallySelectedWorkspaceID
         _selectedWorkspaceID = State(
-            initialValue: requestedWorkspaceID ?? highlightedEntry?.workspaceID
-                ?? initiallySelectedWorkspaceID
+            initialValue: initialWorkspaceID
         )
+        _showsCompactInspector = State(initialValue: initialWorkspaceID != nil)
     }
 
     var body: some View {
-        HSplitView {
-            masterColumn
-                .frame(minWidth: 330, idealWidth: 385, maxWidth: 420)
-            inspectorColumn
-                .frame(minWidth: 530, maxWidth: .infinity, maxHeight: .infinity)
+        GeometryReader { geometry in
+            responsiveContent(for: SettingsDetailLayout.resolve(availableWidth: geometry.size.width))
         }
         .onAppear {
             reconcileSelection(preferred: requestedWorkspaceID ?? highlightedEntry?.workspaceID)
@@ -1129,13 +1375,44 @@ struct WorkspaceSettingsView: View {
         .onChange(of: store.activeProfileID) { _, _ in reconcileSelection() }
         .onChange(of: highlightedEntry?.workspaceID) { _, workspaceID in
             reconcileSelection(preferred: workspaceID)
+            if workspaceID != nil { showsCompactInspector = true }
         }
         .onChange(of: requestedWorkspaceID) { _, workspaceID in
             reconcileSelection(preferred: workspaceID)
+            if workspaceID != nil { showsCompactInspector = true }
         }
     }
 
-    private var masterColumn: some View {
+    @ViewBuilder
+    private func responsiveContent(for layout: SettingsDetailLayout) -> some View {
+        switch layout {
+        case .wide:
+            HStack(spacing: 0) {
+                masterColumn()
+                    .frame(width: SettingsWindowMetrics.masterListWidth)
+                    .frame(maxHeight: .infinity)
+                Divider()
+                inspectorColumn
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        case .compact:
+            VStack(spacing: 0) {
+                if showsCompactInspector {
+                    SettingsCompactDetailHeader(
+                        backTitle: "Workspaces",
+                        title: selectedWorkspace?.name ?? "Workspace",
+                        goBack: { showsCompactInspector = false }
+                    )
+                    Divider()
+                    inspectorColumn
+                } else {
+                    masterColumn(showsDisclosure: true)
+                }
+            }
+        }
+    }
+
+    private func masterColumn(showsDisclosure: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 9) {
                 Picker("Display workspace behavior", selection: $store.multiDisplayMode) {
@@ -1171,10 +1448,22 @@ struct WorkspaceSettingsView: View {
                 .padding(.bottom, 6)
             }
 
-            List(selection: $selectedWorkspaceID) {
+            List(selection: Binding(
+                get: { selectedWorkspaceID },
+                set: { workspaceID in
+                    selectedWorkspaceID = workspaceID
+                    if showsDisclosure, workspaceID != nil {
+                        showsCompactInspector = true
+                    }
+                }
+            )) {
                 ForEach(store.workspaces) { workspace in
-                    workspaceRow(workspace)
+                    workspaceRow(workspace, showsDisclosure: showsDisclosure)
                         .tag(workspace.id)
+                        .onTapGesture {
+                            selectedWorkspaceID = workspace.id
+                            if showsDisclosure { showsCompactInspector = true }
+                        }
                         .draggable(workspace.id.uuidString)
                         .dropDestination(for: String.self) { values, _ in
                             guard let source = values.first.flatMap(UUID.init(uuidString:)) else {
@@ -1195,12 +1484,18 @@ struct WorkspaceSettingsView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(
+                \.defaultMinListRowHeight,
+                SettingsWindowMetrics.masterRowMinimumHeight
+            )
 
             Divider()
 
             HStack(spacing: 8) {
-                Button { selectedWorkspaceID = store.addWorkspace() } label: {
+                Button {
+                    selectedWorkspaceID = store.addWorkspace()
+                    if showsDisclosure { showsCompactInspector = true }
+                } label: {
                     Image(systemName: "plus")
                 }
                 .help("Add workspace")
@@ -1228,16 +1523,34 @@ struct WorkspaceSettingsView: View {
 
             Divider()
 
-            Button(SettingsCopy.restoreWindowManagerDefaultsTitle) {
-                store.resetToWindowManagerDefaults()
-                reconcileSelection()
+            VStack(spacing: 12) {
+                SettingsActionRow(
+                    title: "Active workspace",
+                    description: "Recover the interaction display's active workspace, clear transient positioning, and reapply its current layout."
+                ) {
+                    Button("Bring Windows Back On Screen") {
+                        engine.resetCurrentWorkspace()
+                    }
+                }
+
+                Divider()
+
+                SettingsActionRow(
+                    title: "Workspace collection",
+                    description: "Restore WindowRanger's built-in workspace names, order, keys, and layout choices."
+                ) {
+                    Button("Restore Defaults") {
+                        store.resetToWindowManagerDefaults()
+                        reconcileSelection()
+                    }
+                    .help(SettingsCopy.restoreWindowManagerDefaultsTitle)
+                    .accessibilityLabel(SettingsCopy.restoreWindowManagerDefaultsTitle)
+                }
             }
-            .help("Restore WindowRanger's built-in workspace configuration")
-            .accessibilityLabel(SettingsCopy.restoreWindowManagerDefaultsTitle)
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     @ViewBuilder
@@ -1280,15 +1593,14 @@ struct WorkspaceSettingsView: View {
     }
 
     private func inspectorHeader(_ workspace: WorkspaceDefinition) -> some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 10) {
             Image(systemName: workspace.layout.systemImage)
-                .font(.system(size: 25, weight: .medium))
+                .font(.system(size: 22, weight: .medium))
                 .foregroundStyle(Color.accentColor)
-                .frame(width: 52, height: 52)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 11))
+                .frame(width: 30)
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 3) {
                 TextField(
                     "Workspace name",
                     text: WorkspaceSettingsFieldBindings.name(
@@ -1297,7 +1609,7 @@ struct WorkspaceSettingsView: View {
                     )
                 )
                 .textFieldStyle(.roundedBorder)
-                .font(.title2.weight(.semibold))
+                .font(.headline)
                 .accessibilityLabel("Workspace name")
 
                 Text("\(displayRoleName(for: workspace.id)) · \(workspace.layout.title)")
@@ -1305,8 +1617,8 @@ struct WorkspaceSettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
     }
 
     private func inspectorForm(_ workspace: WorkspaceDefinition) -> some View {
@@ -1425,21 +1737,14 @@ struct WorkspaceSettingsView: View {
             }
 
             Section("Repair") {
-                Button("Reset This Workspace", systemImage: "arrow.counterclockwise") {
-                    store.resetWorkspaceSettings(workspace.id, undoManager: undoManager)
+                SettingsActionRow(
+                    title: "Selected workspace",
+                    description: "Restore Freeform and WindowRanger's built-in geometry while keeping its name, key, Home Display, app rules, and live window membership. This settings change can be undone."
+                ) {
+                    Button("Reset Workspace", systemImage: "arrow.counterclockwise") {
+                        store.resetWorkspaceSettings(workspace.id, undoManager: undoManager)
+                    }
                 }
-                Text("Restores Freeform and WindowRanger's built-in geometry. It keeps the workspace name, key, Home Display, app rules, and live window membership. The settings change can be undone.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Divider()
-
-                Button("Bring Active Workspace Windows Back On Screen", systemImage: "rectangle.inset.filled.and.person.filled") {
-                    engine.resetCurrentWorkspace()
-                }
-                Text("Recovers managed windows in the interaction display's active workspace, clears transient positioning state, and reapplies that workspace's current layout. Accessibility frame changes cannot be undone.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -1465,8 +1770,20 @@ struct WorkspaceSettingsView: View {
     private func tiledGeometryControls(_ workspaceID: UUID) -> some View {
         VStack(alignment: .leading, spacing: 11) {
             Text("Inner gaps").font(.subheadline.weight(.semibold))
-            Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
-                GridRow {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 20) {
+                    Stepper(
+                        "Horizontal: \(Int(configuration(for: workspaceID).gaps.innerHorizontal)) pt",
+                        value: gapBinding(\.innerHorizontal, workspaceID: workspaceID),
+                        in: 0...200
+                    )
+                    Stepper(
+                        "Vertical: \(Int(configuration(for: workspaceID).gaps.innerVertical)) pt",
+                        value: gapBinding(\.innerVertical, workspaceID: workspaceID),
+                        in: 0...200
+                    )
+                }
+                VStack(alignment: .leading, spacing: 8) {
                     Stepper(
                         "Horizontal: \(Int(configuration(for: workspaceID).gaps.innerHorizontal)) pt",
                         value: gapBinding(\.innerHorizontal, workspaceID: workspaceID),
@@ -1481,8 +1798,34 @@ struct WorkspaceSettingsView: View {
             }
 
             Text("Outer screen padding").font(.subheadline.weight(.semibold))
-            Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
-                GridRow {
+            ViewThatFits(in: .horizontal) {
+                Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
+                    GridRow {
+                        Stepper(
+                            "Top: \(Int(configuration(for: workspaceID).gaps.outerTop)) pt",
+                            value: gapBinding(\.outerTop, workspaceID: workspaceID),
+                            in: 0...400
+                        )
+                        Stepper(
+                            "Right: \(Int(configuration(for: workspaceID).gaps.outerRight)) pt",
+                            value: gapBinding(\.outerRight, workspaceID: workspaceID),
+                            in: 0...400
+                        )
+                    }
+                    GridRow {
+                        Stepper(
+                            "Bottom: \(Int(configuration(for: workspaceID).gaps.outerBottom)) pt",
+                            value: gapBinding(\.outerBottom, workspaceID: workspaceID),
+                            in: 0...400
+                        )
+                        Stepper(
+                            "Left: \(Int(configuration(for: workspaceID).gaps.outerLeft)) pt",
+                            value: gapBinding(\.outerLeft, workspaceID: workspaceID),
+                            in: 0...400
+                        )
+                    }
+                }
+                VStack(alignment: .leading, spacing: 8) {
                     Stepper(
                         "Top: \(Int(configuration(for: workspaceID).gaps.outerTop)) pt",
                         value: gapBinding(\.outerTop, workspaceID: workspaceID),
@@ -1493,8 +1836,6 @@ struct WorkspaceSettingsView: View {
                         value: gapBinding(\.outerRight, workspaceID: workspaceID),
                         in: 0...400
                     )
-                }
-                GridRow {
                     Stepper(
                         "Bottom: \(Int(configuration(for: workspaceID).gaps.outerBottom)) pt",
                         value: gapBinding(\.outerBottom, workspaceID: workspaceID),
@@ -1510,7 +1851,10 @@ struct WorkspaceSettingsView: View {
         }
     }
 
-    private func workspaceRow(_ workspace: WorkspaceDefinition) -> some View {
+    private func workspaceRow(
+        _ workspace: WorkspaceDefinition,
+        showsDisclosure: Bool
+    ) -> some View {
         HStack(spacing: 10) {
             Image(systemName: workspace.layout.systemImage)
                 .font(.system(size: 17, weight: .medium))
@@ -1530,8 +1874,15 @@ struct WorkspaceSettingsView: View {
             Text("⌃⌥\(workspace.key.uppercased())")
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
+            if showsDisclosure {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
         }
         .padding(.vertical, 3)
+        .frame(minHeight: SettingsWindowMetrics.masterRowMinimumHeight)
         .contentShape(Rectangle())
         .help("\(workspace.name) — \(displayRoleName(for: workspace.id)), \(workspace.layout.title), key \(workspace.key.uppercased())")
         .accessibilityElement(children: .ignore)
@@ -1539,6 +1890,7 @@ struct WorkspaceSettingsView: View {
             workspace: workspace,
             displayRoleName: displayRoleName(for: workspace.id)
         ))
+        .accessibilityHint(showsDisclosure ? "Opens workspace details" : "Selects this workspace")
     }
 
     @ViewBuilder
@@ -1709,140 +2061,343 @@ private struct AppRulesSettingsView: View {
     @ObservedObject var store: SettingsStore
     @Environment(\.undoManager) private var undoManager
     @State private var showsAppPicker = false
+    @State private var selectedRuleID: AppRule.ID?
+    @State private var showsCompactEditor = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Rules use bundle identifiers, so they remain stable if an app is renamed or moved.")
-                .foregroundStyle(.secondary)
-            if store.appRules.isEmpty {
-                ContentUnavailableView(
-                    "No Application Rules",
-                    systemImage: "app.badge",
-                    description: Text("Add an installed or currently running app, then choose one or more behaviors.")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List {
-                    ForEach(store.appRules) { rule in
-                        AppRuleEditor(rule: Binding(
-                            get: { store.appRules.first(where: { $0.id == rule.id }) ?? rule },
-                            set: { store.updateAppRule($0, undoManager: undoManager) }
-                        ), workspaces: store.workspaces) {
-                            store.removeAppRule(bundleIdentifier: rule.bundleIdentifier)
-                        }
-                        .padding(.vertical, 6)
-                    }
-                }
-                .listStyle(.inset(alternatesRowBackgrounds: true))
-            }
-            HStack {
-                Button("Add Application…", systemImage: "plus") { showsAppPicker = true }
-                Button("Undo Last Rule Change", systemImage: "arrow.uturn.backward") {
-                    undoManager?.undo()
-                }
-                .disabled(!(undoManager?.canUndo ?? false))
-                Spacer()
-                Text("Changes apply immediately to managed windows and can be undone with Command-Z. Rules sync through iCloud when enabled.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        GeometryReader { geometry in
+            responsiveContent(for: SettingsDetailLayout.resolve(availableWidth: geometry.size.width))
         }
-        .padding(24)
+        .onAppear { reconcileSelection() }
+        .onChange(of: store.appRules.map(\.id)) { _, _ in reconcileSelection() }
         .sheet(isPresented: $showsAppPicker) {
             InstalledApplicationPicker(
                 excludedBundleIdentifiers: Set(store.appRules.map { $0.bundleIdentifier.lowercased() })
             ) { application in
                 store.addAppRule(for: application)
+                selectedRuleID = application.bundleIdentifier.lowercased()
+                showsCompactEditor = true
                 showsAppPicker = false
             }
         }
+    }
+
+    @ViewBuilder
+    private func responsiveContent(for layout: SettingsDetailLayout) -> some View {
+        switch layout {
+        case .wide:
+            HStack(spacing: 0) {
+                ruleListColumn()
+                    .frame(width: SettingsWindowMetrics.masterListWidth)
+                    .frame(maxHeight: .infinity)
+                Divider()
+                ruleInspectorColumn
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        case .compact:
+            VStack(spacing: 0) {
+                if showsCompactEditor {
+                    SettingsCompactDetailHeader(
+                        backTitle: "Applications",
+                        title: selectedRule?.displayName ?? "Application Rule",
+                        goBack: { showsCompactEditor = false }
+                    )
+                    Divider()
+                    ruleInspectorColumn
+                } else {
+                    ruleListColumn(showsDisclosure: true)
+                }
+            }
+        }
+    }
+
+    private func ruleListColumn(showsDisclosure: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Application Rules")
+                    .font(.headline)
+                Text("Choose an application to edit its workspace and window behavior.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            if store.appRules.isEmpty {
+                ContentUnavailableView(
+                    "No Application Rules",
+                    systemImage: "app.badge",
+                    description: Text("Add an installed or currently running app to create a rule.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(selection: Binding(
+                    get: { selectedRuleID },
+                    set: { selection in
+                        selectedRuleID = selection
+                        if showsDisclosure, selection != nil { showsCompactEditor = true }
+                    }
+                )) {
+                    ForEach(store.appRules) { rule in
+                        ruleListRow(rule, showsDisclosure: showsDisclosure)
+                            .tag(rule.id)
+                            .onTapGesture {
+                                selectedRuleID = rule.id
+                                if showsDisclosure { showsCompactEditor = true }
+                            }
+                            .contextMenu {
+                                Button("Remove Rule", role: .destructive) {
+                                    selectedRuleID = rule.id
+                                    removeSelectedRule()
+                                }
+                            }
+                    }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .environment(
+                    \.defaultMinListRowHeight,
+                    SettingsWindowMetrics.masterRowMinimumHeight
+                )
+            }
+
+            Divider()
+
+            HStack(spacing: 8) {
+                Button { showsAppPicker = true } label: {
+                    Image(systemName: "plus")
+                }
+                .help("Add application rule")
+                .accessibilityLabel("Add application rule")
+
+                Button(role: .destructive) { removeSelectedRule() } label: {
+                    Image(systemName: "trash")
+                }
+                .disabled(selectedRule == nil)
+                .help("Remove selected rule")
+                .accessibilityLabel("Remove selected rule")
+
+                Button { undoManager?.undo() } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                }
+                .disabled(!(undoManager?.canUndo ?? false))
+                .help("Undo last rule change")
+                .accessibilityLabel("Undo last rule change")
+
+                Spacer()
+            }
+            .buttonStyle(.bordered)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+
+            Text("Changes apply immediately, support Command-Z, and sync through iCloud when enabled.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    @ViewBuilder
+    private var ruleInspectorColumn: some View {
+        if let rule = selectedRule {
+            AppRuleEditor(
+                rule: Binding(
+                    get: { store.appRules.first(where: { $0.id == rule.id }) ?? rule },
+                    set: { store.updateAppRule($0, undoManager: undoManager) }
+                ),
+                workspaces: store.workspaces
+            )
+            .id(rule.id)
+        } else {
+            ContentUnavailableView(
+                "No Rule Selected",
+                systemImage: "app.badge",
+                description: Text("Add or select an application rule to configure it.")
+            )
+        }
+    }
+
+    private func ruleListRow(_ rule: AppRule, showsDisclosure: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(nsImage: appIcon(bundleIdentifier: rule.bundleIdentifier))
+                .resizable()
+                .frame(width: 28, height: 28)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(rule.displayName)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    if !rule.isEnabled {
+                        Text("Paused")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text(ruleSummary(rule))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if showsDisclosure {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.vertical, 3)
+        .frame(minHeight: SettingsWindowMetrics.masterRowMinimumHeight)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(showsDisclosure ? "Opens application rule details" : "")
+    }
+
+    private var selectedRule: AppRule? {
+        selectedRuleID.flatMap { id in store.appRules.first { $0.id == id } }
+    }
+
+    private func reconcileSelection() {
+        if let selectedRuleID, store.appRules.contains(where: { $0.id == selectedRuleID }) {
+            return
+        }
+        selectedRuleID = store.appRules.first?.id
+    }
+
+    private func removeSelectedRule() {
+        guard let selectedRule else { return }
+        let ids = store.appRules.map(\.id)
+        let index = ids.firstIndex(of: selectedRule.id) ?? 0
+        let nextID: AppRule.ID? = if ids.count <= 1 {
+            nil
+        } else if index < ids.count - 1 {
+            ids[index + 1]
+        } else {
+            ids[index - 1]
+        }
+        store.removeAppRule(bundleIdentifier: selectedRule.bundleIdentifier)
+        selectedRuleID = nextID
+        if nextID == nil { showsCompactEditor = false }
+    }
+
+    private func ruleSummary(_ rule: AppRule) -> String {
+        if !rule.isEnabled { return "Rule paused" }
+        if rule.keepsOnAllWorkspaces { return "All workspaces" }
+        if let id = rule.assignedWorkspaceID,
+           let workspace = store.workspaces.first(where: { $0.id == id }) {
+            return workspace.name
+        }
+        return "Current workspace"
+    }
+
+    private func appIcon(bundleIdentifier: String) -> NSImage {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
+            .map { NSWorkspace.shared.icon(forFile: $0.path) }
+            ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)
+            ?? NSImage()
     }
 }
 
 private struct AppRuleEditor: View {
     @Binding var rule: AppRule
     let workspaces: [WorkspaceDefinition]
-    let remove: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(nsImage: icon).resizable().frame(width: 30, height: 30)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(rule.displayName).font(.headline)
-                    Text(rule.bundleIdentifier)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-                Spacer()
-                Toggle("Enabled", isOn: $rule.isEnabled)
-                    .toggleStyle(.switch)
-                    .help(rule.isEnabled ? "Pause this rule without deleting it" : "Resume this rule")
-                Button(role: .destructive, action: remove) { Image(systemName: "trash") }
-                    .buttonStyle(.borderless)
-                    .help("Remove rule")
-            }
-            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
-                GridRow {
-                    Text("Workspace")
-                    Picker("Workspace", selection: Binding(
-                        get: { rule.assignedWorkspaceID },
-                        set: { rule.assignedWorkspaceID = $0 }
-                    )) {
-                        Text("Use current workspace").tag(nil as UUID?)
-                        ForEach(workspaces) { Text($0.name).tag(Optional($0.id)) }
+        Form {
+            Section {
+                HStack(spacing: 12) {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 36, height: 36)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(rule.displayName)
+                            .font(.headline)
+                        Text(rule.bundleIdentifier)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
                     }
-                    .labelsHidden()
-                    .frame(maxWidth: 220)
-                    .disabled(rule.keepsOnAllWorkspaces)
+                    Spacer()
+                    Toggle("Enabled", isOn: $rule.isEnabled)
+                        .toggleStyle(.switch)
+                        .help(rule.isEnabled ? "Pause this rule" : "Resume this rule")
                 }
-                GridRow {
-                    Text("Visibility")
-                    Toggle("Keep on all workspaces", isOn: Binding(
-                        get: { rule.keepsOnAllWorkspaces },
-                        set: { rule.keepsOnAllWorkspaces = $0 }
-                    ))
-                }
-                GridRow {
-                    Text("Layouts")
-                    Toggle("Do not include in Tiled or Accordion", isOn: Binding(
-                        get: { rule.excludesFromLayout },
-                        set: { rule.excludesFromLayout = $0 }
-                    ))
-                }
-                GridRow {
-                    Text("Secondary windows")
-                    Toggle("Float detected dialogs and secondary windows", isOn: Binding(
-                        get: { rule.floatsSecondaryWindows },
-                        set: { rule.floatsSecondaryWindows = $0 }
-                    ))
+            }
+
+            Section("Behavior") {
+                LabeledContent("Workspace") { workspacePicker }
+                Toggle("Keep on all workspaces", isOn: keepEverywhereBinding)
+                Toggle("Do not include in Tiled or Accordion", isOn: layoutExclusionBinding)
+                Toggle("Float detected dialogs and secondary windows", isOn: floatDialogsBinding)
                     .disabled(rule.excludesFromLayout)
-                }
             }
             .disabled(!rule.isEnabled)
             .opacity(rule.isEnabled ? 1 : 0.62)
-            if !rule.isEnabled {
-                Label(
-                    "This rule is paused. Its actions are preserved and will apply again when resumed.",
-                    systemImage: "pause.circle"
-                )
+
+            if !rule.isEnabled || rule.keepsOnAllWorkspaces || rule.floatsSecondaryWindows {
+                Section("Status") {
+                    if !rule.isEnabled {
+                        Label(
+                            "This rule is paused. Its saved actions will apply again when resumed.",
+                            systemImage: "pause.circle"
+                        )
+                    }
+                    if rule.keepsOnAllWorkspaces, rule.assignedWorkspaceID != nil {
+                        Label(
+                            "Workspace assignment is paused while Keep on all workspaces is enabled.",
+                            systemImage: "info.circle"
+                        )
+                    }
+                    if rule.floatsSecondaryWindows {
+                        Text(rule.excludesFromLayout
+                            ? "The full-app layout exclusion takes precedence while it is enabled."
+                            : "Explicit per-window layout choices take precedence. Verified dialogs already float automatically; this rule also covers conservative dialog-like metadata.")
+                    }
+                }
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-            if rule.keepsOnAllWorkspaces, rule.assignedWorkspaceID != nil {
-                Label("Workspace assignment is paused while Keep on all workspaces is enabled.", systemImage: "info.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if rule.floatsSecondaryWindows {
-                Text(rule.excludesFromLayout
-                    ? "The full app layout exclusion takes precedence while it is enabled."
-                    : "Explicit per-window layout choices take precedence. Verified dialogs already float automatically; this rule also covers conservative dialog-like metadata without using window titles.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
+        .formStyle(.grouped)
+    }
+
+    private var workspacePicker: some View {
+        Picker("Workspace", selection: Binding(
+            get: { rule.assignedWorkspaceID },
+            set: { rule.assignedWorkspaceID = $0 }
+        )) {
+            Text("Use current workspace").tag(nil as UUID?)
+            ForEach(workspaces) { Text($0.name).tag(Optional($0.id)) }
+        }
+        .labelsHidden()
+        .frame(maxWidth: 220)
+        .disabled(rule.keepsOnAllWorkspaces)
+    }
+
+    private var keepEverywhereBinding: Binding<Bool> {
+        Binding(
+            get: { rule.keepsOnAllWorkspaces },
+            set: { rule.keepsOnAllWorkspaces = $0 }
+        )
+    }
+
+    private var layoutExclusionBinding: Binding<Bool> {
+        Binding(
+            get: { rule.excludesFromLayout },
+            set: { rule.excludesFromLayout = $0 }
+        )
+    }
+
+    private var floatDialogsBinding: Binding<Bool> {
+        Binding(
+            get: { rule.floatsSecondaryWindows },
+            set: { rule.floatsSecondaryWindows = $0 }
+        )
     }
 
     private var icon: NSImage {
@@ -1977,52 +2532,60 @@ private struct ShortcutSettingsView: View {
         }
     }
 
+    private let workspaceActions: [ConfigurableHotKeyAction] = [
+        .previousWorkspace, .nextWorkspace, .backAndForthWorkspace, .moveWorkspaceToNextDisplay,
+    ]
+    private let focusActions: [ConfigurableHotKeyAction] = [
+        .previousWindow, .nextWindow, .focusLeft, .focusDown, .focusUp, .focusRight,
+    ]
+    private let layoutActions: [ConfigurableHotKeyAction] = [
+        .selectAccordion, .selectTiled, .toggleFloating,
+        .moveLeft, .moveDown, .moveUp, .moveRight, .resizeSmaller, .resizeLarger,
+    ]
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+        Form {
+            Section {
                 Text("Select a global command shortcut to record a replacement. Workspace keys and their derived switch/move shortcuts are configured in Workspaces.")
                     .foregroundStyle(.secondary)
-                if !configurationReport.issues.isEmpty || !store.hotKeyRuntimeIssues.isEmpty {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Label(
-                            "Some shortcuts need attention",
-                            systemImage: "exclamationmark.triangle.fill"
-                        )
-                        .font(.headline)
-                        .foregroundStyle(.orange)
-                        Text("Conflicting shortcuts are not registered for either command. A macOS registration failure affects only that command; other valid shortcuts remain available.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button("Reset Conflicting Custom Shortcuts") {
-                            finishRecording()
-                            store.resetShortcuts(conflictingCustomActions)
-                        }
-                        .disabled(conflictingCustomActions.isEmpty)
-                        Text("If both commands use built-in defaults, record a different global shortcut here or change the affected workspace key in Workspaces.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            }
+
+            if !configurationReport.issues.isEmpty || !store.hotKeyRuntimeIssues.isEmpty {
+                Section("Needs Attention") {
+                    Label(
+                        "Some shortcuts are unavailable",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .foregroundStyle(.orange)
+                    Text("Conflicting shortcuts are not registered for either command. A macOS registration failure affects only that command.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Reset Conflicting Custom Shortcuts") {
+                        finishRecording()
+                        store.resetShortcuts(conflictingCustomActions)
                     }
-                    .padding(12)
-                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                    .disabled(conflictingCustomActions.isEmpty)
+                    Text("If both commands use built-in defaults, record a different shortcut here or change the affected workspace key in Workspaces.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 12) {
-                    GridRow {
-                        Text("Action").bold()
-                        Text("Shortcut").bold()
-                        Text("Reset").bold()
-                    }
-                    Divider()
-                    ForEach(ConfigurableHotKeyAction.allCases) { action in
-                        shortcutRow(action)
-                    }
-                    GridRow {
-                        Text("Select Freeform")
-                        Text("Command wheel or Settings").foregroundStyle(.secondary)
-                        Color.clear.frame(width: 1, height: 1)
-                    }
-                }
+            }
+
+            Section("Workspace Navigation") {
+                ForEach(workspaceActions) { action in shortcutRow(action) }
+            }
+
+            Section("Window Focus") {
+                ForEach(focusActions) { action in shortcutRow(action) }
+            }
+
+            Section("Layout and Placement") {
+                ForEach(layoutActions) { action in shortcutRow(action) }
+                LabeledContent("Select Freeform", value: "Command wheel or Settings")
+                    .foregroundStyle(.secondary)
+
                 Label(
-                    directionalMoveCornerStatus.message,
+                    "Tiled corner placement: \(directionalMoveCornerStatus.message)",
                     systemImage: directionalMoveCornerStatus.available
                         ? "arrow.up.left.and.arrow.down.right"
                         : "exclamationmark.triangle.fill"
@@ -2036,39 +2599,64 @@ private struct ShortcutSettingsView: View {
                         ? "Two-arrow corner placement available. \(directionalMoveCornerStatus.message)"
                         : "Two-arrow corner placement unavailable. \(directionalMoveCornerStatus.message)"
                 )
-                if let conflictMessage {
+            }
+
+            if let conflictMessage {
+                Section("Recording") {
                     Label(conflictMessage, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                         .accessibilityLabel("Shortcut conflict. \(conflictMessage)")
                 }
-                HStack {
-                    Button("Reset All Shortcuts") {
-                        finishRecording()
-                        conflictMessage = nil
-                        store.resetAllShortcuts()
-                    }
-                    Spacer()
-                    Text("Escape cancels recording. A global shortcut must include Control, Option, or Command.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Button("Reset All Shortcuts") {
+                    finishRecording()
+                    conflictMessage = nil
+                    store.resetAllShortcuts()
                 }
-                Divider()
-                Text("An app-level layout exclusion remains authoritative; window-level floating controls cannot override it.")
+                Text("Escape cancels recording. A global shortcut must include Control, Option, or Command.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("Workspace-specific shortcuts are intentionally kept with each workspace's name, display home, and layout in Workspaces.")
+                Text("App-level layout exclusions remain authoritative. Workspace-specific shortcuts stay with each workspace in Workspaces.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .formStyle(.grouped)
         .onDisappear { finishRecording() }
     }
 
     private func shortcutRow(_ action: ConfigurableHotKeyAction) -> some View {
         let chord = store.hotKeyConfiguration.chord(for: action)
-        return GridRow {
+        return LabeledContent {
+            HStack(spacing: 8) {
+                Button {
+                    beginRecording(action)
+                } label: {
+                    if recordingAction == action {
+                        Text("Press shortcut…")
+                            .frame(minWidth: 110)
+                    } else {
+                        ShortcutCaps(keys: chord.keyCaps)
+                            .frame(minWidth: 110)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .help("Record a new global shortcut for \(action.title)")
+
+                Button {
+                    if recordingAction == action { finishRecording() }
+                    conflictMessage = nil
+                    store.resetShortcut(action)
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                }
+                .disabled(store.hotKeyConfiguration.isUsingDefault(for: action))
+                .help("Reset \(action.title)")
+                .accessibilityLabel("Reset \(action.title)")
+            }
+        } label: {
             VStack(alignment: .leading, spacing: 3) {
                 Text(action.title)
                 ForEach(configurationReport.issues(for: action)) { issue in
@@ -2088,24 +2676,6 @@ private struct ShortcutSettingsView: View {
                         .accessibilityLabel("Shortcut registration failed. \(issue.message)")
                 }
             }
-            Button {
-                beginRecording(action)
-            } label: {
-                if recordingAction == action {
-                    Text("Press shortcut…")
-                        .frame(minWidth: 110)
-                } else {
-                    ShortcutCaps(keys: chord.keyCaps)
-                }
-            }
-            .buttonStyle(.bordered)
-            .help("Record a new global shortcut for \(action.title)")
-            Button("Reset") {
-                if recordingAction == action { finishRecording() }
-                conflictMessage = nil
-                store.resetShortcut(action)
-            }
-            .disabled(store.hotKeyConfiguration.isUsingDefault(for: action))
         }
     }
 
@@ -2184,25 +2754,30 @@ private struct RadialMenuSettingsView: View {
         Form {
             Section("Activation") {
                 Toggle("Enable command wheel", isOn: $store.radialMenuEnabled)
-                HStack {
-                    Text("Global shortcut")
-                    Spacer()
-                    Button {
-                        beginShortcutRecording()
-                    } label: {
-                        if isRecordingShortcut {
-                            Text("Press shortcut…").frame(minWidth: 120)
-                        } else {
-                            ShortcutCaps(keys: wheelChord.keyCaps)
+                LabeledContent("Global shortcut") {
+                    HStack(spacing: 8) {
+                        Button {
+                            beginShortcutRecording()
+                        } label: {
+                            if isRecordingShortcut {
+                                Text("Press shortcut…").frame(minWidth: 120)
+                            } else {
+                                ShortcutCaps(keys: wheelChord.keyCaps)
+                                    .frame(minWidth: 120)
+                            }
                         }
+                        .buttonStyle(.bordered)
+                        Button {
+                            finishShortcutRecording()
+                            conflictMessage = nil
+                            store.resetShortcut(.commandWheel)
+                        } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                        }
+                        .disabled(store.hotKeyConfiguration.isUsingDefault(for: .commandWheel))
+                        .help("Reset command wheel shortcut")
+                        .accessibilityLabel("Reset command wheel shortcut")
                     }
-                    .buttonStyle(.bordered)
-                    Button("Reset") {
-                        finishShortcutRecording()
-                        conflictMessage = nil
-                        store.resetShortcut(.commandWheel)
-                    }
-                    .disabled(store.hotKeyConfiguration.isUsingDefault(for: .commandWheel))
                 }
                 .disabled(!store.radialMenuEnabled)
                 if let conflict = conflictMessage ?? storedConflict {
@@ -2215,12 +2790,16 @@ private struct RadialMenuSettingsView: View {
                         .foregroundStyle(.orange)
                         .accessibilityLabel("Shortcut registration failed. \(runtimeIssue.message)")
                 }
-                Picker("Activation style", selection: $store.radialMenuActivationStyle) {
-                    ForEach(RadialMenuActivationStyle.allCases) { style in
-                        Text(style.title).tag(style)
+                LabeledContent("Activation style") {
+                    Picker("Activation style", selection: $store.radialMenuActivationStyle) {
+                        ForEach(RadialMenuActivationStyle.allCases) { style in
+                            Text(style.title).tag(style)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 220)
                 }
-                .pickerStyle(.segmented)
                 Toggle(
                     "Hold Globe/Fn to show Command Wheel",
                     isOn: $store.radialMenuGlobeFnHoldEnabled
@@ -2393,8 +2972,8 @@ private struct CommandWheelEditorRow: View {
             Spacer()
             editorControls
         }
-        .padding(10)
-        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 9))
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
         .draggable(item.rawValue)
         .dropDestination(for: String.self) { values, _ in
             guard let raw = values.first else { return false }
@@ -2529,15 +3108,18 @@ private struct DiagnosticsSettingsView: View {
     var body: some View {
         Form {
             Section("Debug diagnostics") {
-                Button("Copy Recent Diagnostics") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(diagnostics.recentDiagnosticsText(), forType: .string)
+                LabeledContent("Recent logs") {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            copyDiagnosticsButton
+                            revealDiagnosticsButton
+                        }
+                        VStack(alignment: .trailing, spacing: 8) {
+                            copyDiagnosticsButton
+                            revealDiagnosticsButton
+                        }
+                    }
                 }
-                Button("Reveal Diagnostics File") {
-                    guard let fileURL = diagnostics.fileURL else { return }
-                    NSWorkspace.shared.activateFileViewerSelecting([fileURL])
-                }
-                .disabled(diagnostics.fileURL == nil)
             }
             Section("Window admission") {
                 HStack {
@@ -2584,6 +3166,21 @@ private struct DiagnosticsSettingsView: View {
             .foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
+    }
+
+    private var copyDiagnosticsButton: some View {
+        Button("Copy Recent Diagnostics") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(diagnostics.recentDiagnosticsText(), forType: .string)
+        }
+    }
+
+    private var revealDiagnosticsButton: some View {
+        Button("Reveal Diagnostics File") {
+            guard let fileURL = diagnostics.fileURL else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+        }
+        .disabled(diagnostics.fileURL == nil)
     }
 
     private func refreshAdmissionRecords() {

@@ -211,6 +211,24 @@ second copy of that checklist.
 
 ## Done
 
+### WR-027 — Tidy Settings across wide and compact layouts
+
+- **Result:** Settings now follows a consistent native macOS layout grammar with a permanent sidebar,
+  common master-list widths, aligned controls and actions, compact list/detail navigation, semantic
+  system surfaces, and stable two-line list rows after scrolling.
+- **Evidence:** All seven panes render at wide and compact sizes, with wide Light and Dark fixtures;
+  the complete 451-test non-hosted suite and local quick gate pass. The maintainer validated the full
+  correction pass and recycled-row scrolling in the signed daily build on 10 August 2026.
+
+### WR-025 — Reflow Settings across useful window sizes
+
+- **Result:** Settings resize continuously down to 760 x 560. Wide collection panes retain their
+  master/detail layouts; compact Profiles, Workspaces, and App Rules use disclosure rows and titled
+  detail views with Back navigation; narrow controls reflow without clipping.
+- **Evidence:** Deterministic layout and AppKit window-policy tests pass in the complete 451-test
+  suite. The maintainer validated resizing, compact navigation, selection retention, and return to
+  the wide layout in the signed daily build on 10 August 2026.
+
 ### WR-024 — Show exact build identity in Settings
 
 - **Result:** Settings now shows the app version, build number, source commit, and Dev marker in an
