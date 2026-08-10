@@ -478,11 +478,12 @@ private protocol SettingsHostingSizingConfigurable {
 
 extension NSHostingView: SettingsHostingSizingConfigurable {
     func useExplicitWindowConstraints() {
-        // SwiftUI's default hosting options continuously derive NSWindow minimum and maximum
-        // sizes from the currently selected Settings pane. Settings panes are scrollable and can
-        // have very tall intrinsic content, so leave only intrinsic view sizing enabled and let
-        // the coordinator own the stable, pane-independent window constraints.
-        sizingOptions = [.intrinsicContentSize]
+        // SwiftUI's hosting measurements can continuously derive Auto Layout constraints from the
+        // selected Settings pane. Even an intrinsic-content-only measurement can pin the hosting
+        // view to its ideal size and prevent an otherwise resizable NSWindow from tracking an edge
+        // drag. These panes provide their own scrolling and responsive layout, so leave all window
+        // bounds to the coordinator's explicit AppKit minimum and maximum.
+        sizingOptions = []
     }
 }
 

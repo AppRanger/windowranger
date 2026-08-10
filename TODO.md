@@ -42,6 +42,10 @@ None.
 - **Remaining live boundary:** In the signed daily build, resize continuously across the breakpoint;
   confirm both compact sections in Profiles and Workspaces remain reachable and retain selection;
   check App Rules, Shortcuts, and Command Wheel at 760 x 560; then expand back to the wide layout.
+- **Failed live evidence:** In commit `23232a71599c`, the maintainer confirmed that no edge or
+  corner could resize the window and no resize pointer appeared. The remaining intrinsic-content
+  hosting measurement could pin the view at its ideal size despite the AppKit resizable style; the
+  next signed daily removes all hosting-derived constraints and keeps explicit AppKit bounds only.
 
 ### WR-005 — Measure Debug diagnostic logging under slow storage
 

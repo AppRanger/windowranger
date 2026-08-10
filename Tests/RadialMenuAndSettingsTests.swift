@@ -1033,11 +1033,16 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 
         XCTAssertTrue(window.styleMask.contains(.resizable))
         XCTAssertEqual(window.contentMinSize, SettingsWindowMetrics.minimumSize)
-        XCTAssertEqual(hostingView.sizingOptions, [.intrinsicContentSize])
+        XCTAssertEqual(hostingView.sizingOptions, [])
         XCTAssertGreaterThan(window.contentMaxSize.width, 10_000)
         XCTAssertGreaterThan(window.contentMaxSize.height, 10_000)
         XCTAssertGreaterThanOrEqual(window.contentLayoutRect.width, SettingsWindowMetrics.minimumSize.width)
         XCTAssertGreaterThanOrEqual(window.contentLayoutRect.height, SettingsWindowMetrics.minimumSize.height)
+
+        window.setContentSize(CGSize(width: 1_000, height: 700))
+        XCTAssertEqual(window.contentLayoutRect.size, CGSize(width: 1_000, height: 700))
+        window.setContentSize(CGSize(width: 800, height: 600))
+        XCTAssertEqual(window.contentLayoutRect.size, CGSize(width: 800, height: 600))
         window.close()
     }
 
