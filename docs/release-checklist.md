@@ -9,26 +9,33 @@ promotion and versioning. It is a design authority, not evidence that the releas
 ## Product identity
 
 - [x] Select the product name and complete preliminary clearance: **WindowRanger**.
-- [ ] Confirm the copyright line in `LICENSE` with the maintainer.
+- [x] Confirm the copyright line in `LICENSE` with the maintainer as part of the explicit
+      first-publication approval.
 - [x] Select `com.windowranger.WindowRanger` as the public bundle identifier; the private development
       identity intentionally does not migrate.
 - [x] Confirm Developer ID ownership and team `44NAD22AK6`; verify the exported app's Developer ID
       designated requirement and public bundle identifier.
-- [ ] Finalize app icon, menu-bar identity, versioning and support language.
+- [x] Finalize the first-Beta app icon, menu-bar identity, versioning and support language.
 
 ## Licensing and repository hygiene
 
 - [x] Add the MIT license for the source project.
-- [ ] Audit all dependency/reference licenses and update `THIRD_PARTY_NOTICES.md`.
-- [ ] Confirm no copied generated artwork, vendor branding or incompatible source is present.
-- [ ] Scan tracked history and current files for credentials, tokens, personal paths, logs, app
-      bundles, DerivedData and private diagnostics.
+- [x] Audit all dependency/reference licenses and update `THIRD_PARTY_NOTICES.md`; the app uses only
+      Apple SDK frameworks and vendors no third-party package or source.
+- [x] Confirm the retained artwork was generated specifically for WindowRanger, contains no vendor
+      branding, and has recorded provenance in `Brand/WindowRanger/README.md`.
+- [x] Scan all 92 commits and current files for credentials, tokens, personal paths, logs, app
+      bundles, DerivedData and private diagnostics. Gitleaks 8.30.1 reported only four false
+      positives on two local settings keys; historical absolute-path hits are obsolete design
+      provenance and privacy-scrubber fixtures, not secrets or shipped paths.
 - [x] Add contribution guidelines, issue forms, a pull-request template, governance, support, and a
       code of conduct.
-- [ ] Enable GitHub private vulnerability reporting or publish another verified private security
-      contact, then update `SECURITY.md`.
-- [ ] Publish a private project-controlled conduct-reporting contact in `CODE_OF_CONDUCT.md`.
-- [ ] Review commit authorship/privacy before making history public.
+- [ ] Enable GitHub private vulnerability reporting when public; `SECURITY.md` already points to
+      the private form.
+- [ ] Confirm the private form is active as the project-controlled conduct-reporting path documented
+      in `CODE_OF_CONDUCT.md`.
+- [x] Review commit authorship/privacy before making history public; all 92 commits use the intended
+      maintainer identity.
 
 ## Build and verification
 
@@ -38,7 +45,8 @@ promotion and versioning. It is a design authority, not evidence that the releas
 - [x] Run static analysis and address compiler warnings relevant to project code.
 - [x] Build universal Release and verify bundle ID, architectures, entitlements and Developer ID
       signature.
-- [ ] Confirm Release omits Debug menus, verbose diagnostic paths and internal-only copy.
+- [x] Confirm the exact Beta Release omits the Debug menu labels, verbose diagnostic path, and
+      internal-only copy while retaining the inert logging type required by shared code.
 - [ ] Audit LaunchServices so validation leaves only intended products registered.
 - [ ] Run a clean-machine installation/upgrade/uninstall test.
 

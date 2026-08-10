@@ -43,9 +43,11 @@ project in public spaces.
 
 ## Reporting and enforcement
 
-Do not report a conduct incident in a public issue. While the repository is private, participants
-should report incidents to the maintainer through their existing private project channel. Before the
-repository is made public, a project-controlled private reporting contact must be added here.
+Do not report a conduct incident in a public issue. Use the project's
+[private maintainer reporting form](https://github.com/windowranger/windowranger/security/advisories/new)
+and begin the title with `Conduct report`. Although GitHub labels this private form as a security
+advisory, WindowRanger also accepts conduct reports there so the content remains visible only to
+repository maintainers and explicitly invited collaborators.
 
 Abusive content on GitHub can also be reported privately through
 [GitHub's abuse-reporting tools](https://support.github.com/contact/report-abuse). Reporters' privacy
