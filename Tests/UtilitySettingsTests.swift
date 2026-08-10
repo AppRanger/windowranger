@@ -41,6 +41,116 @@ final class UtilitySettingsTests: XCTestCase {
         var errorDescription: String? { "Could not update login item" }
     }
 
+    func testApplicationPickerGroupsOpenAppsFirstAndFiltersBothGroups() {
+        let applications = [
+            InstalledApplication(
+                bundleIdentifier: "com.example.Zebra",
+                displayName: "Zebra",
+                bundleURL: nil,
+                isRunning: false
+            ),
+            InstalledApplication(
+                bundleIdentifier: "com.example.Mail",
+                displayName: "Mail",
+                bundleURL: nil,
+                isRunning: true
+            ),
+            InstalledApplication(
+                bundleIdentifier: "com.example.Editor",
+                displayName: "Editor",
+                bundleURL: nil,
+                isRunning: true
+            ),
+            InstalledApplication(
+                bundleIdentifier: "com.example.Archive",
+                displayName: "Archive",
+                bundleURL: nil,
+                isRunning: false
+            ),
+        ]
+
+        let groups = InstalledApplicationPickerPolicy.groups(
+            applications: applications,
+            search: ""
+        )
+        XCTAssertEqual(groups.openApplications.map(\.displayName), ["Editor", "Mail"])
+        XCTAssertEqual(groups.otherApplications.map(\.displayName), ["Archive", "Zebra"])
+
+        let filtered = InstalledApplicationPickerPolicy.groups(
+            applications: applications,
+            search: "example.mail"
+        )
+        XCTAssertEqual(filtered.openApplications.map(\.displayName), ["Mail"])
+        XCTAssertTrue(filtered.otherApplications.isEmpty)
+    }
+
+    func testAppRuleWorkspaceDefaultRequiresOneUnambiguousRunningAssignment() {
+        let workspaceA = UUID()
+        let workspaceB = UUID()
+
+        XCTAssertEqual(
+            AppRuleDefaultWorkspacePolicy.resolve(
+                applicationIsRunning: true,
+                liveWorkspaceIDs: [workspaceA, workspaceA]
+            ),
+            workspaceA
+        )
+        XCTAssertNil(AppRuleDefaultWorkspacePolicy.resolve(
+            applicationIsRunning: true,
+            liveWorkspaceIDs: []
+        ))
+        XCTAssertNil(AppRuleDefaultWorkspacePolicy.resolve(
+            applicationIsRunning: true,
+            liveWorkspaceIDs: [workspaceA, workspaceB]
+        ))
+        XCTAssertNil(AppRuleDefaultWorkspacePolicy.resolve(
+            applicationIsRunning: false,
+            liveWorkspaceIDs: [workspaceA]
+        ))
+    }
+
+    func testAddingRunningAppRuleUsesOnlyAValidSuggestedWorkspace() {
+        let suite = "UtilitySettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        let workspaceID = store.workspaces[0].id
+        let running = InstalledApplication(
+            bundleIdentifier: "com.example.Running",
+            displayName: "Running",
+            bundleURL: nil,
+            isRunning: true
+        )
+        let closed = InstalledApplication(
+            bundleIdentifier: "com.example.Closed",
+            displayName: "Closed",
+            bundleURL: nil,
+            isRunning: false
+        )
+        let invalid = InstalledApplication(
+            bundleIdentifier: "com.example.Invalid",
+            displayName: "Invalid",
+            bundleURL: nil,
+            isRunning: true
+        )
+
+        store.addAppRule(for: running, defaultWorkspaceID: workspaceID)
+        store.addAppRule(for: closed, defaultWorkspaceID: workspaceID)
+        store.addAppRule(for: invalid, defaultWorkspaceID: UUID())
+
+        XCTAssertEqual(
+            store.appRules.first(where: { $0.id == running.id })?.assignedWorkspaceID,
+            workspaceID
+        )
+        XCTAssertNil(store.appRules.first(where: { $0.id == closed.id })?.assignedWorkspaceID)
+        XCTAssertNil(store.appRules.first(where: { $0.id == invalid.id })?.assignedWorkspaceID)
+        defaults.removePersistentDomain(forName: suite)
+    }
+
     func testLaunchAtLoginControllerOnlyMutatesServiceAfterExplicitToggle() {
         let service = FakeLaunchAtLoginService(status: .notRegistered)
         let controller = LaunchAtLoginController(service: service)

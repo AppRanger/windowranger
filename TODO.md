@@ -274,6 +274,15 @@ second copy of that checklist.
 
 ## Done
 
+### WR-031 — Prioritise open apps when adding an App Rule
+
+- **Result:** The Add Application Rule picker groups open apps first and initializes a new rule from
+  the app's existing workspace only when its managed windows agree on one unambiguous assignment;
+  closed, windowless, invalid, and split-workspace cases retain **Use current workspace**.
+- **Evidence:** Test isolation and all 461 non-hosted tests pass, the signed universal Debug daily
+  build for `a39b372ee895-dirty` was installed and verified, and the maintainer confirmed the picker
+  and inherited assignment behave as intended on 10 August 2026.
+
 ### WR-027 — Tidy Settings across wide and compact layouts
 
 - **Result:** Settings now follows a consistent native macOS layout grammar with a permanent sidebar,
