@@ -54,19 +54,42 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-033 — Respect the auto-hidden Dock edge after leaving a game
+
+- **Type:** Platform geometry bug
+- **Priority:** P2
+- **Status:** Live validation
+- **Diagnostic-backed cause:** Leaving the Games workspace made AppKit reserve a 59-point bottom
+  Dock reveal strip even though the user's Dock preference was auto-hide. WindowRanger correctly
+  re-sampled that smaller `visibleFrame`, so this was not stale cached or restoration geometry.
+- **Implemented:** Display refresh now makes the user's Dock hiding preference authoritative only
+  for the configured bottom, left, or right Dock edge. Auto-hide restores that edge to the full
+  display boundary while preserving AppKit's other menu-bar, camera, and safe-area exclusions. A
+  visible Dock continues to use AppKit's exclusion. The existing layout signature detects preference
+  changes during normal polling and reflows without a WindowRanger restart.
+- **Automated evidence:** Pure bounds-policy tests cover the observed bottom inset, visible Dock,
+  left/right Dock orientations, and a fail-safe unknown orientation.
+- **Remaining live boundary:** In a signed Debug build, verify auto-hide on fills the Dock edge,
+  auto-hide off stops above the visible Dock, toggling either way reflows without relaunch, and a
+  full-screen game exit cannot leave the 59-point strip behind on either monitor.
+
 ### WR-032 — Align Settings list actions and App Rule workspace values
 
 - **Type:** Settings polish
 - **Priority:** P2
 - **Status:** Live validation
 - **Implemented:** Profiles, Workspaces, and App Rules now use one regular native control size and
-  shared vertical padding for their master-list action rows. The App Rule workspace picker uses a
-  fixed trailing-aligned control column matching the switches below it.
+  shared vertical padding for their master-list action rows. Their shared native bordered-button
+  component places every SF Symbol on the same 16-point canvas so the chrome has identical bounds.
+  The App Rule workspace picker uses a fixed trailing-aligned control column matching the switches
+  below it. The App Rule header now uses an explicit trailing control group so its Enabled label is
+  right-aligned directly beside the native switch instead of stretching into the middle of the row.
 - **Automated evidence:** Layout constants are covered alongside the existing Settings metrics;
-  source and signed-app build verification remain part of PR #15's merge gate.
+  the complete 465-test non-hosted suite passes after the follow-up alignment changes.
 - **Remaining live boundary:** In the installed merged build, compare all three master-list action
   rows and confirm their buttons have one visual height. Confirm short and long App Rule workspace
-  names remain right-aligned at wide and compact Settings widths before marking this Done.
+  names remain right-aligned at wide and compact Settings widths, and confirm the Enabled label
+  remains adjacent to its switch, before marking this Done.
 
 ### WR-029 — Optionally highlight the focused window
 
@@ -82,15 +105,17 @@ smallest useful outcome and acceptance boundary.
   conservative OS-generation default controls the corner radius: macOS 27 and later use the
   maintainer-validated 16-point radius while earlier releases retain the 10-point fallback. Each App
   Rule can supply a local, non-synced radius override for its bundle identifier. Policy excludes
-  WindowRanger-owned windows and any
+  WindowRanger-owned windows, apps identified as games through the same public bundle metadata used
+  by full-screen safety, and any
   window whose non-full-screen state cannot be confirmed. Lifecycle wiring reconciles display
   changes and removes the border for full-screen game sessions, sleep, inactive login sessions,
   disabling, and quit.
 - **Automated evidence:** The unsigned Debug app target builds, test isolation passes, and the full
-  458-test non-hosted suite covers local enablement, colour, filter and per-app radius persistence,
+  465-test non-hosted suite covers local enablement, colour, filter and per-app radius persistence,
   Settings search, OS-generation fallback and override precedence, independent and combined
-  workspace-filter eligibility, conservative missing-context and full-screen handling, coordinate
-  conversion, the four-point managed layout inset, and the nonactivating panel policy.
+  workspace-filter eligibility, declared-game exclusion, conservative missing-context and
+  full-screen handling, coordinate conversion, the four-point managed layout inset, and the
+  nonactivating panel policy.
 - **Installed evidence:** The signed Debug daily build for `1edb85207be4-dirty`, including the
   dedicated colour picker, four-point layout margin, both workspace filters, automatic radius
   policy, and local per-app radius controls, was installed and relaunched from
@@ -101,8 +126,8 @@ smallest useful outcome and acceptance boundary.
 - **Remaining live boundary:** Enable **Highlight the focused window** in General Settings and
   confirm the border tracks real focus, movement, and resizing on both displays without taking focus
   or intercepting clicks. Confirm the white default and custom colours, the Tiled/Accordion edge
-  margin on both displays, unchanged Freeform geometry, Settings and full-screen exclusion,
-  Settings and full-screen exclusion, returning a per-app radius override to Automatic,
+  margin on both displays, unchanged Freeform geometry, Settings, declared-game and full-screen
+  exclusion, returning a per-app radius override to Automatic,
   disable/reenable, and sleep/wake before marking this Done.
 
 ### WR-005 — Measure Debug diagnostic logging under slow storage

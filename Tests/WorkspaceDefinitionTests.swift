@@ -1491,6 +1491,69 @@ final class WorkspaceDefinitionTests: XCTestCase {
         )
     }
 
+    func testAutoHiddenBottomDockRestoresOnlyBottomDisplayEdge() {
+        let screen = CGRect(x: 0, y: 0, width: 3360, height: 1418)
+        let visible = CGRect(x: 0, y: 59, width: 3360, height: 1329)
+
+        XCTAssertEqual(
+            WorkspaceEngine.usableCocoaBounds(
+                screenFrame: screen,
+                visibleFrame: visible,
+                dockPreferences: DockLayoutPreferences(automaticallyHides: true, edge: .bottom)
+            ),
+            CGRect(x: 0, y: 0, width: 3360, height: 1388)
+        )
+    }
+
+    func testVisibleBottomDockKeepsAppKitSafeBounds() {
+        let visible = CGRect(x: 0, y: 59, width: 3360, height: 1329)
+
+        XCTAssertEqual(
+            WorkspaceEngine.usableCocoaBounds(
+                screenFrame: CGRect(x: 0, y: 0, width: 3360, height: 1418),
+                visibleFrame: visible,
+                dockPreferences: DockLayoutPreferences(automaticallyHides: false, edge: .bottom)
+            ),
+            visible
+        )
+    }
+
+    func testAutoHiddenSideDockRestoresOnlyConfiguredEdge() {
+        let screen = CGRect(x: -1200, y: 0, width: 1200, height: 900)
+        let leftVisible = CGRect(x: -1140, y: 0, width: 1140, height: 875)
+        let rightVisible = CGRect(x: -1200, y: 0, width: 1140, height: 875)
+
+        XCTAssertEqual(
+            WorkspaceEngine.usableCocoaBounds(
+                screenFrame: screen,
+                visibleFrame: leftVisible,
+                dockPreferences: DockLayoutPreferences(automaticallyHides: true, edge: .left)
+            ),
+            CGRect(x: -1200, y: 0, width: 1200, height: 875)
+        )
+        XCTAssertEqual(
+            WorkspaceEngine.usableCocoaBounds(
+                screenFrame: screen,
+                visibleFrame: rightVisible,
+                dockPreferences: DockLayoutPreferences(automaticallyHides: true, edge: .right)
+            ),
+            CGRect(x: -1200, y: 0, width: 1200, height: 875)
+        )
+    }
+
+    func testUnknownAutoHiddenDockEdgeKeepsAppKitSafeBounds() {
+        let visible = CGRect(x: 0, y: 59, width: 3360, height: 1329)
+
+        XCTAssertEqual(
+            WorkspaceEngine.usableCocoaBounds(
+                screenFrame: CGRect(x: 0, y: 0, width: 3360, height: 1418),
+                visibleFrame: visible,
+                dockPreferences: DockLayoutPreferences(automaticallyHides: true, edge: nil)
+            ),
+            visible
+        )
+    }
+
     func testAccordionExcludesFloatingAndAppExcludedWindowsFromItsCount() {
         let excludedRule = ResolvedAppRule(
             assignedWorkspaceID: nil,

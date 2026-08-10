@@ -105,10 +105,11 @@ enum FocusedWindowHighlightPolicy {
         enabled: Bool,
         suppressed: Bool,
         ownProcessIdentifier: pid_t,
+        isDeclaredGame: Bool = false,
         filters: FocusedWindowHighlightFilters = .unrestricted,
         workspaceContext: FocusedWindowHighlightWorkspaceContext? = nil
     ) -> Bool {
-        guard enabled, !suppressed, let target,
+        guard enabled, !suppressed, !isDeclaredGame, let target,
               target.key.processIdentifier != ownProcessIdentifier,
               target.fullscreenObservation == .falseValue,
               target.frame.position.x.isFinite,
@@ -167,6 +168,7 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
     private var filters = FocusedWindowHighlightFilters.unrestricted
     private var cornerRadiusOverrides: [String: Double] = [:]
     private var workspaceContexts: [WindowKey: FocusedWindowHighlightWorkspaceContext] = [:]
+    private var declaredGameByApplicationIdentity: [String: Bool] = [:]
     private var timer: Timer?
     private var panel: FocusedWindowHighlightPanel?
     private var borderView: FocusedWindowHighlightView?
@@ -275,6 +277,7 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
             enabled: enabled,
             suppressed: suppressed,
             ownProcessIdentifier: ownProcessIdentifier,
+            isDeclaredGame: target.map(isDeclaredGame) ?? false,
             filters: filters,
             workspaceContext: target.flatMap { workspaceContexts[$0.key] }
         ), let target, let mainScreenTop = mainScreenTopProvider()
@@ -302,6 +305,24 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
             )
         }
         presentedTarget = target.key
+    }
+
+    private func isDeclaredGame(_ target: FocusedWindowHighlightTarget) -> Bool {
+        let application = NSRunningApplication(
+            processIdentifier: target.key.processIdentifier
+        )
+        let identity = target.bundleIdentifier?.lowercased()
+            ?? application?.bundleURL?.standardizedFileURL.path.lowercased()
+            ?? "pid:\(target.key.processIdentifier)"
+        if let cached = declaredGameByApplicationIdentity[identity] { return cached }
+        guard let bundle = application?.bundleURL.flatMap({ Bundle(url: $0) }) else {
+            // A launch transition can expose the AX window before Launch Services resolves its
+            // bundle. Do not cache that temporary absence; the next highlight poll will retry.
+            return false
+        }
+        let declared = FullscreenGameMetadataPolicy.isDeclaredGame(bundle: bundle)
+        declaredGameByApplicationIdentity[identity] = declared
+        return declared
     }
 
     private func dismiss(reason: String) {

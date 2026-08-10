@@ -394,6 +394,13 @@ final class UtilitySettingsTests: XCTestCase {
             suppressed: false,
             ownProcessIdentifier: 123
         ))
+        XCTAssertFalse(FocusedWindowHighlightPolicy.shouldPresent(
+            target: eligible,
+            enabled: true,
+            suppressed: false,
+            ownProcessIdentifier: 999,
+            isDeclaredGame: true
+        ))
 
         let fullscreen = FocusedWindowHighlightTarget(
             key: eligible.key,

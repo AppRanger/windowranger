@@ -117,6 +117,12 @@ Display topology resolves first, fresh AX elements are acquired second, and visi
 applied once the snapshot is stable. Bounded retries handle temporarily incomplete enumeration.
 Old focus/layout callbacks are superseded and cannot act on the newer generation.
 
+Display snapshots begin with AppKit's current `visibleFrame`. A locally read Dock preference then
+controls only the configured Dock edge: a visible Dock keeps AppKit's exclusion, while an auto-hidden
+Dock restores that edge to the full screen frame. Other safe-area exclusions remain authoritative.
+The preference is sampled with each display refresh so game transitions and Dock setting changes
+invalidate the existing layout signature and reflow without a restart.
+
 On graceful quit, persistent assignment state is saved before managed windows are returned to
 visible frames. A debugger Stop or crash cannot run synchronous cleanup; startup reconciliation is
 the recovery boundary for those cases.
@@ -126,7 +132,8 @@ the recovery boundary for those cases.
 The menu bar uses one stable AppKit status item. Its primary target always opens the app menu; only
 explicit Full-mode workspace buttons switch. Command feedback is a nonactivating click-through
 overlay. The optional focused-window highlight uses the same nonactivating, click-through boundary,
-polls only while enabled on this Mac, and excludes WindowRanger-owned and full-screen windows. Its
+polls only while enabled on this Mac, and excludes WindowRanger-owned windows, apps identified as
+games through the same public bundle metadata used by full-screen safety, and full-screen windows. Its
 local white-by-default colour is independent of the synced menu-bar accent. Automated Tiled and
 Accordion geometry reserves a four-point screen-edge clearance while it is enabled; Freeform
 geometry remains untouched. Optional Tiled-only and multiple-window filters consume the engine's

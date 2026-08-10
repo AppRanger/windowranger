@@ -33,6 +33,17 @@ struct DisplaySnapshot: Equatable, Sendable, Identifiable {
     }
 }
 
+enum DockEdge: String, Equatable, Sendable {
+    case bottom
+    case left
+    case right
+}
+
+struct DockLayoutPreferences: Equatable, Sendable {
+    let automaticallyHides: Bool
+    let edge: DockEdge?
+}
+
 struct PersistedDisplayPlacement: Codable, Equatable, Sendable {
     let displayIdentifier: String
     let normalizedOrigin: CGPoint
@@ -166,6 +177,14 @@ enum FullscreenSessionPolicy {
 }
 
 enum FullscreenGameMetadataPolicy {
+    static func isDeclaredGame(bundle: Bundle?) -> Bool {
+        isDeclaredGame(
+            supportsGameMode: bundle?.object(forInfoDictionaryKey: "LSSupportsGameMode") as? Bool,
+            supportsGameControllerMode: bundle?.object(forInfoDictionaryKey: "GCSupportsGameMode") as? Bool,
+            applicationCategory: bundle?.object(forInfoDictionaryKey: "LSApplicationCategoryType") as? String
+        )
+    }
+
     static func isDeclaredGame(
         supportsGameMode: Bool?,
         supportsGameControllerMode: Bool?,
@@ -6061,11 +6080,7 @@ final class WorkspaceEngine {
             ?? "pid:\(application.processIdentifier)"
         if let cached = declaredGameByBundleIdentifier[cacheKey] { return cached }
         let bundle = application.bundleURL.flatMap { Bundle(url: $0) }
-        let declared = FullscreenGameMetadataPolicy.isDeclaredGame(
-            supportsGameMode: bundle?.object(forInfoDictionaryKey: "LSSupportsGameMode") as? Bool,
-            supportsGameControllerMode: bundle?.object(forInfoDictionaryKey: "GCSupportsGameMode") as? Bool,
-            applicationCategory: bundle?.object(forInfoDictionaryKey: "LSApplicationCategoryType") as? String
-        )
+        let declared = FullscreenGameMetadataPolicy.isDeclaredGame(bundle: bundle)
         declaredGameByBundleIdentifier[cacheKey] = declared
         return declared
     }
@@ -8014,6 +8029,7 @@ final class WorkspaceEngine {
         CGGetActiveDisplayList(displayCount, &displays, &displayCount)
         let active = Array(displays.prefix(Int(displayCount)))
         let mainDisplay = CGMainDisplayID()
+        let dockPreferences = currentDockLayoutPreferences()
         let screensByDisplayID: [CGDirectDisplayID: NSScreen] = Dictionary(
             uniqueKeysWithValues: NSScreen.screens.compactMap { screen -> (CGDirectDisplayID, NSScreen)? in
             guard let number = screen.deviceDescription[
@@ -8045,7 +8061,11 @@ final class WorkspaceEngine {
             return DisplaySnapshot(
                 identifier: identifier,
                 bounds: bounds,
-                usableBounds: usableDisplayBounds(displayID, mainDisplayID: mainDisplay),
+                usableBounds: usableDisplayBounds(
+                    displayID,
+                    mainDisplayID: mainDisplay,
+                    dockPreferences: dockPreferences
+                ),
                 isMain: displayID == mainDisplay,
                 isBuiltIn: CGDisplayIsBuiltin(displayID) != 0,
                 name: name,
@@ -8081,7 +8101,8 @@ final class WorkspaceEngine {
 
     private static func usableDisplayBounds(
         _ displayID: CGDirectDisplayID,
-        mainDisplayID: CGDirectDisplayID
+        mainDisplayID: CGDirectDisplayID,
+        dockPreferences: DockLayoutPreferences
     ) -> CGRect? {
         func screen(for identifier: CGDirectDisplayID) -> NSScreen? {
             NSScreen.screens.first { screen in
@@ -8092,10 +8113,63 @@ final class WorkspaceEngine {
         guard let targetScreen = screen(for: displayID),
               let mainScreen = screen(for: mainDisplayID)
         else { return nil }
+        let visibleFrame = usableCocoaBounds(
+            screenFrame: targetScreen.frame,
+            visibleFrame: targetScreen.visibleFrame,
+            dockPreferences: dockPreferences
+        )
         return accessibilityBounds(
-            forCocoaBounds: targetScreen.visibleFrame,
+            forCocoaBounds: visibleFrame,
             mainScreenTop: mainScreen.frame.maxY
         )
+    }
+
+    static func usableCocoaBounds(
+        screenFrame: CGRect,
+        visibleFrame: CGRect,
+        dockPreferences: DockLayoutPreferences
+    ) -> CGRect {
+        guard dockPreferences.automaticallyHides, let edge = dockPreferences.edge else {
+            return visibleFrame
+        }
+        let constrained = visibleFrame.intersection(screenFrame)
+        guard !constrained.isNull, constrained.width > 0, constrained.height > 0 else {
+            return visibleFrame
+        }
+
+        var adjusted = constrained
+        switch edge {
+        case .bottom:
+            adjusted.origin.y = screenFrame.minY
+            adjusted.size.height = constrained.maxY - screenFrame.minY
+        case .left:
+            adjusted.origin.x = screenFrame.minX
+            adjusted.size.width = constrained.maxX - screenFrame.minX
+        case .right:
+            adjusted.size.width = screenFrame.maxX - constrained.minX
+        }
+        return adjusted
+    }
+
+    private static func currentDockLayoutPreferences() -> DockLayoutPreferences {
+        let applicationID = "com.apple.dock" as CFString
+        let automaticallyHides = (
+            CFPreferencesCopyValue(
+                "autohide" as CFString,
+                applicationID,
+                kCFPreferencesCurrentUser,
+                kCFPreferencesAnyHost
+            ) as? NSNumber
+        )?.boolValue ?? false
+        let edge = (
+            CFPreferencesCopyValue(
+                "orientation" as CFString,
+                applicationID,
+                kCFPreferencesCurrentUser,
+                kCFPreferencesAnyHost
+            ) as? String
+        ).flatMap(DockEdge.init(rawValue:))
+        return DockLayoutPreferences(automaticallyHides: automaticallyHides, edge: edge)
     }
 
     static func accessibilityBounds(forCocoaBounds bounds: CGRect, mainScreenTop: CGFloat) -> CGRect {
