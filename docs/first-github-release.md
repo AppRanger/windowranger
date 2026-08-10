@@ -1,13 +1,12 @@
 # First GitHub release
 
-WindowRanger's first public binary should be `v0.1.0-beta.1`, not a Stable release. The product is
-still explicitly pre-release and several live, accessibility, privacy, identity, and packaging gates
-remain open.
+WindowRanger's first public binary is `v0.1.0-beta.1`, not a Stable release. The product remains
+explicitly pre-release and several live, accessibility, privacy, and packaging gates remain open.
 
-As of 9 August 2026, that exact Beta is Developer ID-signed, notarized, stapled, packaged, tested by
-the maintainer, and attached to a private draft GitHub prerelease. The tag and artifacts remain at
-commit `04b5750b1fe3b183c1259d132a0a8e985f8b4e0e`. This runbook documents the reproducible process;
-it does not imply that repository visibility or the draft has been published.
+As of 10 August 2026, that exact Beta is Developer ID-signed, notarized, stapled, packaged, tested by
+the maintainer, and published as a
+[GitHub prerelease](https://github.com/windowranger/windowranger/releases/tag/v0.1.0-beta.1). The tag
+and artifacts remain at commit `04b5750b1fe3b183c1259d132a0a8e985f8b4e0e`.
 
 This runbook uses a local-first release pipeline:
 
@@ -173,16 +172,16 @@ To repeat the round-trip verification without changing an existing draft or publ
 ./scripts/create-github-release.sh --version 0.1.0-beta.1 --verify-existing
 ```
 
-Review the draft on GitHub and then explicitly publish it only after every applicable human gate is
-complete. GitHub's automatically generated source archives are not the macOS app and must not be
-described as the install download.
+For a later release, review the draft on GitHub and explicitly publish it only after every applicable
+gate for that release is complete. GitHub's automatically generated source archives are not the
+macOS app and must not be described as the install download.
 
 ## Repository visibility
 
-The repository is currently private, so a GitHub release is private too. Make the repository public
-only after the history/privacy scan, licence review, security contact, conduct contact, and other
-public-project gates are complete. Changing visibility and publishing the draft are separate,
-explicit maintainer actions.
+The repository became public on 10 August 2026 after the history/privacy scan, licence review,
+private security and conduct reporting paths, branch protection, and tag rules were verified.
+Changing visibility and publishing a draft remain separate, explicit maintainer actions for any
+future private release repository.
 
 ## Moving release signing to CI later
 

@@ -1,20 +1,19 @@
 # WindowRanger
 
 > **Pre-release:** WindowRanger is under active development. The first signed and notarized Beta is
-> packaged as a private draft, but it is not publicly available and still has live-validation work
-> outstanding.
+> publicly available, with live-validation work still outstanding.
 
 A small, native macOS virtual-workspace manager built around one workflow rather than a
 general-purpose command language.
 
 WindowRanger will use three release channels: Stable from `main`, Beta from release branches, and
 rolling Dev builds from `develop`. Stable and opt-in Beta updates will use Sparkle later; Dev builds
-will remain outside automatic updates. No public release artifacts exist yet.
+will remain outside automatic updates.
 
-The prepared first download is the signed and notarized `v0.1.0-beta.1` DMG in a private draft
-GitHub prerelease, with a notarized ZIP as a fallback. Until the maintainer explicitly makes the
-repository public and publishes that draft, source checkouts and local development builds are the
-only available forms; generated GitHub source archives are not an installable macOS app.
+Download the signed and notarized
+[`v0.1.0-beta.1` GitHub prerelease](https://github.com/windowranger/windowranger/releases/tag/v0.1.0-beta.1)
+as a DMG, with a notarized ZIP as a fallback. GitHub's automatically generated source archives are
+not an installable macOS app.
 
 ## Project documentation
 

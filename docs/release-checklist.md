@@ -30,9 +30,8 @@ promotion and versioning. It is a design authority, not evidence that the releas
       provenance and privacy-scrubber fixtures, not secrets or shipped paths.
 - [x] Add contribution guidelines, issue forms, a pull-request template, governance, support, and a
       code of conduct.
-- [ ] Enable GitHub private vulnerability reporting when public; `SECURITY.md` already points to
-      the private form.
-- [ ] Confirm the private form is active as the project-controlled conduct-reporting path documented
+- [x] Enable GitHub private vulnerability reporting and link the private form from `SECURITY.md`.
+- [x] Confirm the private form is active as the project-controlled conduct-reporting path documented
       in `CODE_OF_CONDUCT.md`.
 - [x] Review commit authorship/privacy before making history public; all 92 commits use the intended
       maintainer identity.
@@ -80,8 +79,8 @@ promotion and versioning. It is a design authority, not evidence that the releas
 
 - [x] Define Stable, Beta, and Dev release channels and the Gitflow-style promotion model.
 - [x] Create `develop`, make it the default integration branch, and run the required CI workflow.
-- [ ] Protect `main`, `develop`, and release tags once GitHub Pro is enabled or the repository is
-      made public; the current private plan rejects rulesets and branch protection.
+- [x] Protect `main` and `develop` with pull-request, required-check, conversation-resolution,
+      deletion, and force-push rules; protect `v*` tags with a maintainer-only active ruleset.
 - [x] Choose the initial distribution: a signed, notarized channel-specific DMG attached to a
       GitHub prerelease, with a notarized ZIP fallback; Homebrew remains a later Stable channel.
 - [x] Choose a local-first release pipeline: repository-managed local checks perform private-phase
@@ -108,4 +107,5 @@ promotion and versioning. It is a design authority, not evidence that the releas
 - [x] Produce tracked release notes, SHA-256 checksums and a commit/toolchain provenance manifest;
       round-trip verify all five GitHub assets.
 - [x] Developer ID-sign, notarize, staple, Gatekeeper-check, and verify the exact Beta app and DMG.
-- [ ] Publish only with explicit maintainer approval.
+- [x] Publish `v0.1.0-beta.1` only after explicit maintainer approval, preserving its verified tag
+      and five uploaded assets.
