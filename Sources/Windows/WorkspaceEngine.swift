@@ -69,6 +69,12 @@ enum FocusObservationDisposition: Equatable, Sendable {
     case externalChange
 }
 
+enum ParkedFocusActivationDisposition: Equatable, Sendable {
+    case unaffected
+    case suppressStaleActivation
+    case acceptExplicitActivation
+}
+
 enum ExactWindowFocusStep: Equatable, Sendable {
     case markWindowMain
     case focusWindowElement
@@ -758,7 +764,7 @@ final class WorkspaceEngine {
     private var recentInteractionDisplayIdentifier: String?
     private var recentInteractionFocusTarget: WindowKey?
     private var recentInteractionDisplayDeadline = Date.distantPast
-    private var sendOnlyFocusSuppression: [WindowKey: Date] = [:]
+    private var staleParkedFocusSuppression: [WindowKey: Date] = [:]
     private var lastAutomaticUnhideAttemptByProcess: [pid_t: Date] = [:]
     private var lastBackgroundLayoutSignature: String?
     private var lastSolvedTiledFrames: [WindowKey: WindowFrame] = [:]
@@ -3274,20 +3280,26 @@ final class WorkspaceEngine {
                 return
             }
 
-            if let focusedWindow = self.focusedWindowKey(),
-               let allowExplicitActivationAfter = self.sendOnlyFocusSuppression[focusedWindow] {
-                if Date() < allowExplicitActivationAfter {
+            if let focusedWindow = self.focusedWindowKey() {
+                switch Self.parkedFocusActivationDisposition(
+                    allowExplicitActivationAfter: self.staleParkedFocusSuppression[focusedWindow],
+                    now: Date()
+                ) {
+                case .suppressStaleActivation:
                     self.diagnostics.log(
-                        category: "move-window",
+                        category: "focus-observation",
                         event: "stale-activation-suppressed",
                         correlation: intendedCorrelationID,
                         fields: ["window": Self.diagnosticWindowKey(focusedWindow)]
                     )
                     return
+                case .acceptExplicitActivation:
+                    // A later explicit activation is genuine user intent and may use the normal
+                    // external-focus workspace-follow behavior.
+                    self.staleParkedFocusSuppression.removeValue(forKey: focusedWindow)
+                case .unaffected:
+                    break
                 }
-                // A later explicit activation is treated as genuine user intent and may use the
-                // normal external-focus workspace-follow behavior.
-                self.sendOnlyFocusSuppression.removeValue(forKey: focusedWindow)
             }
 
             if let intendedTarget,
@@ -3597,7 +3609,7 @@ final class WorkspaceEngine {
                     token: verificationToken
                 )
             } else {
-                self.sendOnlyFocusSuppression[focusedKey] = Date().addingTimeInterval(1.5)
+                self.staleParkedFocusSuppression[focusedKey] = Date().addingTimeInterval(1.5)
                 if Self.shouldWindowBeVisible(
                     workspaceID: effectiveWorkspaceID,
                     activeWorkspaceIDs: self.activeWorkspaceIDs,
@@ -3714,11 +3726,21 @@ final class WorkspaceEngine {
         workspaceMatches && visible && meaningfullyVisible && displayMatches && focusEligible
     }
 
-    static func sendOnlyFocusObservationIsSuppressed<T: Hashable>(
+    static func staleParkedFocusObservationIsSuppressed<T: Hashable>(
         focusedWindow: T?,
         suppressedWindows: Set<T>
     ) -> Bool {
         focusedWindow.map(suppressedWindows.contains) == true
+    }
+
+    static func parkedFocusActivationDisposition(
+        allowExplicitActivationAfter: Date?,
+        now: Date
+    ) -> ParkedFocusActivationDisposition {
+        guard let allowExplicitActivationAfter else { return .unaffected }
+        return now < allowExplicitActivationAfter
+            ? .suppressStaleActivation
+            : .acceptExplicitActivation
     }
 
     static func directionalCandidateOrder<Key: Hashable>(
@@ -5674,7 +5696,7 @@ final class WorkspaceEngine {
         foregroundFullscreenGameSessionKey = nil
         emitFullscreenGameSessionIfNeeded()
         focusCycleRejectedUntil.removeAll()
-        sendOnlyFocusSuppression.removeAll()
+        staleParkedFocusSuppression.removeAll()
         lastAutomaticUnhideAttemptByProcess.removeAll()
         tiledTrees.removeAll()
         lastSolvedTiledFrames.removeAll()
@@ -5993,7 +6015,7 @@ final class WorkspaceEngine {
             focusCycleRejectedUntil = focusCycleRejectedUntil.filter {
                 !removedTrackedWindowKeys.contains($0.key)
             }
-            sendOnlyFocusSuppression = sendOnlyFocusSuppression.filter {
+            staleParkedFocusSuppression = staleParkedFocusSuppression.filter {
                 !removedTrackedWindowKeys.contains($0.key)
             }
             if radialPlacementCommitContext.map({
@@ -6067,7 +6089,7 @@ final class WorkspaceEngine {
         admissionDecisionByWindow = admissionDecisionByWindow.filter { shouldRetainDiscoveryState($0.key) }
         admissionMetadataByWindow = admissionMetadataByWindow.filter { shouldRetainDiscoveryState($0.key) }
         lastKnownWindowLayer = lastKnownWindowLayer.filter { shouldRetainDiscoveryState($0.key) }
-        sendOnlyFocusSuppression = sendOnlyFocusSuppression.filter {
+        staleParkedFocusSuppression = staleParkedFocusSuppression.filter {
             shouldRetainDiscoveryState($0.key)
         }
         let expiredFullscreenSessionKeys = Set(fullscreenSessions.keys.filter {
@@ -6100,7 +6122,7 @@ final class WorkspaceEngine {
         }
         emitFullscreenGameSessionIfNeeded()
         if observeFocus, let focused,
-           sendOnlyFocusSuppression[focused] == nil,
+           staleParkedFocusSuppression[focused] == nil,
            let tracked = windows[focused] {
             lastFocusedWindow[tracked.workspaceID] = focused
         }
@@ -6454,7 +6476,7 @@ final class WorkspaceEngine {
             recentInteractionFocusTarget = nil
         }
         focusCycleRejectedUntil.removeValue(forKey: key)
-        sendOnlyFocusSuppression.removeValue(forKey: key)
+        staleParkedFocusSuppression.removeValue(forKey: key)
         lastSolvedTiledFrames.removeValue(forKey: key)
 
         if removal.changedManagedState {
@@ -6963,16 +6985,16 @@ final class WorkspaceEngine {
         allowWorkspaceFollowing: Bool,
         observationCorrelationID: String? = nil
     ) {
-        if Self.sendOnlyFocusObservationIsSuppressed(
+        if Self.staleParkedFocusObservationIsSuppressed(
             focusedWindow: focusedWindow,
-            suppressedWindows: Set(sendOnlyFocusSuppression.keys)
+            suppressedWindows: Set(staleParkedFocusSuppression.keys)
         ) {
             // Polling can continue to report the just-parked AX window even after its focused/main
             // flags were cleared. Never interpret that stale observation as user intent.
             return
         }
-        if let focusedWindow, !sendOnlyFocusSuppression.isEmpty {
-            sendOnlyFocusSuppression = sendOnlyFocusSuppression.filter { $0.key == focusedWindow }
+        if let focusedWindow, !staleParkedFocusSuppression.isEmpty {
+            staleParkedFocusSuppression = staleParkedFocusSuppression.filter { $0.key == focusedWindow }
         }
         if Self.shouldIgnoreFocusObservation(
             focusedWindow: focusedWindow,
@@ -7067,13 +7089,13 @@ final class WorkspaceEngine {
         _ focusedWindow: WindowKey,
         correlationID: String? = nil
     ) {
-        guard sendOnlyFocusSuppression[focusedWindow] == nil else {
+        guard staleParkedFocusSuppression[focusedWindow] == nil else {
             diagnostics.log(
                 category: "focus-follow",
                 event: "ignored",
                 correlation: correlationID,
                 fields: [
-                    "reason": "send-only-move-suppression",
+                    "reason": "stale-parked-window-suppression",
                     "window": Self.diagnosticWindowKey(focusedWindow),
                 ]
             )
@@ -7306,12 +7328,12 @@ final class WorkspaceEngine {
         guard let rawFocusedWindow else { return nil }
         let unusableAnchor = rawFocusedWindow.key.processIdentifier == ownProcessIdentifier ||
             ignoredWindowKeys.contains(rawFocusedWindow.key) ||
-            sendOnlyFocusSuppression[rawFocusedWindow.key] != nil
+            staleParkedFocusSuppression[rawFocusedWindow.key] != nil
         guard unusableAnchor else { return rawFocusedWindow }
 
         let fallbackKeys = [recentInteractionFocusTarget, lastObservedFocusedWindow].compactMap { $0 }
         for key in fallbackKeys {
-            guard sendOnlyFocusSuppression[key] == nil, let tracked = windows[key] else { continue }
+            guard staleParkedFocusSuppression[key] == nil, let tracked = windows[key] else { continue }
             return FocusedWindowSnapshot(
                 key: key,
                 element: tracked.element,
@@ -8690,6 +8712,11 @@ final class WorkspaceEngine {
             recentInteractionFocusTarget = nil
             recentInteractionDisplayIdentifier = destinationDisplayIdentifier
             recentInteractionDisplayDeadline = Date().addingTimeInterval(1.75)
+            suppressParkedPreviousFocusAfterWorkspaceSwitch(
+                previousFocusKey,
+                correlationID: correlationID,
+                reason: "no-destination-candidate"
+            )
             diagnostics.log(
                 category: "workspace-switch-focus",
                 event: "no-candidate",
@@ -8738,6 +8765,7 @@ final class WorkspaceEngine {
         token: FocusVerificationToken
     ) {
         guard let focusTarget = focusTargetWindow(session.key) else { return }
+        staleParkedFocusSuppression.removeValue(forKey: session.key)
         lastFocusedWindow[workspaceID] = session.key
         recentInteractionFocusTarget = session.key
         recentInteractionDisplayIdentifier = destinationDisplayIdentifier
@@ -8890,6 +8918,11 @@ final class WorkspaceEngine {
             recentInteractionDisplayIdentifier = destinationDisplayIdentifier
             recentInteractionDisplayDeadline = Date().addingTimeInterval(1.75)
             clearProgrammaticFocusIntent()
+            suppressParkedPreviousFocusAfterWorkspaceSwitch(
+                previousFocusKey,
+                correlationID: correlationID,
+                reason: "destination-focus-failed"
+            )
             diagnostics.log(
                 category: "workspace-switch-focus",
                 event: "exhausted-candidates",
@@ -8921,6 +8954,9 @@ final class WorkspaceEngine {
         }
 
         if exactAttempt == 0 {
+            // Re-entering a workspace is fresh user intent for its chosen target, so an older
+            // parked-focus suppression must not survive this explicit switch.
+            staleParkedFocusSuppression.removeValue(forKey: targetKey)
             let rule = resolvedRule(for: target.bundleIdentifier)
             if target.workspaceID == workspaceID && !rule.keepsOnAllWorkspaces {
                 lastFocusedWindow[workspaceID] = targetKey
@@ -9054,6 +9090,13 @@ final class WorkspaceEngine {
             case .abortForCompetingFocus:
                 self.clearProgrammaticFocusIntent()
                 self.recentInteractionFocusTarget = nil
+                if actual == previousFocusKey {
+                    self.suppressParkedPreviousFocusAfterWorkspaceSwitch(
+                        previousFocusKey,
+                        correlationID: correlationID,
+                        reason: "previous-focus-retained-after-retry"
+                    )
+                }
                 self.diagnostics.log(
                     category: "workspace-switch-focus",
                     event: "aborted-for-competing-focus",
@@ -9067,6 +9110,36 @@ final class WorkspaceEngine {
         }
         pendingFocusVerification = workItem
         queue.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func suppressParkedPreviousFocusAfterWorkspaceSwitch(
+        _ previousFocusKey: WindowKey?,
+        correlationID: String,
+        reason: String
+    ) {
+        guard let previousFocusKey,
+              let previousWindow = windows[previousFocusKey]
+        else { return }
+        let rule = resolvedRule(for: previousWindow.bundleIdentifier)
+        let previousWindowIsVisible = Self.shouldWindowBeVisible(
+            workspaceID: previousWindow.workspaceID,
+            activeWorkspaceIDs: activeWorkspaceIDs,
+            rule: rule
+        )
+        guard WorkspaceSwitchFocusPolicy.shouldSuppressRetainedPreviousFocus(
+            previousWindowIsVisible: previousWindowIsVisible
+        ) else { return }
+
+        staleParkedFocusSuppression[previousFocusKey] = Date().addingTimeInterval(1.5)
+        diagnostics.log(
+            category: "workspace-switch-focus",
+            event: "stale-source-focus-suppression-armed",
+            correlation: correlationID,
+            fields: [
+                "window": Self.diagnosticWindowKey(previousFocusKey),
+                "reason": reason,
+            ]
+        )
     }
 
     private func attemptFocusCycleCandidate(

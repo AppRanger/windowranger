@@ -145,11 +145,11 @@ final class MoveWindowFocusTests: XCTestCase {
     }
 
     func testSendOnlySuppressionConsumesParkedFocusButNotReplacementFocus() {
-        XCTAssertTrue(WorkspaceEngine.sendOnlyFocusObservationIsSuppressed(
+        XCTAssertTrue(WorkspaceEngine.staleParkedFocusObservationIsSuppressed(
             focusedWindow: "moving",
             suppressedWindows: ["moving"]
         ))
-        XCTAssertFalse(WorkspaceEngine.sendOnlyFocusObservationIsSuppressed(
+        XCTAssertFalse(WorkspaceEngine.staleParkedFocusObservationIsSuppressed(
             focusedWindow: "replacement",
             suppressedWindows: ["moving"]
         ))

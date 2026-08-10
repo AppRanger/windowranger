@@ -54,6 +54,58 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-038 — Do not let stale parked-window focus undo a workspace switch
+
+- **Type:** Workspace/focus bug
+- **Priority:** P1
+- **Status:** Live validation
+- **Diagnostic-backed:** After updating to macOS 27 build `26A5406e` and rebooting, an explicit
+  Independent Displays switch on the primary display from workspace 1 to workspace 2 can reverse
+  itself after roughly two seconds. Workspace 2 currently contains one `com.openai.codex` window.
+  WindowRanger successfully reveals and lays out that window, but application activation commonly
+  fails or exact-focus verification observes no focused window. WindowServer continues routing
+  keyboard focus to the Chrome or Claude window that WindowRanger just parked from workspace 1. A
+  later background focus poll classifies that stale parked-window focus as an external change, and
+  `focus-follow` deliberately switches the display from workspace 2 back to workspace 1. The
+  retained rotated diagnostics contain repeated 2-to-1 reversals across multiple app sessions.
+- **Live diagnostic refinement:** A clean macOS 27 capture again showed the workspace-2 Codex
+  window become visible while `NSRunningApplication.activate()` returned `false`; the app was
+  nevertheless running, finished launching, unhidden, and using the regular foreground activation
+  policy. WindowRanger itself was an inactive accessory app. The Codex window exposed successful
+  main-window and raise operations but no settable window- or application-focus attribute, leaving
+  activation as the only successful exact-focus path. A later attempt did activate Codex and
+  remained on workspace 2, confirming that the failure is intermittent rather than a permanently
+  invalid target.
+- **OS research:** Apple documents modern app activation as user-intent-driven and not guaranteed;
+  cooperative activation is guaranteed only when the currently active app yields to the receiver.
+  That contract is consistent with the rejection observed from WindowRanger's inactive menu-bar
+  process, although a macOS 27 regression or policy tightening is not yet independently proven.
+  The new `com.apple.campo` Siri AI process was also observed temporarily acting as a WindowServer
+  keyboard-focus thief and was correctly ignored as unmanaged. It was not active immediately before
+  the retained automatic reversals, so it remains a possible source of additional focus churn rather
+  than the diagnostic-backed primary cause.
+- **Expected:** An explicit workspace switch must not be undone solely because macOS continues to
+  report the just-parked source window as focused after destination focus fails. Genuine later user
+  activation of an app on an inactive workspace must still bring that workspace forward.
+- **Reproduction context:** In Independent Displays mode, focus Chrome or Claude on workspace 1,
+  then switch the same display to workspace 2 containing the Codex window and wait for the next
+  background focus polls. The issue appeared after the macOS update/reboot while Time Machine,
+  Spotlight, CoreDuet, and WindowServer were also under substantial post-boot load; that load may
+  amplify latency but does not itself account for the logged `focus-follow` reversal.
+- **Implemented:** Generalized the existing parked-window focus suppression so a failed workspace
+  switch arms it only for the previous focused window when that window is now genuinely parked.
+  Background polls cannot reinterpret that stale identity as user intent, including after an
+  intervening `nil` focus observation. Re-entering the source workspace explicitly clears the
+  suppression for its chosen target, and an explicit application activation is accepted after the
+  existing short stale-activation window. Added a privacy-safe diagnostic when suppression is armed.
+- **Automated verification:** Focused `WorkspaceSwitchFocusTests` and `MoveWindowFocusTests` passed
+  32 tests. `./scripts/verify-local-ci.sh --quick` passed project generation, shell syntax, test
+  isolation, and all 480 non-hosted tests on macOS 27/Xcode 27.
+- **Live-validation boundary:** The installed daily app was not stopped or replaced. Install the
+  resulting Debug build through the normal daily handoff, reproduce with Codex as the only
+  destination window, and confirm both that a rejected destination activation no longer reverses
+  the workspace switch and that later deliberate activation of the parked app still follows it.
+
 ### WR-036 — Swipe between workspaces
 
 - **Type:** Feature
