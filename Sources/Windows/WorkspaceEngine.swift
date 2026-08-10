@@ -339,7 +339,6 @@ enum MoveWorkspaceFocusDisposition: String, Equatable, Sendable {
     case sendOnly = "send-only"
     case follow = "follow"
     case unchangedVisible = "unchanged-visible"
-    case blockedByAppRule = "blocked-by-app-rule"
 }
 
 struct PersistedWorkspaceState: Codable, Equatable, Sendable {
@@ -621,6 +620,7 @@ final class WorkspaceEngine {
         var restoreFrame: WindowFrame
         var displayPlacement: PersistedDisplayPlacement?
         var layoutOverride: WindowLayoutOverride
+        var workspaceRuleOverrideActive: Bool
         var admissionDecision: WindowAdmissionDecision
         var layoutOrder: Int
         var layoutWeight: Double
@@ -1165,6 +1165,7 @@ final class WorkspaceEngine {
                     tracked.layoutWeight = 1
                     reroutedCount += 1
                 }
+                tracked.workspaceRuleOverrideActive = false
                 self.windows[key] = tracked
             }
 
@@ -1398,7 +1399,10 @@ final class WorkspaceEngine {
                     tracked.restoreFrame = frame
                     tracked.displayPlacement = Self.displayPlacement(for: frame, displays: displays)
                 }
-                if let assignedWorkspaceID = next.assignedWorkspaceID {
+                if previous != next {
+                    tracked.workspaceRuleOverrideActive = false
+                }
+                if previous != next, let assignedWorkspaceID = next.assignedWorkspaceID {
                     if tracked.workspaceID != assignedWorkspaceID {
                         tracked.layoutOrder = self.nextLayoutOrder(in: assignedWorkspaceID)
                         tracked.layoutWeight = 1
@@ -3422,25 +3426,10 @@ final class WorkspaceEngine {
             let disposition = Self.moveWorkspaceFocusDisposition(
                 sourceWorkspaceID: sourceWorkspaceID,
                 requestedWorkspaceID: workspaceID,
-                assignedWorkspaceID: rule.assignedWorkspaceID,
                 keepsOnAllWorkspaces: rule.keepsOnAllWorkspaces,
                 configuredFollow: self.focusFollowsMovedWindow,
                 followOverride: followOverride
             )
-            guard disposition != .blockedByAppRule else {
-                self.diagnostics.log(
-                    category: "move-window",
-                    event: "blocked",
-                    correlation: correlationID,
-                    fields: [
-                        "window": Self.diagnosticWindowKey(focusedKey),
-                        "reason": disposition.rawValue,
-                        "source-workspace": Self.shortIdentifier(sourceWorkspaceID.uuidString),
-                        "requested-workspace": Self.shortIdentifier(workspaceID.uuidString),
-                    ]
-                )
-                return
-            }
             guard disposition != .unchangedVisible else {
                 self.diagnostics.log(
                     category: "move-window",
@@ -3454,7 +3443,7 @@ final class WorkspaceEngine {
                 )
                 return
             }
-            let effectiveWorkspaceID = rule.assignedWorkspaceID ?? workspaceID
+            let effectiveWorkspaceID = workspaceID
             guard effectiveWorkspaceID != sourceWorkspaceID else { return }
 
             let replacementOrder: [WindowKey]
@@ -3510,6 +3499,10 @@ final class WorkspaceEngine {
                 }
             }
             tracked.workspaceID = effectiveWorkspaceID
+            tracked.workspaceRuleOverrideActive = Self.manualWorkspaceRuleOverrideIsActive(
+                assignedWorkspaceID: rule.assignedWorkspaceID,
+                requestedWorkspaceID: effectiveWorkspaceID
+            )
             tracked.layoutOrder = self.nextLayoutOrder(in: effectiveWorkspaceID)
             tracked.layoutWeight = 1
             self.windows[focusedKey] = tracked
@@ -3607,19 +3600,30 @@ final class WorkspaceEngine {
     static func moveWorkspaceFocusDisposition(
         sourceWorkspaceID: UUID,
         requestedWorkspaceID: UUID,
-        assignedWorkspaceID: UUID?,
         keepsOnAllWorkspaces: Bool,
         configuredFollow: Bool,
         followOverride: Bool?
     ) -> MoveWorkspaceFocusDisposition {
-        if let assignedWorkspaceID, assignedWorkspaceID != requestedWorkspaceID {
-            return .blockedByAppRule
-        }
-        let destination = assignedWorkspaceID ?? requestedWorkspaceID
-        if destination == sourceWorkspaceID || keepsOnAllWorkspaces {
+        if requestedWorkspaceID == sourceWorkspaceID || keepsOnAllWorkspaces {
             return .unchangedVisible
         }
         return (followOverride ?? configuredFollow) ? .follow : .sendOnly
+    }
+
+    static func manualWorkspaceRuleOverrideIsActive(
+        assignedWorkspaceID: UUID?,
+        requestedWorkspaceID: UUID
+    ) -> Bool {
+        assignedWorkspaceID.map { $0 != requestedWorkspaceID } ?? false
+    }
+
+    static func workspaceIDAfterRuleRefresh(
+        currentWorkspaceID: UUID,
+        assignedWorkspaceID: UUID?,
+        manualOverrideActive: Bool
+    ) -> UUID {
+        guard !manualOverrideActive else { return currentWorkspaceID }
+        return assignedWorkspaceID ?? currentWorkspaceID
     }
 
     static func moveReplacementFocusOrder<T: Equatable>(
@@ -4651,6 +4655,7 @@ final class WorkspaceEngine {
         queue.async { [weak self] in
             guard let self else { return }
             self.refreshWindows()
+            self.reapplyWorkspaceRules(to: Array(self.windows.keys))
             self.applyVisibleWindows(self.windows.values, displays: Self.activeDisplays())
             self.persistState(preservingPendingRestores: true)
             self.emitState()
@@ -4684,10 +4689,17 @@ final class WorkspaceEngine {
             )
             let workspaceID = workspaceResolution.workspaceID
             guard self.isWorkspaceActive(workspaceID) else { return }
+            let initialTargetKeys = self.windows.values
+                .filter { $0.workspaceID == workspaceID }
+                .map(\.key)
+            let reroutedByRules = self.reapplyWorkspaceRules(to: initialTargetKeys)
+            let resetFocusContextKey = focusContextKey.flatMap { key in
+                self.windows[key]?.workspaceID == workspaceID ? key : nil
+            }
             let verificationToken = self.beginCorrelatedAction(
                 correlationID: correlationID,
                 interactionDisplayIdentifier: interactionDisplay.identifier,
-                expectedFocusTarget: focusContextKey
+                expectedFocusTarget: resetFocusContextKey
             )
 
             self.diagnostics.log(
@@ -4698,13 +4710,14 @@ final class WorkspaceEngine {
                     "workspace": Self.shortIdentifier(workspaceID.uuidString),
                     "display": Self.shortIdentifier(interactionDisplay.identifier),
                     "display-mode": self.displayMode.rawValue,
-                    "focused-window": focusContextKey.map(Self.diagnosticWindowKey) ?? "none",
+                    "focused-window": resetFocusContextKey.map(Self.diagnosticWindowKey) ?? "none",
+                    "rules-rerouted-windows": String(reroutedByRules),
                 ]
             )
 
-            let targetKeys = self.windows.values
-                .filter { $0.workspaceID == workspaceID }
-                .map(\.key)
+            let targetKeys = initialTargetKeys.filter {
+                self.windows[$0]?.workspaceID == workspaceID
+            }
             var repairs: [FrameChange] = []
             for key in targetKeys {
                 guard var tracked = self.windows[key] else { continue }
@@ -4741,18 +4754,22 @@ final class WorkspaceEngine {
                     partition.displayIdentifier != interactionDisplay.identifier
             }
             self.applyFrameChanges(repairs, correlationID: correlationID)
-            if let focusContextKey, self.windows[focusContextKey] != nil {
+            if let resetFocusContextKey, self.windows[resetFocusContextKey] != nil {
                 self.prepareProgrammaticFocusIntent(
-                    focusContextKey,
+                    resetFocusContextKey,
                     correlationID: correlationID,
                     duration: 0.8
                 )
             }
-            self.applyVisibleWindows(
-                self.windows.values.filter { $0.workspaceID == workspaceID },
-                displays: displays,
-                correlationID: correlationID
-            )
+            if reroutedByRules > 0 {
+                self.applyVisibility(displays: displays, correlationID: correlationID)
+            } else {
+                self.applyVisibleWindows(
+                    self.windows.values.filter { $0.workspaceID == workspaceID },
+                    displays: displays,
+                    correlationID: correlationID
+                )
+            }
             self.lastBackgroundLayoutSignature = self.backgroundLayoutSignature(displays: displays)
             self.persistState(preservingPendingRestores: true)
             self.emitState()
@@ -4767,7 +4784,7 @@ final class WorkspaceEngine {
                 ]
             )
             self.verifyFocusAfterAction(
-                expected: focusContextKey,
+                expected: resetFocusContextKey,
                 correlationID: correlationID,
                 action: "reset-workspace",
                 token: verificationToken,
@@ -5573,9 +5590,11 @@ final class WorkspaceEngine {
                     let previousAdmissionDecision = tracked.admissionDecision
                     tracked.admissionDecision = admissionDecision
                     let rule = resolvedRule(for: tracked.bundleIdentifier)
-                    if let assignedWorkspaceID = rule.assignedWorkspaceID {
-                        tracked.workspaceID = assignedWorkspaceID
-                    }
+                    tracked.workspaceID = Self.workspaceIDAfterRuleRefresh(
+                        currentWorkspaceID: tracked.workspaceID,
+                        assignedWorkspaceID: rule.assignedWorkspaceID,
+                        manualOverrideActive: tracked.workspaceRuleOverrideActive
+                    )
                     let layoutDecision = Self.layoutDecision(
                         layoutOverride: tracked.layoutOverride,
                         admissionDecision: tracked.admissionDecision,
@@ -5644,6 +5663,7 @@ final class WorkspaceEngine {
                         restoreFrame: desiredFrame,
                         displayPlacement: placement,
                         layoutOverride: Self.restoredLayoutOverride(remembered?.layoutOverride),
+                        workspaceRuleOverrideActive: false,
                         admissionDecision: admissionDecision,
                         layoutOrder: remembered?.layoutOrder ?? self.nextLayoutOrder(in: workspaceID),
                         layoutWeight: Self.validLayoutWeight(remembered?.layoutWeight)
@@ -7453,6 +7473,28 @@ final class WorkspaceEngine {
         return rule?.resolved(validWorkspaceIDs: Set(workspaces.map(\.id))) ?? .none
     }
 
+    @discardableResult
+    private func reapplyWorkspaceRules(to keys: [WindowKey]) -> Int {
+        var reroutedCount = 0
+        for key in keys {
+            guard var tracked = windows[key] else { continue }
+            let sourceWorkspaceID = tracked.workspaceID
+            let assignedWorkspaceID = resolvedRule(for: tracked.bundleIdentifier).assignedWorkspaceID
+            tracked.workspaceRuleOverrideActive = false
+            if let assignedWorkspaceID, assignedWorkspaceID != sourceWorkspaceID {
+                tracked.workspaceID = assignedWorkspaceID
+                tracked.layoutOrder = nextLayoutOrder(in: assignedWorkspaceID)
+                tracked.layoutWeight = 1
+                if lastFocusedWindow[sourceWorkspaceID] == key {
+                    lastFocusedWindow.removeValue(forKey: sourceWorkspaceID)
+                }
+                reroutedCount += 1
+            }
+            windows[key] = tracked
+        }
+        return reroutedCount
+    }
+
     private func captureCurrentFrames(
         for workspaceIDs: Set<UUID>,
         displays: [DisplaySnapshot]
@@ -8918,6 +8960,7 @@ final class WorkspaceEngine {
             restoreFrame: fallbackFrame,
             displayPlacement: nil,
             layoutOverride: .automatic,
+            workspaceRuleOverrideActive: false,
             admissionDecision: WindowAdmissionDecision(
                 disposition: .temporarilyIneligible,
                 reason: .fullscreen
