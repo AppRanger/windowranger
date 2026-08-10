@@ -254,8 +254,10 @@ second copy of that checklist.
 - **Automated evidence:** Shell syntax and diff checks passed; the local quick checkpoint passed all
   445 tests with test isolation intact; and stable Xcode 26.6 passed the full local test, static
   analysis, unsigned universal Release build, and both DMG creation/verification paths. Hook
-  installation/removal, exact-commit execution, and private hosted-job skipping are verified on the
-  topic branch before merge.
+  installation/removal and exact-commit execution passed. The topic-branch push created no workflow
+  run, while private pull-request run
+  [31363831170](https://github.com/windowranger/windowranger/actions/runs/31363831170) completed with
+  the hosted job skipped before runner allocation.
 
 ### WR-004 — Bound synced profile-library input with recovery UX
 
