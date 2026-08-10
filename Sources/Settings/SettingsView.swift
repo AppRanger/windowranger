@@ -8,6 +8,8 @@ enum SettingsWindowMetrics {
     static let sidebarWidth: CGFloat = 240
     static let masterListWidth: CGFloat = 300
     static let masterRowMinimumHeight: CGFloat = 44
+    static let masterActionRowVerticalPadding: CGFloat = 9
+    static let appRuleTrailingControlWidth: CGFloat = 220
 
     static func constrainedFrameSize(
         currentSize: CGSize,
@@ -801,8 +803,9 @@ private struct ProfilesSettingsView: View {
                 Spacer()
             }
             .buttonStyle(.bordered)
+            .controlSize(.regular)
             .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.vertical, SettingsWindowMetrics.masterActionRowVerticalPadding)
 
             Divider()
 
@@ -1554,8 +1557,9 @@ struct WorkspaceSettingsView: View {
                 Spacer()
             }
             .buttonStyle(.bordered)
+            .controlSize(.regular)
             .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            .padding(.vertical, SettingsWindowMetrics.masterActionRowVerticalPadding)
 
             Divider()
 
@@ -2223,8 +2227,9 @@ private struct AppRulesSettingsView: View {
                 Spacer()
             }
             .buttonStyle(.bordered)
+            .controlSize(.regular)
             .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.vertical, SettingsWindowMetrics.masterActionRowVerticalPadding)
 
             Text("Behavior changes apply immediately, support Command-Z, and sync through iCloud when enabled. This-Mac appearance overrides stay local.")
                 .font(.caption)
@@ -2456,7 +2461,10 @@ private struct AppRuleEditor: View {
             ForEach(workspaces) { Text($0.name).tag(Optional($0.id)) }
         }
         .labelsHidden()
-        .frame(maxWidth: 220)
+        .frame(
+            width: SettingsWindowMetrics.appRuleTrailingControlWidth,
+            alignment: .trailing
+        )
         .disabled(rule.keepsOnAllWorkspaces)
     }
 

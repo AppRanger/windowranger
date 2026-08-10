@@ -54,6 +54,20 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-032 — Align Settings list actions and App Rule workspace values
+
+- **Type:** Settings polish
+- **Priority:** P2
+- **Status:** Live validation
+- **Implemented:** Profiles, Workspaces, and App Rules now use one regular native control size and
+  shared vertical padding for their master-list action rows. The App Rule workspace picker uses a
+  fixed trailing-aligned control column matching the switches below it.
+- **Automated evidence:** Layout constants are covered alongside the existing Settings metrics;
+  source and signed-app build verification remain part of PR #15's merge gate.
+- **Remaining live boundary:** In the installed merged build, compare all three master-list action
+  rows and confirm their buttons have one visual height. Confirm short and long App Rule workspace
+  names remain right-aligned at wide and compact Settings widths before marking this Done.
+
 ### WR-029 — Optionally highlight the focused window
 
 - **Type:** Feature
