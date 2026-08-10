@@ -115,7 +115,11 @@ therefore restore the original role.
 Sleep/wake and display notifications are coalesced through generation-tokened reconciliation.
 Display topology resolves first, fresh AX elements are acquired second, and visibility/layout is
 applied once the snapshot is stable. Bounded retries handle temporarily incomplete enumeration.
-Old focus/layout callbacks are superseded and cannot act on the newer generation.
+After the layout solve, expected Tiled and Accordion frames are read back because a successful AX
+write does not prove that the receiving app retained it. Only mismatched, still-eligible split
+windows are retried, for a bounded number of attempts; a newer lifecycle signal supersedes the
+verification, and full-screen, deferred, floating, and disappeared windows remain outside it. Old
+focus/layout callbacks are superseded and cannot act on the newer generation.
 
 Display snapshots begin with AppKit's current `visibleFrame`. A locally read Dock preference then
 controls only the configured Dock edge: a visible Dock keeps AppKit's exclusion, while an auto-hidden

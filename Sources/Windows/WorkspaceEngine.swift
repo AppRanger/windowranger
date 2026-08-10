@@ -5327,10 +5327,12 @@ final class WorkspaceEngine {
         guard wakeReconciliationState.isCurrent(generation) else { return }
         let correlationID = "wake-\(generation)"
 
-        // Visibility and layout are applied exactly once, from the final fresh snapshot. Deferred
-        // windows remain tracked for a later successful enumeration but receive no AX writes now.
+        // Visibility and layout start from the final fresh snapshot. Deferred windows remain
+        // tracked for a later successful enumeration but receive no AX writes now. Split frames
+        // are verified separately because AX write success does not prove that an app retained them.
+        var expectedLayoutFrames: [WindowKey: WindowFrame] = [:]
         if windowServerSessionValidated {
-            applyVisibility(
+            expectedLayoutFrames = applyVisibility(
                 displays: report.displays,
                 correlationID: correlationID,
                 eligibleWindowKeys: report.writeEligibleWindowKeys
@@ -5340,10 +5342,202 @@ final class WorkspaceEngine {
                 displays: report.displays,
                 correlationID: correlationID
             )
-            lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: report.displays)
             persistState(preservingPendingRestores: true)
         }
         emitState()
+
+        guard windowServerSessionValidated, !expectedLayoutFrames.isEmpty else {
+            completeWakeReconciliation(
+                report: report,
+                generation: generation,
+                degradedReason: degradedReason,
+                layoutApplyCount: windowServerSessionValidated ? 1 : 0,
+                recordLayoutSignature: windowServerSessionValidated
+            )
+            return
+        }
+
+        scheduleWakeLayoutVerification(
+            report: report,
+            expectedFrames: expectedLayoutFrames,
+            generation: generation,
+            degradedReason: degradedReason,
+            verificationAttemptIndex: 0,
+            layoutApplyCount: 1
+        )
+    }
+
+    private func scheduleWakeLayoutVerification(
+        report: WindowRefreshReport,
+        expectedFrames: [WindowKey: WindowFrame],
+        generation: UInt64,
+        degradedReason: String?,
+        verificationAttemptIndex: Int,
+        layoutApplyCount: Int
+    ) {
+        let delays = WakeLayoutVerificationPolicy.verificationDelaysMilliseconds
+        let delay = delays[min(verificationAttemptIndex, delays.count - 1)]
+        wakeReconciliationWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.verifyWakeLayout(
+                report: report,
+                expectedFrames: expectedFrames,
+                generation: generation,
+                degradedReason: degradedReason,
+                verificationAttemptIndex: verificationAttemptIndex,
+                layoutApplyCount: layoutApplyCount
+            )
+        }
+        wakeReconciliationWorkItem = workItem
+        queue.asyncAfter(deadline: .now() + .milliseconds(delay), execute: workItem)
+    }
+
+    private func verifyWakeLayout(
+        report: WindowRefreshReport,
+        expectedFrames: [WindowKey: WindowFrame],
+        generation: UInt64,
+        degradedReason: String?,
+        verificationAttemptIndex: Int,
+        layoutApplyCount: Int
+    ) {
+        guard wakeReconciliationState.isCurrent(generation) else { return }
+        wakeReconciliationWorkItem = nil
+        let correlationID = "wake-\(generation)"
+
+        // A signal arriving after the layout solve invalidates its display snapshot. Start a fresh
+        // readiness attempt in the same generation instead of verifying obsolete geometry.
+        if wakeReceivedAdditionalSignal {
+            wakeAttemptIndex = 0
+            wakePreviousTopologySignature = report.topologySignature
+            diagnostics.log(
+                category: "lifecycle",
+                event: "wake-layout-verification-superseded",
+                correlation: correlationID,
+                fields: ["reason": "new-lifecycle-signal"]
+            )
+            scheduleWakeReconciliationAttempt(generation: generation, afterMilliseconds: 0)
+            return
+        }
+
+        let stillEligibleExpectedFrames = expectedFrames.filter { key, _ in
+            guard let tracked = windows[key],
+                  isWorkspaceActive(tracked.workspaceID),
+                  workspaceLayout(for: tracked.workspaceID) != .none,
+                  Self.shouldIncludeInLayout(
+                    layoutOverride: tracked.layoutOverride,
+                    admissionDecision: tracked.admissionDecision,
+                    rule: resolvedRule(for: tracked.bundleIdentifier)
+                  )
+            else { return false }
+            return FullscreenSessionPolicy.allowsGeometryWrite(
+                hasFullscreenSession: fullscreenSessions[key] != nil,
+                isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains(key)
+            )
+        }
+        let observedFrames = Dictionary(uniqueKeysWithValues: stillEligibleExpectedFrames.keys.compactMap {
+            key -> (WindowKey, WindowFrame)? in
+            guard let tracked = windows[key],
+                  let frame = AccessibilityWindow.frame(of: tracked.element)
+            else { return nil }
+            return (key, frame)
+        })
+        let mismatchedKeys = WakeLayoutVerificationPolicy.mismatchedWindowKeys(
+            expectedFrames: stillEligibleExpectedFrames,
+            observedFrames: observedFrames
+        )
+        diagnostics.log(
+            category: "lifecycle",
+            event: "wake-layout-verification",
+            correlation: correlationID,
+            fields: [
+                "attempt": String(verificationAttemptIndex + 1),
+                "target-count": String(stillEligibleExpectedFrames.count),
+                "mismatch-count": String(mismatchedKeys.count),
+            ]
+        )
+
+        guard !mismatchedKeys.isEmpty else {
+            completeWakeReconciliation(
+                report: report,
+                generation: generation,
+                degradedReason: degradedReason,
+                layoutApplyCount: layoutApplyCount,
+                recordLayoutSignature: true
+            )
+            return
+        }
+
+        let nextAttempt = verificationAttemptIndex + 1
+        guard nextAttempt < WakeLayoutVerificationPolicy.verificationDelaysMilliseconds.count else {
+            for key in mismatchedKeys {
+                diagnostics.log(
+                    category: "lifecycle",
+                    event: "wake-layout-frame-mismatch",
+                    correlation: correlationID,
+                    fields: [
+                        "window": Self.diagnosticWindowKey(key),
+                        "expected-frame": stillEligibleExpectedFrames[key]
+                            .map(Self.diagnosticFrame) ?? "unknown",
+                        "observed-frame": observedFrames[key]
+                            .map(Self.diagnosticFrame) ?? "unavailable",
+                    ]
+                )
+            }
+            let reason = [degradedReason, "layout-frame-mismatch"]
+                .compactMap { $0 }
+                .joined(separator: ",")
+            completeWakeReconciliation(
+                report: report,
+                generation: generation,
+                degradedReason: reason,
+                layoutApplyCount: layoutApplyCount,
+                recordLayoutSignature: false
+            )
+            return
+        }
+
+        let retryChanges = mismatchedKeys.compactMap { key -> FrameChange? in
+            guard let tracked = windows[key], let frame = stillEligibleExpectedFrames[key] else {
+                return nil
+            }
+            return FrameChange(window: tracked, frame: frame)
+        }
+        applyFrameChanges(retryChanges, correlationID: correlationID)
+        diagnostics.log(
+            category: "lifecycle",
+            event: "wake-layout-retry-scheduled",
+            correlation: correlationID,
+            fields: [
+                "delay-ms": String(
+                    WakeLayoutVerificationPolicy.verificationDelaysMilliseconds[nextAttempt]
+                ),
+                "window-count": String(retryChanges.count),
+            ]
+        )
+        scheduleWakeLayoutVerification(
+            report: report,
+            expectedFrames: stillEligibleExpectedFrames,
+            generation: generation,
+            degradedReason: degradedReason,
+            verificationAttemptIndex: nextAttempt,
+            layoutApplyCount: layoutApplyCount + 1
+        )
+    }
+
+    private func completeWakeReconciliation(
+        report: WindowRefreshReport,
+        generation: UInt64,
+        degradedReason: String?,
+        layoutApplyCount: Int,
+        recordLayoutSignature: Bool
+    ) {
+        guard wakeReconciliationState.isCurrent(generation) else { return }
+        let correlationID = "wake-\(generation)"
+        if recordLayoutSignature {
+            lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: report.displays)
+        } else {
+            lastBackgroundLayoutSignature = nil
+        }
         _ = wakeReconciliationState.complete(generation: generation)
         wakeReconciliationWorkItem = nil
         if degradedReason == nil {
@@ -5362,7 +5556,7 @@ final class WorkspaceEngine {
                 "reason": degradedReason ?? "ready",
                 "active-workspaces": diagnosticActiveWorkspaceMap(),
                 "deferred-window-count": String(report.deferredWindowKeys.count),
-                "layout-apply-count": windowServerSessionValidated ? "1" : "0",
+                "layout-apply-count": String(layoutApplyCount),
             ]
         )
     }
@@ -7279,11 +7473,12 @@ final class WorkspaceEngine {
         focusedWindowSnapshot()?.key
     }
 
+    @discardableResult
     private func applyVisibility(
         displays: [DisplaySnapshot]? = nil,
         correlationID: String? = nil,
         eligibleWindowKeys: Set<WindowKey>? = nil
-    ) {
+    ) -> [WindowKey: WindowFrame] {
         let displays = displays ?? Self.activeDisplays()
         let parkingPosition = parkingPosition(displays: displays)
         let activeWorkspaceIDs = activeWorkspaceIDs
@@ -7294,7 +7489,7 @@ final class WorkspaceEngine {
 
         // Restore first, then hide. This ordering is intentional: it minimizes the interval in
         // which neither workspace is visible and matches the low-flicker ordering used by AeroSpork.
-        applyVisibleWindows(
+        let expectedLayoutFrames = applyVisibleWindows(
             windows.values.filter {
                 isEligible($0) &&
                 Self.shouldWindowBeVisible(
@@ -7318,6 +7513,7 @@ final class WorkspaceEngine {
             .map { PositionChange(window: $0, position: parkingPosition) },
             correlationID: correlationID
         )
+        return expectedLayoutFrames
     }
 
     private func applyVisibilityTransition(
@@ -7346,13 +7542,15 @@ final class WorkspaceEngine {
         )
     }
 
+    @discardableResult
     private func applyVisibleWindows<S: Sequence>(
         _ trackedWindows: S,
         displays: [DisplaySnapshot],
         correlationID: String? = nil
-    ) where S.Element == TrackedWindow {
+    ) -> [WindowKey: WindowFrame] where S.Element == TrackedWindow {
         var positionChanges: [PositionChange] = []
         var frameChanges: [FrameChange] = []
+        var expectedLayoutFrames: [WindowKey: WindowFrame] = [:]
         let writeEligibleWindows = trackedWindows.filter {
             FullscreenSessionPolicy.allowsGeometryWrite(
                 hasFullscreenSession: fullscreenSessions[$0.key] != nil,
@@ -7467,6 +7665,7 @@ final class WorkspaceEngine {
                         for tracked in ordered {
                             guard let frame = frames[tracked.key] else { continue }
                             lastSolvedTiledFrames[tracked.key] = frame
+                            expectedLayoutFrames[tracked.key] = frame
                             frameChanges.append(FrameChange(window: tracked, frame: frame))
                         }
                     }
@@ -7479,9 +7678,10 @@ final class WorkspaceEngine {
                         tiledWeights: ordered.map { CGFloat(Self.validLayoutWeight($0.layoutWeight)) },
                         layoutConfiguration: layoutConfiguration
                     )
-                    frameChanges.append(contentsOf: zip(ordered, frames).map {
-                        FrameChange(window: $0.0, frame: $0.1)
-                    })
+                    for (tracked, frame) in zip(ordered, frames) {
+                        expectedLayoutFrames[tracked.key] = frame
+                        frameChanges.append(FrameChange(window: tracked, frame: frame))
+                    }
                 }
                 diagnostics.log(
                     category: "layout",
@@ -7500,6 +7700,7 @@ final class WorkspaceEngine {
         }
         applyFrameChanges(frameChanges, correlationID: correlationID)
         applyPositionChanges(positionChanges, correlationID: correlationID)
+        return expectedLayoutFrames
     }
 
     private func workspaceLayout(for workspaceID: UUID) -> WorkspaceLayout {
