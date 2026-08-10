@@ -242,6 +242,23 @@ second copy of that checklist.
 
 ## Done
 
+### WR-020 — Shift private hosted verification to local hooks
+
+- **Result:** Automatic GitHub-hosted jobs now skip while the repository is private, with an
+  explicit manual dispatch retained for a deliberately billable run. Public pull requests run the
+  non-hosted suite without duplicate topic-branch pushes; selected integration/release pushes add
+  analysis, unsigned Release, and Stable/Beta DMG checks. An opt-in repository-managed pre-push hook
+  verifies the exact pushed commit in an isolated worktree, and a separate full local command covers
+  the uncredentialed integration/release checkpoint without signing, notarizing, installing, or
+  launching the app.
+- **Automated evidence:** Shell syntax and diff checks passed; the local quick checkpoint passed all
+  445 tests with test isolation intact; and stable Xcode 26.6 passed the full local test, static
+  analysis, unsigned universal Release build, and both DMG creation/verification paths. Hook
+  installation/removal and exact-commit execution passed. The topic-branch push created no workflow
+  run, while private pull-request run
+  [31363831170](https://github.com/windowranger/windowranger/actions/runs/31363831170) completed with
+  the hosted job skipped before runner allocation.
+
 ### WR-004 — Bound synced profile-library input with recovery UX
 
 - **Result:** The atomic iCloud profile-library value now has explicit byte, profile, nested-count,
