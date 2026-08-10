@@ -54,6 +54,20 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-032 — Align Settings list actions and App Rule workspace values
+
+- **Type:** Settings polish
+- **Priority:** P2
+- **Status:** Live validation
+- **Implemented:** Profiles, Workspaces, and App Rules now use one regular native control size and
+  shared vertical padding for their master-list action rows. The App Rule workspace picker uses a
+  fixed trailing-aligned control column matching the switches below it.
+- **Automated evidence:** Layout constants are covered alongside the existing Settings metrics;
+  source and signed-app build verification remain part of PR #15's merge gate.
+- **Remaining live boundary:** In the installed merged build, compare all three master-list action
+  rows and confirm their buttons have one visual height. Confirm short and long App Rule workspace
+  names remain right-aligned at wide and compact Settings widths before marking this Done.
+
 ### WR-029 — Optionally highlight the focused window
 
 - **Type:** Feature
@@ -273,6 +287,15 @@ second copy of that checklist.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-031 — Prioritise open apps when adding an App Rule
+
+- **Result:** The Add Application Rule picker groups open apps first and initializes a new rule from
+  the app's existing workspace only when its managed windows agree on one unambiguous assignment;
+  closed, windowless, invalid, and split-workspace cases retain **Use current workspace**.
+- **Evidence:** Test isolation and all 461 non-hosted tests pass, the signed universal Debug daily
+  build for `a39b372ee895-dirty` was installed and verified, and the maintainer confirmed the picker
+  and inherited assignment behave as intended on 10 August 2026.
 
 ### WR-027 — Tidy Settings across wide and compact layouts
 

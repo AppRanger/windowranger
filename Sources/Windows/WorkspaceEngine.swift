@@ -1463,6 +1463,28 @@ final class WorkspaceEngine {
         }
     }
 
+    /// Reads the existing managed-window membership without refreshing or moving windows. An app
+    /// rule affects every window from a bundle, so split membership is deliberately ambiguous and
+    /// resolves to no default rather than choosing one workspace arbitrarily.
+    func appRuleDefaultWorkspaceID(
+        forBundleIdentifier bundleIdentifier: String,
+        completion: @escaping (UUID?) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let workspaceIDs = self.windows.values.compactMap { tracked -> UUID? in
+                guard tracked.bundleIdentifier?.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+                else { return nil }
+                return tracked.workspaceID
+            }
+            let workspaceID = AppRuleDefaultWorkspacePolicy.resolve(
+                applicationIsRunning: true,
+                liveWorkspaceIDs: workspaceIDs
+            )
+            DispatchQueue.main.async { completion(workspaceID) }
+        }
+    }
+
     /// Creates a read-only support snapshot on the engine queue. It deliberately does not call
     /// refresh, admission, visibility, focus, or persistence paths, because copying diagnostics
     /// must never change the subject being diagnosed.

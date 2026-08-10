@@ -8,6 +8,8 @@ enum SettingsWindowMetrics {
     static let sidebarWidth: CGFloat = 240
     static let masterListWidth: CGFloat = 300
     static let masterRowMinimumHeight: CGFloat = 44
+    static let masterActionRowVerticalPadding: CGFloat = 9
+    static let appRuleTrailingControlWidth: CGFloat = 220
 
     static func constrainedFrameSize(
         currentSize: CGSize,
@@ -218,7 +220,7 @@ struct SettingsView: View {
                 case .workspaces, .displays, .layouts:
                     EmptyView()
                 case .appRules:
-                    AppRulesSettingsView(store: store)
+                    AppRulesSettingsView(store: store, engine: engine)
                 case .shortcuts:
                     ShortcutSettingsView(
                         store: store,
@@ -801,8 +803,9 @@ private struct ProfilesSettingsView: View {
                 Spacer()
             }
             .buttonStyle(.bordered)
+            .controlSize(.regular)
             .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.vertical, SettingsWindowMetrics.masterActionRowVerticalPadding)
 
             Divider()
 
@@ -1554,8 +1557,9 @@ struct WorkspaceSettingsView: View {
                 Spacer()
             }
             .buttonStyle(.bordered)
+            .controlSize(.regular)
             .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            .padding(.vertical, SettingsWindowMetrics.masterActionRowVerticalPadding)
 
             Divider()
 
@@ -2095,6 +2099,7 @@ private struct WorkspaceShortcutCaps: View {
 
 private struct AppRulesSettingsView: View {
     @ObservedObject var store: SettingsStore
+    let engine: WorkspaceEngine
     @Environment(\.undoManager) private var undoManager
     @State private var showsAppPicker = false
     @State private var selectedRuleID: AppRule.ID?
@@ -2110,10 +2115,7 @@ private struct AppRulesSettingsView: View {
             InstalledApplicationPicker(
                 excludedBundleIdentifiers: Set(store.appRules.map { $0.bundleIdentifier.lowercased() })
             ) { application in
-                store.addAppRule(for: application)
-                selectedRuleID = application.bundleIdentifier.lowercased()
-                showsCompactEditor = true
-                showsAppPicker = false
+                addRule(for: application)
             }
         }
     }
@@ -2225,8 +2227,9 @@ private struct AppRulesSettingsView: View {
                 Spacer()
             }
             .buttonStyle(.bordered)
+            .controlSize(.regular)
             .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.vertical, SettingsWindowMetrics.masterActionRowVerticalPadding)
 
             Text("Behavior changes apply immediately, support Command-Z, and sync through iCloud when enabled. This-Mac appearance overrides stay local.")
                 .font(.caption)
@@ -2320,6 +2323,27 @@ private struct AppRulesSettingsView: View {
         store.removeAppRule(bundleIdentifier: selectedRule.bundleIdentifier)
         selectedRuleID = nextID
         if nextID == nil { showsCompactEditor = false }
+    }
+
+    private func addRule(for application: InstalledApplication) {
+        guard application.isRunning else {
+            finishAddingRule(for: application, defaultWorkspaceID: nil)
+            return
+        }
+        engine.appRuleDefaultWorkspaceID(forBundleIdentifier: application.bundleIdentifier) {
+            workspaceID in
+            finishAddingRule(for: application, defaultWorkspaceID: workspaceID)
+        }
+    }
+
+    private func finishAddingRule(
+        for application: InstalledApplication,
+        defaultWorkspaceID: UUID?
+    ) {
+        store.addAppRule(for: application, defaultWorkspaceID: defaultWorkspaceID)
+        selectedRuleID = application.bundleIdentifier.lowercased()
+        showsCompactEditor = true
+        showsAppPicker = false
     }
 
     private func ruleSummary(_ rule: AppRule) -> String {
@@ -2437,7 +2461,10 @@ private struct AppRuleEditor: View {
             ForEach(workspaces) { Text($0.name).tag(Optional($0.id)) }
         }
         .labelsHidden()
-        .frame(maxWidth: 220)
+        .frame(
+            width: SettingsWindowMetrics.appRuleTrailingControlWidth,
+            alignment: .trailing
+        )
         .disabled(rule.keepsOnAllWorkspaces)
     }
 
@@ -2524,37 +2551,24 @@ private struct InstalledApplicationPicker: View {
             if isLoading {
                 ProgressView("Finding installed applications…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if filteredApplications.isEmpty {
+            } else if applicationGroups.isEmpty {
                 ContentUnavailableView.search(text: search)
             } else {
-                List(filteredApplications) { application in
-                    Button { select(application) } label: {
-                        HStack(spacing: 10) {
-                            Image(nsImage: application.bundleURL.map {
-                                NSWorkspace.shared.icon(forFile: $0.path)
-                            } ?? NSImage())
-                            .resizable()
-                            .frame(width: 28, height: 28)
-                            VStack(alignment: .leading, spacing: 1) {
-                                HStack {
-                                    Text(application.displayName)
-                                    if application.isRunning {
-                                        Text("Running")
-                                            .font(.caption2)
-                                            .padding(.horizontal, 5)
-                                            .padding(.vertical, 2)
-                                            .background(.quaternary, in: Capsule())
-                                    }
-                                }
-                                Text(application.bundleIdentifier)
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(.secondary)
+                List {
+                    if !applicationGroups.openApplications.isEmpty {
+                        Section("Open Applications") {
+                            ForEach(applicationGroups.openApplications) { application in
+                                applicationRow(application)
                             }
-                            Spacer()
                         }
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    if !applicationGroups.otherApplications.isEmpty {
+                        Section("Other Applications") {
+                            ForEach(applicationGroups.otherApplications) { application in
+                                applicationRow(application)
+                            }
+                        }
+                    }
                 }
                 .listStyle(.inset(alternatesRowBackgrounds: true))
             }
@@ -2572,12 +2586,29 @@ private struct InstalledApplicationPicker: View {
         }
     }
 
-    private var filteredApplications: [InstalledApplication] {
-        guard !search.isEmpty else { return applications }
-        return applications.filter {
-            $0.displayName.localizedCaseInsensitiveContains(search) ||
-                $0.bundleIdentifier.localizedCaseInsensitiveContains(search)
+    private var applicationGroups: InstalledApplicationGroups {
+        InstalledApplicationPickerPolicy.groups(applications: applications, search: search)
+    }
+
+    private func applicationRow(_ application: InstalledApplication) -> some View {
+        Button { select(application) } label: {
+            HStack(spacing: 10) {
+                Image(nsImage: application.bundleURL.map {
+                    NSWorkspace.shared.icon(forFile: $0.path)
+                } ?? NSImage())
+                .resizable()
+                .frame(width: 28, height: 28)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(application.displayName)
+                    Text(application.bundleIdentifier)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 }
 

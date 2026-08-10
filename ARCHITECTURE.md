@@ -70,6 +70,12 @@ Effective layout participation follows this order:
 Keep-on-all-workspaces rules affect visibility but do not grant a window permission to enter layout
 or focus scopes that it otherwise fails.
 
+The Add Application Rule picker reads existing engine membership without refreshing or mutating
+windows. Open apps are presented separately from other installed apps. A new rule inherits a live
+workspace only when every currently managed window for that bundle agrees on one workspace;
+windowless or split-workspace apps retain no assignment so Settings never guesses a bundle-wide
+rule from ambiguous per-window state.
+
 ## Persistence boundaries
 
 ### Synced reusable definitions

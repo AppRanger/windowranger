@@ -1010,12 +1010,21 @@ final class SettingsStore: ObservableObject {
         setLayoutConfiguration(.aeroSpaceUserDefaults, for: workspaceID)
     }
 
-    func addAppRule(for application: InstalledApplication) {
+    func addAppRule(
+        for application: InstalledApplication,
+        defaultWorkspaceID: UUID? = nil
+    ) {
         guard !appRules.contains(where: { $0.id == application.id }) else { return }
-        appRules.append(AppRule(
+        var rule = AppRule(
             bundleIdentifier: application.bundleIdentifier,
             displayName: application.displayName
-        ))
+        )
+        if application.isRunning,
+           let defaultWorkspaceID,
+           workspaces.contains(where: { $0.id == defaultWorkspaceID }) {
+            rule.assignedWorkspaceID = defaultWorkspaceID
+        }
+        appRules.append(rule)
     }
 
     func removeAppRule(bundleIdentifier: String) {
