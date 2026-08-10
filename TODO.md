@@ -360,12 +360,20 @@ second copy of that checklist.
   universal Release build, and Stable/Beta DMG smoke gate. Local stable-Xcode verification then
   passed 478 tests, static analysis, universal archive, and Developer ID export before exposing a
   release-script defect: the notarization result parser assigned to zsh's read-only `status`
-  parameter. The partial output is preserved outside the candidate path. After the parser correction
-  was reviewed and promoted, repeated preflight exposed a second shell defect: with `pipefail`
+  parameter. The partial output is preserved in
+  `.build/releases/0.1.0-beta.2.failed-20260810-2118`; its app notarization submission
+  (`168cd92f-f0b9-4910-9100-2ebbda3fe980`) was accepted, but it is not the exact candidate. After
+  the parser correction was reviewed and promoted, repeated preflight exposed a second shell defect:
+  with `pipefail`
   enabled, piping the two-line `xcodebuild -version` output through `head` could intermittently exit
   141 when `head` closed the pipe early. The correction consumes the complete output with `sed` while
-  selecting its first line, preserving strict pipeline failure handling. It must be reviewed and
-  promoted before repeating packaging and recording exact-artifact evidence.
+  selecting its first line, preserving strict pipeline failure handling. Both corrections are now
+  merged into `develop` and `release/0.1.0`; their final public push gates passed 478 tests, static
+  analysis, unsigned universal Release builds, Stable/Beta DMG smoke packaging, and artifact upload.
+- **Current blocker:** Exact packaging from release commit `e7dc5ad` is blocked before credentials
+  are used because the local notarytool keychain profile `WindowRanger` is missing. Restore that
+  profile interactively, then rerun strict preflight and the credentialed distribution build. No
+  final Beta 2 DMG or ZIP exists yet, and no tag, assets, or GitHub release have been created.
 - **Testing boundary:** Install and test the packaged Beta 2 DMG itself. Exercise the remaining live
   validation items in this queue, with particular attention to Settings resizing, multi-display
   workspace routing, focused-window borders, sleep/wake, Dock auto-hide, native glass feedback, and
