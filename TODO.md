@@ -20,136 +20,219 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
-### WR-015 — Make iCloud settings sync opt-in
+### WR-028 — Rework the Command Wheel experience
 
-- **Type:** Feature / privacy default
-- **Priority:** P2
-- **Status:** Inbox
-- **Evidence:** Requested
-- **Current behavior:** General Settings already provides **Sync settings with iCloud**, and turning
-  it off keeps settings local. New installations currently default the preference to on.
-- **Requested outcome:** Make new installations local-only by default so iCloud is an explicit
-  opt-in. Keep the existing visible toggle for people who want sync.
-- **Acceptance:**
-  - a new installation with no saved preference starts with iCloud sync disabled;
-  - an existing installation preserves its saved enabled/disabled choice;
-  - disabling sync immediately prevents cloud reads and writes while local profiles and preferences
-    continue to persist normally;
-  - disabling does not delete local settings or silently delete previously synced cloud data;
-  - running without an available iCloud account/store remains fully functional and does not nag;
-  - Settings and privacy copy explain which reusable settings sync and which machine/session state
-    always remains local;
-  - deterministic tests cover first-run default, migration, off-state isolation, and re-enabling.
-
-### WR-016 — Reveal menu diagnostics only with Option-click
-
-- **Type:** Feature / menu cleanup
-- **Priority:** P2
-- **Status:** Inbox
-- **Evidence:** Requested
-- **Current behavior:** Debug builds always show the **WindowRanger Debug**, **Copy Recent
-  Diagnostics**, and **Reveal Diagnostics File** section in the primary status-item menu. Release
-  builds already omit it.
-- **Requested outcome:** Keep diagnostics out of the normal user menu. Holding Option while clicking
-  the WindowRanger status item reveals the diagnostics section for that menu opening.
-- **Acceptance:**
-  - opening the Debug status menu normally shows no diagnostics header, separator, copy, or reveal
-    items;
-  - holding Option when opening the menu shows the existing diagnostics section without changing
-    its actions, privacy boundary, or file-availability state;
-  - the reveal decision is recalculated for each menu opening and never becomes a persisted/sticky
-    preference;
-  - releasing Option or reopening normally returns to the clean menu, without duplicate separators
-    or menu items;
-  - Release builds continue to contain no verbose diagnostics menu controls or file path;
-  - the Debug-only Diagnostics destination in Settings remains available and is outside this menu
-    change;
-  - deterministic menu tests cover normal open, Option-open, repeated transitions, disabled Reveal
-    state, and the Release compile-time boundary;
-  - troubleshooting docs tell support/test users to Option-click before choosing **Copy Recent
-    Diagnostics** or **Reveal Diagnostics File**.
-
-### WR-017 — Copy a focused-window diagnostic report for bug reports
-
-- **Type:** Feature / support diagnostics
+- **Type:** UX audit / potentially major change
 - **Priority:** P1
 - **Status:** Inbox
-- **Evidence:** Requested
-- **Current behavior:** Debug builds provide a rotating diagnostic log and a live admission view,
-  but users cannot produce one self-contained report explaining why a particular window is being
-  managed, ignored, floated, focused, parked, or laid out unexpectedly.
-- **Requested outcome:** Let a user focus the misbehaving window, Option-click the WindowRanger menu,
-  and copy a bounded, human-reviewable diagnostic report suitable for attaching to a bug report.
-- **Capture boundary:**
-  - target the last externally focused window captured before the status menu opens, so opening the
-    menu cannot replace the subject with WindowRanger UI;
-  - work for both managed and unmanaged/ignored candidate windows when Accessibility permits it;
-  - read only; generating the report must not focus, raise, move, resize, unpark, admit, or otherwise
-    mutate the target window or WindowRanger state;
-  - represent unreadable/unsupported Accessibility attributes as unavailable or failed, never as a
-    confident false value.
-- **Report contents:**
-  - a versioned report schema, timestamp, WindowRanger version/build, macOS version, and a short
-    current WindowServer-session identifier;
-  - target app bundle identifier and privacy-safe session-local window identity;
-  - AX/CG role, subrole, layer and capability/read-result summary; focused, main, minimized and
-    full-screen observations; current frame and resolved display/visible frame;
-  - admission disposition and reasons, workspace/display membership, visibility/parking state,
-    app-rule and floating precedence, layout eligibility, current layout/tree participation, and
-    expected-versus-observed frame when applicable;
-  - bounded recent commands, generation/correlation IDs, frame/focus attempts, AX result codes, and
-    stale/cancellation reasons that relate to that window;
-  - an explicit privacy header telling the user to review the report before sharing.
-- **Privacy boundary:** Never include window titles, document names or paths, URLs, typed text,
-  clipboard contents, screenshots/window pixels, full user paths, profile/workspace names, monitor
-  serial numbers, unrelated windows, or an unbounded log tail. Apply the existing diagnostic
-  sanitizer to the final serialized report as a fail-closed last step.
-- **Availability and UX:**
-  - expose **Copy Focused Window Diagnostic Report** only in the Option-revealed support section from
-    WR-016;
-  - make the privacy-safe focused-window report available in distributable builds without enabling
-    the persistent verbose Debug log or **Reveal Diagnostics File**;
-  - show a clear no-target/Accessibility-unavailable explanation instead of copying a misleading
-    partial success report;
-  - add a bug-report template field explaining how to generate, review, and attach/paste the report.
-- **Acceptance:** Deterministic tests cover managed, ignored, deferred, floating, excluded,
-  minimized, full-screen, parked, stale, failed-AX-read, and no-target cases; prove zero window/state
-  mutations; verify bounds and schema stability; and inject forbidden privacy values through every
-  source to prove none survive the final output.
+- **User-observed:** The current command wheel is functional and looks acceptable, but is not a
+  good experience to use. Treat the next pass as an interaction and information-architecture review,
+  not a cosmetic tidy-up; a major rework remains possible.
+- **Expected:** Opening, understanding, navigating, and committing a contextual command should feel
+  immediate and predictable while preserving truthful context validation and nonactivating behavior.
+- **Next boundary:** Capture the current interaction at both levels with keyboard and pointer, then
+  decide whether the existing radial model is worth refining before implementation.
 
-## Ready
+### WR-030 — Investigate Battle.net focused-window compatibility
 
-### WR-004 — Bound synced profile-library input with recovery UX
+- **Type:** Compatibility research / possible bug
+- **Priority:** P2
+- **Status:** Inbox
+- **Diagnostic-backed:** The live `net.battle.app` window is admitted as `managed-normal` with
+  `AXWindow / AXStandardWindow`, WindowServer layer 0, standard controls, and successful frame and
+  raise operations. Its separate App Rule excludes it from Tiled and Accordion, but that is not why
+  the focus border is absent. After successful application activation, Battle.net exposes neither a
+  settable window-focused attribute nor a settable application focused-window attribute, and live
+  focus observation repeatedly returns no focused window. Exact focus verification therefore fails
+  closed and the highlight controller cannot obtain the focused-window target it requires.
+- **Expected:** Preserve the verified Codex transient-window exclusion and the central admission
+  boundary. Before changing behavior, determine whether a narrowly proven fallback can identify the
+  one main, visible, layer-0 window of an active application without guessing among multiple windows
+  or weakening focus verification globally.
+- **Next boundary:** Research and test a Battle.net-specific observation fixture or bounded generic
+  fallback; do not implement it until its ambiguity and competition behavior are understood.
 
-- **Type:** Hardening
-- **Priority:** P2 — before public release
-- **Status:** Ready
-- **Source:** `docs/code-review-2026-08-08.md`, CR-004
-- **Outcome:** Define explicit synced-library document, count, and name limits without silently
-  rejecting legitimate existing private-install data. Include migration/recovery behavior and
-  deterministic tests.
+## Live validation
+
+### WR-036 — Swipe between workspaces
+
+- **Type:** Feature
+- **Priority:** P2
+- **Status:** Live validation
+- **Implemented:** General Settings now has an off-by-default, per-Mac three- or four-finger
+  horizontal workspace swipe. A read-only HID event tap passes generic gesture contacts to a pure
+  finger-count, coherence, axis, and threshold state machine. One accepted swipe dispatches the
+  existing workspace-cycle command and latches until every finger lifts, so ordered wraparound and
+  Independent Displays interaction routing remain owned by the existing engine. The monitor never
+  suppresses or modifies events and suspends for full-screen games, system sleep, inactive login
+  sessions, shortcut recording, and shutdown; display, profile, and app activation changes cancel
+  an in-flight gesture. Settings reports a runtime issue when macOS does not expose the stream.
+- **Automated evidence:** The unsigned Debug app target builds and local quick verification passes
+  478 non-hosted tests. New coverage verifies left/right direction, three/four-finger admission,
+  vertical and changed-contact rejection, one dispatch per gesture, monitor enable/suppression
+  lifecycle, fail-closed availability, local-only persistence, and Settings search.
+- **Installed evidence:** The signed universal Debug daily build for `b6d5762caeb7-dirty` is
+  installed and running from `/Applications/WindowRanger.app`; its Apple Development signature,
+  bundle identity, embedded revision, version `0.1.0 (1)`, and running executable path were verified.
+- **Remaining validation:** Test three- and four-finger choices on the physical trackpad in both
+  directions. Confirm one switch per swipe, wraparound at each end,
+  interaction-display routing in Independent Displays, no interference with chosen macOS gestures,
+  and safe pause/resume across a full-screen game and sleep/wake. The generic gesture event bridge is
+  not a named public Core Graphics event type, so live behavior across supported macOS releases
+  remains a required compatibility boundary.
+
+### WR-035 — Use native glass for command feedback
+
+- **Type:** Visual refinement
+- **Priority:** P2
+- **Status:** Live validation
+- **Requested:** Make the centered command-feedback toast feel closer to the native macOS glass HUD
+  without changing its short-lived, click-through, nonactivating behavior.
+- **Implemented:** On macOS 26 and later, the toast uses Apple's public `NSGlassEffectView` with the
+  regular style, a pill radius derived from half its live height, and its label installed through the
+  glass-owned content view. It remains static rather than interactive because the panel deliberately
+  ignores pointer events. macOS 14–25 retain the existing `NSVisualEffectView` HUD material with the
+  same pill shape. The radius follows any display-driven height clamp. Placement, timing, coalescing,
+  reduced-motion dismissal, VoiceOver announcements, shadow, and nonactivating panel policy are
+  unchanged.
+- **Automated evidence:** Local quick verification passes 470 tests, including native-glass versus
+  fallback selection, correct content ownership, and pill curvature following a clamped live height.
+- **Remaining validation:** Install a signed daily build on macOS 27 and compare short and wrapped
+  feedback in light and dark appearances over varied backgrounds. Confirm the optical effect,
+  curvature, text contrast, shadow, and dismissal feel native without stealing focus.
+
+### WR-034 — Reconcile every split window after wake
+
+- **Type:** Wake/layout bug
+- **Priority:** P1
+- **Status:** Live validation
+- **User-observed:** After waking from sleep, some but not all windows in a Tiled split are
+  occasionally returned to their expected frames. The report is intermittent; the available rotated
+  diagnostics do not contain the failing physical sleep/wake sequence, so this remains
+  user-observed rather than reproduced.
+- **Expected:** Once displays and managed AX windows are ready after wake, every eligible Tiled or
+  Accordion participant should match the layout calculated from the stable display snapshot. A
+  temporarily unready app must not leave one split participant in stale geometry indefinitely.
+- **Code-supported cause:** Wake reconciliation proved fresh `AXWindows` enumeration and performed
+  one layout pass, but then accepted the immediately observed frames as its background-layout
+  baseline. AX write success only means macOS accepted the attributes; it does not prove that the app
+  retained the target frame. A late or ignored write could therefore become the baseline and suppress
+  the normal background retry. The missing physical sleep/wake diagnostic means this remains the
+  strongest code-supported cause rather than a reproduced cause.
+- **Implemented:** Wake now retains the authoritative Tiled and Accordion solution, reads those
+  frames back three times over a bounded period, and reapplies only mismatched windows that are still
+  active layout participants. New lifecycle signals supersede the check. Deferred, full-screen,
+  floating, removed, and newly ineligible windows receive no retry. A final mismatch is diagnostic
+  and leaves the normal background layout baseline invalid so recovery can continue later.
+- **Automated evidence:** Local quick verification passes 467 tests, including retained-frame,
+  missing-frame, mismatch-tolerance, and bounded-verification policy coverage.
+- **Remaining validation:** Install a signed daily build and exercise ordinary and topology-changing
+  physical sleep/wake with multi-window Tiled and Accordion workspaces. Confirm every participant
+  returns to its split, focus remains stable, and diagnostics show bounded verification rather than
+  repeated layout traffic.
+
+### WR-033 — Respect the auto-hidden Dock edge after leaving a game
+
+- **Type:** Platform geometry bug
+- **Priority:** P2
+- **Status:** Live validation
+- **Diagnostic-backed cause:** Leaving the Games workspace made AppKit reserve a 59-point bottom
+  Dock reveal strip even though the user's Dock preference was auto-hide. WindowRanger correctly
+  re-sampled that smaller `visibleFrame`, so this was not stale cached or restoration geometry.
+- **Implemented:** Display refresh now makes the user's Dock hiding preference authoritative only
+  for the configured bottom, left, or right Dock edge. Auto-hide restores that edge to the full
+  display boundary while preserving AppKit's other menu-bar, camera, and safe-area exclusions. A
+  visible Dock continues to use AppKit's exclusion. The existing layout signature detects preference
+  changes during normal polling and reflows without a WindowRanger restart.
+- **Automated evidence:** Pure bounds-policy tests cover the observed bottom inset, visible Dock,
+  left/right Dock orientations, and a fail-safe unknown orientation.
+- **Installed evidence:** The signed Debug daily build for `8b649ad3f3f9` was installed and
+  relaunched from `/Applications/WindowRanger.app`; its Apple Development signature, embedded clean
+  revision, version `0.1.0 (1)`, and running executable path were verified.
+- **Remaining live boundary:** In a signed Debug build, verify auto-hide on fills the Dock edge,
+  auto-hide off stops above the visible Dock, toggling either way reflows without relaunch, and a
+  full-screen game exit cannot leave the 59-point strip behind on either monitor.
+
+### WR-032 — Align Settings list actions and App Rule workspace values
+
+- **Type:** Settings polish
+- **Priority:** P2
+- **Status:** Live validation
+- **Implemented:** Profiles, Workspaces, and App Rules now use one regular native control size and
+  shared vertical padding for their master-list action rows. Their shared native bordered-button
+  component places every SF Symbol on the same 16-point canvas so the chrome has identical bounds.
+  The App Rule workspace picker uses a fixed trailing-aligned control column matching the switches
+  below it. The App Rule header now uses an explicit trailing control group so its Enabled label is
+  right-aligned directly beside the native switch instead of stretching into the middle of the row.
+- **Automated evidence:** Layout constants are covered alongside the existing Settings metrics;
+  the complete 465-test non-hosted suite passes after the follow-up alignment changes.
+- **Installed evidence:** The signed Debug daily build for `8b649ad3f3f9`, including all three
+  alignment refinements, is installed and running from `/Applications/WindowRanger.app`.
+- **Remaining live boundary:** In the installed merged build, compare all three master-list action
+  rows and confirm their buttons have one visual height. Confirm short and long App Rule workspace
+  names remain right-aligned at wide and compact Settings widths, and confirm the Enabled label
+  remains adjacent to its switch, before marking this Done.
+
+### WR-029 — Optionally highlight the focused window
+
+- **Type:** Feature
+- **Priority:** P1
+- **Status:** Live validation
+- **Implemented:** General Settings now has an off-by-default, per-Mac option with its own local
+  border colour, defaulting to white. It monitors only while enabled and draws a nonactivating,
+  click-through panel. Tiled and Accordion layouts reserve four points at screen edges while the
+  option is enabled so the border remains visible; Freeform geometry stays user-controlled. Two
+  independent local filters can restrict the border to Tiled workspaces and to workspaces containing
+  multiple managed windows; unproven workspace context hides the border conservatively. A
+  conservative OS-generation default controls the corner radius: macOS 27 and later use the
+  maintainer-validated 16-point radius while earlier releases retain the 10-point fallback. Each App
+  Rule can supply a local, non-synced radius override for its bundle identifier. Policy excludes
+  WindowRanger-owned windows, apps identified as games through the same public bundle metadata used
+  by full-screen safety, and any
+  window whose non-full-screen state cannot be confirmed. Lifecycle wiring reconciles display
+  changes and removes the border for full-screen game sessions, sleep, inactive login sessions,
+  disabling, and quit.
+- **Automated evidence:** The unsigned Debug app target builds, test isolation passes, and the full
+  465-test non-hosted suite covers local enablement, colour, filter and per-app radius persistence,
+  Settings search, OS-generation fallback and override precedence, independent and combined
+  workspace-filter eligibility, declared-game exclusion, conservative missing-context and
+  full-screen handling, coordinate conversion, the four-point managed layout inset, and the
+  nonactivating panel policy.
+- **Installed evidence:** The signed Debug daily build for `1edb85207be4-dirty`, including the
+  dedicated colour picker, four-point layout margin, both workspace filters, automatic radius
+  policy, and local per-app radius controls, was installed and relaunched from
+  `/Applications/WindowRanger.app`; its Apple Development signature, version `0.1.0 (1)`, embedded
+  revision, and running executable path were verified. The maintainer previously live-validated the
+  initial white-border behavior and colour/margin refinement, then confirmed the workspace filters,
+  per-app radius override, and 16-point macOS 27 automatic default work as intended. The follow-up
+  declared-game exclusion is installed in the signed Debug daily build for `8b649ad3f3f9` but still
+  needs live validation with a detected game window.
+- **Remaining live boundary:** Enable **Highlight the focused window** in General Settings and
+  confirm the border tracks real focus, movement, and resizing on both displays without taking focus
+  or intercepting clicks. Confirm the white default and custom colours, the Tiled/Accordion edge
+  margin on both displays, unchanged Freeform geometry, Settings, declared-game and full-screen
+  exclusion, returning a per-app radius override to Automatic,
+  disable/reenable, and sleep/wake before marking this Done.
 
 ### WR-005 — Measure Debug diagnostic logging under slow storage
 
 - **Type:** Performance measurement
 - **Priority:** P3
-- **Status:** Ready
+- **Status:** Live validation
 - **Source:** `docs/code-review-2026-08-08.md`, CR-005
-- **Outcome:** Measure a noisy real Debug session on slow storage before deciding whether ordered
-  synchronous JSONL writes need a queue. Preserve diagnostic ordering unless evidence justifies a
-  change.
-
-### WR-006 — Reconcile the future-systems brief with implemented Tiled manipulation
-
-- **Type:** Documentation change
-- **Priority:** P2
-- **Status:** Ready
-- **Source:** `docs/future-workspace-systems-decisions.md` versus current
-  `TiledLayoutTree`/`WorkspaceEngine` code and tests
-- **Outcome:** Stop describing manual split resizing and drag-to-swap as wholly future work. Keep
-  layout presets and any unimplemented overlay/editor behavior clearly separated and research-only.
-
-## Live validation
+- **Controlled evidence:** A deterministic 100-record noisy action measured 4.2 ms with the memory
+  sink and 311.5 ms with 2 ms latency injected into every ordered append (3.11 ms per record), while
+  preserving exact JSONL sequence 1...100. This confirms synchronous cost tracks storage latency;
+  it does not establish that the normal Debug log volume or the maintainer's filesystem causes a
+  perceptible interaction problem.
+- **Automated evidence:** Test isolation and the complete 446-test suite passed on 10 August 2026.
+- **Private CI evidence:** [PR #7](https://github.com/windowranger/windowranger/pull/7) uses WR-020's
+  exact-commit local pre-push gate; its hosted pull-request job skips successfully before runner
+  allocation while the repository remains private.
+- **Remaining live boundary:** Gracefully quit the installed copy, run the intended signed Debug
+  build, reproduce a sustained noisy window/workspace session on the target slow-storage setup, and
+  record command latency plus diagnostic event rate. Keep ordered synchronous writes unless that
+  real session demonstrates a user-visible bottleneck.
 
 ### WR-001 — Run the signed-app stability checkpoint
 
@@ -228,20 +311,57 @@ adding engineering tasks.
 - **Decision:** Global/profile/workspace ownership, initial presets and participant policy,
   Tiled-only versus Freeform, and what topology can persist without guessing window identity.
 
+### WR-019 — Separate the local Xcode development identity
+
+- **Type:** Development workflow / signing
+- **Priority:** P2
+- **Status:** Needs decision
+- **Evidence:** User-observed and signing-requirement backed during the first Beta smoke test.
+- **Current behavior:** Xcode Debug and the installed Developer ID app use the same
+  `com.windowranger.WindowRanger` bundle identifier but different designated requirements. macOS can
+  therefore treat them as separate Accessibility clients while LaunchServices still sees the same
+  bundle identifier, making handoff and permission recovery ambiguous.
+- **Smallest useful outcome:** Decide whether the local Xcode product should use a clearly named
+  development-only bundle identifier and app name while Stable and Beta retain the canonical public
+  identity.
+- **Acceptance:**
+  - the installed public app and Xcode development app are unambiguous in Accessibility settings,
+    LaunchServices, process inspection, and menus;
+  - the required development App ID, provisioning profile, and iCloud capability are configured
+    before changing the project;
+  - Xcode handoff scripts quit and resume only the intended product;
+  - public Stable/Beta bundle identity, preferences, update continuity, and release provenance do
+    not change;
+  - migration guidance avoids global TCC or LaunchServices resets and is live-tested on the
+    maintainer's Mac.
+
 ## Pre-release work
 
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
-### WR-011 — Product identity and public project hygiene
+### WR-037 — Prepare WindowRanger 0.1.0 Beta 2
 
-- **Type:** Release epic
-- **Status:** Held
-- **Completed groundwork:** Contributor workflow and safety rules, issue forms, pull-request template,
-  CODEOWNERS review routing, governance, support, and code-of-conduct documents.
-- **Remaining scope:** Copyright, Developer ID/signing ownership, final icon/version/support language,
-  third-party licence audit, history/secret/privacy review, private security reporting, and a private
-  project-controlled conduct contact.
+- **Type:** Beta release checkpoint
+- **Priority:** P1
+- **Status:** Live validation
+- **Approved scope:** Promote the reviewed `develop` checkpoint through `release/0.1.0`, assign
+  public version `0.1.0-beta.2` and monotonically increasing build number `2`, and create the exact
+  Developer ID-signed, notarized, stapled DMG and ZIP locally for maintainer testing. Do not create
+  or push the release tag, upload assets, create a GitHub release, or publish Beta 2 until the exact
+  artifact passes the applicable manual regression and the maintainer explicitly approves that
+  later publication checkpoint.
+- **Candidate highlights:** Resizable native Settings with compact list/detail navigation; optional
+  focused-window border; improved App Rule creation and alignment; Dock and wake reconciliation;
+  native glass command feedback; and optional three- or four-finger workspace swiping.
+- **Automated evidence:** The final WR-035/WR-036 integration commit passed the isolated local
+  pre-push checkpoint with 478 non-hosted tests and the independent public GitHub CI check before
+  merge. Release preflight, full stable-Xcode verification, packaging, notarization, and exact
+  artifact evidence remain to be recorded against the promoted release commit.
+- **Testing boundary:** Install and test the packaged Beta 2 DMG itself. Exercise the remaining live
+  validation items in this queue, with particular attention to Settings resizing, multi-display
+  workspace routing, focused-window borders, sleep/wake, Dock auto-hide, native glass feedback, and
+  physical three- and four-finger trackpad gestures.
 
 ### WR-012 — Clean build and package verification
 
@@ -292,40 +412,167 @@ second copy of that checklist.
     than claiming they are preserved;
   - keep Beta and Dev packaging out of the initial Homebrew acceptance boundary unless separately
     approved.
-- **Remaining scope:** Create/protect `develop`, choose distribution and packaging, Accessibility
-  migration guidance, implement and secure Sparkle, create and validate the Homebrew Cask, define
-  update/rollback failure handling, release provenance, signing/notarization, and publication.
-- **Gate:** Requires explicit maintainer approval; this queue does not authorize publishing.
+- **Completed groundwork:** Public Beta distribution, local-first signing/notarization, release
+  provenance, protected integration/stable branches and protected release tags.
+- **Remaining scope:** Accessibility migration guidance, Sparkle, Homebrew Stable distribution, and
+  update/rollback failure handling.
+- **Gate:** Each later release still requires explicit maintainer approval.
+
+## Done
+
+### WR-031 — Prioritise open apps when adding an App Rule
+
+- **Result:** The Add Application Rule picker groups open apps first and initializes a new rule from
+  the app's existing workspace only when its managed windows agree on one unambiguous assignment;
+  closed, windowless, invalid, and split-workspace cases retain **Use current workspace**.
+- **Evidence:** Test isolation and all 461 non-hosted tests pass, the signed universal Debug daily
+  build for `a39b372ee895-dirty` was installed and verified, and the maintainer confirmed the picker
+  and inherited assignment behave as intended on 10 August 2026.
+
+### WR-027 — Tidy Settings across wide and compact layouts
+
+- **Result:** Settings now follows a consistent native macOS layout grammar with a permanent sidebar,
+  common master-list widths, aligned controls and actions, compact list/detail navigation, semantic
+  system surfaces, and stable two-line list rows after scrolling.
+- **Evidence:** All seven panes render at wide and compact sizes, with wide Light and Dark fixtures;
+  the complete 451-test non-hosted suite and local quick gate pass. The maintainer validated the full
+  correction pass and recycled-row scrolling in the signed daily build on 10 August 2026.
+
+### WR-025 — Reflow Settings across useful window sizes
+
+- **Result:** Settings resize continuously down to 760 x 560. Wide collection panes retain their
+  master/detail layouts; compact Profiles, Workspaces, and App Rules use disclosure rows and titled
+  detail views with Back navigation; narrow controls reflow without clipping.
+- **Evidence:** Deterministic layout and AppKit window-policy tests pass in the complete 451-test
+  suite. The maintainer validated resizing, compact navigation, selection retention, and return to
+  the wide layout in the signed daily build on 10 August 2026.
+
+### WR-024 — Show exact build identity in Settings
+
+- **Result:** Settings now shows the app version, build number, source commit, and Dev marker in an
+  unobtrusive sidebar footer. Daily builds append `-dirty` when their working tree differs from the
+  displayed commit; clean distributable builds embed their exact source commit.
+- **Evidence:** The complete 451-test suite passed, an unsigned app build embedded the expected
+  values, and the maintainer confirmed the footer in the signed daily build on 10 August 2026.
+
+### WR-022 — Make the Settings window resizable and large enough for its content
+
+- **Result:** Settings now uses stable explicit AppKit minimum/maximum constraints rather than
+  allowing a tall active pane to replace them. The detail hierarchy follows available geometry,
+  undersized restored frames grow safely, and larger frames remain user-controlled.
+- **Evidence:** Focused AppKit/SwiftUI host regressions and the complete 451-test suite passed; the
+  maintainer confirmed resizing and the corrected Profiles layout in the signed daily build on
+  10 August 2026.
+
+### WR-023 — Delegate windowranger.com DNS to Cloudflare
+
+- **Result:** Added `windowranger.com` to Cloudflare on the Free plan, preserved the existing
+  Namecheap parking and email-forwarding DNS records, and changed the registrar delegation to the
+  assigned Cloudflare nameservers. DNSSEC remains disabled with no DS record.
+- **Evidence:** Cloudflare reported the zone active on 10 August 2026. Cloudflare's API retained all
+  eight discovered A, CNAME, MX, and TXT records; public recursive resolvers returned the assigned
+  `carmelo.ns.cloudflare.com` and `magnolia.ns.cloudflare.com` delegation, the proxied apex and
+  `www` addresses, all five Namecheap forwarding MX records, and the matching SPF TXT record.
+
+### WR-021 — Allow manual workspace moves to override App Rules
+
+- **Result:** App Rule workspace assignments now provide initial and reset placement without
+  permanently locking an individual window. Manual moves survive routine refreshes; moving back
+  clears the override; rule/profile changes, resets, and reopen boundaries reapply the assignment.
+- **Evidence:** Deterministic tests cover the decision boundaries, the complete isolated 448-test
+  suite passed, and the maintainer confirmed the behavior in the signed daily build on 10 August
+  2026.
 
 ### WR-018 — Publish the first GitHub Beta
 
-- **Type:** Release
-- **Priority:** P1
-- **Status:** Live validation
-- **Outcome:** Publish `v0.1.0-beta.1` as a GitHub prerelease with the exact universal Developer
-  ID-signed, notarized, stapled Beta DMG, notarized ZIP fallback, SHA-256 checksums, provenance
-  manifest, reviewed release notes, and no claim of Sparkle or Stable support.
-- **Implemented groundwork:** Unprivileged GitHub Actions verification, Hardened Runtime build
-  setting, Developer ID export configuration, approved Stable and construction-themed Beta DMG
-  artwork, deterministic headless DMG packaging, local build/notarize/package script, draft-release
-  script, release-notes template, and first-release runbook.
-- **Automated evidence:** Stable Xcode 26.6 passes the non-hosted test-isolation check and the current
-  local 419-test suite. GitHub Actions run
-  [31330255231](https://github.com/windowranger/windowranger/actions/runs/31330255231) independently
-  passes isolation, 417 committed tests, Release static analysis, an unsigned universal
-  `arm64 x86_64` Release build, Stable/Beta DMG creation and verification, and artifact upload on
-  macOS 26 with Xcode 26.6. Both exact hosted DMGs also pass local read-only disk-image, bundle
-  identity, `/Applications` shortcut, background, and Finder-metadata verification without launching
-  the app. The intended `44NAD22AK6` team has a local Developer ID Application identity with private
-  key, an installed all-device Developer ID profile authorizing the public bundle ID and iCloud
-  key-value entitlement through August 2044, and a validated `WindowRanger` notary Keychain profile.
-  The credentialed archive/export/notarization path remains untested.
-- **Current blockers:**
-  - complete the remaining product-identity, repository-publication, manual regression,
-    accessibility, privacy, and clean-package gates in `docs/release-checklist.md`;
-  - build and test the exact artifact from a clean `release/0.1.0` branch using stable Xcode.
-- **Publication gate:** Creating the draft is not publication. Changing repository visibility and
-  publishing the reviewed draft each require explicit maintainer action at the final checkpoint.
+- **Result:** Made `windowranger/windowranger` public and published `v0.1.0-beta.1` as a GitHub
+  prerelease on 10 August 2026, preserving the exact signed, notarized artifact tag and all five
+  checksum/provenance-verified assets. Enabled private vulnerability reporting, secret scanning and
+  push protection; protected `main`, `develop`, and `v*` tags.
+- **Evidence:** The public release is
+  [WindowRanger 0.1.0 Beta 1](https://github.com/windowranger/windowranger/releases/tag/v0.1.0-beta.1)
+  at artifact commit `04b5750b1fe3b183c1259d132a0a8e985f8b4e0e`. Immediately before publication,
+  the downloaded app and DMG passed checksums, provenance, signature, stapling, notarization, and
+  Gatekeeper checks; the publication-preparation checkpoint passed all 446 tests.
+- **Known Beta limitations:** Remaining manual regression, accessibility, privacy, clean-user,
+  LaunchServices, update, and rollback work stays explicit in the release notes and checklist and is
+  not Stable evidence.
+
+### WR-011 — Product identity and public project hygiene
+
+- **Result:** Confirmed first-Beta identity, copyright, artwork provenance, Apple-only dependencies,
+  MIT reference notices, intended commit authorship, and a redacted all-history secret/privacy scan.
+  Published contributor/governance/support documents and private security and conduct reporting
+  paths before making the repository public.
+
+### WR-020 — Shift private hosted verification to local hooks
+
+- **Result:** Automatic GitHub-hosted jobs now skip while the repository is private, with an
+  explicit manual dispatch retained for a deliberately billable run. Public pull requests run the
+  non-hosted suite without duplicate topic-branch pushes; selected integration/release pushes add
+  analysis, unsigned Release, and Stable/Beta DMG checks. An opt-in repository-managed pre-push hook
+  verifies the exact pushed commit in an isolated worktree, and a separate full local command covers
+  the uncredentialed integration/release checkpoint without signing, notarizing, installing, or
+  launching the app.
+- **Automated evidence:** Shell syntax and diff checks passed; the local quick checkpoint passed all
+  445 tests with test isolation intact; and stable Xcode 26.6 passed the full local test, static
+  analysis, unsigned universal Release build, and both DMG creation/verification paths. Hook
+  installation/removal and exact-commit execution passed. The topic-branch push created no workflow
+  run, while private pull-request run
+  [31363831170](https://github.com/windowranger/windowranger/actions/runs/31363831170) completed with
+  the hosted job skipped before runner allocation.
+
+### WR-004 — Bound synced profile-library input with recovery UX
+
+- **Result:** The atomic iCloud profile-library value now has explicit byte, profile, nested-count,
+  and user-facing-name limits with validation before decode/application. Invalid remote data never
+  replaces or truncates local profiles; existing oversized private-install libraries remain local,
+  writes are withheld visibly, and an eligible local copy replaces rejected cloud data only through
+  an explicit General Settings recovery action.
+- **Automated evidence:** Fifteen focused tests cover exact boundaries, every collection limit,
+  oversized bytes, long names, malformed/future versions, local preservation, safe enablement,
+  remote rejection and explicit recovery. Test isolation and the complete 445-test suite passed on
+  10 August 2026.
+
+### WR-017 — Copy a focused-window diagnostic report for bug reports
+
+- **Result:** Option-click now exposes a distributable-build focused-window report captured before
+  menu presentation. The 64 KB, schema-versioned report is read-only, distinguishes failed or
+  unavailable AX reads from false values, includes privacy-safe admission/workspace/layout evidence
+  plus only related bounded in-memory events, and receives a final fail-closed privacy scrub.
+- **Automated evidence:** Nine deterministic report tests cover managed, ignored, deferred,
+  floating, excluded, minimized, full-screen, parked, stale, failed-read, no-target, privacy,
+  schema/bounds, release visibility, related-event filtering, and pure rendering. Test isolation,
+  an unsigned universal Release build, and the complete 435-test Debug suite passed on 10 August
+  2026. The bug-report template and privacy documentation describe generation and review.
+
+### WR-016 — Reveal menu diagnostics only with Option-click
+
+- **Result:** Debug status-menu diagnostics are hidden during an ordinary open and appear only while
+  Option is held for that opening. The decision is stateless, the unavailable file action remains
+  disabled, Release retains its compile-time exclusion, and support/privacy instructions now explain
+  the Option-click route.
+- **Automated evidence:** Deterministic policy tests cover normal, Option, repeated, unavailable-file,
+  and Debug/Release compile-boundary cases; test isolation, the focused Debug and Release checks,
+  and the complete 426-test Debug suite passed on 10 August 2026.
+
+### WR-015 — Make iCloud settings sync opt-in
+
+- **Result:** New installations now start local-only; saved enabled/disabled choices remain intact,
+  disabling immediately gates every cloud read/write while retaining local and remote data, and
+  re-enabling pushes the current reusable settings. Settings, README, and privacy copy document the
+  opt-in and machine-local boundaries.
+- **Automated evidence:** Test isolation, five focused first-run/saved-choice/off-state/no-store/
+  re-enable tests, and the complete 422-test suite passed with no failures on 10 August 2026.
+
+### WR-006 — Reconcile the future-systems brief with implemented Tiled manipulation
+
+- **Result:** Updated the future-systems brief and README to distinguish implemented, deterministically
+  tested manual split resizing, title-bar drag-to-swap, and radial edge/corner placement from
+  research-only reusable presets and any future explicit overlay editor. Signed-app behavior remains
+  covered by the existing live-validation queue.
+- **Automated evidence:** Test isolation passed and all 36 focused `TiledLayoutTreeTests` passed with
+  no failures on 9 August 2026.
 
 ## Scan notes — not queued again
 
@@ -333,8 +580,8 @@ second copy of that checklist.
   mismatch in `design-qa.md`.
 - Portable profile transfer is described as implemented in the current README and reviewed code;
   its remaining live coverage belongs to WR-001/WR-013.
-- Manual Tiled split resizing and drag-to-swap already have implementation/test evidence. WR-006 is
-  the documentation correction; it is not a request to rebuild them.
+- Manual Tiled split resizing and drag-to-swap already have implementation/test evidence; their
+  documentation correction is recorded under Done rather than queued as an implementation request.
 - Native Spaces integration remains an explicit non-goal.
 
 ## New-item template

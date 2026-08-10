@@ -137,15 +137,22 @@ enum SettingsWindowGeometry {
         let bounds = safeFrame.width > 0 && safeFrame.height > 0 ? safeFrame : display.visibleFrame
         guard bounds.width > 0, bounds.height > 0 else { return nil }
 
-        let width = min(max(1, currentFrame.width), bounds.width)
-        let height = min(max(1, currentFrame.height), bounds.height)
-        let size = CGSize(width: width, height: height)
+        let size = SettingsWindowMetrics.constrainedFrameSize(
+            currentSize: CGSize(
+                width: max(1, currentFrame.width),
+                height: max(1, currentFrame.height)
+            ),
+            availableSize: bounds.size
+        )
         let intersection = currentFrame.intersection(display.visibleFrame)
         let alreadyOnDisplay = !intersection.isNull &&
             intersection.width * intersection.height >= min(4_096, currentFrame.width * currentFrame.height * 0.1)
         let proposedOrigin = alreadyOnDisplay
             ? currentFrame.origin
-            : CGPoint(x: display.visibleFrame.midX - width / 2, y: display.visibleFrame.midY - height / 2)
+            : CGPoint(
+                x: display.visibleFrame.midX - size.width / 2,
+                y: display.visibleFrame.midY - size.height / 2
+            )
         let maximumX = max(bounds.minX, bounds.maxX - size.width)
         let maximumY = max(bounds.minY, bounds.maxY - size.height)
         let origin = CGPoint(
@@ -174,6 +181,7 @@ enum SettingsWindowGeometry {
 protocol SettingsWindowSurface: AnyObject {
     var frame: CGRect { get }
     var isVisible: Bool { get }
+    func applyWindowConstraints()
     func prepareAsFloatingUtility()
     func surface(at frame: CGRect)
     func surfaceWithoutActivation(at frame: CGRect)
@@ -193,6 +201,7 @@ final class SettingsWindowCoordinator {
     private var surface: SettingsWindowSurface?
     private weak var attachedWindow: NSWindow?
     private var closeObserver: NSObjectProtocol?
+    private var constraintObservers: [NSObjectProtocol] = []
     private var pendingContext: SettingsSurfaceContext?
     private(set) var assignedContext: SettingsSurfaceContext?
     private(set) var requestGeneration: UInt64 = 0
@@ -281,13 +290,16 @@ final class SettingsWindowCoordinator {
 
     func attach(window: NSWindow) {
         if attachedWindow === window, surface != nil {
+            surface?.applyWindowConstraints()
             surfacePendingRequestIfPossible()
             return
         }
         detach(restoreLifecycle: true)
         let adapter = AppKitSettingsWindowSurface(window: window)
+        adapter.applyWindowConstraints()
         attachedWindow = window
         surface = adapter
+        observeConstraintReconciliation(for: window)
         closeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: window,
@@ -298,6 +310,7 @@ final class SettingsWindowCoordinator {
                 self.windowWillClose()
             }
         }
+        scheduleConstraintReconciliation(for: window)
         surfacePendingRequestIfPossible()
     }
 
@@ -305,6 +318,7 @@ final class SettingsWindowCoordinator {
     func attach(surface: SettingsWindowSurface) {
         detach(restoreLifecycle: true)
         self.surface = surface
+        surface.applyWindowConstraints()
         surfacePendingRequestIfPossible()
     }
 
@@ -325,6 +339,7 @@ final class SettingsWindowCoordinator {
         } else if remainsActive, isHiddenForWorkspace {
             // Returning to the utility's assigned virtual workspace should restore it without
             // activating WindowRanger or stealing focus from the workspace switch target.
+            surface.applyWindowConstraints()
             guard let placement = SettingsWindowGeometry.placement(
                 currentFrame: surface.frame,
                 requestedDisplayIdentifier: assignedContext.displayIdentifier,
@@ -345,12 +360,13 @@ final class SettingsWindowCoordinator {
     }
 
     func screenParametersDidChange() {
-        guard let assignedContext, let surface, surface.isVisible,
-              let placement = SettingsWindowGeometry.placement(
-                  currentFrame: surface.frame,
-                  requestedDisplayIdentifier: assignedContext.displayIdentifier,
-                  displays: displayProvider()
-              )
+        guard let assignedContext, let surface, surface.isVisible else { return }
+        surface.applyWindowConstraints()
+        guard let placement = SettingsWindowGeometry.placement(
+            currentFrame: surface.frame,
+            requestedDisplayIdentifier: assignedContext.displayIdentifier,
+            displays: displayProvider()
+        )
         else { return }
         surface.prepareAsFloatingUtility()
         surface.repositionWithoutActivation(to: placement.frame)
@@ -404,12 +420,13 @@ final class SettingsWindowCoordinator {
     }
 
     private func surfacePendingRequestIfPossible() {
-        guard let context = pendingContext, let surface,
-              let placement = SettingsWindowGeometry.placement(
-                  currentFrame: surface.frame,
-                  requestedDisplayIdentifier: context.displayIdentifier,
-                  displays: displayProvider()
-              )
+        guard let context = pendingContext, let surface else { return }
+        surface.applyWindowConstraints()
+        guard let placement = SettingsWindowGeometry.placement(
+            currentFrame: surface.frame,
+            requestedDisplayIdentifier: context.displayIdentifier,
+            displays: displayProvider()
+        )
         else { return }
         pendingContext = nil
         assignedContext = context
@@ -447,13 +464,60 @@ final class SettingsWindowCoordinator {
             NotificationCenter.default.removeObserver(closeObserver)
             self.closeObserver = nil
         }
+        constraintObservers.forEach(NotificationCenter.default.removeObserver)
+        constraintObservers.removeAll()
         if restoreLifecycle { surface?.restoreOrdinaryLifecycle() }
         surface = nil
         attachedWindow = nil
     }
 
+    private func observeConstraintReconciliation(for window: NSWindow) {
+        let names: [Notification.Name] = [
+            NSWindow.didBecomeKeyNotification,
+            NSWindow.didUpdateNotification,
+        ]
+        constraintObservers = names.map { name in
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: window,
+                queue: .main
+            ) { [weak self, weak window] _ in
+                Task { @MainActor in
+                    guard let self, let window, self.attachedWindow === window else { return }
+                    self.surface?.applyWindowConstraints()
+                }
+            }
+        }
+    }
+
+    private func scheduleConstraintReconciliation(for window: NSWindow) {
+        Task { @MainActor [weak self, weak window] in
+            await Task.yield()
+            guard let self, let window, self.attachedWindow === window else { return }
+            self.surface?.applyWindowConstraints()
+        }
+    }
+
     private static func short(_ value: String) -> String {
         value.count > 16 ? "\(value.prefix(6))-\(value.suffix(6))" : value
+    }
+}
+
+@MainActor
+private protocol SettingsHostingSizingConfigurable {
+    func useExplicitWindowConstraints()
+}
+
+extension NSHostingView: SettingsHostingSizingConfigurable {
+    func useExplicitWindowConstraints() {
+        // SwiftUI's hosting measurements can continuously derive Auto Layout constraints from the
+        // selected Settings pane. Even an intrinsic-content-only measurement can pin the hosting
+        // view to its ideal size and prevent an otherwise resizable NSWindow from tracking an edge
+        // drag. These panes provide their own scrolling and responsive layout, so leave all window
+        // bounds to the coordinator's explicit AppKit minimum and maximum.
+        if !sizingOptions.isEmpty {
+            sizingOptions = []
+        }
     }
 }
 
@@ -472,8 +536,47 @@ private final class AppKitSettingsWindowSurface: SettingsWindowSurface {
     var frame: CGRect { window?.frame ?? .zero }
     var isVisible: Bool { window?.isVisible == true }
 
+    func applyWindowConstraints() {
+        guard let window else { return }
+        configureHostingSizing(in: window.contentView)
+        if !window.styleMask.contains(.resizable) {
+            window.styleMask.insert(.resizable)
+        }
+        if window.contentMinSize != SettingsWindowMetrics.minimumSize {
+            window.contentMinSize = SettingsWindowMetrics.minimumSize
+        }
+        let maximumSize = CGSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        if window.contentMaxSize != maximumSize {
+            window.contentMaxSize = maximumSize
+        }
+        if let zoomButton = window.standardWindowButton(.zoomButton), !zoomButton.isEnabled {
+            zoomButton.isEnabled = true
+        }
+
+        let currentContentSize = window.contentView?.bounds.size ?? window.contentLayoutRect.size
+        let requiredContentSize = CGSize(
+            width: max(currentContentSize.width, SettingsWindowMetrics.minimumSize.width),
+            height: max(currentContentSize.height, SettingsWindowMetrics.minimumSize.height)
+        )
+        if requiredContentSize != currentContentSize {
+            window.setContentSize(requiredContentSize)
+        }
+    }
+
+    private func configureHostingSizing(in view: NSView?) {
+        guard let view else { return }
+        if let hostingView = view as? any SettingsHostingSizingConfigurable {
+            hostingView.useExplicitWindowConstraints()
+        }
+        view.subviews.forEach { configureHostingSizing(in: $0) }
+    }
+
     func prepareAsFloatingUtility() {
         guard let window else { return }
+        applyWindowConstraints()
         window.identifier = NSUserInterfaceItemIdentifier("com.windowranger.WindowRanger.settings")
         window.level = .floating
         window.collectionBehavior.insert(.moveToActiveSpace)

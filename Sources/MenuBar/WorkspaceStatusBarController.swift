@@ -225,6 +225,48 @@ struct CommandFeedbackPanelPolicy: Equatable, Sendable {
 }
 
 @MainActor
+enum CommandFeedbackSurfaceFactory {
+    static func make(frame: CGRect) -> NSView {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: frame)
+            glass.style = .regular
+            glass.setAccessibilityElement(false)
+            updatePillShape(glass)
+            return glass
+        }
+
+        let material = NSVisualEffectView(frame: frame)
+        material.material = .hudWindow
+        material.blendingMode = .behindWindow
+        material.state = .active
+        material.wantsLayer = true
+        material.layer?.masksToBounds = true
+        material.setAccessibilityElement(false)
+        updatePillShape(material)
+        return material
+    }
+
+    static func updatePillShape(_ surface: NSView) {
+        let cornerRadius = max(0, surface.bounds.height / 2)
+        if #available(macOS 26.0, *), let glass = surface as? NSGlassEffectView {
+            glass.cornerRadius = cornerRadius
+        } else {
+            surface.layer?.cornerRadius = cornerRadius
+        }
+    }
+
+    static func installContent(_ content: NSView, in surface: NSView) {
+        content.frame = surface.bounds
+        content.autoresizingMask = [.width, .height]
+        if #available(macOS 26.0, *), let glass = surface as? NSGlassEffectView {
+            glass.contentView = content
+        } else {
+            surface.addSubview(content)
+        }
+    }
+}
+
+@MainActor
 protocol CommandFeedbackPresenting: AnyObject {
     func present(_ request: CommandFeedbackRequest)
     func dismiss(reason: String)
@@ -266,6 +308,9 @@ final class CommandFeedbackOverlayController: CommandFeedbackPresenting {
         let panel = ensurePanel()
         label?.stringValue = request.message
         panel.setFrame(placement.panelFrame, display: false)
+        if let surface = panel.contentView {
+            CommandFeedbackSurfaceFactory.updatePillShape(surface)
+        }
         panel.alphaValue = 1
         panel.orderFrontRegardless()
 
@@ -313,6 +358,9 @@ final class CommandFeedbackOverlayController: CommandFeedbackPresenting {
         let previousDisplay = currentDisplayIdentifier
         currentDisplayIdentifier = placement.displayIdentifier
         panel?.setFrame(placement.panelFrame, display: true)
+        if let surface = panel?.contentView {
+            CommandFeedbackSurfaceFactory.updatePillShape(surface)
+        }
         if previousDisplay != placement.displayIdentifier {
             diagnostics.log(
                 category: "command-feedback",
@@ -407,14 +455,12 @@ final class CommandFeedbackOverlayController: CommandFeedbackPresenting {
         panel.isExcludedFromWindowsMenu = true
         panel.setAccessibilityElement(false)
 
-        let background = NSVisualEffectView(frame: CGRect(origin: .zero, size: Self.panelSize))
-        background.material = .hudWindow
-        background.blendingMode = .behindWindow
-        background.state = .active
-        background.wantsLayer = true
-        background.layer?.cornerRadius = 14
-        background.layer?.masksToBounds = true
-        background.setAccessibilityElement(false)
+        let background = CommandFeedbackSurfaceFactory.make(
+            frame: CGRect(origin: .zero, size: Self.panelSize)
+        )
+        let content = NSView(frame: background.bounds)
+        content.setAccessibilityElement(false)
+        CommandFeedbackSurfaceFactory.installContent(content, in: background)
 
         let label = NSTextField(labelWithString: "")
         label.maximumNumberOfLines = 3
@@ -425,13 +471,13 @@ final class CommandFeedbackOverlayController: CommandFeedbackPresenting {
         label.refusesFirstResponder = true
         label.setAccessibilityElement(false)
         label.translatesAutoresizingMaskIntoConstraints = false
-        background.addSubview(label)
+        content.addSubview(label)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 18),
-            label.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -18),
-            label.topAnchor.constraint(greaterThanOrEqualTo: background.topAnchor, constant: 12),
-            label.bottomAnchor.constraint(lessThanOrEqualTo: background.bottomAnchor, constant: -12),
-            label.centerYAnchor.constraint(equalTo: background.centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
+            label.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
+            label.topAnchor.constraint(greaterThanOrEqualTo: content.topAnchor, constant: 12),
+            label.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -12),
+            label.centerYAnchor.constraint(equalTo: content.centerYAnchor),
         ])
         panel.contentView = background
         self.panel = panel
@@ -487,6 +533,35 @@ private final class CommandFeedbackPanel: NSPanel {
     override var canBecomeMain: Bool { CommandFeedbackPanelPolicy.nonActivating.canBecomeMain }
 }
 
+enum VerboseDiagnosticsMenuEntry: Equatable {
+    case separator
+    case header
+    case copyRecent
+    case revealFile(isEnabled: Bool)
+}
+
+enum FocusedWindowSupportMenuPolicy {
+    static func isVisible(modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        modifierFlags.contains(.option)
+    }
+}
+
+enum VerboseDiagnosticsMenuPolicy {
+    static func entries(
+        buildSupportsVerboseDiagnostics: Bool,
+        modifierFlags: NSEvent.ModifierFlags,
+        diagnosticFileAvailable: Bool
+    ) -> [VerboseDiagnosticsMenuEntry] {
+        guard buildSupportsVerboseDiagnostics, modifierFlags.contains(.option) else { return [] }
+        return [
+            .separator,
+            .header,
+            .copyRecent,
+            .revealFile(isEnabled: diagnosticFileAvailable),
+        ]
+    }
+}
+
 @MainActor
 final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     static var verboseDiagnosticsMenuEnabled: Bool {
@@ -495,6 +570,17 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         #else
         false
         #endif
+    }
+
+    static func verboseDiagnosticsMenuEntries(
+        modifierFlags: NSEvent.ModifierFlags,
+        diagnosticFileAvailable: Bool
+    ) -> [VerboseDiagnosticsMenuEntry] {
+        VerboseDiagnosticsMenuPolicy.entries(
+            buildSupportsVerboseDiagnostics: verboseDiagnosticsMenuEnabled,
+            modifierFlags: modifierFlags,
+            diagnosticFileAvailable: diagnosticFileAvailable
+        )
     }
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -510,6 +596,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private var highlightColor: MenuBarHighlightColor
     private var contentView: MenuBarStatusContentView?
     private var lastSnapshot: MenuBarPresentationSnapshot?
+    private var focusedWindowDiagnosticReport: String?
+    private var supportSectionVisibleForCurrentOpen = false
     private var isInvalidated = false
 
     init(
@@ -641,7 +729,19 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        let modifierFlags = NSEvent.modifierFlags
+        supportSectionVisibleForCurrentOpen = FocusedWindowSupportMenuPolicy.isVisible(
+            modifierFlags: modifierFlags
+        )
+        focusedWindowDiagnosticReport = supportSectionVisibleForCurrentOpen
+            ? engine.focusedWindowDiagnosticReport()
+            : nil
         rebuildMenu()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        supportSectionVisibleForCurrentOpen = false
+        focusedWindowDiagnosticReport = nil
     }
 
     private func rebuildMenu() {
@@ -723,19 +823,42 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             }
         }
 
+        let supportSectionVisible = supportSectionVisibleForCurrentOpen
+        if supportSectionVisible {
+            appMenu.addItem(.separator())
+            appMenu.addItem(disabledMenuItem(title: "WindowRanger Support"))
+            appMenu.addItem(actionMenuItem(
+                title: "Copy Focused Window Diagnostic Report",
+                action: #selector(copyFocusedWindowDiagnosticReport)
+            ))
+        }
+
         #if DEBUG
-        appMenu.addItem(.separator())
-        appMenu.addItem(disabledMenuItem(title: "WindowRanger Debug"))
-        appMenu.addItem(actionMenuItem(
-            title: "Copy Recent Diagnostics",
-            action: #selector(copyRecentDiagnostics)
-        ))
-        let reveal = actionMenuItem(
-            title: "Reveal Diagnostics File",
-            action: #selector(revealDiagnosticsFile)
-        )
-        reveal.isEnabled = diagnostics.fileURL != nil
-        appMenu.addItem(reveal)
+        for entry in Self.verboseDiagnosticsMenuEntries(
+            modifierFlags: NSEvent.modifierFlags,
+            diagnosticFileAvailable: diagnostics.fileURL != nil
+        ) {
+            switch entry {
+            case .separator:
+                if !supportSectionVisible { appMenu.addItem(.separator()) }
+            case .header:
+                if !supportSectionVisible {
+                    appMenu.addItem(disabledMenuItem(title: "WindowRanger Debug"))
+                }
+            case .copyRecent:
+                appMenu.addItem(actionMenuItem(
+                    title: "Copy Recent Diagnostics",
+                    action: #selector(copyRecentDiagnostics)
+                ))
+            case let .revealFile(isEnabled):
+                let reveal = actionMenuItem(
+                    title: "Reveal Diagnostics File",
+                    action: #selector(revealDiagnosticsFile)
+                )
+                reveal.isEnabled = isEnabled
+                appMenu.addItem(reveal)
+            }
+        }
         #endif
 
         appMenu.addItem(.separator())
@@ -804,6 +927,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     @objc private func redoTiledPlacement() {
         tiledPlacementUndoManager?.redo()
         rebuildMenu()
+    }
+
+    @objc private func copyFocusedWindowDiagnosticReport() {
+        guard let focusedWindowDiagnosticReport else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(focusedWindowDiagnosticReport, forType: .string)
     }
 
     #if DEBUG

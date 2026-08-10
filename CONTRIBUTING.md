@@ -92,6 +92,36 @@ host, or macro-expand `WindowRanger.app`. Tests must not register Carbon hotkeys
 Accessibility, change login items, access iCloud, write diagnostics in the user's home directory,
 or inspect or move live windows.
 
+The repository packages that same safe checkpoint as:
+
+```sh
+./scripts/verify-local-ci.sh --quick
+```
+
+To run it automatically against the exact commit being pushed, opt this clone into the
+repository-managed pre-push hook:
+
+```sh
+./scripts/install-git-hooks.sh
+```
+
+The hook validates one pushed commit in a temporary detached worktree, so uncommitted files in the
+active checkout cannot enter its result. It performs only project generation, shell syntax, test
+isolation, and the non-hosted suite; it never builds, launches, stops, signs, installs, or automates
+WindowRanger. Hook installation is deliberately local and opt-in because Git does not install hooks
+from a clone. Remove it with `./scripts/install-git-hooks.sh --remove`. If the clone already has a
+different `core.hooksPath`, the installer stops rather than overwriting it.
+
+At an integration or release checkpoint, run the heavier local equivalent explicitly:
+
+```sh
+./scripts/verify-local-ci.sh --full
+```
+
+Full verification adds Release static analysis, an unsigned Release build in canonical DerivedData,
+and Stable/Beta DMG smoke creation and verification. It remains uncredentialed: signing,
+notarization, publication, installation, and live-window testing are separate maintainer actions.
+
 For implementation checkpoints:
 
 1. Run the smallest relevant test class.
@@ -118,9 +148,15 @@ When a pull request still needs signed-app or multi-display testing, say so plai
 tests is not evidence that live Accessibility behaviour, packaging, notarization, or distribution
 has been validated.
 
-GitHub Actions repeats project generation, isolated tests, static analysis, and an unsigned Release
-compile. It deliberately has no Apple signing or notarization secrets. Maintainer-only distribution
-uses the [first-release runbook](docs/first-github-release.md), not the daily installer.
+While the repository is private, automatic hosted jobs are skipped to preserve the GitHub Free
+allowance; `workflow_dispatch` remains an explicit, potentially billable maintainer action. Local
+pre-push verification is the default gate in that phase. Once the repository is public, standard
+hosted runners become the independent gate automatically: pull requests targeting `develop` or
+`main` run generation, syntax, isolation, and tests, while pushes to `main`, `develop`, `release/**`,
+or `hotfix/**` additionally run static analysis, an unsigned Release build, and Stable/Beta DMG
+smoke packaging. Topic-branch pushes do not duplicate the pull-request run. Hosted jobs deliberately
+have no Apple signing or notarization secrets. Maintainer-only distribution uses the
+[first-release runbook](docs/first-github-release.md), not the daily installer.
 
 ## Pull request workflow
 

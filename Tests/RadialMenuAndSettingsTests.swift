@@ -1,6 +1,7 @@
 import AppKit
 import Carbon
 import Combine
+import SwiftUI
 import XCTest
 
 final class RadialMenuAndSettingsTests: XCTestCase {
@@ -979,7 +980,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             applicationActivator: { activationCount += 1 }
         )
         let surface = TestSettingsWindowSurface(
-            frame: CGRect(x: 100, y: 100, width: 900, height: 640)
+            frame: CGRect(x: 100, y: 100, width: 600, height: 480)
         )
         let context = SettingsSurfaceContext(
             workspaceID: workspaceB.id,
@@ -999,10 +1000,77 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         coordinator.attach(surface: surface)
 
         XCTAssertEqual(activationCount, 1)
+        XCTAssertEqual(surface.constraintCount, 2)
         XCTAssertEqual(surface.prepareCount, 1)
         XCTAssertEqual(surface.surfacedFrames.count, 1)
+        XCTAssertEqual(surface.surfacedFrames[0].size, SettingsWindowMetrics.minimumSize)
         XCTAssertEqual(coordinator.assignedContext, context)
         XCTAssertTrue(displays[1].visibleFrame.contains(surface.surfacedFrames[0].midpoint))
+    }
+
+    @MainActor
+    func testSettingsAppKitHostUsesStableExplicitResizeConstraints() async {
+        let hostingView = NSHostingView(
+            rootView: Text("Tall Settings content")
+                .frame(minWidth: 1_800, minHeight: 1_200)
+        )
+        hostingView.sizingOptions = [.minSize, .maxSize, .intrinsicContentSize]
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 900, height: 640),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hostingView
+        let coordinator = SettingsWindowCoordinator(
+            diagnostics: .disabled,
+            displayProvider: { [] },
+            applicationActivator: {}
+        )
+
+        coordinator.attach(window: window)
+
+        XCTAssertTrue(window.styleMask.contains(.resizable))
+        XCTAssertEqual(window.contentMinSize, SettingsWindowMetrics.minimumSize)
+        XCTAssertEqual(hostingView.sizingOptions, [])
+        XCTAssertGreaterThan(window.contentMaxSize.width, 10_000)
+        XCTAssertGreaterThan(window.contentMaxSize.height, 10_000)
+        XCTAssertGreaterThanOrEqual(window.contentLayoutRect.width, SettingsWindowMetrics.minimumSize.width)
+        XCTAssertGreaterThanOrEqual(window.contentLayoutRect.height, SettingsWindowMetrics.minimumSize.height)
+
+        window.setContentSize(CGSize(width: 1_000, height: 700))
+        XCTAssertEqual(window.contentLayoutRect.size, CGSize(width: 1_000, height: 700))
+        window.setContentSize(CGSize(width: 800, height: 600))
+        XCTAssertEqual(window.contentLayoutRect.size, CGSize(width: 800, height: 600))
+
+        window.styleMask.remove(.resizable)
+        window.contentMaxSize = SettingsWindowMetrics.minimumSize
+        window.standardWindowButton(.zoomButton)?.isEnabled = false
+        NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: window)
+        await Task.yield()
+
+        XCTAssertTrue(window.styleMask.contains(.resizable))
+        XCTAssertGreaterThan(window.contentMaxSize.width, 10_000)
+        XCTAssertGreaterThan(window.contentMaxSize.height, 10_000)
+        XCTAssertEqual(window.standardWindowButton(.zoomButton)?.isEnabled, true)
+        window.close()
+    }
+
+    func testSettingsBuildIdentityMakesVersionBuildAndSourceVisible() {
+        let identity = SettingsBuildIdentity(
+            version: "0.1.0",
+            build: "7",
+            commit: "abc123def456-dirty",
+            isDebugBuild: true
+        )
+
+        XCTAssertEqual(identity.versionText, "Version 0.1.0 (7)")
+        XCTAssertEqual(identity.sourceText, "Dev · abc123def456-dirty")
+        XCTAssertEqual(
+            identity.accessibilityText,
+            "Version 0.1.0 (7), Dev, abc123def456-dirty"
+        )
     }
 
     @MainActor
@@ -1241,6 +1309,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
         XCTAssertEqual(crossing?.displayIdentifier, "external")
         XCTAssertEqual(crossing?.resolutionReason, "requested-display-centered")
+        XCTAssertEqual(crossing?.frame.size, CGSize(width: 900, height: 640))
         XCTAssertTrue(displays[1].visibleFrame.contains(try! XCTUnwrap(crossing).frame.midpoint))
 
         let clamped = SettingsWindowGeometry.placement(
@@ -1251,6 +1320,23 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         let clampedFrame = try! XCTUnwrap(clamped).frame
         XCTAssertGreaterThanOrEqual(clampedFrame.minX, displays[1].visibleFrame.minX + 18)
         XCTAssertGreaterThanOrEqual(clampedFrame.minY, displays[1].visibleFrame.minY + 18)
+    }
+
+    func testSettingsPlacementPreservesLargerFramesAndFitsSmallDisplays() {
+        XCTAssertEqual(
+            SettingsWindowMetrics.constrainedFrameSize(
+                currentSize: CGSize(width: 1400, height: 820),
+                availableSize: CGSize(width: 1600, height: 900)
+            ),
+            CGSize(width: 1400, height: 820)
+        )
+        XCTAssertEqual(
+            SettingsWindowMetrics.constrainedFrameSize(
+                currentSize: CGSize(width: 800, height: 500),
+                availableSize: CGSize(width: 1000, height: 620)
+            ),
+            CGSize(width: 800, height: 560)
+        )
     }
 
     func testIndependentSettingsPointerRoutingUsesTargetDisplaysActiveWorkspace() {
@@ -1460,10 +1546,23 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     func testWorkspaceSettingsWindowHasRoomForSidebarListAndInspector() {
-        XCTAssertEqual(SettingsWindowMetrics.minimumSize, CGSize(width: 1120, height: 680))
+        XCTAssertEqual(SettingsWindowMetrics.minimumSize, CGSize(width: 760, height: 560))
         XCTAssertEqual(SettingsWindowMetrics.defaultSize, CGSize(width: 1280, height: 780))
+        XCTAssertEqual(SettingsWindowMetrics.sidebarWidth, 240)
+        XCTAssertEqual(SettingsWindowMetrics.masterListWidth, 300)
+        XCTAssertEqual(SettingsWindowMetrics.masterRowMinimumHeight, 44)
+        XCTAssertEqual(SettingsWindowMetrics.masterActionRowVerticalPadding, 9)
+        XCTAssertEqual(SettingsWindowMetrics.masterActionIconSize, 16)
+        XCTAssertEqual(SettingsWindowMetrics.appRuleTrailingControlWidth, 220)
+        XCTAssertGreaterThan(
+            SettingsWindowMetrics.minimumSize.width - SettingsWindowMetrics.sidebarWidth,
+            500
+        )
         XCTAssertGreaterThan(SettingsWindowMetrics.defaultSize.width, SettingsWindowMetrics.minimumSize.width)
         XCTAssertGreaterThan(SettingsWindowMetrics.defaultSize.height, SettingsWindowMetrics.minimumSize.height)
+        XCTAssertEqual(SettingsDetailLayout.resolve(availableWidth: 899), .compact)
+        XCTAssertEqual(SettingsDetailLayout.resolve(availableWidth: 900), .wide)
+        XCTAssertEqual(SettingsDetailLayout.resolve(availableWidth: 1_200), .wide)
     }
 
     @MainActor
@@ -2466,6 +2565,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 private final class TestSettingsWindowSurface: SettingsWindowSurface {
     var frame: CGRect
     private(set) var isVisible = false
+    private(set) var constraintCount = 0
     private(set) var prepareCount = 0
     private(set) var surfacedFrames: [CGRect] = []
     private(set) var nonactivatingSurfaceFrames: [CGRect] = []
@@ -2476,6 +2576,8 @@ private final class TestSettingsWindowSurface: SettingsWindowSurface {
     init(frame: CGRect) {
         self.frame = frame
     }
+
+    func applyWindowConstraints() { constraintCount += 1 }
 
     func prepareAsFloatingUtility() { prepareCount += 1 }
 

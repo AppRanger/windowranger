@@ -1,6 +1,8 @@
 # Future workspace systems — decision brief
 
-Status: **Research only. Nothing in this document is implemented or approved for implementation.**
+Status: **Research only for pinned-display mode, named arrangements, the optional overview, and
+reusable layout presets.** Section 4 also distinguishes those unapproved preset/editor ideas from
+the Tiled placement and direct-manipulation behavior that is already implemented and tested.
 
 This brief scopes four adjacent concepts without turning them into one feature. It preserves the
 current product boundaries: profiles are reusable configuration rather than window snapshots;
@@ -180,21 +182,27 @@ side effects. Live tests must separately verify system permission copy and captu
 5. Is the overview global, per interaction display, or one panel per display?
 6. Does click switch only, and does drag send-only by default with a modifier for follow?
 
-## 4. Layout presets and direct manipulation
+## 4. Layout presets and current direct manipulation
 
-### Separate increments
+### Current boundary
 
-These should not ship as one feature:
+These are separate capabilities and must not be treated as one future feature:
 
-1. **Layout presets:** named reusable geometry/topology templates independent of live window IDs.
-2. **Divider handles:** resize an existing Tiled split with preview, bounds, and one commit.
-3. **Drag-to-swap/reorder:** reorder existing eligible layout leaves.
-4. **Edge insertion:** modify the session-local Tiled tree by placing a focused/dragged eligible
-   window at a semantic edge.
+1. **Layout presets — research only:** named reusable geometry/topology templates independent of
+   live window IDs.
+2. **Manual split resizing — implemented:** resizing a focused Tiled window adjusts the nearest
+   compatible divider, clamps it to safe minimum geometry, and reflows the affected tree.
+3. **Title-bar drag-to-swap — implemented:** a position-only drag holds the focused tile in place
+   while the pointer is down, then swaps leaves with the tile under the pointer on release.
+4. **Radial edge/corner placement — implemented:** preview and commit share the same session-local
+   tree proposal and revalidate the captured window/workspace/display context before applying it.
 
-Presets provide value without global pointer tracking and are the safest first research prototype.
-The existing radial Tiled Place contract already supplies an important invariant: preview makes zero
-AX writes; commit validates the same captured context and applies one normal layout transaction.
+The three implemented behaviors have deterministic tree and engine coverage. Their feel and
+Accessibility behavior with real third-party windows remain part of the signed-app validation
+boundary; test evidence alone does not close that work. Presets remain the only feature proposal in
+this section. The existing radial Tiled Place contract supplies an important invariant for any
+future editor: preview makes zero AX writes; commit validates the same captured context and applies
+one normal layout transaction.
 
 ### Model and persistence implications
 
@@ -204,18 +212,16 @@ identities. It remains undecided whether presets are global, profile-owned, or c
 workspace on selection. Migrating an existing flat Tiled workspace must preserve its current visual
 arrangement until a preset or direct action is deliberately applied.
 
-Direct manipulation changes the current WindowServer-session layout tree/order/weights. Durable
-cross-session persistence would require stable semantic slots rather than window IDs and is a later
-decision.
+Current direct manipulation changes the WindowServer-session layout tree/order/weights. Durable
+cross-session tree persistence would require stable semantic slots rather than window IDs and
+remains a later preset decision.
 
 ### Interaction and platform feasibility
 
-App-owned nonactivating overlays can draw divider handles, ghost frames, and insertion targets over
-other windows. Idle overlays should be click-through; interactive handles would deliberately accept
-pointer events only while the manipulation mode is active. Native in-app drag/drop is suitable for a
-future overview/editor. Observing a drag that starts in another app is possible with a systemwide
-event monitor, but AppKit says the monitor cannot modify the original events; this path needs careful
-focus, permission, teardown, and live-behavior testing rather than an inferred implementation.
+Current manual split resizing and drag-to-swap reconcile Accessibility frame observations from the
+focused Tiled window; they do not expose app-owned divider handles or an overview/editor. The radial
+placement preview is a nonactivating WindowRanger overlay. A future preset editor could add explicit
+handles, ghost frames, or native in-app drag/drop, but that UI is neither implemented nor approved.
 
 Every gesture should capture window/workspace/display/topology generation, keep focus on the exact
 target, perform no AX writes during hover/preview, validate again on release, commit once, and
@@ -224,21 +230,20 @@ focus, display change, sleep, and profile/workspace change discard the preview.
 
 ### Failure, dependencies, and tests
 
-Depends on the pure Tiled tree, transaction/diff layout application, focus verification,
-nonactivating overlays, and bounded Undo. Tests cover preset participant counts/aspect ratios,
-minimum sizes, divider clamping, swap/insertion topology, contextual exclusions, preview zero-write,
-single commit, stale-generation cancel, rapid display/profile changes, focus retention, and recovery
-after apps reject a frame.
+The implemented manipulation paths depend on the pure Tiled tree, transaction/diff layout
+application, focus verification, nonactivating placement preview, and bounded Undo. Existing tests
+cover divider selection/clamping, drag target selection, swap/insertion topology, contextual
+exclusions, preview zero-write, single commit, and stale-context cancellation. Presets still need
+separate participant-count, aspect-ratio, persistence, migration, and editor tests after their
+product boundary is decided.
 
 ### Product decisions still required
 
 1. Are presets global, profile-owned, or embedded per workspace?
 2. Which initial presets are worth naming, and how do they handle extra/fewer windows?
-3. Do direct handles appear only in an explicit edit mode, on hover, or while a modifier is held?
-4. Is manipulation limited to the overview/WindowRanger overlays, or should it observe drags that
-   begin on third-party title bars?
-5. Does Freeform gain snap presets, or are presets Tiled-only initially?
-6. Which tree/order/weight state persists across restart without guessing window identity?
+3. Does Freeform gain snap presets, or are presets Tiled-only initially?
+4. Which topology, participant policy, or semantic slot state can persist without guessing window
+   identity?
 
 ## Recommended research order
 
@@ -247,4 +252,5 @@ after apps reject a frame.
 3. Define arrangement capture/apply data and privacy boundaries before any “Save Desk” UI.
 4. If thumbnails remain desirable, perform an isolated ScreenCaptureKit permission/parked-window
    feasibility spike with no integration into normal startup.
-5. Add direct manipulation only after presets and the existing Tiled tree are live-stable.
+5. Consider an explicit overlay editor only if the current native resize, drag-to-swap, and radial
+   placement interactions prove insufficient in live validation.

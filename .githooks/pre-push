@@ -1,0 +1,31 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+zero_object="0000000000000000000000000000000000000000"
+commit_to_verify=""
+
+while read -r local_ref local_object remote_ref remote_object; do
+    [[ "$local_object" != "$zero_object" ]] || continue
+    if [[ -n "$commit_to_verify" && "$commit_to_verify" != "$local_object" ]]; then
+        print -u2 "WindowRanger pre-push validation supports one commit per push."
+        print -u2 "Push refs separately, or run ./scripts/verify-local-ci.sh --quick first."
+        exit 1
+    fi
+    commit_to_verify="$local_object"
+done
+
+[[ -n "$commit_to_verify" ]] || exit 0
+
+repository_root="$(git rev-parse --show-toplevel)"
+validation_worktree="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/windowranger-pre-push.XXXXXX")"
+
+cleanup() {
+    git -C "$repository_root" worktree remove --force "$validation_worktree" >/dev/null 2>&1 || true
+    /bin/rmdir "$validation_worktree" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+print "Validating pushed commit ${commit_to_verify[1,12]} in an isolated worktree..."
+git -C "$repository_root" worktree add --detach "$validation_worktree" "$commit_to_verify"
+"$validation_worktree/scripts/verify-local-ci.sh" --quick

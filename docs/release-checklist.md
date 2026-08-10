@@ -9,33 +9,43 @@ promotion and versioning. It is a design authority, not evidence that the releas
 ## Product identity
 
 - [x] Select the product name and complete preliminary clearance: **WindowRanger**.
-- [ ] Confirm the copyright line in `LICENSE` with the maintainer.
+- [x] Confirm the copyright line in `LICENSE` with the maintainer as part of the explicit
+      first-publication approval.
 - [x] Select `com.windowranger.WindowRanger` as the public bundle identifier; the private development
       identity intentionally does not migrate.
-- [ ] Confirm Developer ID ownership, signing team and designated requirement.
-- [ ] Finalize app icon, menu-bar identity, versioning and support language.
+- [x] Confirm Developer ID ownership and team `44NAD22AK6`; verify the exported app's Developer ID
+      designated requirement and public bundle identifier.
+- [x] Finalize the first-Beta app icon, menu-bar identity, versioning and support language.
 
 ## Licensing and repository hygiene
 
 - [x] Add the MIT license for the source project.
-- [ ] Audit all dependency/reference licenses and update `THIRD_PARTY_NOTICES.md`.
-- [ ] Confirm no copied generated artwork, vendor branding or incompatible source is present.
-- [ ] Scan tracked history and current files for credentials, tokens, personal paths, logs, app
-      bundles, DerivedData and private diagnostics.
+- [x] Audit all dependency/reference licenses and update `THIRD_PARTY_NOTICES.md`; the app uses only
+      Apple SDK frameworks and vendors no third-party package or source.
+- [x] Confirm the retained artwork was generated specifically for WindowRanger, contains no vendor
+      branding, and has recorded provenance in `Brand/WindowRanger/README.md`.
+- [x] Scan all 92 commits and current files for credentials, tokens, personal paths, logs, app
+      bundles, DerivedData and private diagnostics. Gitleaks 8.30.1 reported only four false
+      positives on two local settings keys; historical absolute-path hits are obsolete design
+      provenance and privacy-scrubber fixtures, not secrets or shipped paths.
 - [x] Add contribution guidelines, issue forms, a pull-request template, governance, support, and a
       code of conduct.
-- [ ] Enable GitHub private vulnerability reporting or publish another verified private security
-      contact, then update `SECURITY.md`.
-- [ ] Publish a private project-controlled conduct-reporting contact in `CODE_OF_CONDUCT.md`.
-- [ ] Review commit authorship/privacy before making history public.
+- [x] Enable GitHub private vulnerability reporting and link the private form from `SECURITY.md`.
+- [x] Confirm the private form is active as the project-controlled conduct-reporting path documented
+      in `CODE_OF_CONDUCT.md`.
+- [x] Review commit authorship/privacy before making history public; all 92 commits use the intended
+      maintainer identity.
 
 ## Build and verification
 
-- [ ] Generate the project from a clean checkout with the documented Xcode/XcodeGen versions.
-- [ ] Verify non-hosted test isolation and run the complete suite from a clean DerivedData state.
-- [ ] Run static analysis and address compiler warnings relevant to project code.
-- [ ] Build universal Release and verify bundle ID, architectures, entitlements and signature.
-- [ ] Confirm Release omits Debug menus, verbose diagnostic paths and internal-only copy.
+- [x] Generate the project from a clean release worktree with stable Xcode 26.6 and the documented
+      XcodeGen toolchain.
+- [x] Verify non-hosted test isolation and run the complete suite from a clean DerivedData state.
+- [x] Run static analysis and address compiler warnings relevant to project code.
+- [x] Build universal Release and verify bundle ID, architectures, entitlements and Developer ID
+      signature.
+- [x] Confirm the exact Beta Release omits the Debug menu labels, verbose diagnostic path, and
+      internal-only copy while retaining the inert logging type required by shared code.
 - [ ] Audit LaunchServices so validation leaves only intended products registered.
 - [ ] Run a clean-machine installation/upgrade/uninstall test.
 
@@ -68,13 +78,18 @@ promotion and versioning. It is a design authority, not evidence that the releas
 ## Packaging and updates — held
 
 - [x] Define Stable, Beta, and Dev release channels and the Gitflow-style promotion model.
-- [ ] Create and protect the `develop` integration branch after required checks are ready.
+- [x] Create `develop`, make it the default integration branch, and run the required CI workflow.
+- [x] Protect `main` and `develop` with pull-request, required-check, conversation-resolution,
+      deletion, and force-push rules; protect `v*` tags with a maintainer-only active ruleset.
 - [x] Choose the initial distribution: a signed, notarized channel-specific DMG attached to a
       GitHub prerelease, with a notarized ZIP fallback; Homebrew remains a later Stable channel.
-- [x] Choose a local-first release pipeline: GitHub Actions performs unprivileged verification, and
-      the maintainer's Mac performs Developer ID signing, notarization, stapling, and packaging.
-- [ ] Validate `scripts/build-distribution.sh` with the intended Developer ID identity and notary
-      profile, then test the exact packaged artifact on a clean machine or user account.
+- [x] Choose a local-first release pipeline: repository-managed local checks perform private-phase
+      unprivileged verification; standard GitHub Actions independently repeat it when public or
+      explicitly dispatched; and the maintainer's Mac performs Developer ID signing, notarization,
+      stapling, and packaging.
+- [x] Validate `scripts/build-distribution.sh` with the intended Developer ID identity and
+      `WindowRanger` notary profile; test the exact installed DMG on the maintainer's Mac.
+- [ ] Test the exact packaged artifact on another supported Mac or a clean macOS user account.
 - [x] Create and automatically verify the Stable and construction-themed Beta DMG layouts, including
       the `/Applications` shortcut and native drag-to-install instruction.
 - [ ] Validate DMG install/uninstall behavior and Accessibility migration guidance on a clean machine
@@ -86,7 +101,11 @@ promotion and versioning. It is a design authority, not evidence that the releas
       held.
 - [ ] Design and implement one signed Sparkle appcast with default Stable and opt-in `beta` channel,
       including channel switching, monotonic build numbers, signatures, rollback, and failure UX.
-- [ ] Choose the signing/notarization pipeline and final rollback policy.
-- [ ] Produce reproducible release notes, checksums and provenance.
-- [ ] Notarize and staple only after the preceding decisions and tests are complete.
-- [ ] Publish only with explicit maintainer approval.
+- [x] Choose and prove the local-first signing/notarization pipeline; keep credentials off ordinary
+      GitHub Actions jobs.
+- [ ] Finalize the Stable/Beta rollback policy before automatic updates are implemented.
+- [x] Produce tracked release notes, SHA-256 checksums and a commit/toolchain provenance manifest;
+      round-trip verify all five GitHub assets.
+- [x] Developer ID-sign, notarize, staple, Gatekeeper-check, and verify the exact Beta app and DMG.
+- [x] Publish `v0.1.0-beta.1` only after explicit maintainer approval, preserving its verified tag
+      and five uploaded assets.

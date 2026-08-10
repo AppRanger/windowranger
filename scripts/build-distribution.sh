@@ -6,6 +6,8 @@ repository_root="${0:A:h:h}"
 script_name="${0:t}"
 project_file="$repository_root/WindowRanger.xcodeproj"
 export_options="$repository_root/config/ExportOptions-DeveloperID.plist"
+release_team_id="$(/usr/libexec/PlistBuddy -c 'Print :teamID' "$export_options" 2>/dev/null || true)"
+release_bundle_id="com.windowranger.WindowRanger"
 release_root="${WINDOWRANGER_RELEASE_ROOT:-$repository_root/.build/releases}"
 developer_directory="${WINDOWRANGER_DEVELOPER_DIR:-${DEVELOPER_DIR:-$(/usr/bin/xcode-select -p)}}"
 dmg_tool_root="${WINDOWRANGER_DMG_TOOL_ROOT:-$repository_root/.build/dmg-tools}"
@@ -95,6 +97,7 @@ done
     "Release builds must use stable Xcode, not: $developer_directory"
 )
 [[ -f "$export_options" ]] || blockers+=("Missing export options: $export_options")
+[[ -n "$release_team_id" ]] || blockers+=("Export options do not declare a release team ID")
 [[ -x "$dmgbuild" ]] || blockers+=(
     "DMG tools are not installed; run ./scripts/install-dmg-tools.sh"
 )
@@ -103,6 +106,7 @@ done
 )
 
 current_branch="$(/usr/bin/git -C "$repository_root" branch --show-current)"
+source_revision="$(/usr/bin/git -C "$repository_root" rev-parse --short=12 HEAD)"
 [[ "$current_branch" == "$expected_branch" ]] || blockers+=(
     "$channel version $version must be built from $expected_branch, not ${current_branch:-detached HEAD}"
 )
@@ -111,9 +115,15 @@ working_tree_state="$(/usr/bin/git -C "$repository_root" status --porcelain --un
 [[ -z "$working_tree_state" ]] || blockers+=("The release worktree must be clean and committed")
 
 identity_output="$(/usr/bin/security find-identity -v -p codesigning 2>&1 || true)"
-[[ "$identity_output" == *"Developer ID Application:"* ]] || blockers+=(
-    "No Developer ID Application signing identity is installed in the keychain"
+matching_identities="$(
+    print -r -- "$identity_output" |
+        /usr/bin/grep -E "Developer ID Application:.*\($release_team_id\)" || true
+)"
+identity_count="$(print -r -- "$matching_identities" | /usr/bin/grep -c . || true)"
+[[ "$identity_count" == "1" ]] || blockers+=(
+    "Expected exactly one valid Developer ID Application identity for team $release_team_id; found $identity_count"
 )
+signing_identity_hash="$(print -r -- "$matching_identities" | /usr/bin/awk 'NR == 1 { print $2 }')"
 
 if [[ -d "$developer_directory" ]]; then
     DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun notarytool history \
@@ -138,6 +148,7 @@ print "  Version: $version"
 print "  Build: $build_number"
 print "  Branch: $current_branch"
 print "  Toolchain: $xcode_version"
+print "  Signing team: $release_team_id"
 print "  Notary keychain profile: $notary_profile"
 
 if [[ "$preflight_only" == true ]]; then
@@ -167,6 +178,47 @@ dmg_checksum_file="$release_directory/$dmg_checksum_name"
 manifest_name="WindowRanger-$version.release.txt"
 manifest_file="$release_directory/$manifest_name"
 entitlements_file="$release_directory/WindowRanger.entitlements.plist"
+
+notarize_and_record() {
+    local artifact="$1"
+    local label="$2"
+    local result_file="$release_directory/WindowRanger-$version-$label-notary-result.json"
+    local log_file="$release_directory/WindowRanger-$version-$label-notary-log.json"
+    local submission_id
+    local status
+    local issue_count
+
+    DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun notarytool submit "$artifact" \
+        --keychain-profile "$notary_profile" \
+        --wait \
+        --output-format json > "$result_file"
+
+    submission_id="$(/usr/bin/plutil -extract id raw -o - "$result_file")"
+    status="$(/usr/bin/plutil -extract status raw -o - "$result_file")"
+    [[ "$status" == "Accepted" ]] || {
+        print -u2 "$label notarization was not accepted: $status"
+        return 1
+    }
+
+    DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun notarytool log "$submission_id" "$log_file" \
+        --keychain-profile "$notary_profile"
+    issue_count="$(
+        /usr/bin/awk '{
+            line = $0
+            while (match(line, /"severity"[[:space:]]*:/)) {
+                count += 1
+                line = substr(line, RSTART + RLENGTH)
+            }
+        } END { print count + 0 }' "$log_file"
+    )"
+    [[ "$issue_count" == "0" ]] || {
+        print -u2 "$label notarization log contains $issue_count issue(s): $log_file"
+        return 1
+    }
+
+    print "$label notarization accepted with zero logged issues: $submission_id"
+    REPLY="$submission_id"
+}
 
 print "Generating the Xcode project..."
 (cd "$repository_root" && /opt/homebrew/bin/xcodegen generate 2>/dev/null) || \
@@ -205,6 +257,7 @@ DEVELOPER_DIR="$developer_directory" /usr/bin/xcodebuild \
     -allowProvisioningUpdates \
     MARKETING_VERSION="$base_version" \
     CURRENT_PROJECT_VERSION="$build_number" \
+    WINDOWRANGER_GIT_COMMIT="$source_revision" \
     archive
 
 print "Exporting with Developer ID..."
@@ -222,6 +275,20 @@ exported_app="$export_path/WindowRanger.app"
 signature_details="$(/usr/bin/codesign -dv --verbose=4 "$exported_app" 2>&1)"
 [[ "$signature_details" == *"Authority=Developer ID Application:"* ]] || {
     print -u2 "Exported app is not signed with Developer ID Application"
+    exit 1
+}
+[[ "$signature_details" == *"Identifier=$release_bundle_id"* ]] || {
+    print -u2 "Exported app has the wrong signing identifier"
+    exit 1
+}
+[[ "$signature_details" == *"TeamIdentifier=$release_team_id"* ]] || {
+    print -u2 "Exported app is signed by the wrong team"
+    exit 1
+}
+
+app_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$exported_app/Contents/Info.plist")"
+[[ "$app_bundle_id" == "$release_bundle_id" ]] || {
+    print -u2 "Unexpected app bundle identifier: $app_bundle_id"
     exit 1
 }
 
@@ -245,9 +312,8 @@ get_task_allow="$(/usr/bin/plutil -extract com.apple.security.get-task-allow raw
 
 print "Submitting the Developer ID app for notarization..."
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$exported_app" "$notary_archive"
-DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun notarytool submit "$notary_archive" \
-    --keychain-profile "$notary_profile" \
-    --wait
+notarize_and_record "$notary_archive" app
+app_notarization_id="$REPLY"
 
 print "Stapling and validating the notarization ticket..."
 DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun stapler staple "$exported_app"
@@ -265,16 +331,15 @@ WINDOWRANGER_DMGBUILD="$dmgbuild" "$repository_root/scripts/build-dmg.sh" \
 
 print "Signing the DMG container with Developer ID..."
 /usr/bin/codesign --force \
-    --sign "Developer ID Application" \
+    --sign "$signing_identity_hash" \
     --timestamp \
     --identifier "com.windowranger.WindowRanger.dmg" \
     "$final_dmg"
 /usr/bin/codesign --verify --verbose=2 "$final_dmg"
 
 print "Notarizing and stapling the DMG container..."
-DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun notarytool submit "$final_dmg" \
-    --keychain-profile "$notary_profile" \
-    --wait
+notarize_and_record "$final_dmg" dmg
+dmg_notarization_id="$REPLY"
 DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun stapler staple "$final_dmg"
 DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun stapler validate "$final_dmg"
 /usr/sbin/spctl -a -vv -t open --context context:primary-signature "$final_dmg"
@@ -299,6 +364,9 @@ dmg_checksum="$(/usr/bin/awk '{ print $1 }' "$dmg_checksum_file")"
     print "archive_sha256=$archive_checksum"
     print "dmg=$final_dmg_name"
     print "dmg_sha256=$dmg_checksum"
+    print "app_notarization_id=$app_notarization_id"
+    print "dmg_notarization_id=$dmg_notarization_id"
+    print "notarization_issue_count=0"
 } > "$manifest_file"
 
 print "Release package ready:"

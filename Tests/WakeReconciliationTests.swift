@@ -212,6 +212,36 @@ final class WakeReconciliationTests: XCTestCase {
         )
     }
 
+    func testWakeLayoutVerificationDetectsMissingAndMismatchedFrames() {
+        let expected = WindowFrame(
+            position: CGPoint(x: 10, y: 20),
+            size: CGSize(width: 800, height: 600)
+        )
+        let closeEnough = WindowFrame(
+            position: CGPoint(x: 10.5, y: 19.5),
+            size: CGSize(width: 800.5, height: 599.5)
+        )
+        let wrong = WindowFrame(
+            position: CGPoint(x: 10, y: 60),
+            size: CGSize(width: 800, height: 560)
+        )
+
+        XCTAssertEqual(
+            WakeLayoutVerificationPolicy.mismatchedWindowKeys(
+                expectedFrames: ["retained": expected, "wrong": expected, "missing": expected],
+                observedFrames: ["retained": closeEnough, "wrong": wrong]
+            ),
+            ["wrong", "missing"]
+        )
+    }
+
+    func testWakeLayoutVerificationIsBounded() {
+        XCTAssertEqual(
+            WakeLayoutVerificationPolicy.verificationDelaysMilliseconds,
+            [120, 300, 650]
+        )
+    }
+
     func testUnavailableWindowServerSessionRetriesBoundedly() {
         XCTAssertEqual(
             decision(sessionAvailable: false),

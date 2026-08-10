@@ -17,6 +17,18 @@ central admission boundary and receive no workspace, layout, persistence, focus 
 Accessibility permission is controlled by macOS. WindowRanger does not reset TCC or silently alter
 the system permission list.
 
+## Optional trackpad workspace gesture
+
+**Swipe between workspaces** is off by default and stored only on this Mac. When enabled,
+WindowRanger uses an Accessibility-authorized, read-only Core Graphics event tap to observe generic
+trackpad gesture events. It reads only the selected finger count, session-scoped touch identities,
+and normalized movement needed to decide whether one horizontal swipe crossed the threshold. It
+does not suppress or modify the original event, store a gesture history, log touch identities or
+positions, or read typed input. All per-gesture state is discarded when the fingers lift or the
+gesture is cancelled. The monitor pauses during sleep, inactive-session, shortcut-recording and
+full-screen game states, and fails closed with a visible Settings issue when macOS does not expose
+the gesture stream.
+
 ## Launch at login
 
 The optional **Open at login** setting uses Apple's `SMAppService.mainApp`. It is off by default for
@@ -25,11 +37,21 @@ and do not register or unregister the live login item.
 
 ## Settings and iCloud
 
-When **Sync settings with iCloud** is enabled, reusable profile definitions and supported global
-preferences use the user's private iCloud key-value store. Profile definitions can contain workspace
-names/keys/order/layout geometry, abstract display-role names and typed app rules including app bundle
-identifiers. They do not contain open window IDs, titles, frames, focus, monitor serials/fingerprints,
-the active profile or automatic trigger assignments.
+Settings sync is off by default. When **Sync settings with iCloud** is explicitly enabled, reusable
+profile definitions and supported global preferences use the user's private iCloud key-value store.
+Turning it off immediately stops cloud reads and writes; it does not delete local settings or
+previously synced cloud data. Profile definitions can contain workspace names/keys/order/layout
+geometry, abstract display-role names and typed app rules including app bundle identifiers. They do
+not contain open window IDs, titles, frames, focus, monitor serials/fingerprints, the active profile
+or automatic trigger assignments.
+
+The one atomic synced profile-library document is bounded to 750,000 encoded bytes, 128 profiles,
+128 workspaces and 64 display roles per profile, 512 app rules per profile, and 256 characters per
+user-facing name. WindowRanger checks the byte bound before decoding and validates version, counts,
+names and structure before replacing local definitions. Rejected remote data remains untouched in
+iCloud, existing local/private-install profiles remain available without silent truncation, and
+General Settings presents the rejection plus an explicit replace-cloud-with-local recovery action
+when the local document is eligible.
 
 An explicitly requested profile export contains the same reusable definition boundary in a local
 JSON file chosen by the user. Import is additive and does not read or write physical monitor
@@ -53,15 +75,23 @@ Debug app runs can write structured JSON Lines diagnostics to:
 
 `~/Library/Logs/com.windowranger.WindowRanger/diagnostics.jsonl`
 
-The file is bounded at 1 MB with two 1 MB backups. Debug Settings can copy a bounded, action-aware
-excerpt or reveal the file. Records can include timestamps, session/action IDs, bundle identifiers,
+The file is bounded at 1 MB with two 1 MB backups. Option-clicking the status item in any build
+reveals a read-only focused-window report for that menu opening. The report is capped at 64 KB,
+contains a privacy-review header, uses only session-local or abstract workspace/display identities,
+and includes bounded in-memory events only when they correlate to the subject window. Creating it
+does not perform Accessibility writes or enable the persistent Debug log. Debug builds additionally
+offer controls to copy a broader bounded excerpt or reveal the file. Opening the menu normally keeps
+all support controls hidden. Debug Settings retains its Diagnostics destination. Records can
+include timestamps, session/action IDs, bundle identifiers,
 internal window/workspace/display IDs, short display identifiers, frames, layout decisions and AX
 success/failure results.
 
 The diagnostic privacy filter removes window titles, document names, URLs, typed content, full user
-paths and window contents. These exclusions are code-tested but still require manual review before a
-public release. Release builds do not expose the verbose file controls or create this diagnostic file;
-minimal system fault/error reporting may still be visible through normal macOS facilities.
+paths and window contents. A final fail-closed scrub is applied after focused-report serialization.
+These exclusions are code-tested but still require manual review before a public release. Release
+builds do not expose the verbose file controls or create this diagnostic file; they retain only a
+small bounded in-memory history for the focused report. Minimal system fault/error reporting may
+still be visible through normal macOS facilities.
 
 Unit tests inject memory/no-op sinks and never write diagnostics into the user's home directory.
 

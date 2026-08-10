@@ -23,7 +23,10 @@ concurrency:
 
 jobs:
   test-and-build:
-    name: Test and unsigned Release build
+    # Standard hosted runners are free once the repository is public. While it remains private,
+    # local verification is the default and only an explicit manual dispatch may consume minutes.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.repository.private == false }}
+    name: Verify source and unsigned build
     runs-on: macos-26
     timeout-minutes: 45
     env:
@@ -42,6 +45,9 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: Check release script syntax
+        run: zsh -n scripts/*.sh
+
       - name: Verify non-hosted test isolation
         run: ./scripts/verify-test-isolation.sh
 
@@ -56,6 +62,7 @@ jobs:
             test
 
       - name: Run static analysis
+        if: ${{ github.event_name != 'pull_request' }}
         run: |
           xcodebuild \
             -project WindowRanger.xcodeproj \
@@ -66,6 +73,7 @@ jobs:
             analyze
 
       - name: Build unsigned Release configuration
+        if: ${{ github.event_name != 'pull_request' }}
         run: |
           xcodebuild \
             -project WindowRanger.xcodeproj \
@@ -77,6 +85,7 @@ jobs:
             build
 
       - name: Build unsigned DMG smoke packages
+        if: ${{ github.event_name != 'pull_request' }}
         run: |
           ./scripts/install-dmg-tools.sh
           mkdir -p .build/ci-packages
@@ -92,6 +101,7 @@ jobs:
           ./scripts/verify-dmg.sh --dmg .build/ci-packages/WindowRanger-unsigned-beta.dmg
 
       - name: Upload unsigned DMG smoke packages
+        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: unsigned-dmg-smoke-${{ github.sha }}

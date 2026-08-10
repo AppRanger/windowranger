@@ -33,6 +33,17 @@ struct DisplaySnapshot: Equatable, Sendable, Identifiable {
     }
 }
 
+enum DockEdge: String, Equatable, Sendable {
+    case bottom
+    case left
+    case right
+}
+
+struct DockLayoutPreferences: Equatable, Sendable {
+    let automaticallyHides: Bool
+    let edge: DockEdge?
+}
+
 struct PersistedDisplayPlacement: Codable, Equatable, Sendable {
     let displayIdentifier: String
     let normalizedOrigin: CGPoint
@@ -166,6 +177,14 @@ enum FullscreenSessionPolicy {
 }
 
 enum FullscreenGameMetadataPolicy {
+    static func isDeclaredGame(bundle: Bundle?) -> Bool {
+        isDeclaredGame(
+            supportsGameMode: bundle?.object(forInfoDictionaryKey: "LSSupportsGameMode") as? Bool,
+            supportsGameControllerMode: bundle?.object(forInfoDictionaryKey: "GCSupportsGameMode") as? Bool,
+            applicationCategory: bundle?.object(forInfoDictionaryKey: "LSApplicationCategoryType") as? String
+        )
+    }
+
     static func isDeclaredGame(
         supportsGameMode: Bool?,
         supportsGameControllerMode: Bool?,
@@ -339,7 +358,6 @@ enum MoveWorkspaceFocusDisposition: String, Equatable, Sendable {
     case sendOnly = "send-only"
     case follow = "follow"
     case unchangedVisible = "unchanged-visible"
-    case blockedByAppRule = "blocked-by-app-rule"
 }
 
 struct PersistedWorkspaceState: Codable, Equatable, Sendable {
@@ -573,6 +591,8 @@ struct WorkspaceEngineState: Equatable {
     let accessibilityGranted: Bool
     let profileID: UUID?
     let activeWorkspaceIDByDisplay: [String: UUID]
+    let focusedWindowHighlightWorkspaceContexts:
+        [WindowKey: FocusedWindowHighlightWorkspaceContext]
 
     init(
         currentWorkspaceID: UUID,
@@ -581,7 +601,9 @@ struct WorkspaceEngineState: Equatable {
         managedWindowCount: Int,
         accessibilityGranted: Bool,
         profileID: UUID? = nil,
-        activeWorkspaceIDByDisplay: [String: UUID] = [:]
+        activeWorkspaceIDByDisplay: [String: UUID] = [:],
+        focusedWindowHighlightWorkspaceContexts:
+            [WindowKey: FocusedWindowHighlightWorkspaceContext] = [:]
     ) {
         self.currentWorkspaceID = currentWorkspaceID
         self.activeWorkspaceIDs = activeWorkspaceIDs
@@ -590,6 +612,8 @@ struct WorkspaceEngineState: Equatable {
         self.accessibilityGranted = accessibilityGranted
         self.profileID = profileID
         self.activeWorkspaceIDByDisplay = activeWorkspaceIDByDisplay
+        self.focusedWindowHighlightWorkspaceContexts =
+            focusedWindowHighlightWorkspaceContexts
     }
 }
 
@@ -621,6 +645,7 @@ final class WorkspaceEngine {
         var restoreFrame: WindowFrame
         var displayPlacement: PersistedDisplayPlacement?
         var layoutOverride: WindowLayoutOverride
+        var workspaceRuleOverrideActive: Bool
         var admissionDecision: WindowAdmissionDecision
         var layoutOrder: Int
         var layoutWeight: Double
@@ -628,6 +653,7 @@ final class WorkspaceEngine {
 
     private struct FocusedWindowSnapshot {
         let key: WindowKey
+        let element: AXUIElement
         let frame: WindowFrame?
     }
 
@@ -705,6 +731,7 @@ final class WorkspaceEngine {
     private var appRulesByBundleIdentifier: [String: AppRule]
     private var focusFollowsMovedWindow: Bool
     private var automaticallyUnhideApplications: Bool
+    private var focusedWindowHighlightEnabled: Bool
     private var lastDisplays: [DisplaySnapshot] = []
     private var windows: [WindowKey: TrackedWindow] = [:]
     private var tiledTrees: [TiledLayoutPartitionKey: TiledNode]
@@ -717,6 +744,7 @@ final class WorkspaceEngine {
     private var lastKnownWindowLayer: [WindowKey: Int] = [:]
     private var lastFocusedWindow: [UUID: WindowKey] = [:]
     private var lastObservedFocusedWindow: WindowKey?
+    private var lastDiagnosticFocusedWindow: FocusedWindowSnapshot?
     private var programmaticFocusTarget: WindowKey?
     private var programmaticFocusDeadline = Date.distantPast
     private var programmaticFocusCorrelationID: String?
@@ -764,6 +792,7 @@ final class WorkspaceEngine {
         appRules: [AppRule] = [],
         focusFollowsMovedWindow: Bool = false,
         automaticallyUnhideApplications: Bool = false,
+        focusedWindowHighlightEnabled: Bool = false,
         stateStore: WorkspaceStateStore = WorkspaceStateStore(),
         diagnostics: DiagnosticLogger = .disabled
     ) {
@@ -775,6 +804,7 @@ final class WorkspaceEngine {
         appRulesByBundleIdentifier = Self.indexedAppRules(appRules)
         self.focusFollowsMovedWindow = focusFollowsMovedWindow
         self.automaticallyUnhideApplications = automaticallyUnhideApplications
+        self.focusedWindowHighlightEnabled = focusedWindowHighlightEnabled
         self.stateStore = stateStore
         self.diagnostics = diagnostics
         let restoredState = stateStore.load()
@@ -1163,6 +1193,7 @@ final class WorkspaceEngine {
                     tracked.layoutWeight = 1
                     reroutedCount += 1
                 }
+                tracked.workspaceRuleOverrideActive = false
                 self.windows[key] = tracked
             }
 
@@ -1396,7 +1427,10 @@ final class WorkspaceEngine {
                     tracked.restoreFrame = frame
                     tracked.displayPlacement = Self.displayPlacement(for: frame, displays: displays)
                 }
-                if let assignedWorkspaceID = next.assignedWorkspaceID {
+                if previous != next {
+                    tracked.workspaceRuleOverrideActive = false
+                }
+                if previous != next, let assignedWorkspaceID = next.assignedWorkspaceID {
                     if tracked.workspaceID != assignedWorkspaceID {
                         tracked.layoutOrder = self.nextLayoutOrder(in: assignedWorkspaceID)
                         tracked.layoutWeight = 1
@@ -1424,6 +1458,17 @@ final class WorkspaceEngine {
         }
     }
 
+    func updateFocusedWindowHighlight(enabled: Bool) {
+        queue.async { [weak self] in
+            guard let self, self.focusedWindowHighlightEnabled != enabled else { return }
+            self.focusedWindowHighlightEnabled = enabled
+            self.lastBackgroundLayoutSignature = nil
+            self.applyVisibility(displays: Self.activeDisplays())
+            self.persistState(preservingPendingRestores: true)
+            self.emitState()
+        }
+    }
+
     func admissionSupportSnapshot(
         completion: @escaping ([WindowAdmissionSupportRecord]) -> Void
     ) {
@@ -1435,6 +1480,290 @@ final class WorkspaceEngine {
             )
             DispatchQueue.main.async { completion(records) }
         }
+    }
+
+    /// Reads the existing managed-window membership without refreshing or moving windows. An app
+    /// rule affects every window from a bundle, so split membership is deliberately ambiguous and
+    /// resolves to no default rather than choosing one workspace arbitrarily.
+    func appRuleDefaultWorkspaceID(
+        forBundleIdentifier bundleIdentifier: String,
+        completion: @escaping (UUID?) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let workspaceIDs = self.windows.values.compactMap { tracked -> UUID? in
+                guard tracked.bundleIdentifier?.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+                else { return nil }
+                return tracked.workspaceID
+            }
+            let workspaceID = AppRuleDefaultWorkspacePolicy.resolve(
+                applicationIsRunning: true,
+                liveWorkspaceIDs: workspaceIDs
+            )
+            DispatchQueue.main.async { completion(workspaceID) }
+        }
+    }
+
+    /// Creates a read-only support snapshot on the engine queue. It deliberately does not call
+    /// refresh, admission, visibility, focus, or persistence paths, because copying diagnostics
+    /// must never change the subject being diagnosed.
+    func focusedWindowDiagnosticReport(now: Date = Date()) -> String {
+        queue.sync {
+            makeFocusedWindowDiagnosticReport(now: now)
+        }
+    }
+
+    private func makeFocusedWindowDiagnosticReport(now: Date) -> String {
+        let buildMode: String
+        #if DEBUG
+        buildMode = "Debug"
+        #else
+        buildMode = "Release"
+        #endif
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? "unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+            ?? "unknown"
+        let base = (
+            timestamp: now,
+            appVersion: version,
+            appBuild: build,
+            buildMode: buildMode,
+            macOSVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            session: Self.shortIdentifier(WorkspaceStateStore.currentWindowServerSession())
+        )
+
+        guard AXIsProcessTrusted() else {
+            return FocusedWindowDiagnosticReport.render(FocusedWindowDiagnosticSnapshot(
+                timestamp: base.timestamp,
+                appVersion: base.appVersion,
+                appBuild: base.appBuild,
+                buildMode: base.buildMode,
+                macOSVersion: base.macOSVersion,
+                windowServerSession: base.session,
+                targetStatus: "accessibility-unavailable",
+                targetBundleIdentifier: .unavailable("Accessibility permission is not granted"),
+                targetWindowIdentifier: .unavailable("Accessibility permission is not granted"),
+                accessibility: [],
+                management: [],
+                relatedHistory: ""
+            ))
+        }
+        let currentlyFocused = focusedWindowSnapshot().flatMap { snapshot in
+            snapshot.key.processIdentifier == ownProcessIdentifier ? nil : snapshot
+        }
+        guard let focused = currentlyFocused ?? lastDiagnosticFocusedWindow
+        else {
+            return FocusedWindowDiagnosticReport.render(FocusedWindowDiagnosticSnapshot(
+                timestamp: base.timestamp,
+                appVersion: base.appVersion,
+                appBuild: base.appBuild,
+                buildMode: base.buildMode,
+                macOSVersion: base.macOSVersion,
+                windowServerSession: base.session,
+                targetStatus: "no-target",
+                targetBundleIdentifier: .unavailable("no externally focused window"),
+                targetWindowIdentifier: .unavailable("no externally focused window"),
+                accessibility: [],
+                management: [],
+                relatedHistory: ""
+            ))
+        }
+
+        let key = focused.key
+        let usedLastExternalAnchor = currentlyFocused == nil
+        let tracked = windows[key]
+        let cachedDecision = admissionDecisionByWindow[key] ?? tracked?.admissionDecision
+        let cachedMetadata = admissionMetadataByWindow[key]
+        let bundleIdentifier = tracked?.bundleIdentifier
+            ?? cachedMetadata?.bundleIdentifier
+            ?? NSRunningApplication(processIdentifier: key.processIdentifier)?.bundleIdentifier
+        let targetStatus: String
+        if NSRunningApplication(processIdentifier: key.processIdentifier) == nil {
+            targetStatus = "stale"
+        } else if temporarilyDeferredWindowKeys.contains(key) {
+            targetStatus = "deferred"
+        } else if ignoredWindowKeys.contains(key) || cachedDecision?.disposition == .ignoredTransientPopup {
+            targetStatus = "ignored"
+        } else if tracked != nil {
+            targetStatus = "managed"
+        } else {
+            targetStatus = "unmanaged"
+        }
+
+        let appElement = AXUIElementCreateApplication(key.processIdentifier)
+        let observedFrame = Self.diagnosticFrameRead(of: focused.element)
+        let displays = Self.activeDisplays()
+        let actualFrame = AccessibilityWindow.frame(of: focused.element)
+        let resolvedDisplayIndex = actualFrame.flatMap { frame in
+            Self.displayPlacement(for: frame, displays: displays).flatMap { placement in
+                displays.firstIndex(where: { $0.identifier == placement.displayIdentifier })
+            }
+        }
+        let visibleFrame = resolvedDisplayIndex.map { displays[$0].usableBounds }
+
+        var accessibility: [(String, DiagnosticReportValue)] = [
+            ("ax-role", Self.diagnosticAttribute(focused.element, kAXRoleAttribute as CFString, as: String.self)),
+            ("ax-subrole", Self.diagnosticAttribute(focused.element, kAXSubroleAttribute as CFString, as: String.self)),
+            ("cg-window-layer", AccessibilityWindow.windowLayer(for: key.windowIdentifier).map { .value(String($0)) } ?? .unavailable("WindowServer read unavailable")),
+            ("ax-focused", Self.diagnosticAttribute(focused.element, kAXFocusedAttribute as CFString, as: Bool.self)),
+            ("ax-main", Self.diagnosticAttribute(focused.element, kAXMainAttribute as CFString, as: Bool.self)),
+            ("ax-minimized", Self.diagnosticAttribute(focused.element, kAXMinimizedAttribute as CFString, as: Bool.self)),
+            ("ax-fullscreen", Self.diagnosticAttribute(focused.element, "AXFullScreen" as CFString, as: Bool.self)),
+            ("focused-settable", Self.diagnosticSettable(kAXFocusedAttribute as CFString, on: focused.element)),
+            ("main-settable", Self.diagnosticSettable(kAXMainAttribute as CFString, on: focused.element)),
+            ("app-focused-window-settable", Self.diagnosticSettable(kAXFocusedWindowAttribute as CFString, on: appElement)),
+            ("raise-action-supported", Self.diagnosticAction(kAXRaiseAction as CFString, on: focused.element)),
+            ("observed-frame", observedFrame),
+            ("resolved-display", resolvedDisplayIndex.map { .value("display-\($0 + 1)") } ?? .unavailable("frame or display unavailable")),
+            ("resolved-display-visible-frame", visibleFrame.map { .value(Self.diagnosticRect($0)) } ?? .unavailable("frame or display unavailable")),
+        ]
+        if accessibility.isEmpty { accessibility = [] }
+
+        var management: [(String, DiagnosticReportValue)] = [
+            ("capture-source", .value(usedLastExternalAnchor ? "last-external-focus" : "current-external-focus")),
+            ("admission-disposition", cachedDecision.map { .value($0.disposition.rawValue) } ?? .unavailable("no cached admission decision")),
+            ("admission-reason", cachedDecision.map { .value($0.reason.rawValue) } ?? .unavailable("no cached admission decision")),
+            ("temporarily-deferred", .value(String(temporarilyDeferredWindowKeys.contains(key)))),
+        ]
+        if let tracked {
+            let rule = resolvedRule(for: tracked.bundleIdentifier)
+            let layout = workspaceLayout(for: tracked.workspaceID)
+            let layoutDecision = Self.layoutDecision(
+                layoutOverride: tracked.layoutOverride,
+                admissionDecision: tracked.admissionDecision,
+                rule: rule
+            )
+            let workspaceIndex = workspaces.firstIndex(where: { $0.id == tracked.workspaceID })
+            let displayIndex = tracked.displayPlacement.flatMap { placement in
+                displays.firstIndex(where: { $0.identifier == placement.displayIdentifier })
+            }
+            let treeParticipation = tiledTrees.contains { partition, tree in
+                partition.workspaceID == tracked.workspaceID && tree.contains(key)
+            }
+            let shouldBeVisible = Self.shouldWindowBeVisible(
+                workspaceID: tracked.workspaceID,
+                activeWorkspaceIDs: activeWorkspaceIDs,
+                rule: rule
+            )
+            let workspaceMembership: DiagnosticReportValue = workspaceIndex.map {
+                .value("workspace-\($0 + 1)")
+            } ?? .unavailable("workspace absent")
+            let displayMembership: DiagnosticReportValue = displayIndex.map {
+                .value("display-\($0 + 1)")
+            } ?? .unavailable("no stored display placement")
+            let expectedFrame: DiagnosticReportValue = lastSolvedTiledFrames[key].map {
+                .value(Self.diagnosticFrame($0))
+            } ?? .unavailable("no solved layout frame")
+            let expectedFrameMatch: DiagnosticReportValue
+            if let expected = lastSolvedTiledFrames[key], let actualFrame {
+                expectedFrameMatch = .value(String(AccessibilityWindow.framesMatch(actualFrame, expected)))
+            } else {
+                expectedFrameMatch = .unavailable("expected or observed frame unavailable")
+            }
+            management.append(contentsOf: [
+                ("workspace-membership", workspaceMembership),
+                ("display-membership", displayMembership),
+                ("expected-visible", .value(String(shouldBeVisible))),
+                ("parking-state", .value(shouldBeVisible ? "not-expected-parked" : "expected-parked")),
+                ("app-rule-assigned-workspace", .value(String(rule.assignedWorkspaceID != nil))),
+                ("app-rule-keeps-on-all-workspaces", .value(String(rule.keepsOnAllWorkspaces))),
+                ("app-rule-excludes-from-layout", .value(String(rule.excludesFromLayout))),
+                ("app-rule-floats-secondary", .value(String(rule.floatsSecondaryWindows))),
+                ("layout-override", .value(tracked.layoutOverride.rawValue)),
+                ("layout", .value(layout.rawValue)),
+                ("layout-decision", .value(layoutDecision.rawValue)),
+                ("layout-eligible", .value(String(layoutDecision.includesInLayout))),
+                ("tiled-tree-participation", .value(String(treeParticipation))),
+                ("expected-frame", expectedFrame),
+                ("expected-frame-matches-observed", expectedFrameMatch),
+            ])
+        } else {
+            management.append(contentsOf: [
+                ("workspace-membership", .unavailable("window is not managed")),
+                ("display-membership", .unavailable("window is not managed")),
+                ("parking-state", .unavailable("window is not managed")),
+                ("layout-eligible", .unavailable("window is not managed")),
+                ("tiled-tree-participation", .value("false")),
+                ("expected-frame", .unavailable("window is not managed")),
+                ("expected-frame-matches-observed", .unavailable("window is not managed")),
+            ])
+        }
+
+        let token = Self.diagnosticWindowKey(key)
+        return FocusedWindowDiagnosticReport.render(FocusedWindowDiagnosticSnapshot(
+            timestamp: base.timestamp,
+            appVersion: base.appVersion,
+            appBuild: base.appBuild,
+            buildMode: base.buildMode,
+            macOSVersion: base.macOSVersion,
+            windowServerSession: base.session,
+            targetStatus: targetStatus,
+            targetBundleIdentifier: bundleIdentifier.map(DiagnosticReportValue.value) ?? .unavailable("bundle identifier unavailable"),
+            targetWindowIdentifier: .value(token),
+            accessibility: accessibility,
+            management: management,
+            relatedHistory: diagnostics.relatedDiagnosticsText(windowToken: token)
+        ))
+    }
+
+    private static func diagnosticAttribute<T>(
+        _ element: AXUIElement,
+        _ attribute: CFString,
+        as type: T.Type
+    ) -> DiagnosticReportValue {
+        var raw: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, attribute, &raw)
+        switch result {
+        case .success:
+            guard let value = raw as? T else { return .failed("unexpected value type") }
+            return .value(String(describing: value))
+        case .attributeUnsupported, .noValue:
+            return .unavailable("unsupported")
+        default:
+            return .failed("AXError \(result.rawValue)")
+        }
+    }
+
+    private static func diagnosticSettable(
+        _ attribute: CFString,
+        on element: AXUIElement
+    ) -> DiagnosticReportValue {
+        var settable = DarwinBoolean(false)
+        let result = AXUIElementIsAttributeSettable(element, attribute, &settable)
+        switch result {
+        case .success: return .value(String(settable.boolValue))
+        case .attributeUnsupported, .noValue: return .unavailable("unsupported")
+        default: return .failed("AXError \(result.rawValue)")
+        }
+    }
+
+    private static func diagnosticAction(
+        _ action: CFString,
+        on element: AXUIElement
+    ) -> DiagnosticReportValue {
+        var raw: CFArray?
+        let result = AXUIElementCopyActionNames(element, &raw)
+        switch result {
+        case .success:
+            let names = raw as? [String] ?? []
+            return .value(String(names.contains(action as String)))
+        case .actionUnsupported, .noValue: return .unavailable("unsupported")
+        default: return .failed("AXError \(result.rawValue)")
+        }
+    }
+
+    private static func diagnosticFrameRead(of element: AXUIElement) -> DiagnosticReportValue {
+        let position = diagnosticAttribute(element, kAXPositionAttribute as CFString, as: AXValue.self)
+        let size = diagnosticAttribute(element, kAXSizeAttribute as CFString, as: AXValue.self)
+        guard case .value = position, case .value = size else {
+            if case let .failed(reason) = position { return .failed("position \(reason)") }
+            if case let .failed(reason) = size { return .failed("size \(reason)") }
+            return .unavailable("position or size unsupported")
+        }
+        return AccessibilityWindow.frame(of: element)
+            .map { .value(diagnosticFrame($0)) }
+            ?? .failed("AXValue conversion failed")
     }
 
     func switchToWorkspace(_ id: UUID, correlationID: String? = nil) {
@@ -2165,7 +2494,8 @@ final class WorkspaceEngine {
             let layout = self.workspaces[workspaceIndex].layout
             let configuration = self.workspaces[workspaceIndex].layoutConfiguration
                 ?? .aeroSpaceUserDefaults
-            let orientation = configuration.orientation.resolved(for: display.usableBounds)
+            let managedBounds = self.managedLayoutBounds(display.usableBounds)
+            let orientation = configuration.orientation.resolved(for: managedBounds)
             let destinationKey: WindowKey
             var treeFingerprints: (before: String, after: String)?
             var tiledMoveStrategy: TiledDirectionalMoveStrategy?
@@ -2215,7 +2545,7 @@ final class WorkspaceEngine {
                     tree: currentTree,
                     focusedWindow: focused.key,
                     direction: direction,
-                    displayBounds: display.usableBounds,
+                    displayBounds: managedBounds,
                     configuration: configuration
                 ) else {
                     self.emitCommandFeedback("The window is already at that edge of the Tiled layout.")
@@ -2331,7 +2661,8 @@ final class WorkspaceEngine {
                 self.emitCommandFeedback("Resize needs at least two layout windows.")
                 return
             }
-            let layoutBounds = Self.insetLayoutBounds(display.usableBounds, gaps: configuration.gaps)
+            let managedBounds = self.managedLayoutBounds(display.usableBounds)
+            let layoutBounds = Self.insetLayoutBounds(managedBounds, gaps: configuration.gaps)
             let orientation = configuration.orientation.resolved(for: layoutBounds)
             let availableLength = Double(
                 orientation == .horizontal ? layoutBounds.width : layoutBounds.height
@@ -2371,7 +2702,7 @@ final class WorkspaceEngine {
                     participants: participants,
                     focusedIndex: focusedIndex,
                     deltaPoints: Double(delta),
-                    displayBounds: display.usableBounds,
+                    displayBounds: managedBounds,
                     configuration: configuration
                 ) else {
                     self.emitCommandFeedback("That Tiled split is already at its safe limit.")
@@ -3158,25 +3489,10 @@ final class WorkspaceEngine {
             let disposition = Self.moveWorkspaceFocusDisposition(
                 sourceWorkspaceID: sourceWorkspaceID,
                 requestedWorkspaceID: workspaceID,
-                assignedWorkspaceID: rule.assignedWorkspaceID,
                 keepsOnAllWorkspaces: rule.keepsOnAllWorkspaces,
                 configuredFollow: self.focusFollowsMovedWindow,
                 followOverride: followOverride
             )
-            guard disposition != .blockedByAppRule else {
-                self.diagnostics.log(
-                    category: "move-window",
-                    event: "blocked",
-                    correlation: correlationID,
-                    fields: [
-                        "window": Self.diagnosticWindowKey(focusedKey),
-                        "reason": disposition.rawValue,
-                        "source-workspace": Self.shortIdentifier(sourceWorkspaceID.uuidString),
-                        "requested-workspace": Self.shortIdentifier(workspaceID.uuidString),
-                    ]
-                )
-                return
-            }
             guard disposition != .unchangedVisible else {
                 self.diagnostics.log(
                     category: "move-window",
@@ -3190,7 +3506,7 @@ final class WorkspaceEngine {
                 )
                 return
             }
-            let effectiveWorkspaceID = rule.assignedWorkspaceID ?? workspaceID
+            let effectiveWorkspaceID = workspaceID
             guard effectiveWorkspaceID != sourceWorkspaceID else { return }
 
             let replacementOrder: [WindowKey]
@@ -3246,6 +3562,10 @@ final class WorkspaceEngine {
                 }
             }
             tracked.workspaceID = effectiveWorkspaceID
+            tracked.workspaceRuleOverrideActive = Self.manualWorkspaceRuleOverrideIsActive(
+                assignedWorkspaceID: rule.assignedWorkspaceID,
+                requestedWorkspaceID: effectiveWorkspaceID
+            )
             tracked.layoutOrder = self.nextLayoutOrder(in: effectiveWorkspaceID)
             tracked.layoutWeight = 1
             self.windows[focusedKey] = tracked
@@ -3343,19 +3663,30 @@ final class WorkspaceEngine {
     static func moveWorkspaceFocusDisposition(
         sourceWorkspaceID: UUID,
         requestedWorkspaceID: UUID,
-        assignedWorkspaceID: UUID?,
         keepsOnAllWorkspaces: Bool,
         configuredFollow: Bool,
         followOverride: Bool?
     ) -> MoveWorkspaceFocusDisposition {
-        if let assignedWorkspaceID, assignedWorkspaceID != requestedWorkspaceID {
-            return .blockedByAppRule
-        }
-        let destination = assignedWorkspaceID ?? requestedWorkspaceID
-        if destination == sourceWorkspaceID || keepsOnAllWorkspaces {
+        if requestedWorkspaceID == sourceWorkspaceID || keepsOnAllWorkspaces {
             return .unchangedVisible
         }
         return (followOverride ?? configuredFollow) ? .follow : .sendOnly
+    }
+
+    static func manualWorkspaceRuleOverrideIsActive(
+        assignedWorkspaceID: UUID?,
+        requestedWorkspaceID: UUID
+    ) -> Bool {
+        assignedWorkspaceID.map { $0 != requestedWorkspaceID } ?? false
+    }
+
+    static func workspaceIDAfterRuleRefresh(
+        currentWorkspaceID: UUID,
+        assignedWorkspaceID: UUID?,
+        manualOverrideActive: Bool
+    ) -> UUID {
+        guard !manualOverrideActive else { return currentWorkspaceID }
+        return assignedWorkspaceID ?? currentWorkspaceID
     }
 
     static func moveReplacementFocusOrder<T: Equatable>(
@@ -3748,6 +4079,7 @@ final class WorkspaceEngine {
         )
         let configuration = workspaceLayoutConfiguration(for: tracked.workspaceID)
             ?? .aeroSpaceUserDefaults
+        let managedBounds = managedLayoutBounds(display.usableBounds)
         let partition = TiledLayoutPartitionKey(
             workspaceID: tracked.workspaceID,
             displayIdentifier: display.identifier
@@ -3760,10 +4092,10 @@ final class WorkspaceEngine {
                   weights: participants.map {
                       CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
                   },
-                  orientation: configuration.orientation.resolved(for: display.usableBounds)
+                  orientation: configuration.orientation.resolved(for: managedBounds)
               ), let expectedFrames = try? TiledLayoutEngine.frames(
                   for: currentTree,
-                  in: display.usableBounds,
+                  in: managedBounds,
                   configuration: configuration
               ), let expectedFocusedFrame = expectedFrames[focusedWindow],
               let lastSolvedFrame = lastSolvedTiledFrames[focusedWindow],
@@ -3884,6 +4216,7 @@ final class WorkspaceEngine {
 
         let configuration = workspaceLayoutConfiguration(for: tracked.workspaceID)
             ?? .aeroSpaceUserDefaults
+        let managedBounds = managedLayoutBounds(display.usableBounds)
         let partition = TiledLayoutPartitionKey(
             workspaceID: tracked.workspaceID,
             displayIdentifier: display.identifier
@@ -3894,10 +4227,10 @@ final class WorkspaceEngine {
             weights: participants.map {
                 CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
             },
-            orientation: configuration.orientation.resolved(for: display.usableBounds)
+            orientation: configuration.orientation.resolved(for: managedBounds)
         ), let expectedFrames = try? TiledLayoutEngine.frames(
             for: currentTree,
-            in: display.usableBounds,
+            in: managedBounds,
             configuration: configuration
         ), let expectedFocusedFrame = expectedFrames[focusedWindow],
               let lastSolvedFrame = lastSolvedTiledFrames[focusedWindow],
@@ -3906,7 +4239,7 @@ final class WorkspaceEngine {
                   currentTree,
                   focusedWindow: focusedWindow,
                   observedFrame: observedFrame,
-                  displayBounds: display.usableBounds,
+                  displayBounds: managedBounds,
                   configuration: configuration
               ), let effectiveShares = TiledLayoutEngine.leafShares(resizedTree)
         else { return }
@@ -4082,6 +4415,7 @@ final class WorkspaceEngine {
         )
         guard participants.count > 1, participants.contains(focusedWindow) else { return nil }
         let configuration = workspace.layoutConfiguration ?? .aeroSpaceUserDefaults
+        let managedBounds = managedLayoutBounds(display.usableBounds)
         let partition = TiledLayoutPartitionKey(
             workspaceID: workspaceID,
             displayIdentifier: displayIdentifier
@@ -4092,7 +4426,7 @@ final class WorkspaceEngine {
             weights: participants.map {
                 CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
             },
-            orientation: configuration.orientation.resolved(for: display.usableBounds)
+            orientation: configuration.orientation.resolved(for: managedBounds)
         ) else { return nil }
         let previews = Dictionary(
             uniqueKeysWithValues: VisualPlacement.compassOrder.compactMap { placement in
@@ -4100,7 +4434,7 @@ final class WorkspaceEngine {
                     focusedWindow,
                     at: placement,
                     in: tree,
-                    bounds: display.usableBounds,
+                    bounds: managedBounds,
                     configuration: configuration
                 )).map { (placement, $0) }
             }
@@ -4219,8 +4553,9 @@ final class WorkspaceEngine {
                 correlationID: nil
             )
             let participantIndex = focusedKey.flatMap { layoutParticipants.firstIndex(of: $0) }
+            let managedBounds = self.managedLayoutBounds(display.usableBounds)
             let resolvedOrientation = (workspace.layoutConfiguration?.orientation ?? .automatic)
-                .resolved(for: display.usableBounds)
+                .resolved(for: managedBounds)
             var availableMoveDirections = Set<WindowDirection>()
             if workspace.layout != .none,
                let participantIndex,
@@ -4245,7 +4580,7 @@ final class WorkspaceEngine {
                 weights: layoutParticipants.map {
                     CGFloat(Self.validLayoutWeight(self.windows[$0]?.layoutWeight))
                 },
-                orientation: layoutConfiguration.orientation.resolved(for: display.usableBounds)
+                orientation: layoutConfiguration.orientation.resolved(for: managedBounds)
             ) : nil
             let tiledTreeFingerprint = tiledTree.map(TiledLayoutEngine.fingerprint) ?? "none"
             let focusedToken = focusedWindow.map {
@@ -4387,6 +4722,7 @@ final class WorkspaceEngine {
         queue.async { [weak self] in
             guard let self else { return }
             self.refreshWindows()
+            self.reapplyWorkspaceRules(to: Array(self.windows.keys))
             self.applyVisibleWindows(self.windows.values, displays: Self.activeDisplays())
             self.persistState(preservingPendingRestores: true)
             self.emitState()
@@ -4420,10 +4756,17 @@ final class WorkspaceEngine {
             )
             let workspaceID = workspaceResolution.workspaceID
             guard self.isWorkspaceActive(workspaceID) else { return }
+            let initialTargetKeys = self.windows.values
+                .filter { $0.workspaceID == workspaceID }
+                .map(\.key)
+            let reroutedByRules = self.reapplyWorkspaceRules(to: initialTargetKeys)
+            let resetFocusContextKey = focusContextKey.flatMap { key in
+                self.windows[key]?.workspaceID == workspaceID ? key : nil
+            }
             let verificationToken = self.beginCorrelatedAction(
                 correlationID: correlationID,
                 interactionDisplayIdentifier: interactionDisplay.identifier,
-                expectedFocusTarget: focusContextKey
+                expectedFocusTarget: resetFocusContextKey
             )
 
             self.diagnostics.log(
@@ -4434,13 +4777,14 @@ final class WorkspaceEngine {
                     "workspace": Self.shortIdentifier(workspaceID.uuidString),
                     "display": Self.shortIdentifier(interactionDisplay.identifier),
                     "display-mode": self.displayMode.rawValue,
-                    "focused-window": focusContextKey.map(Self.diagnosticWindowKey) ?? "none",
+                    "focused-window": resetFocusContextKey.map(Self.diagnosticWindowKey) ?? "none",
+                    "rules-rerouted-windows": String(reroutedByRules),
                 ]
             )
 
-            let targetKeys = self.windows.values
-                .filter { $0.workspaceID == workspaceID }
-                .map(\.key)
+            let targetKeys = initialTargetKeys.filter {
+                self.windows[$0]?.workspaceID == workspaceID
+            }
             var repairs: [FrameChange] = []
             for key in targetKeys {
                 guard var tracked = self.windows[key] else { continue }
@@ -4477,18 +4821,22 @@ final class WorkspaceEngine {
                     partition.displayIdentifier != interactionDisplay.identifier
             }
             self.applyFrameChanges(repairs, correlationID: correlationID)
-            if let focusContextKey, self.windows[focusContextKey] != nil {
+            if let resetFocusContextKey, self.windows[resetFocusContextKey] != nil {
                 self.prepareProgrammaticFocusIntent(
-                    focusContextKey,
+                    resetFocusContextKey,
                     correlationID: correlationID,
                     duration: 0.8
                 )
             }
-            self.applyVisibleWindows(
-                self.windows.values.filter { $0.workspaceID == workspaceID },
-                displays: displays,
-                correlationID: correlationID
-            )
+            if reroutedByRules > 0 {
+                self.applyVisibility(displays: displays, correlationID: correlationID)
+            } else {
+                self.applyVisibleWindows(
+                    self.windows.values.filter { $0.workspaceID == workspaceID },
+                    displays: displays,
+                    correlationID: correlationID
+                )
+            }
             self.lastBackgroundLayoutSignature = self.backgroundLayoutSignature(displays: displays)
             self.persistState(preservingPendingRestores: true)
             self.emitState()
@@ -4503,7 +4851,7 @@ final class WorkspaceEngine {
                 ]
             )
             self.verifyFocusAfterAction(
-                expected: focusContextKey,
+                expected: resetFocusContextKey,
                 correlationID: correlationID,
                 action: "reset-workspace",
                 token: verificationToken,
@@ -4630,13 +4978,14 @@ final class WorkspaceEngine {
             return false
         }
         let configuration = workspace.layoutConfiguration ?? .aeroSpaceUserDefaults
+        let managedBounds = managedLayoutBounds(display.usableBounds)
         guard let currentTree = TiledLayoutEngine.reconciled(
             tiledTrees[commit.partition],
             windowKeys: participants,
             weights: participants.map {
                 CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
             },
-            orientation: configuration.orientation.resolved(for: display.usableBounds)
+            orientation: configuration.orientation.resolved(for: managedBounds)
         ), currentTree == commit.originalTree else {
             diagnostics.log(
                 category: diagnosticCategory,
@@ -4978,10 +5327,12 @@ final class WorkspaceEngine {
         guard wakeReconciliationState.isCurrent(generation) else { return }
         let correlationID = "wake-\(generation)"
 
-        // Visibility and layout are applied exactly once, from the final fresh snapshot. Deferred
-        // windows remain tracked for a later successful enumeration but receive no AX writes now.
+        // Visibility and layout start from the final fresh snapshot. Deferred windows remain
+        // tracked for a later successful enumeration but receive no AX writes now. Split frames
+        // are verified separately because AX write success does not prove that an app retained them.
+        var expectedLayoutFrames: [WindowKey: WindowFrame] = [:]
         if windowServerSessionValidated {
-            applyVisibility(
+            expectedLayoutFrames = applyVisibility(
                 displays: report.displays,
                 correlationID: correlationID,
                 eligibleWindowKeys: report.writeEligibleWindowKeys
@@ -4991,10 +5342,202 @@ final class WorkspaceEngine {
                 displays: report.displays,
                 correlationID: correlationID
             )
-            lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: report.displays)
             persistState(preservingPendingRestores: true)
         }
         emitState()
+
+        guard windowServerSessionValidated, !expectedLayoutFrames.isEmpty else {
+            completeWakeReconciliation(
+                report: report,
+                generation: generation,
+                degradedReason: degradedReason,
+                layoutApplyCount: windowServerSessionValidated ? 1 : 0,
+                recordLayoutSignature: windowServerSessionValidated
+            )
+            return
+        }
+
+        scheduleWakeLayoutVerification(
+            report: report,
+            expectedFrames: expectedLayoutFrames,
+            generation: generation,
+            degradedReason: degradedReason,
+            verificationAttemptIndex: 0,
+            layoutApplyCount: 1
+        )
+    }
+
+    private func scheduleWakeLayoutVerification(
+        report: WindowRefreshReport,
+        expectedFrames: [WindowKey: WindowFrame],
+        generation: UInt64,
+        degradedReason: String?,
+        verificationAttemptIndex: Int,
+        layoutApplyCount: Int
+    ) {
+        let delays = WakeLayoutVerificationPolicy.verificationDelaysMilliseconds
+        let delay = delays[min(verificationAttemptIndex, delays.count - 1)]
+        wakeReconciliationWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.verifyWakeLayout(
+                report: report,
+                expectedFrames: expectedFrames,
+                generation: generation,
+                degradedReason: degradedReason,
+                verificationAttemptIndex: verificationAttemptIndex,
+                layoutApplyCount: layoutApplyCount
+            )
+        }
+        wakeReconciliationWorkItem = workItem
+        queue.asyncAfter(deadline: .now() + .milliseconds(delay), execute: workItem)
+    }
+
+    private func verifyWakeLayout(
+        report: WindowRefreshReport,
+        expectedFrames: [WindowKey: WindowFrame],
+        generation: UInt64,
+        degradedReason: String?,
+        verificationAttemptIndex: Int,
+        layoutApplyCount: Int
+    ) {
+        guard wakeReconciliationState.isCurrent(generation) else { return }
+        wakeReconciliationWorkItem = nil
+        let correlationID = "wake-\(generation)"
+
+        // A signal arriving after the layout solve invalidates its display snapshot. Start a fresh
+        // readiness attempt in the same generation instead of verifying obsolete geometry.
+        if wakeReceivedAdditionalSignal {
+            wakeAttemptIndex = 0
+            wakePreviousTopologySignature = report.topologySignature
+            diagnostics.log(
+                category: "lifecycle",
+                event: "wake-layout-verification-superseded",
+                correlation: correlationID,
+                fields: ["reason": "new-lifecycle-signal"]
+            )
+            scheduleWakeReconciliationAttempt(generation: generation, afterMilliseconds: 0)
+            return
+        }
+
+        let stillEligibleExpectedFrames = expectedFrames.filter { key, _ in
+            guard let tracked = windows[key],
+                  isWorkspaceActive(tracked.workspaceID),
+                  workspaceLayout(for: tracked.workspaceID) != .none,
+                  Self.shouldIncludeInLayout(
+                    layoutOverride: tracked.layoutOverride,
+                    admissionDecision: tracked.admissionDecision,
+                    rule: resolvedRule(for: tracked.bundleIdentifier)
+                  )
+            else { return false }
+            return FullscreenSessionPolicy.allowsGeometryWrite(
+                hasFullscreenSession: fullscreenSessions[key] != nil,
+                isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains(key)
+            )
+        }
+        let observedFrames = Dictionary(uniqueKeysWithValues: stillEligibleExpectedFrames.keys.compactMap {
+            key -> (WindowKey, WindowFrame)? in
+            guard let tracked = windows[key],
+                  let frame = AccessibilityWindow.frame(of: tracked.element)
+            else { return nil }
+            return (key, frame)
+        })
+        let mismatchedKeys = WakeLayoutVerificationPolicy.mismatchedWindowKeys(
+            expectedFrames: stillEligibleExpectedFrames,
+            observedFrames: observedFrames
+        )
+        diagnostics.log(
+            category: "lifecycle",
+            event: "wake-layout-verification",
+            correlation: correlationID,
+            fields: [
+                "attempt": String(verificationAttemptIndex + 1),
+                "target-count": String(stillEligibleExpectedFrames.count),
+                "mismatch-count": String(mismatchedKeys.count),
+            ]
+        )
+
+        guard !mismatchedKeys.isEmpty else {
+            completeWakeReconciliation(
+                report: report,
+                generation: generation,
+                degradedReason: degradedReason,
+                layoutApplyCount: layoutApplyCount,
+                recordLayoutSignature: true
+            )
+            return
+        }
+
+        let nextAttempt = verificationAttemptIndex + 1
+        guard nextAttempt < WakeLayoutVerificationPolicy.verificationDelaysMilliseconds.count else {
+            for key in mismatchedKeys {
+                diagnostics.log(
+                    category: "lifecycle",
+                    event: "wake-layout-frame-mismatch",
+                    correlation: correlationID,
+                    fields: [
+                        "window": Self.diagnosticWindowKey(key),
+                        "expected-frame": stillEligibleExpectedFrames[key]
+                            .map(Self.diagnosticFrame) ?? "unknown",
+                        "observed-frame": observedFrames[key]
+                            .map(Self.diagnosticFrame) ?? "unavailable",
+                    ]
+                )
+            }
+            let reason = [degradedReason, "layout-frame-mismatch"]
+                .compactMap { $0 }
+                .joined(separator: ",")
+            completeWakeReconciliation(
+                report: report,
+                generation: generation,
+                degradedReason: reason,
+                layoutApplyCount: layoutApplyCount,
+                recordLayoutSignature: false
+            )
+            return
+        }
+
+        let retryChanges = mismatchedKeys.compactMap { key -> FrameChange? in
+            guard let tracked = windows[key], let frame = stillEligibleExpectedFrames[key] else {
+                return nil
+            }
+            return FrameChange(window: tracked, frame: frame)
+        }
+        applyFrameChanges(retryChanges, correlationID: correlationID)
+        diagnostics.log(
+            category: "lifecycle",
+            event: "wake-layout-retry-scheduled",
+            correlation: correlationID,
+            fields: [
+                "delay-ms": String(
+                    WakeLayoutVerificationPolicy.verificationDelaysMilliseconds[nextAttempt]
+                ),
+                "window-count": String(retryChanges.count),
+            ]
+        )
+        scheduleWakeLayoutVerification(
+            report: report,
+            expectedFrames: stillEligibleExpectedFrames,
+            generation: generation,
+            degradedReason: degradedReason,
+            verificationAttemptIndex: nextAttempt,
+            layoutApplyCount: layoutApplyCount + 1
+        )
+    }
+
+    private func completeWakeReconciliation(
+        report: WindowRefreshReport,
+        generation: UInt64,
+        degradedReason: String?,
+        layoutApplyCount: Int,
+        recordLayoutSignature: Bool
+    ) {
+        guard wakeReconciliationState.isCurrent(generation) else { return }
+        let correlationID = "wake-\(generation)"
+        if recordLayoutSignature {
+            lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: report.displays)
+        } else {
+            lastBackgroundLayoutSignature = nil
+        }
         _ = wakeReconciliationState.complete(generation: generation)
         wakeReconciliationWorkItem = nil
         if degradedReason == nil {
@@ -5013,7 +5556,7 @@ final class WorkspaceEngine {
                 "reason": degradedReason ?? "ready",
                 "active-workspaces": diagnosticActiveWorkspaceMap(),
                 "deferred-window-count": String(report.deferredWindowKeys.count),
-                "layout-apply-count": windowServerSessionValidated ? "1" : "0",
+                "layout-apply-count": String(layoutApplyCount),
             ]
         )
     }
@@ -5124,6 +5667,7 @@ final class WorkspaceEngine {
         lastKnownWindowLayer.removeAll()
         lastFocusedWindow.removeAll()
         lastObservedFocusedWindow = nil
+        lastDiagnosticFocusedWindow = nil
         temporarilyDeferredWindowKeys.removeAll()
         fullscreenSessions.removeAll()
         fullscreenAuthoritativeFalseCounts.removeAll()
@@ -5308,9 +5852,11 @@ final class WorkspaceEngine {
                     let previousAdmissionDecision = tracked.admissionDecision
                     tracked.admissionDecision = admissionDecision
                     let rule = resolvedRule(for: tracked.bundleIdentifier)
-                    if let assignedWorkspaceID = rule.assignedWorkspaceID {
-                        tracked.workspaceID = assignedWorkspaceID
-                    }
+                    tracked.workspaceID = Self.workspaceIDAfterRuleRefresh(
+                        currentWorkspaceID: tracked.workspaceID,
+                        assignedWorkspaceID: rule.assignedWorkspaceID,
+                        manualOverrideActive: tracked.workspaceRuleOverrideActive
+                    )
                     let layoutDecision = Self.layoutDecision(
                         layoutOverride: tracked.layoutOverride,
                         admissionDecision: tracked.admissionDecision,
@@ -5379,6 +5925,7 @@ final class WorkspaceEngine {
                         restoreFrame: desiredFrame,
                         displayPlacement: placement,
                         layoutOverride: Self.restoredLayoutOverride(remembered?.layoutOverride),
+                        workspaceRuleOverrideActive: false,
                         admissionDecision: admissionDecision,
                         layoutOrder: remembered?.layoutOrder ?? self.nextLayoutOrder(in: workspaceID),
                         layoutWeight: Self.validLayoutWeight(remembered?.layoutWeight)
@@ -5539,7 +6086,12 @@ final class WorkspaceEngine {
         deferredWindowKeys = deferredWindowKeys.intersection(windows.keys)
         temporarilyDeferredWindowKeys = deferredWindowKeys
 
-        let focused = observeFocus ? focusedWindowKey() : nil
+        let focusedSnapshot = observeFocus ? focusedWindowSnapshot() : nil
+        if let focusedSnapshot,
+           focusedSnapshot.key.processIdentifier != ownProcessIdentifier {
+            lastDiagnosticFocusedWindow = focusedSnapshot
+        }
+        let focused = focusedSnapshot?.key
         if observeFocus {
             reconcileForegroundFullscreenGameSession(focusedWindow: focused)
         } else if let foregroundFullscreenGameSessionKey,
@@ -5722,11 +6274,7 @@ final class WorkspaceEngine {
             ?? "pid:\(application.processIdentifier)"
         if let cached = declaredGameByBundleIdentifier[cacheKey] { return cached }
         let bundle = application.bundleURL.flatMap { Bundle(url: $0) }
-        let declared = FullscreenGameMetadataPolicy.isDeclaredGame(
-            supportsGameMode: bundle?.object(forInfoDictionaryKey: "LSSupportsGameMode") as? Bool,
-            supportsGameControllerMode: bundle?.object(forInfoDictionaryKey: "GCSupportsGameMode") as? Bool,
-            applicationCategory: bundle?.object(forInfoDictionaryKey: "LSApplicationCategoryType") as? String
-        )
+        let declared = FullscreenGameMetadataPolicy.isDeclaredGame(bundle: bundle)
         declaredGameByBundleIdentifier[cacheKey] = declared
         return declared
     }
@@ -5985,7 +6533,11 @@ final class WorkspaceEngine {
                 .sorted()
                 .joined(separator: ",")
         }
-        var parts = ["mode=\(displayMode.rawValue)", "active=\(fullActiveMap)"]
+        var parts = [
+            "mode=\(displayMode.rawValue)",
+            "active=\(fullActiveMap)",
+            "focused-window-highlight=\(focusedWindowHighlightEnabled)",
+        ]
         parts.append(contentsOf: displays.sorted { $0.identifier < $1.identifier }.map {
             "display=\($0.identifier)|\(Self.diagnosticRect($0.bounds))|\(Self.diagnosticRect($0.usableBounds))|\($0.isMain)"
         })
@@ -6740,6 +7292,7 @@ final class WorkspaceEngine {
         ) else { return nil }
         return FocusedWindowSnapshot(
             key: key,
+            element: focusedWindow,
             frame: AccessibilityWindow.frame(of: focusedWindow)
         )
     }
@@ -6759,7 +7312,11 @@ final class WorkspaceEngine {
         let fallbackKeys = [recentInteractionFocusTarget, lastObservedFocusedWindow].compactMap { $0 }
         for key in fallbackKeys {
             guard sendOnlyFocusSuppression[key] == nil, let tracked = windows[key] else { continue }
-            return FocusedWindowSnapshot(key: key, frame: AccessibilityWindow.frame(of: tracked.element))
+            return FocusedWindowSnapshot(
+                key: key,
+                element: tracked.element,
+                frame: AccessibilityWindow.frame(of: tracked.element)
+            )
         }
         return nil
     }
@@ -6916,11 +7473,12 @@ final class WorkspaceEngine {
         focusedWindowSnapshot()?.key
     }
 
+    @discardableResult
     private func applyVisibility(
         displays: [DisplaySnapshot]? = nil,
         correlationID: String? = nil,
         eligibleWindowKeys: Set<WindowKey>? = nil
-    ) {
+    ) -> [WindowKey: WindowFrame] {
         let displays = displays ?? Self.activeDisplays()
         let parkingPosition = parkingPosition(displays: displays)
         let activeWorkspaceIDs = activeWorkspaceIDs
@@ -6931,7 +7489,7 @@ final class WorkspaceEngine {
 
         // Restore first, then hide. This ordering is intentional: it minimizes the interval in
         // which neither workspace is visible and matches the low-flicker ordering used by AeroSpork.
-        applyVisibleWindows(
+        let expectedLayoutFrames = applyVisibleWindows(
             windows.values.filter {
                 isEligible($0) &&
                 Self.shouldWindowBeVisible(
@@ -6955,6 +7513,7 @@ final class WorkspaceEngine {
             .map { PositionChange(window: $0, position: parkingPosition) },
             correlationID: correlationID
         )
+        return expectedLayoutFrames
     }
 
     private func applyVisibilityTransition(
@@ -6983,13 +7542,15 @@ final class WorkspaceEngine {
         )
     }
 
+    @discardableResult
     private func applyVisibleWindows<S: Sequence>(
         _ trackedWindows: S,
         displays: [DisplaySnapshot],
         correlationID: String? = nil
-    ) where S.Element == TrackedWindow {
+    ) -> [WindowKey: WindowFrame] where S.Element == TrackedWindow {
         var positionChanges: [PositionChange] = []
         var frameChanges: [FrameChange] = []
+        var expectedLayoutFrames: [WindowKey: WindowFrame] = [:]
         let writeEligibleWindows = trackedWindows.filter {
             FullscreenSessionPolicy.allowsGeometryWrite(
                 hasFullscreenSession: fullscreenSessions[$0.key] != nil,
@@ -7080,9 +7641,10 @@ final class WorkspaceEngine {
                     ordered.firstIndex(where: { $0.key == key })
                 }
                 let layoutConfiguration = self.workspaceLayoutConfiguration(for: workspaceID)
-                let layoutBounds = layout == .accordion || layoutConfiguration != nil
+                let rawLayoutBounds = layout == .accordion || layoutConfiguration != nil
                     ? display.usableBounds
                     : display.bounds
+                let layoutBounds = managedLayoutBounds(rawLayoutBounds)
                 if layout == .tiled {
                     let configuration = layoutConfiguration ?? .aeroSpaceUserDefaults
                     let partition = TiledLayoutPartitionKey(
@@ -7103,6 +7665,7 @@ final class WorkspaceEngine {
                         for tracked in ordered {
                             guard let frame = frames[tracked.key] else { continue }
                             lastSolvedTiledFrames[tracked.key] = frame
+                            expectedLayoutFrames[tracked.key] = frame
                             frameChanges.append(FrameChange(window: tracked, frame: frame))
                         }
                     }
@@ -7115,9 +7678,10 @@ final class WorkspaceEngine {
                         tiledWeights: ordered.map { CGFloat(Self.validLayoutWeight($0.layoutWeight)) },
                         layoutConfiguration: layoutConfiguration
                     )
-                    frameChanges.append(contentsOf: zip(ordered, frames).map {
-                        FrameChange(window: $0.0, frame: $0.1)
-                    })
+                    for (tracked, frame) in zip(ordered, frames) {
+                        expectedLayoutFrames[tracked.key] = frame
+                        frameChanges.append(FrameChange(window: tracked, frame: frame))
+                    }
                 }
                 diagnostics.log(
                     category: "layout",
@@ -7136,10 +7700,18 @@ final class WorkspaceEngine {
         }
         applyFrameChanges(frameChanges, correlationID: correlationID)
         applyPositionChanges(positionChanges, correlationID: correlationID)
+        return expectedLayoutFrames
     }
 
     private func workspaceLayout(for workspaceID: UUID) -> WorkspaceLayout {
         workspaces.first(where: { $0.id == workspaceID })?.layout ?? .none
+    }
+
+    private func managedLayoutBounds(_ bounds: CGRect) -> CGRect {
+        FocusedWindowHighlightPolicy.reservingScreenEdgeClearance(
+            in: bounds,
+            enabled: focusedWindowHighlightEnabled
+        )
     }
 
     private func workspaceLayoutConfiguration(
@@ -7176,6 +7748,28 @@ final class WorkspaceEngine {
         guard let bundleIdentifier else { return .none }
         let rule = (rules ?? appRulesByBundleIdentifier)[bundleIdentifier.lowercased()]
         return rule?.resolved(validWorkspaceIDs: Set(workspaces.map(\.id))) ?? .none
+    }
+
+    @discardableResult
+    private func reapplyWorkspaceRules(to keys: [WindowKey]) -> Int {
+        var reroutedCount = 0
+        for key in keys {
+            guard var tracked = windows[key] else { continue }
+            let sourceWorkspaceID = tracked.workspaceID
+            let assignedWorkspaceID = resolvedRule(for: tracked.bundleIdentifier).assignedWorkspaceID
+            tracked.workspaceRuleOverrideActive = false
+            if let assignedWorkspaceID, assignedWorkspaceID != sourceWorkspaceID {
+                tracked.workspaceID = assignedWorkspaceID
+                tracked.layoutOrder = nextLayoutOrder(in: assignedWorkspaceID)
+                tracked.layoutWeight = 1
+                if lastFocusedWindow[sourceWorkspaceID] == key {
+                    lastFocusedWindow.removeValue(forKey: sourceWorkspaceID)
+                }
+                reroutedCount += 1
+            }
+            windows[key] = tracked
+        }
+        return reroutedCount
     }
 
     private func captureCurrentFrames(
@@ -7636,6 +8230,7 @@ final class WorkspaceEngine {
         CGGetActiveDisplayList(displayCount, &displays, &displayCount)
         let active = Array(displays.prefix(Int(displayCount)))
         let mainDisplay = CGMainDisplayID()
+        let dockPreferences = currentDockLayoutPreferences()
         let screensByDisplayID: [CGDirectDisplayID: NSScreen] = Dictionary(
             uniqueKeysWithValues: NSScreen.screens.compactMap { screen -> (CGDirectDisplayID, NSScreen)? in
             guard let number = screen.deviceDescription[
@@ -7667,7 +8262,11 @@ final class WorkspaceEngine {
             return DisplaySnapshot(
                 identifier: identifier,
                 bounds: bounds,
-                usableBounds: usableDisplayBounds(displayID, mainDisplayID: mainDisplay),
+                usableBounds: usableDisplayBounds(
+                    displayID,
+                    mainDisplayID: mainDisplay,
+                    dockPreferences: dockPreferences
+                ),
                 isMain: displayID == mainDisplay,
                 isBuiltIn: CGDisplayIsBuiltin(displayID) != 0,
                 name: name,
@@ -7703,7 +8302,8 @@ final class WorkspaceEngine {
 
     private static func usableDisplayBounds(
         _ displayID: CGDirectDisplayID,
-        mainDisplayID: CGDirectDisplayID
+        mainDisplayID: CGDirectDisplayID,
+        dockPreferences: DockLayoutPreferences
     ) -> CGRect? {
         func screen(for identifier: CGDirectDisplayID) -> NSScreen? {
             NSScreen.screens.first { screen in
@@ -7714,10 +8314,63 @@ final class WorkspaceEngine {
         guard let targetScreen = screen(for: displayID),
               let mainScreen = screen(for: mainDisplayID)
         else { return nil }
+        let visibleFrame = usableCocoaBounds(
+            screenFrame: targetScreen.frame,
+            visibleFrame: targetScreen.visibleFrame,
+            dockPreferences: dockPreferences
+        )
         return accessibilityBounds(
-            forCocoaBounds: targetScreen.visibleFrame,
+            forCocoaBounds: visibleFrame,
             mainScreenTop: mainScreen.frame.maxY
         )
+    }
+
+    static func usableCocoaBounds(
+        screenFrame: CGRect,
+        visibleFrame: CGRect,
+        dockPreferences: DockLayoutPreferences
+    ) -> CGRect {
+        guard dockPreferences.automaticallyHides, let edge = dockPreferences.edge else {
+            return visibleFrame
+        }
+        let constrained = visibleFrame.intersection(screenFrame)
+        guard !constrained.isNull, constrained.width > 0, constrained.height > 0 else {
+            return visibleFrame
+        }
+
+        var adjusted = constrained
+        switch edge {
+        case .bottom:
+            adjusted.origin.y = screenFrame.minY
+            adjusted.size.height = constrained.maxY - screenFrame.minY
+        case .left:
+            adjusted.origin.x = screenFrame.minX
+            adjusted.size.width = constrained.maxX - screenFrame.minX
+        case .right:
+            adjusted.size.width = screenFrame.maxX - constrained.minX
+        }
+        return adjusted
+    }
+
+    private static func currentDockLayoutPreferences() -> DockLayoutPreferences {
+        let applicationID = "com.apple.dock" as CFString
+        let automaticallyHides = (
+            CFPreferencesCopyValue(
+                "autohide" as CFString,
+                applicationID,
+                kCFPreferencesCurrentUser,
+                kCFPreferencesAnyHost
+            ) as? NSNumber
+        )?.boolValue ?? false
+        let edge = (
+            CFPreferencesCopyValue(
+                "orientation" as CFString,
+                applicationID,
+                kCFPreferencesCurrentUser,
+                kCFPreferencesAnyHost
+            ) as? String
+        ).flatMap(DockEdge.init(rawValue:))
+        return DockLayoutPreferences(automaticallyHides: automaticallyHides, edge: edge)
     }
 
     static func accessibilityBounds(forCocoaBounds bounds: CGRect, mainScreenTop: CGFloat) -> CGRect {
@@ -8643,6 +9296,7 @@ final class WorkspaceEngine {
             restoreFrame: fallbackFrame,
             displayPlacement: nil,
             layoutOverride: .automatic,
+            workspaceRuleOverrideActive: false,
             admissionDecision: WindowAdmissionDecision(
                 disposition: .temporarilyIneligible,
                 reason: .fullscreen
@@ -9137,6 +9791,22 @@ final class WorkspaceEngine {
     }
 
     private func emitState() {
+        let windowCountByWorkspace = Dictionary(grouping: windows.values, by: \.workspaceID)
+            .mapValues(\.count)
+        let layoutByWorkspace = Dictionary(
+            uniqueKeysWithValues: workspaces.map { ($0.id, $0.layout) }
+        )
+        let highlightContexts = Dictionary(uniqueKeysWithValues: windows.values.compactMap {
+            tracked -> (WindowKey, FocusedWindowHighlightWorkspaceContext)? in
+            guard let layout = layoutByWorkspace[tracked.workspaceID] else { return nil }
+            return (
+                tracked.key,
+                FocusedWindowHighlightWorkspaceContext(
+                    layout: layout,
+                    windowCount: windowCountByWorkspace[tracked.workspaceID] ?? 0
+                )
+            )
+        })
         let state = WorkspaceEngineState(
             currentWorkspaceID: currentWorkspaceID,
             activeWorkspaceIDs: activeWorkspaceIDs,
@@ -9145,7 +9815,8 @@ final class WorkspaceEngine {
             accessibilityGranted: AXIsProcessTrusted(),
             profileID: currentProfileID,
             activeWorkspaceIDByDisplay: displayMode == .independent
-                ? activeWorkspaceIDByDisplay : [:]
+                ? activeWorkspaceIDByDisplay : [:],
+            focusedWindowHighlightWorkspaceContexts: highlightContexts
         )
         DispatchQueue.main.async { [weak self] in self?.onStateChanged?(state) }
     }

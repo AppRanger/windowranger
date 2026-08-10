@@ -57,6 +57,25 @@ enum WorkspaceIdentityPolicy {
     }
 }
 
+struct ICloudProfileLibraryIssue: Equatable, Identifiable, Sendable {
+    enum Source: String, Sendable {
+        case remote
+        case local
+    }
+
+    let source: Source
+    let rejection: SyncedProfileLibraryRejection
+    let canReplaceCloudCopy: Bool
+
+    var id: String { "\(source.rawValue):\(rejection.userMessage)" }
+    var message: String {
+        let retained = source == .remote
+            ? "This Mac's local profiles were kept unchanged."
+            : "Local profiles remain available on this Mac but were not written to iCloud."
+        return rejection.userMessage + " " + retained
+    }
+}
+
 @MainActor
 final class SettingsStore: ObservableObject {
     private enum Keys {
@@ -81,11 +100,23 @@ final class SettingsStore: ObservableObject {
         // Hardware trigger preference is intentionally local to this Mac, not profile-backed or
         // iCloud-synced. Its meaning depends on this Mac's keyboard and Globe configuration.
         static let radialMenuGlobeFnHoldEnabled = "radialMenuGlobeFnHoldEnabled.v1"
+        // Trackpad finger count and activation are hardware preferences for this Mac. They are
+        // deliberately excluded from profiles and iCloud so one Mac cannot silently install a
+        // global input monitor on another.
+        static let workspaceSwipeEnabled = "workspaceSwipeEnabled.v1"
+        static let workspaceSwipeFingerCount = "workspaceSwipeFingerCount.v1"
         static let radialWheelDefinition = "radialWheelDefinition.v1"
         static let hotKeyConfiguration = "hotKeyConfiguration.v1"
         static let menuBarPresentationMode = "menuBarPresentationMode.v1"
         static let menuBarWorkspaceLabelMode = "menuBarWorkspaceLabelMode.v1"
         static let menuBarHighlightColor = "menuBarHighlightColor.v1"
+        static let focusedWindowHighlightEnabled = "focusedWindowHighlightEnabled.v1"
+        static let focusedWindowHighlightColor = "focusedWindowHighlightColor.v1"
+        static let focusedWindowHighlightTiledOnly = "focusedWindowHighlightTiledOnly.v1"
+        static let focusedWindowHighlightMultipleWindowsOnly =
+            "focusedWindowHighlightMultipleWindowsOnly.v1"
+        static let focusedWindowHighlightCornerRadiusOverrides =
+            "focusedWindowHighlightCornerRadiusOverrides.v1"
         static let focusFollowsMovedWindow = "focusFollowsMovedWindow.v1"
         static let automaticallyUnhideApplications = "automaticallyUnhideApplications.v1"
     }
@@ -115,9 +146,12 @@ final class SettingsStore: ObservableObject {
             if iCloudSyncEnabled {
                 pushToICloud()
                 ubiquitousStore?.synchronize()
+            } else {
+                iCloudProfileLibraryIssue = nil
             }
         }
     }
+    @Published private(set) var iCloudProfileLibraryIssue: ICloudProfileLibraryIssue?
 
     @Published var radialMenuEnabled: Bool {
         didSet { persistRadialMenuSettings() }
@@ -145,6 +179,20 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    @Published var workspaceSwipeEnabled: Bool {
+        didSet {
+            guard !isApplyingRemoteChange else { return }
+            defaults.set(workspaceSwipeEnabled, forKey: Keys.workspaceSwipeEnabled)
+        }
+    }
+
+    @Published var workspaceSwipeFingerCount: WorkspaceSwipeFingerCount {
+        didSet {
+            guard !isApplyingRemoteChange else { return }
+            defaults.set(workspaceSwipeFingerCount.rawValue, forKey: Keys.workspaceSwipeFingerCount)
+        }
+    }
+
     @Published var radialWheelDefinition: RadialWheelDefinition {
         didSet { persistRadialMenuSettings() }
     }
@@ -161,6 +209,7 @@ final class SettingsStore: ObservableObject {
     /// Runtime-only monitor availability for the current process and Mac. It is never persisted or
     /// synchronized, just like Carbon registration failures.
     @Published private(set) var globeFnRuntimeIssue: String?
+    @Published private(set) var workspaceSwipeRuntimeIssue: String?
 
     @Published var menuBarPresentationMode: MenuBarPresentationMode {
         didSet { persistMenuBarPresentationMode() }
@@ -172,6 +221,32 @@ final class SettingsStore: ObservableObject {
 
     @Published var menuBarHighlightColor: MenuBarHighlightColor {
         didSet { persistMenuBarHighlightColor() }
+    }
+
+    /// This presentation choice is deliberately local to one Mac. It changes how often this Mac
+    /// reads focused-window geometry and should not silently enable an overlay on another device.
+    @Published var focusedWindowHighlightEnabled: Bool {
+        didSet { persistFocusedWindowHighlightEnabled() }
+    }
+
+    /// The border colour stays local with the presentation toggle and defaults independently to
+    /// white rather than inheriting a potentially unrelated menu-bar accent.
+    @Published var focusedWindowHighlightColor: MenuBarHighlightColor {
+        didSet { persistFocusedWindowHighlightColor() }
+    }
+
+    @Published var focusedWindowHighlightTiledOnly: Bool {
+        didSet { persistFocusedWindowHighlightTiledOnly() }
+    }
+
+    @Published var focusedWindowHighlightMultipleWindowsOnly: Bool {
+        didSet { persistFocusedWindowHighlightMultipleWindowsOnly() }
+    }
+
+    /// Visual matching depends on the local AppKit generation, so these bundle-specific overrides
+    /// deliberately stay outside the synced profile's behavior rules.
+    @Published private(set) var focusedWindowHighlightCornerRadiusOverrides: [String: Double] {
+        didSet { persistFocusedWindowHighlightCornerRadiusOverrides() }
     }
 
     @Published var focusFollowsMovedWindow: Bool {
@@ -249,7 +324,8 @@ final class SettingsStore: ObservableObject {
             displays: initialDisplays
         )
 
-        iCloudSyncEnabled = defaults.object(forKey: Keys.iCloudSync) as? Bool ?? true
+        iCloudSyncEnabled = defaults.object(forKey: Keys.iCloudSync) as? Bool ?? false
+        iCloudProfileLibraryIssue = nil
         radialMenuEnabled = defaults.object(forKey: Keys.radialMenuEnabled) as? Bool ?? true
         radialMenuActivationStyle = defaults.string(forKey: Keys.radialMenuActivationStyle)
             .flatMap(RadialMenuActivationStyle.init(rawValue:)) ?? .pressToToggle
@@ -261,6 +337,11 @@ final class SettingsStore: ObservableObject {
             forKey: Keys.radialMenuGlobeFnHoldEnabled
         ) as? Bool ?? false
         globeFnRuntimeIssue = nil
+        workspaceSwipeEnabled = defaults.object(forKey: Keys.workspaceSwipeEnabled) as? Bool ?? false
+        workspaceSwipeFingerCount = WorkspaceSwipeFingerCount(
+            rawValue: defaults.integer(forKey: Keys.workspaceSwipeFingerCount)
+        ) ?? .three
+        workspaceSwipeRuntimeIssue = nil
         radialWheelDefinition = defaults.data(forKey: Keys.radialWheelDefinition)
             .flatMap { try? JSONDecoder().decode(RadialWheelDefinition.self, from: $0) }
             ?? .builtInDefault
@@ -294,6 +375,23 @@ final class SettingsStore: ObservableObject {
             .flatMap(MenuBarHighlightColor.init(hex:)) ?? .default
         menuBarHighlightColor = initialMenuBarHighlightColor
         defaults.set(initialMenuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
+        focusedWindowHighlightEnabled = defaults.object(
+            forKey: Keys.focusedWindowHighlightEnabled
+        ) as? Bool ?? false
+        focusedWindowHighlightColor = defaults.string(
+            forKey: Keys.focusedWindowHighlightColor
+        ).flatMap(MenuBarHighlightColor.init(hex:)) ?? .default
+        focusedWindowHighlightTiledOnly = defaults.object(
+            forKey: Keys.focusedWindowHighlightTiledOnly
+        ) as? Bool ?? false
+        focusedWindowHighlightMultipleWindowsOnly = defaults.object(
+            forKey: Keys.focusedWindowHighlightMultipleWindowsOnly
+        ) as? Bool ?? false
+        focusedWindowHighlightCornerRadiusOverrides = Self.normalizedCornerRadiusOverrides(
+            defaults.data(forKey: Keys.focusedWindowHighlightCornerRadiusOverrides).flatMap {
+                try? JSONDecoder().decode([String: Double].self, from: $0)
+            } ?? [:]
+        )
         focusFollowsMovedWindow = defaults.object(forKey: Keys.focusFollowsMovedWindow) as? Bool ?? false
         automaticallyUnhideApplications = defaults.object(
             forKey: Keys.automaticallyUnhideApplications
@@ -937,16 +1035,59 @@ final class SettingsStore: ObservableObject {
         setLayoutConfiguration(.aeroSpaceUserDefaults, for: workspaceID)
     }
 
-    func addAppRule(for application: InstalledApplication) {
+    func addAppRule(
+        for application: InstalledApplication,
+        defaultWorkspaceID: UUID? = nil
+    ) {
         guard !appRules.contains(where: { $0.id == application.id }) else { return }
-        appRules.append(AppRule(
+        var rule = AppRule(
             bundleIdentifier: application.bundleIdentifier,
             displayName: application.displayName
-        ))
+        )
+        if application.isRunning,
+           let defaultWorkspaceID,
+           workspaces.contains(where: { $0.id == defaultWorkspaceID }) {
+            rule.assignedWorkspaceID = defaultWorkspaceID
+        }
+        appRules.append(rule)
     }
 
     func removeAppRule(bundleIdentifier: String) {
         appRules.removeAll { $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame }
+        setFocusedWindowHighlightCornerRadiusOverride(nil, for: bundleIdentifier, undoManager: nil)
+    }
+
+    func focusedWindowHighlightCornerRadiusOverride(for bundleIdentifier: String) -> Double? {
+        focusedWindowHighlightCornerRadiusOverrides[Self.normalizedBundleIdentifier(bundleIdentifier)]
+    }
+
+    func setFocusedWindowHighlightCornerRadiusOverride(
+        _ radius: Double?,
+        for bundleIdentifier: String,
+        undoManager: UndoManager?
+    ) {
+        let key = Self.normalizedBundleIdentifier(bundleIdentifier)
+        guard !key.isEmpty else { return }
+        let normalizedRadius = radius.map(FocusedWindowHighlightPolicy.normalizedCornerRadius)
+        let previousRadius = focusedWindowHighlightCornerRadiusOverrides[key]
+        guard previousRadius != normalizedRadius else { return }
+        if let undoManager {
+            undoManager.registerUndo(withTarget: self) { [weak undoManager] target in
+                target.setFocusedWindowHighlightCornerRadiusOverride(
+                    previousRadius,
+                    for: key,
+                    undoManager: undoManager
+                )
+            }
+            undoManager.setActionName("Change Highlight Corner Radius")
+        }
+        var updated = focusedWindowHighlightCornerRadiusOverrides
+        if let normalizedRadius {
+            updated[key] = normalizedRadius
+        } else {
+            updated.removeValue(forKey: key)
+        }
+        focusedWindowHighlightCornerRadiusOverrides = updated
     }
 
     func updateAppRule(_ updatedRule: AppRule, undoManager: UndoManager?) {
@@ -1045,6 +1186,11 @@ final class SettingsStore: ObservableObject {
     func setGlobeFnRuntimeIssue(_ issue: String?) {
         guard globeFnRuntimeIssue != issue else { return }
         globeFnRuntimeIssue = issue
+    }
+
+    func setWorkspaceSwipeRuntimeIssue(_ issue: String?) {
+        guard workspaceSwipeRuntimeIssue != issue else { return }
+        workspaceSwipeRuntimeIssue = issue
     }
 
     func recordActiveWorkspaceState(_ state: WorkspaceEngineState) {
@@ -1360,8 +1506,10 @@ final class SettingsStore: ObservableObject {
         guard let data = try? JSONEncoder().encode(library) else { return }
         defaults.set(data, forKey: Keys.profileLibrary)
         guard syncToCloud, !isApplyingRemoteChange, iCloudSyncEnabled, let ubiquitousStore else { return }
-        ubiquitousStore.set(data, forKey: Keys.profileLibrary)
-        ubiquitousStore.synchronize()
+        if validateLocalLibraryForSync(data) {
+            ubiquitousStore.set(data, forKey: Keys.profileLibrary)
+            ubiquitousStore.synchronize()
+        }
     }
 
     private func persistLocalProfileState() {
@@ -1372,7 +1520,9 @@ final class SettingsStore: ObservableObject {
     private func pushToICloud() {
         guard let ubiquitousStore else { return }
         if let data = try? JSONEncoder().encode(ProfileLibrary(profiles: profiles)) {
-            ubiquitousStore.set(data, forKey: Keys.profileLibrary)
+            if validateLocalLibraryForSync(data) {
+                ubiquitousStore.set(data, forKey: Keys.profileLibrary)
+            }
         }
         ubiquitousStore.set(radialMenuEnabled, forKey: Keys.radialMenuEnabled)
         ubiquitousStore.set(radialMenuActivationStyle.rawValue, forKey: Keys.radialMenuActivationStyle)
@@ -1400,7 +1550,31 @@ final class SettingsStore: ObservableObject {
     private func pullFromICloud() {
         guard iCloudSyncEnabled, let ubiquitousStore else { return }
         let remoteLibraryData = ubiquitousStore.data(forKey: Keys.profileLibrary)
-        let remoteLibrary = Self.decodedRemoteProfileLibrary(remoteLibraryData)
+        let remoteValidation = SyncedProfileLibraryPolicy.validate(remoteLibraryData)
+        let remoteLibrary: ProfileLibrary?
+        switch remoteValidation {
+        case .absent:
+            remoteLibrary = nil
+        case let .accepted(library):
+            remoteLibrary = library
+            iCloudProfileLibraryIssue = nil
+        case let .rejected(rejection):
+            remoteLibrary = nil
+            let localCanReplace = encodedLocalProfileLibrary().map {
+                if case .accepted = SyncedProfileLibraryPolicy.validate($0) { return true }
+                return false
+            } ?? false
+            iCloudProfileLibraryIssue = ICloudProfileLibraryIssue(
+                source: .remote,
+                rejection: rejection,
+                canReplaceCloudCopy: localCanReplace
+            )
+            diagnostics.log(
+                category: "profile",
+                event: "icloud-library-rejected",
+                fields: ["reason": String(describing: rejection)]
+            )
+        }
         let remoteRadialEnabled = ubiquitousStore.object(forKey: Keys.radialMenuEnabled) as? Bool
         let remoteRadialActivationStyle = ubiquitousStore.string(forKey: Keys.radialMenuActivationStyle)
             .flatMap(RadialMenuActivationStyle.init(rawValue:))
@@ -1609,10 +1783,56 @@ final class SettingsStore: ObservableObject {
     /// ignored. Machine-local activation, triggers, runtime state, and role bindings are never part
     /// of this decision.
     static func decodedRemoteProfileLibrary(_ data: Data?) -> ProfileLibrary? {
-        guard let data,
-              let decoded = try? JSONDecoder().decode(ProfileLibrary.self, from: data)
-        else { return nil }
-        return decoded.normalized()
+        guard case let .accepted(library) = SyncedProfileLibraryPolicy.validate(data) else {
+            return nil
+        }
+        return library
+    }
+
+    @discardableResult
+    func replaceICloudProfileLibraryWithLocalCopy() -> Bool {
+        guard iCloudSyncEnabled,
+              let ubiquitousStore,
+              let data = encodedLocalProfileLibrary(),
+              case .accepted = SyncedProfileLibraryPolicy.validate(data)
+        else { return false }
+        ubiquitousStore.set(data, forKey: Keys.profileLibrary)
+        ubiquitousStore.synchronize()
+        iCloudProfileLibraryIssue = nil
+        return true
+    }
+
+    private func encodedLocalProfileLibrary() -> Data? {
+        try? JSONEncoder().encode(ProfileLibrary(profiles: profiles))
+    }
+
+    private func validateLocalLibraryForSync(_ data: Data) -> Bool {
+        // A rejected remote value remains untouched until the user chooses the explicit recovery
+        // action. Ordinary local edits must not turn a failed pull into an implicit cloud replace.
+        if iCloudProfileLibraryIssue?.source == .remote {
+            return false
+        }
+        switch SyncedProfileLibraryPolicy.validate(data) {
+        case .accepted:
+            if iCloudProfileLibraryIssue?.source == .local {
+                iCloudProfileLibraryIssue = nil
+            }
+            return true
+        case let .rejected(rejection):
+            iCloudProfileLibraryIssue = ICloudProfileLibraryIssue(
+                source: .local,
+                rejection: rejection,
+                canReplaceCloudCopy: false
+            )
+            diagnostics.log(
+                category: "profile",
+                event: "icloud-library-write-skipped",
+                fields: ["reason": String(describing: rejection)]
+            )
+            return false
+        case .absent:
+            return false
+        }
     }
 
     private func persistRadialMenuSettings() {
@@ -1659,6 +1879,45 @@ final class SettingsStore: ObservableObject {
             ubiquitousStore.set(menuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
             ubiquitousStore.synchronize()
         }
+    }
+
+    private func persistFocusedWindowHighlightEnabled() {
+        guard !isApplyingRemoteChange else { return }
+        defaults.set(
+            focusedWindowHighlightEnabled,
+            forKey: Keys.focusedWindowHighlightEnabled
+        )
+    }
+
+    private func persistFocusedWindowHighlightColor() {
+        guard !isApplyingRemoteChange else { return }
+        defaults.set(
+            focusedWindowHighlightColor.hex,
+            forKey: Keys.focusedWindowHighlightColor
+        )
+    }
+
+    private func persistFocusedWindowHighlightTiledOnly() {
+        guard !isApplyingRemoteChange else { return }
+        defaults.set(
+            focusedWindowHighlightTiledOnly,
+            forKey: Keys.focusedWindowHighlightTiledOnly
+        )
+    }
+
+    private func persistFocusedWindowHighlightMultipleWindowsOnly() {
+        guard !isApplyingRemoteChange else { return }
+        defaults.set(
+            focusedWindowHighlightMultipleWindowsOnly,
+            forKey: Keys.focusedWindowHighlightMultipleWindowsOnly
+        )
+    }
+
+    private func persistFocusedWindowHighlightCornerRadiusOverrides() {
+        guard !isApplyingRemoteChange,
+              let data = try? JSONEncoder().encode(focusedWindowHighlightCornerRadiusOverrides)
+        else { return }
+        defaults.set(data, forKey: Keys.focusedWindowHighlightCornerRadiusOverrides)
     }
 
     private func persistHotKeyConfiguration() {
@@ -1741,6 +2000,23 @@ final class SettingsStore: ObservableObject {
         return rules.filter { rule in
             !rule.bundleIdentifier.isEmpty && seen.insert(rule.bundleIdentifier.lowercased()).inserted
         }
+    }
+
+    private static func normalizedBundleIdentifier(_ bundleIdentifier: String) -> String {
+        bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func normalizedCornerRadiusOverrides(
+        _ overrides: [String: Double]
+    ) -> [String: Double] {
+        Dictionary(
+            overrides.compactMap { bundleIdentifier, radius -> (String, Double)? in
+                let key = normalizedBundleIdentifier(bundleIdentifier)
+                guard !key.isEmpty, radius.isFinite else { return nil }
+                return (key, FocusedWindowHighlightPolicy.normalizedCornerRadius(radius))
+            },
+            uniquingKeysWith: { _, latest in latest }
+        )
     }
 
     private static func bootstrapProfiles(

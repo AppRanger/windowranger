@@ -32,8 +32,9 @@ installing production hotkeys, asking for Accessibility permission or moving liv
    `ProfileLocalState`, then resolves abstract display roles against connected local displays.
 3. `WorkspaceEngine.start()` checks Accessibility trust, enumerates applications/windows and sends
    each candidate through the central admission classifier before it can enter any other subsystem.
-4. Hotkeys, the menu bar and the command wheel emit `WindowManagerCommand` values through one
-   dispatcher. The engine validates current context again before applying a mutation.
+4. Hotkeys, the optional local workspace-swipe monitor, the menu bar and the command wheel emit
+   `WindowManagerCommand` values through one dispatcher. The engine validates current context again
+   before applying a mutation.
 5. Engine state changes update the menu bar, Settings utility visibility and the persisted local
    workspace session. Configuration changes flow in the opposite direction from `SettingsStore`
    into the engine through debounced publishers.
@@ -70,6 +71,12 @@ Effective layout participation follows this order:
 Keep-on-all-workspaces rules affect visibility but do not grant a window permission to enter layout
 or focus scopes that it otherwise fails.
 
+The Add Application Rule picker reads existing engine membership without refreshing or mutating
+windows. Open apps are presented separately from other installed apps. A new rule inherits a live
+workspace only when every currently managed window for that bundle agrees on one workspace;
+windowless or split-workspace apps retain no assignment so Settings never guesses a bundle-wide
+rule from ambiguous per-window state.
+
 ## Persistence boundaries
 
 ### Synced reusable definitions
@@ -79,6 +86,13 @@ definitions/order/keys/layout geometry, Unified or Independent display mode, abs
 workspace-role assignments and typed app rules. Global preferences such as menu-bar presentation,
 general command shortcuts and command-wheel configuration use their existing global settings path
 and are not profile content.
+
+`SyncedProfileLibraryPolicy` validates the atomic encoded byte size before decoding, then validates
+the schema version, collection counts, user-facing name lengths and normalized structure. A remote
+rejection cannot replace or trim the local library. Local private-install data remains readable even
+when it exceeds the newer sync envelope; writing that library to iCloud is withheld with visible
+recovery state until it is eligible. Replacing a rejected remote value is a separate explicit user
+action and never occurs as a side effect of a failed pull.
 
 ### Local to one Mac
 
@@ -102,7 +116,17 @@ therefore restore the original role.
 Sleep/wake and display notifications are coalesced through generation-tokened reconciliation.
 Display topology resolves first, fresh AX elements are acquired second, and visibility/layout is
 applied once the snapshot is stable. Bounded retries handle temporarily incomplete enumeration.
-Old focus/layout callbacks are superseded and cannot act on the newer generation.
+After the layout solve, expected Tiled and Accordion frames are read back because a successful AX
+write does not prove that the receiving app retained it. Only mismatched, still-eligible split
+windows are retried, for a bounded number of attempts; a newer lifecycle signal supersedes the
+verification, and full-screen, deferred, floating, and disappeared windows remain outside it. Old
+focus/layout callbacks are superseded and cannot act on the newer generation.
+
+Display snapshots begin with AppKit's current `visibleFrame`. A locally read Dock preference then
+controls only the configured Dock edge: a visible Dock keeps AppKit's exclusion, while an auto-hidden
+Dock restores that edge to the full screen frame. Other safe-area exclusions remain authoritative.
+The preference is sampled with each display refresh so game transitions and Dock setting changes
+invalidate the existing layout signature and reflow without a restart.
 
 On graceful quit, persistent assignment state is saved before managed windows are returned to
 visible frames. A debugger Stop or crash cannot run synchronous cleanup; startup reconciliation is
@@ -112,9 +136,36 @@ the recovery boundary for those cases.
 
 The menu bar uses one stable AppKit status item. Its primary target always opens the app menu; only
 explicit Full-mode workspace buttons switch. Command feedback is a nonactivating click-through
-overlay, while the radial command wheel is nonactivating until a validated action is committed.
+overlay. On macOS 26 and later its content is embedded in AppKit's public static Liquid Glass view;
+older supported releases use the system HUD material. Both surfaces use a capsule radius derived
+from the live overlay height. The surface choice never changes its panel, focus, input, timing, or
+accessibility boundary. The optional focused-window highlight uses the same
+nonactivating, click-through boundary, polls only while enabled on this Mac, and excludes
+WindowRanger-owned windows, apps identified as games through the same public bundle metadata used by
+full-screen safety, and full-screen windows. Its local white-by-default colour is independent of the
+synced menu-bar accent. Automated Tiled and
+Accordion geometry reserves a four-point screen-edge clearance while it is enabled; Freeform
+geometry remains untouched. Optional Tiled-only and multiple-window filters consume the engine's
+managed-window workspace snapshot; if a requested workspace condition cannot be proven, the border
+stays hidden. Border corner radius resolves from a conservative OS-generation policy, then an
+optional normalized bundle-identifier override wins. AppKit, Accessibility, and WindowServer do not
+publish another app's rendered corner radius, so the generation table uses verified values only and
+keeps the macOS 27 baseline for later releases until a future design change is verified. Per-app
+overrides are local appearance state rather than synced App Rule actions because the correct
+rendering depends on this Mac and OS. The radial command wheel is nonactivating until a validated
+action is committed.
 Settings is an explicit app-owned floating utility: it may activate and focus, but it is excluded
 from third-party discovery, layout and persistence.
+
+Workspace swiping is a separate off-by-default, machine-local hardware preference. Its AppKit/Core
+Graphics adapter is isolated behind an injected monitor and feeds a pure state machine only touch
+identities and normalized positions for the current gesture. The state machine requires the selected
+three or four fingers to move coherently and horizontally past one threshold, then latches until the
+gesture ends so it cannot emit multiple commands. The adapter returns every event unchanged, retains
+no touch history after the gesture, and fails closed if macOS does not expose the generic gesture
+stream. Accepted swipes use `cycleWorkspace`, preserving its ordered wraparound and Independent
+Displays interaction routing. Sleep, inactive login sessions, full-screen games, shortcut recording,
+display changes, and profile transitions cancel or suspend observation.
 
 Exact focus operations use bounded activation/focus/raise verification and generation tokens.
 Programmatic focus intent is separated from genuine user competition so stale notifications do not

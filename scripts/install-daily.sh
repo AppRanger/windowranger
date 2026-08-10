@@ -9,6 +9,10 @@ configuration="${WINDOWRANGER_DAILY_CONFIGURATION:-Debug}"
 daily_app="${WINDOWRANGER_DAILY_APP:-/Applications/WindowRanger.app}"
 derived_data_directory="${WINDOWRANGER_DAILY_DERIVED_DATA:-$repository_root/.build/DailyDerivedData}"
 launch_after_install=true
+source_revision="$(/usr/bin/git -C "$repository_root" rev-parse --short=12 HEAD)"
+if [[ -n "$(/usr/bin/git -C "$repository_root" status --porcelain --untracked-files=normal)" ]]; then
+    source_revision="$source_revision-dirty"
+fi
 
 usage() {
     print "Usage: $script_name [--debug | --release] [--no-launch]"
@@ -60,6 +64,7 @@ print "Building the $configuration daily app while the current copy remains avai
     -configuration "$configuration" \
     -destination 'generic/platform=macOS' \
     -derivedDataPath "$derived_data_directory" \
+    WINDOWRANGER_GIT_COMMIT="$source_revision" \
     build
 
 built_app="$derived_data_directory/Build/Products/$configuration/WindowRanger.app"

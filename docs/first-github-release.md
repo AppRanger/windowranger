@@ -1,14 +1,19 @@
 # First GitHub release
 
-WindowRanger's first public binary should be `v0.1.0-beta.1`, not a Stable release. The product is
-still explicitly pre-release and several live, accessibility, privacy, identity, and packaging gates
-remain open.
+WindowRanger's first public binary is `v0.1.0-beta.1`, not a Stable release. The product remains
+explicitly pre-release and several live, accessibility, privacy, and packaging gates remain open.
+
+As of 10 August 2026, that exact Beta is Developer ID-signed, notarized, stapled, packaged, tested by
+the maintainer, and published as a
+[GitHub prerelease](https://github.com/windowranger/windowranger/releases/tag/v0.1.0-beta.1). The tag
+and artifacts remain at commit `04b5750b1fe3b183c1259d132a0a8e985f8b4e0e`.
 
 This runbook uses a local-first release pipeline:
 
 | Owner | Responsibility |
 | --- | --- |
-| GitHub Actions | Generate the project, verify test isolation, run tests and static analysis, compile an unsigned universal Release configuration, and smoke-test both DMG layouts. |
+| Local verification | While private, run exact-commit non-hosted checks through the opt-in pre-push hook and run the full uncredentialed checkpoint explicitly at integration/release boundaries. |
+| GitHub Actions | Once public—or on an explicit private manual dispatch—generate the project, verify test isolation, run tests and static analysis, compile an unsigned universal Release configuration, and smoke-test both DMG layouts. |
 | Maintainer's Mac | Use the Developer ID private key, archive/export, notarize, staple, package, and verify the exact release app and DMG. |
 | GitHub Releases | Hold the immutable tag, draft notes, notarized DMG and ZIP, SHA-256 checksums, and provenance manifest. |
 
@@ -42,21 +47,29 @@ credentials in the current design.
    ```sh
    xcrun notarytool store-credentials WindowRanger \
      --apple-id YOUR_APPLE_ID \
-     --team-id 44NAD22AK6 \
-     --password YOUR_APP_SPECIFIC_PASSWORD
+     --team-id 44NAD22AK6
    ```
+
+   Omitting `--password` makes `notarytool` request the app-specific password through its secure
+   interactive prompt instead of placing it in shell history.
 
 Never place the certificate, private key, app-specific password, App Store Connect key, or exported
 `.p12` file in the repository.
 
 ## One-time Git setup
 
-After the current repository changes are reviewed and committed:
+For the first Beta, complete and record these repository steps:
 
-1. Create `develop` from the accepted `main` checkpoint and push it.
-2. Configure required CI checks and branch protection for `main` and `develop`.
-3. Cut `release/0.1.0` from `develop`.
-4. Allow only release fixes, documentation, versioning, and packaging changes on that branch.
+1. Create `develop` from the accepted `main` checkpoint, push it, and make it the default branch.
+2. Preserve the recorded proof of automatic push and pull-request events. While private, automatic
+   hosted jobs now skip to protect the included allowance; they resume when public.
+3. Configure required checks and protection for `main`, `develop`, and release tags when GitHub Pro
+   or public visibility makes rulesets available.
+4. Cut `release/0.1.0` from `develop` and allow only release fixes, documentation, versioning, and
+   packaging changes on that branch.
+
+The branches and exact Beta tag now exist. Protection remains a public-visibility/GitHub-plan gate,
+and automatic CI events must be evidenced independently of the manually dispatched release run.
 
 Do not create the release branch or tags from a dirty worktree.
 
@@ -65,7 +78,16 @@ Do not create the release branch or tags from a dirty worktree.
 Use stable Xcode. This Mac currently has stable Xcode at `/Applications/Xcode.app`; do not use the
 selected Xcode beta for a public build.
 
-From a clean `release/0.1.0` worktree:
+Create a dedicated clean worktree so unrelated development changes cannot enter the release:
+
+```sh
+release_worktree="$(mktemp -d /tmp/windowranger-release.XXXXXX)"
+git fetch origin
+git worktree add "$release_worktree" release/0.1.0
+cd "$release_worktree"
+```
+
+From that clean `release/0.1.0` worktree:
 
 ```sh
 export WINDOWRANGER_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
@@ -91,10 +113,11 @@ The build command:
 3. runs the complete test suite and static analysis;
 4. creates a universal Release archive with Hardened Runtime;
 5. exports with Developer ID and rejects `get-task-allow`;
-6. submits the app through `notarytool`, staples the ticket, and validates it with `stapler` and
-   Gatekeeper;
-7. creates the channel-specific DMG with the `/Applications` shortcut, submits the DMG to Apple,
-   staples its ticket, and verifies the disk image;
+6. submits the app through `notarytool`, saves the accepted submission result and zero-issue log,
+   staples the ticket, and validates it with `stapler` and Gatekeeper;
+7. creates and Developer ID-signs the channel-specific DMG with the `/Applications` shortcut,
+   saves its accepted notarization result and zero-issue log, staples its ticket, and verifies the
+   disk image;
 8. writes the final DMG, fallback ZIP, SHA-256 checksums, and provenance manifest beneath
    `.build/releases/0.1.0-beta.1/`.
 
@@ -115,7 +138,9 @@ Do not test a separate Xcode product and assume the release DMG is equivalent.
 5. Confirm the fallback ZIP contains the same signed and notarized app.
 6. Confirm graceful quit and uninstall behaviour and capture only privacy-safe evidence.
 
-Any change after this test requires a new build number and a newly notarized artifact.
+Any source, build-setting, entitlement, signing, or packaged-content change after this test requires
+a new build number and a newly notarized artifact. Documentation-only release-process improvements
+may follow on `develop`, but they do not rewrite the immutable tag or claim to be inside its binary.
 
 ## Tag and create the draft release
 
@@ -125,26 +150,38 @@ Only after the exact artifact passes:
 git tag -a v0.1.0-beta.1 -m "WindowRanger 0.1.0 Beta 1"
 git push origin v0.1.0-beta.1
 
+./scripts/verify-release-assets.sh \
+  --version 0.1.0-beta.1 \
+  --expected-commit "$(git rev-parse HEAD)"
+
 ./scripts/create-github-release.sh \
   --version 0.1.0-beta.1 \
-  --notes-file /path/to/release-notes.md
+  --notes-file docs/releases/v0.1.0-beta.1.md
 ```
 
 Use [the release-notes template](release-notes-template.md) as the starting point. The command
 requires the pushed tag to point to `HEAD`, attaches the DMG, fallback ZIP, both checksums, and the
-manifest, marks a Beta as a prerelease, and creates a **draft**. It cannot publish the release or
-make the repository public.
+manifest, marks a Beta as a prerelease, and creates a **draft**. Before upload it validates the local
+checksums, manifest, version and commit. It then downloads the five attached assets and repeats the
+same verification against the immutable tag. It cannot publish the release or make the repository
+public.
 
-Review the draft on GitHub, download and checksum its attached asset once more, and then explicitly
-publish it from GitHub. GitHub's automatically generated source archives are not the macOS app and
-must not be described as the install download.
+To repeat the round-trip verification without changing an existing draft or published release:
+
+```sh
+./scripts/create-github-release.sh --version 0.1.0-beta.1 --verify-existing
+```
+
+For a later release, review the draft on GitHub and explicitly publish it only after every applicable
+gate for that release is complete. GitHub's automatically generated source archives are not the
+macOS app and must not be described as the install download.
 
 ## Repository visibility
 
-The repository is currently private, so a GitHub release is private too. Make the repository public
-only after the history/privacy scan, licence review, security contact, conduct contact, and other
-public-project gates are complete. Changing visibility and publishing the draft are separate,
-explicit maintainer actions.
+The repository became public on 10 August 2026 after the history/privacy scan, licence review,
+private security and conduct reporting paths, branch protection, and tag rules were verified.
+Changing visibility and publishing a draft remain separate, explicit maintainer actions for any
+future private release repository.
 
 ## Moving release signing to CI later
 
