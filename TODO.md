@@ -28,6 +28,22 @@ None.
 
 ## Live validation
 
+### WR-021 — Allow manual workspace moves to override App Rules
+
+- **Type:** Behavior correction
+- **Priority:** P1
+- **Status:** Live validation
+- **Scope:** Treat a workspace assignment as initial and reset placement rather than a permanent
+  lock. A manual move to another workspace must succeed and survive routine refreshes, while moving
+  back clears the override. New discovery or reopening, App Rule and profile changes, Reset Current
+  Workspace, and Reset All Windows reapply the assignment. Keep-on-all behavior remains unchanged.
+- **Automated evidence:** Deterministic tests cover contradictory moves, clearing an override by
+  moving back, and refresh behavior with and without an override. The 16 focused tests and complete
+  isolated 448-test suite passed on 10 August 2026.
+- **Remaining live boundary:** In the intended signed development build, assign an app to one
+  workspace, move one of its windows elsewhere, exercise an ordinary refresh/workspace round trip,
+  then verify the stated rule, profile, reset, and reopen boundaries before Beta 2.
+
 ### WR-005 — Measure Debug diagnostic logging under slow storage
 
 - **Type:** Performance measurement

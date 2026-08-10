@@ -59,15 +59,38 @@ final class MoveWindowFocusTests: XCTestCase {
         XCTAssertEqual(disposition(keepsOnAll: true), .unchangedVisible)
     }
 
-    func testAssignedWorkspaceRuleBlocksContradictoryManualMove() {
+    func testAssignedWorkspaceRuleAllowsContradictoryManualMove() {
         XCTAssertEqual(WorkspaceEngine.moveWorkspaceFocusDisposition(
             sourceWorkspaceID: source,
             requestedWorkspaceID: destination,
-            assignedWorkspaceID: other,
             keepsOnAllWorkspaces: false,
             configuredFollow: false,
             followOverride: nil
-        ), .blockedByAppRule)
+        ), .sendOnly)
+        XCTAssertTrue(WorkspaceEngine.manualWorkspaceRuleOverrideIsActive(
+            assignedWorkspaceID: other,
+            requestedWorkspaceID: destination
+        ))
+    }
+
+    func testMovingBackToRuleWorkspaceClearsManualOverride() {
+        XCTAssertFalse(WorkspaceEngine.manualWorkspaceRuleOverrideIsActive(
+            assignedWorkspaceID: destination,
+            requestedWorkspaceID: destination
+        ))
+    }
+
+    func testRefreshPreservesManualWorkspaceOverrideButAppliesRuleWithoutOne() {
+        XCTAssertEqual(WorkspaceEngine.workspaceIDAfterRuleRefresh(
+            currentWorkspaceID: destination,
+            assignedWorkspaceID: other,
+            manualOverrideActive: true
+        ), destination)
+        XCTAssertEqual(WorkspaceEngine.workspaceIDAfterRuleRefresh(
+            currentWorkspaceID: destination,
+            assignedWorkspaceID: other,
+            manualOverrideActive: false
+        ), other)
     }
 
     func testSendOnlyIsMigrationSafeDefault() {
@@ -178,7 +201,6 @@ final class MoveWindowFocusTests: XCTestCase {
         WorkspaceEngine.moveWorkspaceFocusDisposition(
             sourceWorkspaceID: source,
             requestedWorkspaceID: destination,
-            assignedWorkspaceID: nil,
             keepsOnAllWorkspaces: keepsOnAll,
             configuredFollow: configuredFollow,
             followOverride: followOverride
