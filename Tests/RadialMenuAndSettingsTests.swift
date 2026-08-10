@@ -1548,6 +1548,13 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     func testWorkspaceSettingsWindowHasRoomForSidebarListAndInspector() {
         XCTAssertEqual(SettingsWindowMetrics.minimumSize, CGSize(width: 760, height: 560))
         XCTAssertEqual(SettingsWindowMetrics.defaultSize, CGSize(width: 1280, height: 780))
+        XCTAssertEqual(SettingsWindowMetrics.sidebarWidth, 240)
+        XCTAssertEqual(SettingsWindowMetrics.masterListWidth, 300)
+        XCTAssertEqual(SettingsWindowMetrics.masterRowMinimumHeight, 44)
+        XCTAssertGreaterThan(
+            SettingsWindowMetrics.minimumSize.width - SettingsWindowMetrics.sidebarWidth,
+            500
+        )
         XCTAssertGreaterThan(SettingsWindowMetrics.defaultSize.width, SettingsWindowMetrics.minimumSize.width)
         XCTAssertGreaterThan(SettingsWindowMetrics.defaultSize.height, SettingsWindowMetrics.minimumSize.height)
         XCTAssertEqual(SettingsDetailLayout.resolve(availableWidth: 899), .compact)

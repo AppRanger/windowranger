@@ -189,7 +189,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             stateStore: WorkspaceStateStore(fileURL: stateURL, sessionProvider: { "fixture" }),
             diagnostics: .disabled
         )
-        let navigation = SettingsNavigationModel(defaults: defaults, includeDebug: false)
+        let navigation = SettingsNavigationModel(defaults: defaults, includeDebug: true)
         navigation.selectWorkspace(writing.id)
         let coordinator = SettingsWindowCoordinator(
             diagnostics: .disabled,
@@ -266,8 +266,51 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             to: outputDirectory.appendingPathComponent("windowranger-settings-profiles.png"),
             options: .atomic
         )
+        let darkProfilesData = try renderRetinaPNG(
+            darkView,
+            size: Self.snapshotSize,
+            appearance: .darkAqua
+        )
+        XCTAssertGreaterThan(darkProfilesData.count, 25_000)
+        try darkProfilesData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-profiles-dark.png"
+            ),
+            options: .atomic
+        )
+
+        for category in [
+            SettingsCategory.general,
+            .appRules,
+            .shortcuts,
+            .radialMenu,
+            .diagnostics,
+        ] {
+            navigation.select(category)
+            let wideCategoryData = try renderRetinaPNG(view, size: Self.snapshotSize)
+            XCTAssertGreaterThan(wideCategoryData.count, 25_000)
+            try wideCategoryData.write(
+                to: outputDirectory.appendingPathComponent(
+                    "windowranger-settings-\(category.rawValue).png"
+                ),
+                options: .atomic
+            )
+            let darkCategoryData = try renderRetinaPNG(
+                darkView,
+                size: Self.snapshotSize,
+                appearance: .darkAqua
+            )
+            XCTAssertGreaterThan(darkCategoryData.count, 25_000)
+            try darkCategoryData.write(
+                to: outputDirectory.appendingPathComponent(
+                    "windowranger-settings-\(category.rawValue)-dark.png"
+                ),
+                options: .atomic
+            )
+        }
 
         let compactSize = SettingsWindowMetrics.minimumSize
+        navigation.select(.profiles)
         let compactProfilesView = SettingsView(
             store: store,
             engine: engine,
@@ -322,6 +365,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             .appRules,
             .shortcuts,
             .radialMenu,
+            .diagnostics,
         ] {
             navigation.select(category)
             let compactCategoryView = SettingsView(

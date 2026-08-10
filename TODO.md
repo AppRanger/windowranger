@@ -28,27 +28,6 @@ None.
 
 ## Live validation
 
-### WR-025 — Reflow Settings across useful window sizes
-
-- **Type:** Change
-- **Priority:** P1
-- **Status:** Live validation
-- **Implemented:** Settings now resize down to 760 x 560. Wide Profiles and Workspaces retain their
-  split layouts; compact widths expose explicit segmented sections, and narrow geometry, App Rule,
-  and footer controls stack instead of clipping. Long forms remain scrollable.
-- **Automated evidence:** Deterministic compact/wide resolution, AppKit window bounds, and placement
-  tests pass in the complete 451-test non-hosted suite. Production fixtures render every primary
-  Settings pane at the compact minimum, plus Profiles and Workspaces at wide size.
-- **Remaining live boundary:** In the signed daily build, resize continuously across the breakpoint;
-  confirm both compact sections in Profiles and Workspaces remain reachable and retain selection;
-  check App Rules, Shortcuts, and Command Wheel at 760 x 560; then expand back to the wide layout.
-- **Failed live evidence:** In commit `23232a71599c`, the maintainer confirmed that no edge or
-  corner could resize the window and no resize pointer appeared. The remaining intrinsic-content
-  hosting measurement could pin the view at its ideal size despite the AppKit resizable style; the
-  signed daily at `f59b6662b89e` still failed. Live accessibility evidence showed `AXSize` was not
-  settable and the zoom control was disabled, confirming that the SwiftUI Settings scene reapplied
-  a fixed policy after initial attachment. The next daily reconciles constraints after scene updates.
-
 ### WR-005 — Measure Debug diagnostic logging under slow storage
 
 - **Type:** Performance measurement
@@ -231,6 +210,24 @@ second copy of that checklist.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-027 — Tidy Settings across wide and compact layouts
+
+- **Result:** Settings now follows a consistent native macOS layout grammar with a permanent sidebar,
+  common master-list widths, aligned controls and actions, compact list/detail navigation, semantic
+  system surfaces, and stable two-line list rows after scrolling.
+- **Evidence:** All seven panes render at wide and compact sizes, with wide Light and Dark fixtures;
+  the complete 451-test non-hosted suite and local quick gate pass. The maintainer validated the full
+  correction pass and recycled-row scrolling in the signed daily build on 10 August 2026.
+
+### WR-025 — Reflow Settings across useful window sizes
+
+- **Result:** Settings resize continuously down to 760 x 560. Wide collection panes retain their
+  master/detail layouts; compact Profiles, Workspaces, and App Rules use disclosure rows and titled
+  detail views with Back navigation; narrow controls reflow without clipping.
+- **Evidence:** Deterministic layout and AppKit window-policy tests pass in the complete 451-test
+  suite. The maintainer validated resizing, compact navigation, selection retention, and return to
+  the wide layout in the signed daily build on 10 August 2026.
 
 ### WR-024 — Show exact build identity in Settings
 
