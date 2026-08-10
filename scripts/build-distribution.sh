@@ -185,7 +185,7 @@ notarize_and_record() {
     local result_file="$release_directory/WindowRanger-$version-$label-notary-result.json"
     local log_file="$release_directory/WindowRanger-$version-$label-notary-log.json"
     local submission_id
-    local status
+    local notarization_status
     local issue_count
 
     DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun notarytool submit "$artifact" \
@@ -194,9 +194,9 @@ notarize_and_record() {
         --output-format json > "$result_file"
 
     submission_id="$(/usr/bin/plutil -extract id raw -o - "$result_file")"
-    status="$(/usr/bin/plutil -extract status raw -o - "$result_file")"
-    [[ "$status" == "Accepted" ]] || {
-        print -u2 "$label notarization was not accepted: $status"
+    notarization_status="$(/usr/bin/plutil -extract status raw -o - "$result_file")"
+    [[ "$notarization_status" == "Accepted" ]] || {
+        print -u2 "$label notarization was not accepted: $notarization_status"
         return 1
     }
 
