@@ -72,6 +72,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         return controller
     }()
+    private lazy var workspaceSwipeController: WorkspaceSwipeController = {
+        let controller = WorkspaceSwipeController(
+            dispatcher: commandDispatcher,
+            diagnostics: diagnostics
+        )
+        controller.runtimeIssueChanged = { [weak self] issue in
+            self?.settingsStore.setWorkspaceSwipeRuntimeIssue(issue)
+        }
+        return controller
+    }()
     private lazy var commandFeedbackPresenter: CommandFeedbackPresenting =
         CommandFeedbackOverlayController(diagnostics: diagnostics)
     private lazy var focusedWindowHighlightPresenter: FocusedWindowHighlightPresenting =
@@ -157,6 +167,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 session != nil,
                 reason: session == nil ? "fullscreen-game-ended" : "fullscreen-game-session"
             )
+            self.workspaceSwipeController.setSuppressed(
+                session != nil,
+                reason: "fullscreen-game-session"
+            )
             if session != nil {
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "fullscreen-game-session")
                 self.globeFnHoldActivationController.cancel(reason: "fullscreen-game-session")
@@ -171,6 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         registerHotKeys()
         updateGlobeFnHoldActivation()
+        updateWorkspaceSwipeActivation()
         engine.start()
         updateMenuBarPresentation()
         focusedWindowHighlightPresenter.update(
@@ -211,6 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] application in
                 self?.hotKeyManager.cancelDirectionalMoveGesture(reason: "application-activated")
                 self?.globeFnHoldActivationController.cancel(reason: "application-activated")
+                self?.workspaceSwipeController.cancel(reason: "application-activated")
                 self?.radialMenuTriggerController.cancel(reason: "application-activated")
                 self?.engine.applicationActivated(processIdentifier: application.processIdentifier)
             }
@@ -224,6 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.clearTiledPlacementHistory()
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "system-will-sleep")
                 self.globeFnHoldActivationController.cancel(reason: "system-will-sleep")
+                self.workspaceSwipeController.setSuppressed(true, reason: "system-sleep")
                 self.radialMenuTriggerController.cancel(reason: "system-will-sleep")
                 self.commandFeedbackPresenter.dismiss(reason: "system-will-sleep")
                 self.focusedWindowHighlightPresenter.setSuppressed(
@@ -260,6 +277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in
                 self?.hotKeyManager.cancelDirectionalMoveGesture(reason: "session-resigned-active")
                 self?.globeFnHoldActivationController.cancel(reason: "session-resigned-active")
+                self?.workspaceSwipeController.setSuppressed(true, reason: "session-inactive")
                 self?.radialMenuTriggerController.cancel(reason: "session-resigned-active")
                 self?.focusedWindowHighlightPresenter.setSuppressed(
                     true,
@@ -272,6 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.hotKeyManager.cancelDirectionalMoveGesture(reason: "display-configuration-changed")
+                self?.workspaceSwipeController.cancel(reason: "display-configuration-changed")
                 self?.commandFeedbackPresenter.screenParametersDidChange()
                 self?.focusedWindowHighlightPresenter.screenParametersDidChange()
                 self?.settingsWindowCoordinator.screenParametersDidChange()
@@ -351,6 +370,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.updateGlobeFnHoldActivation(globeFnEnabled: enabled)
             }
             .store(in: &cancellables)
+
+        Publishers.CombineLatest(
+            settingsStore.$workspaceSwipeEnabled.removeDuplicates(),
+            settingsStore.$workspaceSwipeFingerCount.removeDuplicates()
+        )
+        .dropFirst()
+        .sink { [weak self] enabled, fingerCount in
+            self?.updateWorkspaceSwipeActivation(
+                enabled: enabled,
+                fingerCount: fingerCount
+            )
+        }
+        .store(in: &cancellables)
 
         settingsStore.$radialMenuHoldDelay
             .dropFirst()
@@ -469,6 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.clearTiledPlacementHistory()
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "profile-transition")
                 self.globeFnHoldActivationController.cancel(reason: "profile-transition")
+                self.workspaceSwipeController.cancel(reason: "profile-transition")
                 self.radialMenuTriggerController.cancel(reason: "profile-transition")
                 self.commandFeedbackPresenter.dismiss(reason: "profile-transition")
                 self.engine.transitionToProfile(request)
@@ -505,6 +538,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tiledPlacementUndoManager.removeAllActions()
         hotKeyManager.cancelDirectionalMoveGesture(reason: "application-terminating")
         globeFnHoldActivationController.shutdown()
+        workspaceSwipeController.shutdown()
         radialMenuTriggerController.cancel(reason: "application-terminating")
         commandFeedbackPresenter.shutdown()
         focusedWindowHighlightPresenter.shutdown()
@@ -531,11 +565,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if isRecording {
             hotKeyManager.cancelDirectionalMoveGesture(reason: "shortcut-recording-began")
             globeFnHoldActivationController.cancel(reason: "shortcut-recording-began")
+            workspaceSwipeController.setSuppressed(true, reason: "shortcut-recording")
             radialMenuTriggerController.cancel(reason: "shortcut-recording-began")
             hotKeyManager.suspendRegistration()
             settingsStore.setHotKeyRuntimeIssues([])
         } else {
             registerHotKeys()
+            workspaceSwipeController.setSuppressed(false, reason: "shortcut-recording")
         }
         updateGlobeFnHoldActivation()
     }
@@ -543,6 +579,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func reconcileAfterWake(source: WakeReconciliationSource) {
         hotKeyManager.cancelDirectionalMoveGesture(reason: source.rawValue)
         globeFnHoldActivationController.resumeAfterLifecycle(reason: source.rawValue)
+        switch source {
+        case .systemWake, .screensWake:
+            workspaceSwipeController.setSuppressed(false, reason: "system-sleep")
+        case .sessionBecameActive:
+            workspaceSwipeController.setSuppressed(false, reason: "system-sleep")
+            workspaceSwipeController.setSuppressed(false, reason: "session-inactive")
+        case .displayConfigurationChanged:
+            workspaceSwipeController.cancel(reason: source.rawValue)
+        }
         radialMenuTriggerController.cancel(reason: source.rawValue)
         commandFeedbackPresenter.dismiss(reason: source.rawValue)
         focusedWindowHighlightPresenter.setSuppressed(
@@ -571,6 +616,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         globeFnHoldActivationController.update(
             enabled: runtimeSettings.isEnabled && fullscreenGameSession == nil,
             holdDelay: runtimeSettings.holdDelay
+        )
+    }
+
+    private func updateWorkspaceSwipeActivation(
+        enabled: Bool? = nil,
+        fingerCount: WorkspaceSwipeFingerCount? = nil
+    ) {
+        workspaceSwipeController.update(
+            enabled: enabled ?? settingsStore.workspaceSwipeEnabled,
+            fingerCount: fingerCount ?? settingsStore.workspaceSwipeFingerCount
+        )
+        workspaceSwipeController.setSuppressed(
+            fullscreenGameSession != nil,
+            reason: "fullscreen-game-session"
+        )
+        workspaceSwipeController.setSuppressed(
+            isShortcutRecording,
+            reason: "shortcut-recording"
         )
     }
 

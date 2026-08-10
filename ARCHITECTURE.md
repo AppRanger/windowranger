@@ -32,8 +32,9 @@ installing production hotkeys, asking for Accessibility permission or moving liv
    `ProfileLocalState`, then resolves abstract display roles against connected local displays.
 3. `WorkspaceEngine.start()` checks Accessibility trust, enumerates applications/windows and sends
    each candidate through the central admission classifier before it can enter any other subsystem.
-4. Hotkeys, the menu bar and the command wheel emit `WindowManagerCommand` values through one
-   dispatcher. The engine validates current context again before applying a mutation.
+4. Hotkeys, the optional local workspace-swipe monitor, the menu bar and the command wheel emit
+   `WindowManagerCommand` values through one dispatcher. The engine validates current context again
+   before applying a mutation.
 5. Engine state changes update the menu bar, Settings utility visibility and the persisted local
    workspace session. Configuration changes flow in the opposite direction from `SettingsStore`
    into the engine through debounced publishers.
@@ -135,10 +136,14 @@ the recovery boundary for those cases.
 
 The menu bar uses one stable AppKit status item. Its primary target always opens the app menu; only
 explicit Full-mode workspace buttons switch. Command feedback is a nonactivating click-through
-overlay. The optional focused-window highlight uses the same nonactivating, click-through boundary,
-polls only while enabled on this Mac, and excludes WindowRanger-owned windows, apps identified as
-games through the same public bundle metadata used by full-screen safety, and full-screen windows. Its
-local white-by-default colour is independent of the synced menu-bar accent. Automated Tiled and
+overlay. On macOS 26 and later its content is embedded in AppKit's public static Liquid Glass view;
+older supported releases use the system HUD material. Both surfaces use a capsule radius derived
+from the live overlay height. The surface choice never changes its panel, focus, input, timing, or
+accessibility boundary. The optional focused-window highlight uses the same
+nonactivating, click-through boundary, polls only while enabled on this Mac, and excludes
+WindowRanger-owned windows, apps identified as games through the same public bundle metadata used by
+full-screen safety, and full-screen windows. Its local white-by-default colour is independent of the
+synced menu-bar accent. Automated Tiled and
 Accordion geometry reserves a four-point screen-edge clearance while it is enabled; Freeform
 geometry remains untouched. Optional Tiled-only and multiple-window filters consume the engine's
 managed-window workspace snapshot; if a requested workspace condition cannot be proven, the border
@@ -151,6 +156,16 @@ rendering depends on this Mac and OS. The radial command wheel is nonactivating 
 action is committed.
 Settings is an explicit app-owned floating utility: it may activate and focus, but it is excluded
 from third-party discovery, layout and persistence.
+
+Workspace swiping is a separate off-by-default, machine-local hardware preference. Its AppKit/Core
+Graphics adapter is isolated behind an injected monitor and feeds a pure state machine only touch
+identities and normalized positions for the current gesture. The state machine requires the selected
+three or four fingers to move coherently and horizontally past one threshold, then latches until the
+gesture ends so it cannot emit multiple commands. The adapter returns every event unchanged, retains
+no touch history after the gesture, and fails closed if macOS does not expose the generic gesture
+stream. Accepted swipes use `cycleWorkspace`, preserving its ordered wraparound and Independent
+Displays interaction routing. Sleep, inactive login sessions, full-screen games, shortcut recording,
+display changes, and profile transitions cancel or suspend observation.
 
 Exact focus operations use bounded activation/focus/raise verification and generation tokens.
 Programmatic focus intent is separated from genuine user competition so stale notifications do not

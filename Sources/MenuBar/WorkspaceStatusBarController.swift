@@ -225,6 +225,48 @@ struct CommandFeedbackPanelPolicy: Equatable, Sendable {
 }
 
 @MainActor
+enum CommandFeedbackSurfaceFactory {
+    static func make(frame: CGRect) -> NSView {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: frame)
+            glass.style = .regular
+            glass.setAccessibilityElement(false)
+            updatePillShape(glass)
+            return glass
+        }
+
+        let material = NSVisualEffectView(frame: frame)
+        material.material = .hudWindow
+        material.blendingMode = .behindWindow
+        material.state = .active
+        material.wantsLayer = true
+        material.layer?.masksToBounds = true
+        material.setAccessibilityElement(false)
+        updatePillShape(material)
+        return material
+    }
+
+    static func updatePillShape(_ surface: NSView) {
+        let cornerRadius = max(0, surface.bounds.height / 2)
+        if #available(macOS 26.0, *), let glass = surface as? NSGlassEffectView {
+            glass.cornerRadius = cornerRadius
+        } else {
+            surface.layer?.cornerRadius = cornerRadius
+        }
+    }
+
+    static func installContent(_ content: NSView, in surface: NSView) {
+        content.frame = surface.bounds
+        content.autoresizingMask = [.width, .height]
+        if #available(macOS 26.0, *), let glass = surface as? NSGlassEffectView {
+            glass.contentView = content
+        } else {
+            surface.addSubview(content)
+        }
+    }
+}
+
+@MainActor
 protocol CommandFeedbackPresenting: AnyObject {
     func present(_ request: CommandFeedbackRequest)
     func dismiss(reason: String)
@@ -266,6 +308,9 @@ final class CommandFeedbackOverlayController: CommandFeedbackPresenting {
         let panel = ensurePanel()
         label?.stringValue = request.message
         panel.setFrame(placement.panelFrame, display: false)
+        if let surface = panel.contentView {
+            CommandFeedbackSurfaceFactory.updatePillShape(surface)
+        }
         panel.alphaValue = 1
         panel.orderFrontRegardless()
 
@@ -313,6 +358,9 @@ final class CommandFeedbackOverlayController: CommandFeedbackPresenting {
         let previousDisplay = currentDisplayIdentifier
         currentDisplayIdentifier = placement.displayIdentifier
         panel?.setFrame(placement.panelFrame, display: true)
+        if let surface = panel?.contentView {
+            CommandFeedbackSurfaceFactory.updatePillShape(surface)
+        }
         if previousDisplay != placement.displayIdentifier {
             diagnostics.log(
                 category: "command-feedback",
@@ -407,14 +455,12 @@ final class CommandFeedbackOverlayController: CommandFeedbackPresenting {
         panel.isExcludedFromWindowsMenu = true
         panel.setAccessibilityElement(false)
 
-        let background = NSVisualEffectView(frame: CGRect(origin: .zero, size: Self.panelSize))
-        background.material = .hudWindow
-        background.blendingMode = .behindWindow
-        background.state = .active
-        background.wantsLayer = true
-        background.layer?.cornerRadius = 14
-        background.layer?.masksToBounds = true
-        background.setAccessibilityElement(false)
+        let background = CommandFeedbackSurfaceFactory.make(
+            frame: CGRect(origin: .zero, size: Self.panelSize)
+        )
+        let content = NSView(frame: background.bounds)
+        content.setAccessibilityElement(false)
+        CommandFeedbackSurfaceFactory.installContent(content, in: background)
 
         let label = NSTextField(labelWithString: "")
         label.maximumNumberOfLines = 3
@@ -425,13 +471,13 @@ final class CommandFeedbackOverlayController: CommandFeedbackPresenting {
         label.refusesFirstResponder = true
         label.setAccessibilityElement(false)
         label.translatesAutoresizingMaskIntoConstraints = false
-        background.addSubview(label)
+        content.addSubview(label)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 18),
-            label.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -18),
-            label.topAnchor.constraint(greaterThanOrEqualTo: background.topAnchor, constant: 12),
-            label.bottomAnchor.constraint(lessThanOrEqualTo: background.bottomAnchor, constant: -12),
-            label.centerYAnchor.constraint(equalTo: background.centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
+            label.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
+            label.topAnchor.constraint(greaterThanOrEqualTo: content.topAnchor, constant: 12),
+            label.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -12),
+            label.centerYAnchor.constraint(equalTo: content.centerYAnchor),
         ])
         panel.contentView = background
         self.panel = panel

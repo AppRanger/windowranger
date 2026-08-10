@@ -17,6 +17,18 @@ central admission boundary and receive no workspace, layout, persistence, focus 
 Accessibility permission is controlled by macOS. WindowRanger does not reset TCC or silently alter
 the system permission list.
 
+## Optional trackpad workspace gesture
+
+**Swipe between workspaces** is off by default and stored only on this Mac. When enabled,
+WindowRanger uses an Accessibility-authorized, read-only Core Graphics event tap to observe generic
+trackpad gesture events. It reads only the selected finger count, session-scoped touch identities,
+and normalized movement needed to decide whether one horizontal swipe crossed the threshold. It
+does not suppress or modify the original event, store a gesture history, log touch identities or
+positions, or read typed input. All per-gesture state is discarded when the fingers lift or the
+gesture is cancelled. The monitor pauses during sleep, inactive-session, shortcut-recording and
+full-screen game states, and fails closed with a visible Settings issue when macOS does not expose
+the gesture stream.
+
 ## Launch at login
 
 The optional **Open at login** setting uses Apple's `SMAppService.mainApp`. It is off by default for

@@ -566,6 +566,29 @@ private struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Trackpad") {
+                Toggle("Swipe between workspaces", isOn: $store.workspaceSwipeEnabled)
+                LabeledContent("Swipe with") {
+                    Picker("Swipe with", selection: $store.workspaceSwipeFingerCount) {
+                        ForEach(WorkspaceSwipeFingerCount.allCases) { fingerCount in
+                            Text(fingerCount.title).tag(fingerCount)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                .disabled(!store.workspaceSwipeEnabled)
+                if let issue = store.workspaceSwipeRuntimeIssue {
+                    Label(issue, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                Text("Off by default and local to this Mac. One horizontal swipe moves to the previous or next workspace and wraps at either end. In Independent Displays mode it follows the display you are interacting with. macOS system gestures may take precedence.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Window focus") {
                 Toggle(
                     "Highlight the focused window",

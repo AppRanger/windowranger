@@ -293,6 +293,36 @@ final class UtilitySettingsTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
     }
 
+    func testWorkspaceSwipeIsOffByDefaultAndPersistsOnlyOnThisMac() {
+        let suite = "UtilitySettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+        let cloud = RecordingCloudStore()
+
+        var store: SettingsStore? = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertFalse(store!.workspaceSwipeEnabled)
+        XCTAssertEqual(store!.workspaceSwipeFingerCount, .three)
+        store!.workspaceSwipeEnabled = true
+        store!.workspaceSwipeFingerCount = .four
+        XCTAssertFalse(cloud.keys.contains("workspaceSwipeEnabled.v1"))
+        XCTAssertFalse(cloud.keys.contains("workspaceSwipeFingerCount.v1"))
+        store = nil
+
+        let restored = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertTrue(restored.workspaceSwipeEnabled)
+        XCTAssertEqual(restored.workspaceSwipeFingerCount, .four)
+        defaults.removePersistentDomain(forName: suite)
+    }
+
     func testFocusedWindowHighlightResolvesOSDefaultAndPerAppCornerRadius() {
         let version14 = OperatingSystemVersion(majorVersion: 14, minorVersion: 7, patchVersion: 0)
         let version15 = OperatingSystemVersion(majorVersion: 15, minorVersion: 6, patchVersion: 0)
@@ -596,6 +626,10 @@ final class UtilitySettingsTests: XCTestCase {
         XCTAssertEqual(
             SettingsCatalog.search("corner radius", includeDebug: false).first?.id,
             "focused-window-highlight"
+        )
+        XCTAssertEqual(
+            SettingsCatalog.search("four finger trackpad", includeDebug: false).first?.id,
+            "workspace-swipe"
         )
     }
 }
