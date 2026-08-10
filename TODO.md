@@ -356,8 +356,12 @@ second copy of that checklist.
   native glass command feedback; and optional three- or four-finger workspace swiping.
 - **Automated evidence:** The final WR-035/WR-036 integration commit passed the isolated local
   pre-push checkpoint with 478 non-hosted tests and the independent public GitHub CI check before
-  merge. Release preflight, full stable-Xcode verification, packaging, notarization, and exact
-  artifact evidence remain to be recorded against the promoted release commit.
+  merge. The promoted release commit passed the public release-branch test, analysis, unsigned
+  universal Release build, and Stable/Beta DMG smoke gate. Local stable-Xcode verification then
+  passed 478 tests, static analysis, universal archive, and Developer ID export before exposing a
+  release-script defect: the notarization result parser assigned to zsh's read-only `status`
+  parameter. The partial output is preserved outside the candidate path; the parser correction must
+  be reviewed and promoted before repeating packaging and recording exact-artifact evidence.
 - **Testing boundary:** Install and test the packaged Beta 2 DMG itself. Exercise the remaining live
   validation items in this queue, with particular attention to Settings resizing, multi-display
   workspace routing, focused-window borders, sleep/wake, Dock auto-hide, native glass feedback, and
