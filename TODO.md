@@ -69,6 +69,9 @@ smallest useful outcome and acceptance boundary.
   changes during normal polling and reflows without a WindowRanger restart.
 - **Automated evidence:** Pure bounds-policy tests cover the observed bottom inset, visible Dock,
   left/right Dock orientations, and a fail-safe unknown orientation.
+- **Installed evidence:** The signed Debug daily build for `8b649ad3f3f9` was installed and
+  relaunched from `/Applications/WindowRanger.app`; its Apple Development signature, embedded clean
+  revision, version `0.1.0 (1)`, and running executable path were verified.
 - **Remaining live boundary:** In a signed Debug build, verify auto-hide on fills the Dock edge,
   auto-hide off stops above the visible Dock, toggling either way reflows without relaunch, and a
   full-screen game exit cannot leave the 59-point strip behind on either monitor.
@@ -86,6 +89,8 @@ smallest useful outcome and acceptance boundary.
   right-aligned directly beside the native switch instead of stretching into the middle of the row.
 - **Automated evidence:** Layout constants are covered alongside the existing Settings metrics;
   the complete 465-test non-hosted suite passes after the follow-up alignment changes.
+- **Installed evidence:** The signed Debug daily build for `8b649ad3f3f9`, including all three
+  alignment refinements, is installed and running from `/Applications/WindowRanger.app`.
 - **Remaining live boundary:** In the installed merged build, compare all three master-list action
   rows and confirm their buttons have one visual height. Confirm short and long App Rule workspace
   names remain right-aligned at wide and compact Settings widths, and confirm the Enabled label
@@ -122,7 +127,9 @@ smallest useful outcome and acceptance boundary.
   `/Applications/WindowRanger.app`; its Apple Development signature, version `0.1.0 (1)`, embedded
   revision, and running executable path were verified. The maintainer previously live-validated the
   initial white-border behavior and colour/margin refinement, then confirmed the workspace filters,
-  per-app radius override, and 16-point macOS 27 automatic default work as intended.
+  per-app radius override, and 16-point macOS 27 automatic default work as intended. The follow-up
+  declared-game exclusion is installed in the signed Debug daily build for `8b649ad3f3f9` but still
+  needs live validation with a detected game window.
 - **Remaining live boundary:** Enable **Highlight the focused window** in General Settings and
   confirm the border tracks real focus, movement, and resizing on both displays without taking focus
   or intercepting clicks. Confirm the white default and custom colours, the Tiled/Accordion edge
