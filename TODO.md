@@ -20,13 +20,76 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
-None.
+### WR-028 — Rework the Command Wheel experience
 
-## Ready
+- **Type:** UX audit / potentially major change
+- **Priority:** P1
+- **Status:** Inbox
+- **User-observed:** The current command wheel is functional and looks acceptable, but is not a
+  good experience to use. Treat the next pass as an interaction and information-architecture review,
+  not a cosmetic tidy-up; a major rework remains possible.
+- **Expected:** Opening, understanding, navigating, and committing a contextual command should feel
+  immediate and predictable while preserving truthful context validation and nonactivating behavior.
+- **Next boundary:** Capture the current interaction at both levels with keyboard and pointer, then
+  decide whether the existing radial model is worth refining before implementation.
 
-None.
+### WR-030 — Investigate Battle.net focused-window compatibility
+
+- **Type:** Compatibility research / possible bug
+- **Priority:** P2
+- **Status:** Inbox
+- **Diagnostic-backed:** The live `net.battle.app` window is admitted as `managed-normal` with
+  `AXWindow / AXStandardWindow`, WindowServer layer 0, standard controls, and successful frame and
+  raise operations. Its separate App Rule excludes it from Tiled and Accordion, but that is not why
+  the focus border is absent. After successful application activation, Battle.net exposes neither a
+  settable window-focused attribute nor a settable application focused-window attribute, and live
+  focus observation repeatedly returns no focused window. Exact focus verification therefore fails
+  closed and the highlight controller cannot obtain the focused-window target it requires.
+- **Expected:** Preserve the verified Codex transient-window exclusion and the central admission
+  boundary. Before changing behavior, determine whether a narrowly proven fallback can identify the
+  one main, visible, layer-0 window of an active application without guessing among multiple windows
+  or weakening focus verification globally.
+- **Next boundary:** Research and test a Battle.net-specific observation fixture or bounded generic
+  fallback; do not implement it until its ambiguity and competition behavior are understood.
 
 ## Live validation
+
+### WR-029 — Optionally highlight the focused window
+
+- **Type:** Feature
+- **Priority:** P1
+- **Status:** Live validation
+- **Implemented:** General Settings now has an off-by-default, per-Mac option with its own local
+  border colour, defaulting to white. It monitors only while enabled and draws a nonactivating,
+  click-through panel. Tiled and Accordion layouts reserve four points at screen edges while the
+  option is enabled so the border remains visible; Freeform geometry stays user-controlled. Two
+  independent local filters can restrict the border to Tiled workspaces and to workspaces containing
+  multiple managed windows; unproven workspace context hides the border conservatively. A
+  conservative OS-generation default controls the corner radius: macOS 27 and later use the
+  maintainer-validated 16-point radius while earlier releases retain the 10-point fallback. Each App
+  Rule can supply a local, non-synced radius override for its bundle identifier. Policy excludes
+  WindowRanger-owned windows and any
+  window whose non-full-screen state cannot be confirmed. Lifecycle wiring reconciles display
+  changes and removes the border for full-screen game sessions, sleep, inactive login sessions,
+  disabling, and quit.
+- **Automated evidence:** The unsigned Debug app target builds, test isolation passes, and the full
+  458-test non-hosted suite covers local enablement, colour, filter and per-app radius persistence,
+  Settings search, OS-generation fallback and override precedence, independent and combined
+  workspace-filter eligibility, conservative missing-context and full-screen handling, coordinate
+  conversion, the four-point managed layout inset, and the nonactivating panel policy.
+- **Installed evidence:** The signed Debug daily build for `1edb85207be4-dirty`, including the
+  dedicated colour picker, four-point layout margin, both workspace filters, automatic radius
+  policy, and local per-app radius controls, was installed and relaunched from
+  `/Applications/WindowRanger.app`; its Apple Development signature, version `0.1.0 (1)`, embedded
+  revision, and running executable path were verified. The maintainer previously live-validated the
+  initial white-border behavior and colour/margin refinement, then confirmed the workspace filters,
+  per-app radius override, and 16-point macOS 27 automatic default work as intended.
+- **Remaining live boundary:** Enable **Highlight the focused window** in General Settings and
+  confirm the border tracks real focus, movement, and resizing on both displays without taking focus
+  or intercepting clicks. Confirm the white default and custom colours, the Tiled/Accordion edge
+  margin on both displays, unchanged Freeform geometry, Settings and full-screen exclusion,
+  Settings and full-screen exclusion, returning a per-app radius override to Automatic,
+  disable/reenable, and sleep/wake before marking this Done.
 
 ### WR-005 — Measure Debug diagnostic logging under slow storage
 

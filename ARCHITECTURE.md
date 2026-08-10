@@ -119,7 +119,19 @@ the recovery boundary for those cases.
 
 The menu bar uses one stable AppKit status item. Its primary target always opens the app menu; only
 explicit Full-mode workspace buttons switch. Command feedback is a nonactivating click-through
-overlay, while the radial command wheel is nonactivating until a validated action is committed.
+overlay. The optional focused-window highlight uses the same nonactivating, click-through boundary,
+polls only while enabled on this Mac, and excludes WindowRanger-owned and full-screen windows. Its
+local white-by-default colour is independent of the synced menu-bar accent. Automated Tiled and
+Accordion geometry reserves a four-point screen-edge clearance while it is enabled; Freeform
+geometry remains untouched. Optional Tiled-only and multiple-window filters consume the engine's
+managed-window workspace snapshot; if a requested workspace condition cannot be proven, the border
+stays hidden. Border corner radius resolves from a conservative OS-generation policy, then an
+optional normalized bundle-identifier override wins. AppKit, Accessibility, and WindowServer do not
+publish another app's rendered corner radius, so the generation table uses verified values only and
+keeps the macOS 27 baseline for later releases until a future design change is verified. Per-app
+overrides are local appearance state rather than synced App Rule actions because the correct
+rendering depends on this Mac and OS. The radial command wheel is nonactivating until a validated
+action is committed.
 Settings is an explicit app-owned floating utility: it may activate and focus, but it is excluded
 from third-party discovery, layout and persistence.
 
