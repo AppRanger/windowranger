@@ -154,16 +154,6 @@ adding engineering tasks.
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
-### WR-011 — Product identity and public project hygiene
-
-- **Type:** Release epic
-- **Status:** Held
-- **Completed groundwork:** Contributor workflow and safety rules, issue forms, pull-request template,
-  CODEOWNERS review routing, governance, support, and code-of-conduct documents.
-- **Remaining scope:** Copyright, Developer ID/signing ownership, final icon/version/support language,
-  third-party licence audit, history/secret/privacy review, private security reporting, and a private
-  project-controlled conduct contact.
-
 ### WR-012 — Clean build and package verification
 
 - **Type:** Release epic
@@ -213,55 +203,35 @@ second copy of that checklist.
     than claiming they are preserved;
   - keep Beta and Dev packaging out of the initial Homebrew acceptance boundary unless separately
     approved.
-- **Remaining scope:** Create/protect `develop`, choose distribution and packaging, Accessibility
-  migration guidance, implement and secure Sparkle, create and validate the Homebrew Cask, define
-  update/rollback failure handling, release provenance, signing/notarization, and publication.
-- **Gate:** Requires explicit maintainer approval; this queue does not authorize publishing.
+- **Completed groundwork:** Public Beta distribution, local-first signing/notarization, release
+  provenance, protected integration/stable branches and protected release tags.
+- **Remaining scope:** Accessibility migration guidance, Sparkle, Homebrew Stable distribution, and
+  update/rollback failure handling.
+- **Gate:** Each later release still requires explicit maintainer approval.
+
+## Done
 
 ### WR-018 — Publish the first GitHub Beta
 
-- **Type:** Release
-- **Priority:** P1
-- **Status:** Live validation
-- **Outcome:** Publish `v0.1.0-beta.1` as a GitHub prerelease with the exact universal Developer
-  ID-signed, notarized, stapled Beta DMG, notarized ZIP fallback, SHA-256 checksums, provenance
-  manifest, reviewed release notes, and no claim of Sparkle or Stable support.
-- **Implemented groundwork:** Unprivileged GitHub Actions verification, Hardened Runtime build
-  setting, Developer ID export configuration, approved Stable and construction-themed Beta DMG
-  artwork, deterministic headless DMG packaging, local build/notarize/package script, draft-release
-  script with local/uploaded asset verification, tracked release notes, and first-release runbook.
-- **Verified evidence:** Tag `v0.1.0-beta.1` and `release/0.1.0` resolve to exact artifact commit
-  `04b5750b1fe3b183c1259d132a0a8e985f8b4e0e`. Stable Xcode 26.6 passed clean project
-  generation, non-hosted tests, static analysis, universal archive/export, exact team/bundle/signing
-  checks, app and DMG notarization with zero Apple log issues, stapling, Gatekeeper assessment, DMG
-  structure verification, checksums, and provenance. Manually dispatched GitHub Actions run
-  [31334467211](https://github.com/windowranger/windowranger/actions/runs/31334467211) independently
-  passed isolation, committed tests, Release analysis/build, Stable/Beta DMG smoke verification, and
-  artifact upload for the exact commit. The private draft contains the DMG, ZIP, both checksums, and
-  manifest; all five assets were downloaded again and checksum-verified. The maintainer installed
-  and ran the exact signed DMG successfully after recovering the separate Accessibility trust for
-  the Developer ID copy. Release-hardening commit
-  `e02b34eee5ef7b1dd2150ca4eacfee383a0d16be` independently started and passed automatic
-  [push run 31336143953](https://github.com/windowranger/windowranger/actions/runs/31336143953) and
-  [pull-request run 31336188662](https://github.com/windowranger/windowranger/actions/runs/31336188662),
-  proving both configured event paths without manual dispatch. Immediately before publication on
-  10 August, all five draft assets were downloaded again and passed checksums and the tracked
-  provenance verifier; the app and DMG independently passed signature, stapling, notarization, and
-  Gatekeeper assessment. A redacted Gitleaks 8.30.1 scan of all 92 commits found only four false
-  positives on local settings keys; dependency, artwork-provenance, tracked-object, personal-path,
-  and authorship reviews found no publication blocker.
-- **Current blockers:**
-  - make the repository public, enable the documented private reporting form, and configure
-    branch/tag protection;
-  - publish the reviewed draft and verify its public release page and assets.
-- **Known Beta limitations:** The remaining manual regression, accessibility, privacy, clean-user,
-  LaunchServices, update, and rollback work stays explicit in the release notes and checklist. It is
-  not represented as complete or silently promoted to Stable evidence.
-- **Publication gate:** The maintainer explicitly authorized public visibility and a new Beta release
-  on 10 August 2026. Creating the draft alone was not publication; the authorized visibility and
-  release mutations still require verified execution.
+- **Result:** Made `windowranger/windowranger` public and published `v0.1.0-beta.1` as a GitHub
+  prerelease on 10 August 2026, preserving the exact signed, notarized artifact tag and all five
+  checksum/provenance-verified assets. Enabled private vulnerability reporting, secret scanning and
+  push protection; protected `main`, `develop`, and `v*` tags.
+- **Evidence:** The public release is
+  [WindowRanger 0.1.0 Beta 1](https://github.com/windowranger/windowranger/releases/tag/v0.1.0-beta.1)
+  at artifact commit `04b5750b1fe3b183c1259d132a0a8e985f8b4e0e`. Immediately before publication,
+  the downloaded app and DMG passed checksums, provenance, signature, stapling, notarization, and
+  Gatekeeper checks; the publication-preparation checkpoint passed all 446 tests.
+- **Known Beta limitations:** Remaining manual regression, accessibility, privacy, clean-user,
+  LaunchServices, update, and rollback work stays explicit in the release notes and checklist and is
+  not Stable evidence.
 
-## Done
+### WR-011 — Product identity and public project hygiene
+
+- **Result:** Confirmed first-Beta identity, copyright, artwork provenance, Apple-only dependencies,
+  MIT reference notices, intended commit authorship, and a redacted all-history secret/privacy scan.
+  Published contributor/governance/support documents and private security and conduct reporting
+  paths before making the repository public.
 
 ### WR-020 — Shift private hosted verification to local hooks
 
