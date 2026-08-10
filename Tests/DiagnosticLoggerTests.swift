@@ -177,6 +177,60 @@ final class DiagnosticLoggerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path + ".3"))
     }
 
+    func testControlledSlowStorageMeasurementPreservesOrderAndQuantifiesBlocking() throws {
+        let eventCount = 100
+        let injectedWriteLatency: TimeInterval = 0.002
+        let baselineSink = MemoryDiagnosticSink()
+        let baselineLogger = DiagnosticLogger(
+            buildMode: .debug,
+            sink: baselineSink,
+            sessionIdentifier: "wr-005-baseline"
+        )
+        let baselineStarted = Date()
+        for index in 0..<eventCount {
+            baselineLogger.log(
+                category: "measurement",
+                event: "noisy-debug-record",
+                correlation: "action-measurement",
+                fields: ["index": String(index), "payload": String(repeating: "x", count: 256)]
+            )
+        }
+        let baselineElapsed = Date().timeIntervalSince(baselineStarted)
+        let sink = LatencyInjectingDiagnosticSink(writeLatency: injectedWriteLatency)
+        let logger = DiagnosticLogger(
+            buildMode: .debug,
+            sink: sink,
+            sessionIdentifier: "wr-005-measurement"
+        )
+
+        let started = Date()
+        for index in 0..<eventCount {
+            logger.log(
+                category: "measurement",
+                event: "noisy-debug-record",
+                correlation: "action-measurement",
+                fields: ["index": String(index), "payload": String(repeating: "x", count: 256)]
+            )
+        }
+        let elapsed = Date().timeIntervalSince(started)
+        let records = try decodedRecords(sink.text)
+
+        XCTAssertEqual(records.count, eventCount)
+        XCTAssertEqual(records.compactMap { $0["sequence"] as? Int }, Array(1...eventCount))
+        XCTAssertGreaterThanOrEqual(elapsed, injectedWriteLatency * Double(eventCount) * 0.9)
+        XCTAssertGreaterThan(elapsed, baselineElapsed + injectedWriteLatency * Double(eventCount) * 0.8)
+        // CI timer granularity can make a requested 2 ms sleep substantially longer. The
+        // measurement is intentionally bounded below to prove synchronous blocking; an upper
+        // wall-clock bound would measure runner scheduling rather than logger behavior.
+        print(String(
+            format: "WR-005 controlled measurement: %d records, %.1f ms memory baseline; %.1f ms at 2 ms injected write latency (%.2f ms/record)",
+            eventCount,
+            baselineElapsed * 1_000,
+            elapsed * 1_000,
+            elapsed * 1_000 / Double(eventCount)
+        ))
+    }
+
     func testInteractionDisplayUsesActualFocusedFrameOnSecondDisplay() {
         let displays = [
             DisplaySnapshot(
@@ -655,5 +709,25 @@ final class DiagnosticLoggerTests: XCTestCase {
             let object = try JSONSerialization.jsonObject(with: Data(line.utf8))
             return try XCTUnwrap(object as? [String: Any])
         }
+    }
+}
+
+private final class LatencyInjectingDiagnosticSink: DiagnosticSink {
+    private let writeLatency: TimeInterval
+    private let memory = MemoryDiagnosticSink()
+    var fileURL: URL? { nil }
+    var text: String { memory.text }
+
+    init(writeLatency: TimeInterval) {
+        self.writeLatency = writeLatency
+    }
+
+    func append(_ data: Data) {
+        Thread.sleep(forTimeInterval: writeLatency)
+        memory.append(data)
+    }
+
+    func recent(maxBytes: Int) -> Data {
+        memory.recent(maxBytes: maxBytes)
     }
 }
