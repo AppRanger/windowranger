@@ -45,7 +45,9 @@ None.
 - **Failed live evidence:** In commit `23232a71599c`, the maintainer confirmed that no edge or
   corner could resize the window and no resize pointer appeared. The remaining intrinsic-content
   hosting measurement could pin the view at its ideal size despite the AppKit resizable style; the
-  next signed daily removes all hosting-derived constraints and keeps explicit AppKit bounds only.
+  signed daily at `f59b6662b89e` still failed. Live accessibility evidence showed `AXSize` was not
+  settable and the zoom control was disabled, confirming that the SwiftUI Settings scene reapplied
+  a fixed policy after initial attachment. The next daily reconciles constraints after scene updates.
 
 ### WR-005 — Measure Debug diagnostic logging under slow storage
 

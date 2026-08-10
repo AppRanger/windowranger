@@ -1009,7 +1009,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     @MainActor
-    func testSettingsAppKitHostUsesStableExplicitResizeConstraints() {
+    func testSettingsAppKitHostUsesStableExplicitResizeConstraints() async {
         let hostingView = NSHostingView(
             rootView: Text("Tall Settings content")
                 .frame(minWidth: 1_800, minHeight: 1_200)
@@ -1043,6 +1043,17 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(window.contentLayoutRect.size, CGSize(width: 1_000, height: 700))
         window.setContentSize(CGSize(width: 800, height: 600))
         XCTAssertEqual(window.contentLayoutRect.size, CGSize(width: 800, height: 600))
+
+        window.styleMask.remove(.resizable)
+        window.contentMaxSize = SettingsWindowMetrics.minimumSize
+        window.standardWindowButton(.zoomButton)?.isEnabled = false
+        NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: window)
+        await Task.yield()
+
+        XCTAssertTrue(window.styleMask.contains(.resizable))
+        XCTAssertGreaterThan(window.contentMaxSize.width, 10_000)
+        XCTAssertGreaterThan(window.contentMaxSize.height, 10_000)
+        XCTAssertEqual(window.standardWindowButton(.zoomButton)?.isEnabled, true)
         window.close()
     }
 

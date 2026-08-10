@@ -201,6 +201,7 @@ final class SettingsWindowCoordinator {
     private var surface: SettingsWindowSurface?
     private weak var attachedWindow: NSWindow?
     private var closeObserver: NSObjectProtocol?
+    private var constraintObservers: [NSObjectProtocol] = []
     private var pendingContext: SettingsSurfaceContext?
     private(set) var assignedContext: SettingsSurfaceContext?
     private(set) var requestGeneration: UInt64 = 0
@@ -298,6 +299,7 @@ final class SettingsWindowCoordinator {
         adapter.applyWindowConstraints()
         attachedWindow = window
         surface = adapter
+        observeConstraintReconciliation(for: window)
         closeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: window,
@@ -308,6 +310,7 @@ final class SettingsWindowCoordinator {
                 self.windowWillClose()
             }
         }
+        scheduleConstraintReconciliation(for: window)
         surfacePendingRequestIfPossible()
     }
 
@@ -461,9 +464,38 @@ final class SettingsWindowCoordinator {
             NotificationCenter.default.removeObserver(closeObserver)
             self.closeObserver = nil
         }
+        constraintObservers.forEach(NotificationCenter.default.removeObserver)
+        constraintObservers.removeAll()
         if restoreLifecycle { surface?.restoreOrdinaryLifecycle() }
         surface = nil
         attachedWindow = nil
+    }
+
+    private func observeConstraintReconciliation(for window: NSWindow) {
+        let names: [Notification.Name] = [
+            NSWindow.didBecomeKeyNotification,
+            NSWindow.didUpdateNotification,
+        ]
+        constraintObservers = names.map { name in
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: window,
+                queue: .main
+            ) { [weak self, weak window] _ in
+                Task { @MainActor in
+                    guard let self, let window, self.attachedWindow === window else { return }
+                    self.surface?.applyWindowConstraints()
+                }
+            }
+        }
+    }
+
+    private func scheduleConstraintReconciliation(for window: NSWindow) {
+        Task { @MainActor [weak self, weak window] in
+            await Task.yield()
+            guard let self, let window, self.attachedWindow === window else { return }
+            self.surface?.applyWindowConstraints()
+        }
     }
 
     private static func short(_ value: String) -> String {
@@ -483,7 +515,9 @@ extension NSHostingView: SettingsHostingSizingConfigurable {
         // view to its ideal size and prevent an otherwise resizable NSWindow from tracking an edge
         // drag. These panes provide their own scrolling and responsive layout, so leave all window
         // bounds to the coordinator's explicit AppKit minimum and maximum.
-        sizingOptions = []
+        if !sizingOptions.isEmpty {
+            sizingOptions = []
+        }
     }
 }
 
@@ -511,10 +545,16 @@ private final class AppKitSettingsWindowSurface: SettingsWindowSurface {
         if window.contentMinSize != SettingsWindowMetrics.minimumSize {
             window.contentMinSize = SettingsWindowMetrics.minimumSize
         }
-        window.contentMaxSize = CGSize(
+        let maximumSize = CGSize(
             width: CGFloat.greatestFiniteMagnitude,
             height: CGFloat.greatestFiniteMagnitude
         )
+        if window.contentMaxSize != maximumSize {
+            window.contentMaxSize = maximumSize
+        }
+        if let zoomButton = window.standardWindowButton(.zoomButton), !zoomButton.isEnabled {
+            zoomButton.isEnabled = true
+        }
 
         let currentContentSize = window.contentView?.bounds.size ?? window.contentLayoutRect.size
         let requiredContentSize = CGSize(
