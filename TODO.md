@@ -340,6 +340,29 @@ adding engineering tasks.
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
+### WR-037 — Prepare WindowRanger 0.1.0 Beta 2
+
+- **Type:** Beta release checkpoint
+- **Priority:** P1
+- **Status:** Live validation
+- **Approved scope:** Promote the reviewed `develop` checkpoint through `release/0.1.0`, assign
+  public version `0.1.0-beta.2` and monotonically increasing build number `2`, and create the exact
+  Developer ID-signed, notarized, stapled DMG and ZIP locally for maintainer testing. Do not create
+  or push the release tag, upload assets, create a GitHub release, or publish Beta 2 until the exact
+  artifact passes the applicable manual regression and the maintainer explicitly approves that
+  later publication checkpoint.
+- **Candidate highlights:** Resizable native Settings with compact list/detail navigation; optional
+  focused-window border; improved App Rule creation and alignment; Dock and wake reconciliation;
+  native glass command feedback; and optional three- or four-finger workspace swiping.
+- **Automated evidence:** The final WR-035/WR-036 integration commit passed the isolated local
+  pre-push checkpoint with 478 non-hosted tests and the independent public GitHub CI check before
+  merge. Release preflight, full stable-Xcode verification, packaging, notarization, and exact
+  artifact evidence remain to be recorded against the promoted release commit.
+- **Testing boundary:** Install and test the packaged Beta 2 DMG itself. Exercise the remaining live
+  validation items in this queue, with particular attention to Settings resizing, multi-display
+  workspace routing, focused-window borders, sleep/wake, Dock auto-hide, native glass feedback, and
+  physical three- and four-finger trackpad gestures.
+
 ### WR-012 — Clean build and package verification
 
 - **Type:** Release epic
