@@ -20,22 +20,6 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
-### WR-042 — Match focused-report history by structured window fields
-
-- **Type:** Diagnostics bug / Beta 2 release blocker
-- **Priority:** P1
-- **Status:** Inbox
-- **Reproduced:** The Beta 2 evidence PR's public CI run included an unrelated action group in a
-  focused-window diagnostic report. The filter searched each serialized JSON record for the raw
-  window token `1:2`; at `2026-08-11T19:01:25Z`, that token occurred inside the unrelated record's
-  timestamp and produced a false match.
-- **Expected:** A focused-window report includes an action group only when one of its structured
-  diagnostic field values refers to the exact window token. Timestamps, session identifiers,
-  categories, correlations, and longer numeric tokens must not make an unrelated action relevant.
-- **Acceptance boundary:** Decode retained diagnostic records, match only field values at exact
-  digit-and-colon token boundaries, cover the timestamp collision and adjacent-token cases, and
-  pass the complete isolated suite in public CI before rebuilding Beta 2.
-
 ### WR-028 — Rework the Command Wheel experience
 
 - **Type:** UX audit / potentially major change
@@ -411,10 +395,21 @@ second copy of that checklist.
   checksum, strict codesign, Gatekeeper, stapler, architecture, version, and build checks pass. A
   subsequent independent CI run exposed WR-042's time-dependent focused-report history filter, so
   this otherwise valid artifact is superseded and must not be used as the final Beta 2 candidate.
-- **Current boundary:** Rebuild the exact local Beta 2 DMG and ZIP after WR-042 is reviewed and
-  promoted. No tag has been created or pushed, no assets have been uploaded, and no GitHub release
-  exists. Explicit file-based Keychain lookup succeeds, but persistence after reboot remains a
-  separate live-validation boundary rather than a publication claim.
+- **Final candidate evidence:** The exact release commit `82b2fa381ae4` has the same Git tree as the
+  reviewed `develop` checkpoint and passed the public release-branch gate with 513 tests, static
+  analysis, unsigned universal Release build, Stable/Beta DMG smoke packages, and artifact upload.
+  The local Xcode 26.6 distribution build then passed the same 513-test suite and static analysis,
+  produced a universal Developer ID-signed app, and completed app and DMG notarization with zero
+  issues. Independent checksum, strict codesign, Gatekeeper, stapler, architecture, version, build,
+  and DMG integrity checks pass. The final ZIP SHA-256 is
+  `875ff04430f0de5cea67309e77463f2087cd47183f77b5e5f4722c46904e29e4`; the final DMG SHA-256 is
+  `06dd521c56812230a995fe98bb00c0909866c45fde2f3b68d51962a887def0b3`. Apple accepted the app
+  (`b3ab3d79-d5d4-4cf3-bece-f92a01d07939`) and DMG
+  (`4df96eb3-c9d8-4221-a0b6-2437e00d4d63`) notarization submissions.
+- **Current boundary:** The final local Beta 2 DMG and ZIP are ready for packaged-app testing. No tag
+  has been created or pushed, no assets have been uploaded, and no GitHub release exists. Explicit
+  file-based Keychain lookup succeeds, but persistence after reboot remains a separate
+  live-validation boundary rather than a publication claim.
 - **Testing boundary:** Install and test the packaged Beta 2 DMG itself. Exercise the remaining live
   validation items in this queue, with particular attention to Settings resizing, multi-display
   workspace routing, focused-window borders, sleep/wake, Dock auto-hide, native glass feedback, and
@@ -476,6 +471,16 @@ second copy of that checklist.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-042 — Match focused-report history by structured window fields
+
+- **Type:** Diagnostics bug / Beta 2 release blocker
+- **Status:** Done
+- **Result:** Focused-window reports now decode retained diagnostics and match exact window tokens
+  only in structured field values, with digit-and-colon boundaries preventing timestamps, metadata,
+  and adjacent identifiers from admitting unrelated action groups. Focused regression tests and the
+  complete 513-test local, public integration, and release-branch gates pass; the corrected change
+  was reviewed before the final Beta 2 candidate was built.
 
 ### WR-041 — Choose or hide menu-bar display icons
 
