@@ -59,6 +59,9 @@ struct FocusedWindowHighlightPanelPolicy: Equatable, Sendable {
 
 enum FocusedWindowHighlightPolicy {
     static let refreshInterval: TimeInterval = 0.1
+    /// A successful focus transaction may temporarily be ahead of AXFocusedWindow. Keep that
+    /// handoff long enough for the observed AX delay, but never poll WindowServer indefinitely.
+    static let verifiedTargetLeaseDuration: TimeInterval = 3
     static let borderWidth: CGFloat = 3
     static let borderOutset: CGFloat = 2
     static let fallbackCornerRadius: CGFloat = 10
@@ -124,6 +127,10 @@ enum FocusedWindowHighlightPolicy {
         return verifiedTarget
     }
 
+    static func verifiedTargetLeaseIsCurrent(expiresAt: Date, now: Date) -> Bool {
+        now < expiresAt
+    }
+
     static func shouldPresent(
         target: FocusedWindowHighlightTarget?,
         enabled: Bool,
@@ -182,11 +189,18 @@ protocol FocusedWindowHighlightPresenting: AnyObject {
 final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
     typealias ObservationProvider = @MainActor () -> FocusedWindowHighlightTarget?
     typealias MainScreenTopProvider = @MainActor () -> CGFloat?
+    typealias NowProvider = @MainActor () -> Date
+
+    private struct VerifiedFocusTargetLease {
+        let target: FocusedWindowHighlightTarget
+        let expiresAt: Date
+    }
 
     private let diagnostics: DiagnosticLogger
     private let ownProcessIdentifier: pid_t
     private let observationProvider: ObservationProvider
     private let mainScreenTopProvider: MainScreenTopProvider
+    private let nowProvider: NowProvider
     private var enabled = false
     private var suppressed = false
     private var color = NSColor.controlAccentColor
@@ -198,18 +212,20 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
     private var panel: FocusedWindowHighlightPanel?
     private var borderView: FocusedWindowHighlightView?
     private var presentedTarget: WindowKey?
-    private var verifiedFocusTarget: FocusedWindowHighlightTarget?
+    private var verifiedFocusTargetLease: VerifiedFocusTargetLease?
 
     init(
         diagnostics: DiagnosticLogger = .disabled,
         ownProcessIdentifier: pid_t = ProcessInfo.processInfo.processIdentifier,
         observationProvider: @escaping ObservationProvider = FocusedWindowHighlightController.focusedTarget,
-        mainScreenTopProvider: @escaping MainScreenTopProvider = FocusedWindowHighlightController.mainScreenTop
+        mainScreenTopProvider: @escaping MainScreenTopProvider = FocusedWindowHighlightController.mainScreenTop,
+        nowProvider: @escaping NowProvider = Date.init
     ) {
         self.diagnostics = diagnostics
         self.ownProcessIdentifier = ownProcessIdentifier
         self.observationProvider = observationProvider
         self.mainScreenTopProvider = mainScreenTopProvider
+        self.nowProvider = nowProvider
     }
 
     func update(enabled: Bool, color: NSColor, filters: FocusedWindowHighlightFilters) {
@@ -219,7 +235,7 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
         self.color = color
         self.filters = filters
         if !enabled {
-            verifiedFocusTarget = nil
+            verifiedFocusTargetLease = nil
         }
         borderView?.strokeColor = color
         let reason = enabledChanged
@@ -229,7 +245,12 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
     }
 
     func updateVerifiedFocusTarget(_ target: FocusedWindowHighlightTarget) {
-        verifiedFocusTarget = target
+        verifiedFocusTargetLease = VerifiedFocusTargetLease(
+            target: target,
+            expiresAt: nowProvider().addingTimeInterval(
+                FocusedWindowHighlightPolicy.verifiedTargetLeaseDuration
+            )
+        )
         guard enabled, !suppressed else { return }
         refresh()
     }
@@ -254,7 +275,7 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
         guard self.suppressed != suppressed else { return }
         self.suppressed = suppressed
         if suppressed {
-            verifiedFocusTarget = nil
+            verifiedFocusTargetLease = nil
         }
         reconcileMonitoring(reason: reason)
     }
@@ -266,7 +287,7 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
 
     func shutdown() {
         enabled = false
-        verifiedFocusTarget = nil
+        verifiedFocusTargetLease = nil
         stopMonitoring()
         dismiss(reason: "shutdown")
         panel?.close()
@@ -311,6 +332,15 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
 
     private func refresh() {
         let accessibilityTarget = observationProvider()
+        let now = nowProvider()
+        if let lease = verifiedFocusTargetLease,
+           !FocusedWindowHighlightPolicy.verifiedTargetLeaseIsCurrent(
+                expiresAt: lease.expiresAt,
+                now: now
+           ) {
+            verifiedFocusTargetLease = nil
+        }
+        let verifiedFocusTarget = verifiedFocusTargetLease?.target
         let verifiedApplicationIsActive = verifiedFocusTarget.flatMap {
             NSRunningApplication(processIdentifier: $0.key.processIdentifier)
         }?.isActive == true
@@ -328,7 +358,7 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
         if let verifiedFocusTarget {
             if accessibilityTarget?.key == verifiedFocusTarget.key ||
                 !verifiedApplicationIsActive || !verifiedWindowServerMatches {
-                self.verifiedFocusTarget = nil
+                self.verifiedFocusTargetLease = nil
             }
         }
         guard FocusedWindowHighlightPolicy.shouldPresent(

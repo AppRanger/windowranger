@@ -85,9 +85,37 @@ enum ExactWindowFocusStep: Equatable, Sendable {
 
 enum FocusCycleVerificationDecision: Equatable, Sendable {
     case succeeded
+    case retryAppKitActivation
     case retryExactTarget
     case advanceToNextCandidate
     case abortForCompetingFocus
+}
+
+enum FocusCandidateAttemptPhase: String, Equatable, Sendable {
+    case initial
+    case appKitActivationFallback
+    case exactRetry
+    case exactRetryAfterAppKitActivation
+
+    var exactAttempt: Int {
+        switch self {
+        case .exactRetry, .exactRetryAfterAppKitActivation: 1
+        case .initial, .appKitActivationFallback: 0
+        }
+    }
+
+    var appKitActivationAttempted: Bool {
+        switch self {
+        case .appKitActivationFallback, .exactRetryAfterAppKitActivation: true
+        case .initial, .exactRetry: false
+        }
+    }
+
+    var performsAppKitActivation: Bool { self == .appKitActivationFallback }
+
+    var exactRetryPhase: FocusCandidateAttemptPhase {
+        appKitActivationAttempted ? .exactRetryAfterAppKitActivation : .exactRetry
+    }
 }
 
 enum KeyboardManipulationFocusDecision: String, Equatable, Sendable {
@@ -2147,7 +2175,7 @@ final class WorkspaceEngine {
             self.attemptFocusCycleCandidate(
                 attemptOrder: attemptOrder,
                 candidateIndex: 0,
-                exactAttempt: 0,
+                phase: .initial,
                 originalFocus: focusContextKey,
                 workspaceID: workspaceID,
                 interactionDisplayIdentifier: interactionDisplay.identifier,
@@ -2224,7 +2252,7 @@ final class WorkspaceEngine {
             self.attemptFocusCycleCandidate(
                 attemptOrder: order,
                 candidateIndex: 0,
-                exactAttempt: 0,
+                phase: .initial,
                 originalFocus: focused.key,
                 workspaceID: workspaceID,
                 interactionDisplayIdentifier: interactionDisplay.identifier,
@@ -3601,7 +3629,7 @@ final class WorkspaceEngine {
                 self.attemptFocusCycleCandidate(
                     attemptOrder: [focusedKey],
                     candidateIndex: 0,
-                    exactAttempt: 0,
+                    phase: .initial,
                     originalFocus: nil,
                     workspaceID: effectiveWorkspaceID,
                     interactionDisplayIdentifier: destinationDisplayIdentifier,
@@ -3639,7 +3667,7 @@ final class WorkspaceEngine {
                     self.attemptFocusCycleCandidate(
                         attemptOrder: replacementOrder,
                         candidateIndex: 0,
-                        exactAttempt: 0,
+                        phase: .initial,
                         originalFocus: nil,
                         workspaceID: sourceWorkspaceID,
                         interactionDisplayIdentifier: interactionDisplay.identifier,
@@ -6905,8 +6933,10 @@ final class WorkspaceEngine {
     static func focusCycleVerificationDecision(
         expected: WindowKey,
         actual: WindowKey?,
+        previousFocus: WindowKey? = nil,
         applicationIsActive: Bool,
         windowServerTargetIsFrontmostNormalWindow: Bool = false,
+        appKitActivationAttempted: Bool = false,
         exactAttempt: Int,
         maximumExactAttempts: Int = 1
     ) -> FocusCycleVerificationDecision {
@@ -6916,11 +6946,22 @@ final class WorkspaceEngine {
            windowServerTargetIsFrontmostNormalWindow {
             return .succeeded
         }
+        if let actual, actual == previousFocus, actual != expected {
+            if !applicationIsActive && !appKitActivationAttempted {
+                return .retryAppKitActivation
+            }
+            if applicationIsActive, exactAttempt < maximumExactAttempts {
+                return .retryExactTarget
+            }
+            return .abortForCompetingFocus
+        }
         if let actual, actual.processIdentifier != expected.processIdentifier {
             return .abortForCompetingFocus
         }
-        if !applicationIsActive, actual == nil {
-            return .advanceToNextCandidate
+        if !applicationIsActive {
+            return appKitActivationAttempted
+                ? .advanceToNextCandidate
+                : .retryAppKitActivation
         }
         return exactAttempt < maximumExactAttempts
             ? .retryExactTarget
@@ -6934,18 +6975,18 @@ final class WorkspaceEngine {
         actualIsIgnored: Bool,
         applicationIsActive: Bool,
         windowServerTargetIsFrontmostNormalWindow: Bool = false,
+        appKitActivationAttempted: Bool = false,
         exactAttempt: Int,
         maximumExactAttempts: Int = 1
     ) -> FocusCycleVerificationDecision {
         if actualIsIgnored { return .abortForCompetingFocus }
-        if actual == previousFocus, actual != expected, exactAttempt == 0 {
-            return .retryExactTarget
-        }
         return focusCycleVerificationDecision(
             expected: expected,
             actual: actual,
+            previousFocus: previousFocus,
             applicationIsActive: applicationIsActive,
             windowServerTargetIsFrontmostNormalWindow: windowServerTargetIsFrontmostNormalWindow,
+            appKitActivationAttempted: appKitActivationAttempted,
             exactAttempt: exactAttempt,
             maximumExactAttempts: maximumExactAttempts
         )
@@ -8762,7 +8803,7 @@ final class WorkspaceEngine {
         attemptWorkspaceSwitchFocusCandidate(
             attemptOrder: attemptOrder,
             candidateIndex: 0,
-            exactAttempt: 0,
+            phase: .initial,
             previousFocusKey: previousFocusKey,
             workspaceID: workspaceID,
             destinationDisplayIdentifier: destinationDisplayIdentifier,
@@ -8910,7 +8951,7 @@ final class WorkspaceEngine {
     private func attemptWorkspaceSwitchFocusCandidate(
         attemptOrder: [WindowKey],
         candidateIndex: Int,
-        exactAttempt: Int,
+        phase: FocusCandidateAttemptPhase = .initial,
         previousFocusKey: WindowKey?,
         workspaceID: UUID,
         destinationDisplayIdentifier: String,
@@ -8957,7 +8998,7 @@ final class WorkspaceEngine {
             attemptWorkspaceSwitchFocusCandidate(
                 attemptOrder: attemptOrder,
                 candidateIndex: candidateIndex + 1,
-                exactAttempt: 0,
+                phase: .initial,
                 previousFocusKey: previousFocusKey,
                 workspaceID: workspaceID,
                 destinationDisplayIdentifier: destinationDisplayIdentifier,
@@ -8968,7 +9009,7 @@ final class WorkspaceEngine {
             return
         }
 
-        if exactAttempt == 0 {
+        if phase == .initial {
             // Re-entering a workspace is fresh user intent for its chosen target, so an older
             // parked-focus suppression must not survive this explicit switch.
             staleParkedFocusSuppression.removeValue(forKey: targetKey)
@@ -8994,16 +9035,25 @@ final class WorkspaceEngine {
             fields: [
                 "window": Self.diagnosticWindowKey(targetKey),
                 "candidate-index": String(candidateIndex),
-                "exact-attempt": String(exactAttempt),
+                "phase": phase.rawValue,
                 "display": Self.shortIdentifier(destinationDisplayIdentifier),
             ]
         )
-        if exactAttempt == 0 {
+        if phase.performsAppKitActivation {
+            activateManagedApplicationWithAppKit(
+                targetKey,
+                tracked: target,
+                correlationID: correlationID,
+                token: token,
+                event: "workspace-switch-observed-activation-fallback"
+            )
+        } else if phase == .initial {
             focusManagedWindow(
                 targetKey,
                 tracked: target,
                 correlationID: correlationID,
-                token: token
+                token: token,
+                allowImmediateAppKitCompatibilityFallback: false
             )
             lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
             persistState(preservingPendingRestores: true)
@@ -9024,7 +9074,9 @@ final class WorkspaceEngine {
         }
 
         pendingFocusVerification?.cancel()
-        let delay: DispatchTimeInterval = exactAttempt == 0 ? .milliseconds(220) : .milliseconds(120)
+        let delay: DispatchTimeInterval = phase.exactAttempt == 0
+            ? .milliseconds(220)
+            : .milliseconds(120)
         let workItem = DispatchWorkItem { [weak self] in
             guard let self, self.isFocusActionGenerationCurrent(token.generation) else { return }
             let actual = self.focusedWindowKey()
@@ -9050,7 +9102,8 @@ final class WorkspaceEngine {
                 applicationIsActive: applicationIsActive,
                 windowServerTargetIsFrontmostNormalWindow:
                     windowServerFrontmostWindow == targetKey.windowIdentifier,
-                exactAttempt: exactAttempt,
+                appKitActivationAttempted: phase.appKitActivationAttempted,
+                exactAttempt: phase.exactAttempt,
                 maximumExactAttempts: 1
             )
             self.diagnostics.log(
@@ -9067,7 +9120,7 @@ final class WorkspaceEngine {
                         windowServerFrontmostWindow == targetKey.windowIdentifier
                     ),
                     "actual-window-ignored": String(actualIsIgnored),
-                    "exact-attempt": String(exactAttempt),
+                    "phase": phase.rawValue,
                     "decision": String(describing: decision),
                     "display": Self.shortIdentifier(destinationDisplayIdentifier),
                 ]
@@ -9091,11 +9144,23 @@ final class WorkspaceEngine {
                         "active-after": self.diagnosticActiveWorkspaceMap(),
                     ]
                 )
+            case .retryAppKitActivation:
+                self.attemptWorkspaceSwitchFocusCandidate(
+                    attemptOrder: attemptOrder,
+                    candidateIndex: candidateIndex,
+                    phase: .appKitActivationFallback,
+                    previousFocusKey: previousFocusKey,
+                    workspaceID: workspaceID,
+                    destinationDisplayIdentifier: destinationDisplayIdentifier,
+                    displays: displays,
+                    correlationID: correlationID,
+                    token: token
+                )
             case .retryExactTarget:
                 self.attemptWorkspaceSwitchFocusCandidate(
                     attemptOrder: attemptOrder,
                     candidateIndex: candidateIndex,
-                    exactAttempt: exactAttempt + 1,
+                    phase: phase.exactRetryPhase,
                     previousFocusKey: previousFocusKey,
                     workspaceID: workspaceID,
                     destinationDisplayIdentifier: destinationDisplayIdentifier,
@@ -9108,7 +9173,7 @@ final class WorkspaceEngine {
                 self.attemptWorkspaceSwitchFocusCandidate(
                     attemptOrder: attemptOrder,
                     candidateIndex: candidateIndex + 1,
-                    exactAttempt: 0,
+                    phase: .initial,
                     previousFocusKey: previousFocusKey,
                     workspaceID: workspaceID,
                     destinationDisplayIdentifier: destinationDisplayIdentifier,
@@ -9174,7 +9239,7 @@ final class WorkspaceEngine {
     private func attemptFocusCycleCandidate(
         attemptOrder: [WindowKey],
         candidateIndex: Int,
-        exactAttempt: Int,
+        phase: FocusCandidateAttemptPhase = .initial,
         originalFocus: WindowKey?,
         workspaceID: UUID,
         interactionDisplayIdentifier: String,
@@ -9220,7 +9285,7 @@ final class WorkspaceEngine {
             attemptFocusCycleCandidate(
                 attemptOrder: attemptOrder,
                 candidateIndex: candidateIndex + 1,
-                exactAttempt: 0,
+                phase: .initial,
                 originalFocus: originalFocus,
                 workspaceID: workspaceID,
                 interactionDisplayIdentifier: interactionDisplayIdentifier,
@@ -9231,7 +9296,7 @@ final class WorkspaceEngine {
             return
         }
 
-        if exactAttempt == 0 {
+        if phase == .initial {
             currentWorkspaceID = workspaceID
             lastFocusedWindow[workspaceID] = targetKey
             recentInteractionFocusTarget = targetKey
@@ -9252,16 +9317,25 @@ final class WorkspaceEngine {
             fields: [
                 "window": Self.diagnosticWindowKey(targetKey),
                 "candidate-index": String(candidateIndex),
-                "exact-attempt": String(exactAttempt),
+                "phase": phase.rawValue,
                 "display": Self.shortIdentifier(interactionDisplayIdentifier),
             ]
         )
-        if exactAttempt == 0 {
+        if phase.performsAppKitActivation {
+            activateManagedApplicationWithAppKit(
+                targetKey,
+                tracked: target,
+                correlationID: correlationID,
+                token: token,
+                event: "focus-cycle-observed-activation-fallback"
+            )
+        } else if phase == .initial {
             focusManagedWindow(
                 targetKey,
                 tracked: target,
                 correlationID: correlationID,
-                token: token
+                token: token,
+                allowImmediateAppKitCompatibilityFallback: false
             )
             lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
             persistState(preservingPendingRestores: true)
@@ -9282,7 +9356,9 @@ final class WorkspaceEngine {
         }
 
         pendingFocusVerification?.cancel()
-        let delay: DispatchTimeInterval = exactAttempt == 0 ? .milliseconds(220) : .milliseconds(120)
+        let delay: DispatchTimeInterval = phase.exactAttempt == 0
+            ? .milliseconds(220)
+            : .milliseconds(120)
         let workItem = DispatchWorkItem { [weak self] in
             guard let self,
                   self.isFocusActionGenerationCurrent(token.generation)
@@ -9304,10 +9380,12 @@ final class WorkspaceEngine {
                 : Self.focusCycleVerificationDecision(
                     expected: targetKey,
                     actual: actual,
+                    previousFocus: originalFocus,
                     applicationIsActive: applicationIsActive,
                     windowServerTargetIsFrontmostNormalWindow:
                         windowServerFrontmostWindow == targetKey.windowIdentifier,
-                    exactAttempt: exactAttempt,
+                    appKitActivationAttempted: phase.appKitActivationAttempted,
+                    exactAttempt: phase.exactAttempt,
                     maximumExactAttempts: 1
                 )
             self.diagnostics.log(
@@ -9323,7 +9401,7 @@ final class WorkspaceEngine {
                         windowServerFrontmostWindow == targetKey.windowIdentifier
                     ),
                     "actual-window-ignored": String(actualIsIgnored),
-                    "exact-attempt": String(exactAttempt),
+                    "phase": phase.rawValue,
                     "decision": String(describing: decision),
                 ]
             )
@@ -9344,11 +9422,23 @@ final class WorkspaceEngine {
                         "active-after": self.diagnosticActiveWorkspaceMap(),
                     ]
                 )
+            case .retryAppKitActivation:
+                self.attemptFocusCycleCandidate(
+                    attemptOrder: attemptOrder,
+                    candidateIndex: candidateIndex,
+                    phase: .appKitActivationFallback,
+                    originalFocus: originalFocus,
+                    workspaceID: workspaceID,
+                    interactionDisplayIdentifier: interactionDisplayIdentifier,
+                    displays: displays,
+                    correlationID: correlationID,
+                    token: token
+                )
             case .retryExactTarget:
                 self.attemptFocusCycleCandidate(
                     attemptOrder: attemptOrder,
                     candidateIndex: candidateIndex,
-                    exactAttempt: exactAttempt + 1,
+                    phase: phase.exactRetryPhase,
                     originalFocus: originalFocus,
                     workspaceID: workspaceID,
                     interactionDisplayIdentifier: interactionDisplayIdentifier,
@@ -9371,7 +9461,7 @@ final class WorkspaceEngine {
                 self.attemptFocusCycleCandidate(
                     attemptOrder: attemptOrder,
                     candidateIndex: candidateIndex + 1,
-                    exactAttempt: 0,
+                    phase: .initial,
                     originalFocus: originalFocus,
                     workspaceID: workspaceID,
                     interactionDisplayIdentifier: interactionDisplayIdentifier,
@@ -9426,7 +9516,8 @@ final class WorkspaceEngine {
         _ key: WindowKey,
         tracked: TrackedWindow,
         correlationID: String? = nil,
-        token: FocusVerificationToken? = nil
+        token: FocusVerificationToken? = nil,
+        allowImmediateAppKitCompatibilityFallback: Bool = true
     ) {
         prepareProgrammaticFocusIntent(
             key,
@@ -9486,10 +9577,10 @@ final class WorkspaceEngine {
 
         // Making an application frontmost chooses an application, not a specific window. Prepare
         // and raise the exact target first, then use the public application-level AXFrontmost
-        // attribute. AppKit activation is a fallback only when Accessibility rejects that write;
-        // unlike NSRunningApplication activation, AXFrontmost produced a prompt handoff for the
-        // affected apps in the controlled macOS 27 test. Reassert the exact target again from the
-        // activation notification so another same-app window cannot win the application handoff.
+        // attribute. Candidate-verification callers disable the immediate compatibility fallback
+        // and may request AppKit activation once only after observing that the app stayed inactive.
+        // One-shot callers without candidate advancement retain the AX-error fallback. Reassert the
+        // exact target from the activation notification so another same-app window cannot win.
         applyExactWindowFocus(
             key,
             tracked: tracked,
@@ -9518,26 +9609,79 @@ final class WorkspaceEngine {
                 kAXFrontmostAttribute as CFString,
                 true as CFTypeRef
             )
-            let appKitFallbackAttempted = Self.shouldUseAppKitActivationFallback(
-                accessibilityFrontmostResult: accessibilityFrontmostResult
-            )
+            let appKitFallbackAttempted = allowImmediateAppKitCompatibilityFallback &&
+                Self.shouldUseAppKitActivationFallback(
+                    accessibilityFrontmostResult: accessibilityFrontmostResult
+                )
             let appKitFallbackSucceeded = appKitFallbackAttempted
                 ? application?.activate() == true
                 : false
-            let activated = accessibilityFrontmostResult == .success || appKitFallbackSucceeded
+            let requestAccepted = accessibilityFrontmostResult == .success || appKitFallbackSucceeded
             self?.diagnostics.log(
                 category: "focus-action",
-                event: "application-activate",
+                event: "application-activation-requested",
                 correlation: correlationID,
                 fields: [
                     "window": Self.diagnosticWindowKey(key),
-                    "success": String(activated),
+                    "request-accepted": String(requestAccepted),
                     "automatic-unhide": unhideDecision.rawValue,
                     "unhide-success": String(unhidden),
                     "accessibility-frontmost-result": String(accessibilityFrontmostResult.rawValue),
+                    "immediate-appkit-compatibility-fallback-allowed": String(
+                        allowImmediateAppKitCompatibilityFallback
+                    ),
                     "appkit-fallback-attempted": String(appKitFallbackAttempted),
                     "appkit-fallback-success": String(appKitFallbackSucceeded),
+                    "activation-outcome": "pending-observation",
                     "ordering": "exact-window-before-frontmost-then-reassert",
+                ]
+            )
+        }
+    }
+
+    private func activateManagedApplicationWithAppKit(
+        _ key: WindowKey,
+        tracked: TrackedWindow,
+        correlationID: String?,
+        token: FocusVerificationToken,
+        event: String
+    ) {
+        prepareProgrammaticFocusIntent(
+            key,
+            correlationID: correlationID,
+            duration: 1.25,
+            generation: token.generation
+        )
+        applyExactWindowFocus(
+            key,
+            tracked: tracked,
+            correlationID: correlationID,
+            event: "\(event)-exact-window"
+        )
+        let application = NSRunningApplication(processIdentifier: key.processIdentifier)
+        DispatchQueue.main.async { [weak self, weak application] in
+            guard let self, self.isFocusActionGenerationCurrent(token.generation) else { return }
+            guard application?.isActive != true else {
+                self.diagnostics.log(
+                    category: "focus-action",
+                    event: event,
+                    correlation: correlationID,
+                    fields: [
+                        "window": Self.diagnosticWindowKey(key),
+                        "result": "skipped-already-active",
+                    ]
+                )
+                return
+            }
+            let requestAccepted = application?.activate() == true
+            self.diagnostics.log(
+                category: "focus-action",
+                event: event,
+                correlation: correlationID,
+                fields: [
+                    "window": Self.diagnosticWindowKey(key),
+                    "request-accepted": String(requestAccepted),
+                    "activation-outcome": "pending-observation",
                 ]
             )
         }

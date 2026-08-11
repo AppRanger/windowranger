@@ -146,6 +146,16 @@ final class WorkspaceSwitchFocusTests: XCTestCase {
             applicationIsActive: false,
             windowServerTargetIsFrontmostNormalWindow: true,
             exactAttempt: 0
+        ), .retryAppKitActivation)
+        XCTAssertEqual(WorkspaceEngine.workspaceSwitchFocusVerificationDecision(
+            expected: target,
+            actual: nil,
+            previousFocus: previous,
+            actualIsIgnored: false,
+            applicationIsActive: false,
+            windowServerTargetIsFrontmostNormalWindow: true,
+            appKitActivationAttempted: true,
+            exactAttempt: 0
         ), .advanceToNextCandidate)
     }
 
@@ -175,7 +185,7 @@ final class WorkspaceSwitchFocusTests: XCTestCase {
             actualIsIgnored: false,
             applicationIsActive: false,
             exactAttempt: 0
-        ), .retryExactTarget)
+        ), .retryAppKitActivation)
         XCTAssertEqual(WorkspaceEngine.workspaceSwitchFocusVerificationDecision(
             expected: target,
             actual: previous,

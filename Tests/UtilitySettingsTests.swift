@@ -604,6 +604,20 @@ final class UtilitySettingsTests: XCTestCase {
         ), verifiedTarget)
     }
 
+    func testFocusedWindowHighlightVerifiedTargetLeaseIsStrictlyBounded() {
+        let expiry = Date(timeIntervalSinceReferenceDate: 103)
+
+        XCTAssertTrue(FocusedWindowHighlightPolicy.verifiedTargetLeaseIsCurrent(
+            expiresAt: expiry,
+            now: Date(timeIntervalSinceReferenceDate: 102.999)
+        ))
+        XCTAssertFalse(FocusedWindowHighlightPolicy.verifiedTargetLeaseIsCurrent(
+            expiresAt: expiry,
+            now: expiry
+        ))
+        XCTAssertEqual(FocusedWindowHighlightPolicy.verifiedTargetLeaseDuration, 3)
+    }
+
     func testFocusedWindowHighlightPanelCannotActivateOrInterceptInput() {
         XCTAssertEqual(
             FocusedWindowHighlightPanelPolicy.nonActivating,

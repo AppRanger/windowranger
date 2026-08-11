@@ -267,9 +267,11 @@ enum AccessibilityWindow {
         for processIdentifier: pid_t,
         in orderedWindows: [WindowServerWindowOrderEntry]
     ) -> CGWindowID? {
-        orderedWindows.first {
-            $0.processIdentifier == processIdentifier && $0.layer == 0
-        }?.windowIdentifier
+        guard let frontmostApplicationWindow = orderedWindows.first(where: {
+            $0.processIdentifier == processIdentifier
+        }), frontmostApplicationWindow.layer == 0
+        else { return nil }
+        return frontmostApplicationWindow.windowIdentifier
     }
 
     static func frontmostOnScreenNormalWindowIdentifier(

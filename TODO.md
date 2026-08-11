@@ -438,20 +438,14 @@ second copy of that checklist.
 
 ### WR-038 — Do not let stale parked-window focus undo a workspace switch
 
-- **Result:** Inactive-application focus now prepares the exact window and uses the public
-  application Accessibility frontmost attribute, with AppKit activation only after an AX error.
-  Exact verification accepts a temporarily missing AX focused-window value only when the
-  application is active and WindowServer independently identifies the requested window as its
-  frontmost on-screen layer-0 window. The focused-window border may consume that already-verified
-  target while AX catches up, revalidating both facts on every poll. No per-app exception or
-  longer focus timer was added.
-- **Evidence:** The complete 485-test non-hosted suite and local quick gate pass. In the signed
-  Debug daily build on macOS 27, the maintainer confirmed Chrome, Excel, Activity Monitor, and
-  Claude keep the intended frontmost order; cycling no longer fails, background candidates no
-  longer move forward, and workspaces no longer reverse themselves. Claude's remaining workspace-
-  return border delay is accepted: diagnostics measured 243-273 ms from focus attempt to border,
-  with `verified-focus-transaction` presentation 3-6 ms after exact verification. The initial
-  independent highlight rediscovery was removed after live logs proved it was never selected.
+- **Result:** Candidate focus now succeeds from observed exact AX or active-app plus unambiguous
+  WindowServer evidence, with a bounded one-shot AppKit activation fallback and exact retry. A
+  same-app higher-layer window invalidates WindowServer proof, competing focus still aborts, and
+  the border's verified-target handoff expires after three seconds. No per-app exception was added.
+- **Evidence:** The complete local quick gate passes 489 non-hosted tests. The signed universal
+  Debug daily build for `dea7fc77d216-dirty` was installed and verified, and the maintainer confirmed
+  workspace return and cycling remain correct with Claude, Chrome, Activity Monitor, and Excel:
+  focus borders remain present, background candidates do not advance, and workspaces do not jump.
 
 ### WR-031 — Prioritise open apps when adding an App Rule
 
