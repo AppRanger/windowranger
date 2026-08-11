@@ -371,9 +371,11 @@ second copy of that checklist.
   selecting its first line, preserving strict pipeline failure handling. Both corrections are now
   merged into `develop` and `release/0.1.0`; their final public push gates passed 478 tests, static
   analysis, unsigned universal Release builds, Stable/Beta DMG smoke packaging, and artifact upload.
-- **Latest source evidence:** The macOS 27 menu-bar integration checkpoint `6210a73585ff` passes the
-  complete local quick gate with 512 non-hosted tests. Its independent public GitHub CI run and the
-  release-preparation PR remain required before promotion to `release/0.1.0`.
+- **Latest source evidence:** Release commit `a95f970f2547` has the exact same Git tree as the
+  reviewed `develop` checkpoint `eda425e447d3`. Its public release-branch CI run passed 512 tests,
+  static analysis, an unsigned universal Release build, Stable/Beta DMG smoke packaging, and
+  artifact upload. Stable Xcode 26.6 then passed the same 512-test suite, static analysis, universal
+  archive, and Developer ID export locally.
 - **Credential hardening:** The original `WindowRanger` profile disappeared twice after being stored
   through `notarytool`'s default Data Protection Keychain path. A replacement profile is now stored
   explicitly in the file-based login Keychain and its history lookup passed both the normal shell
@@ -384,9 +386,17 @@ second copy of that checklist.
   Beta 2 candidate from the latest reviewed `develop` tree. Building, signing, notarizing, and
   stapling the exact local DMG and ZIP is approved; tagging, uploading assets, creating a GitHub
   release, and publication remain separate approval checkpoints.
-- **Current boundary:** No final Beta 2 DMG or ZIP exists, and no tag, assets, or GitHub release have
-  been created. Explicit file-based Keychain lookup succeeds, but persistence after reboot remains
-  a separate live-validation boundary rather than a publication claim.
+- **Exact candidate evidence:** The local `0.1.0-beta.2` build 2 candidate was produced from
+  `a95f970f2547` in `.build/releases/0.1.0-beta.2`. The ZIP SHA-256 is
+  `888c70f05c0020e30bcde5380b80f3affd760f91e39db9dee63efbb9512a2e44`; the DMG SHA-256 is
+  `24d3852b79290aad1a0eb07694cc49f62dc10b9aba0bdbba32ae9863345c044d`. Apple accepted the app
+  (`11c88b99-acf6-4019-a260-f64282a149ea`) and DMG
+  (`9628ef87-5753-4ff6-9de1-db019e503592`) notarizations with zero logged issues. Independent
+  checksum, strict codesign, Gatekeeper, stapler, architecture, version, and build checks pass.
+- **Current boundary:** The exact local Beta 2 DMG and ZIP now exist for manual testing. No tag has
+  been created or pushed, no assets have been uploaded, and no GitHub release exists. Explicit
+  file-based Keychain lookup succeeds, but persistence after reboot remains a separate
+  live-validation boundary rather than a publication claim.
 - **Testing boundary:** Install and test the packaged Beta 2 DMG itself. Exercise the remaining live
   validation items in this queue, with particular attention to Settings resizing, multi-display
   workspace routing, focused-window borders, sleep/wake, Dock auto-hide, native glass feedback, and
