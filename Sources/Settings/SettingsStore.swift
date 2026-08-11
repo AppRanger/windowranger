@@ -827,6 +827,31 @@ final class SettingsStore: ObservableObject {
         evaluateAutomaticProfileSelection(source: "display-topology")
     }
 
+    var menuBarDisplayIconConfiguration: MenuBarDisplayIconConfiguration {
+        MenuBarProfileDisplayIconResolver.configuration(
+            profile: activeProfile,
+            roleBindings: localProfileState.roleBindings,
+            displays: connectedDisplays
+        )
+    }
+
+    func menuBarDisplayIconStyle(forRole roleID: UUID) -> MenuBarDisplayIconStyle {
+        activeProfile.displayRoles.first(where: { $0.id == roleID })?.menuBarIconStyle
+            ?? .automatic
+    }
+
+    func setMenuBarDisplayIconStyle(
+        _ style: MenuBarDisplayIconStyle,
+        forRole roleID: UUID
+    ) {
+        mutateActiveProfile { profile in
+            guard let index = profile.displayRoles.firstIndex(where: { $0.id == roleID }) else {
+                return
+            }
+            profile.displayRoles[index].menuBarIconStyle = style
+        }
+    }
+
     // MARK: - Existing profile-owned setting operations
 
     @discardableResult

@@ -354,7 +354,11 @@ enum ProfileTransferCodec {
                 guard let id = roleIDMap[role.id] else {
                     throw ProfileTransferError.invalidReference("display-role remapping")
                 }
-                return ProfileDisplayRole(id: id, name: role.name)
+                return ProfileDisplayRole(
+                    id: id,
+                    name: role.name,
+                    menuBarIconStyle: role.menuBarIconStyle
+                )
             }
             let assignments = try Dictionary(uniqueKeysWithValues:
                 source.workspaceRoleAssignments.map { workspaceID, roleID -> (UUID, UUID) in
