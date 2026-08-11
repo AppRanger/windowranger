@@ -26,6 +26,10 @@ final class ProfileTransferTests: XCTestCase {
             source.workspaces.map(\.layoutConfiguration)
         )
         XCTAssertEqual(imported.displayRoles.map(\.name), source.displayRoles.map(\.name))
+        XCTAssertEqual(
+            imported.displayRoles.map(\.menuBarIconStyle),
+            source.displayRoles.map(\.menuBarIconStyle)
+        )
         XCTAssertEqual(imported.appRules.first?.bundleIdentifier, "com.example.Editor")
         XCTAssertEqual(
             imported.appRules.first?.assignedWorkspaceID,
@@ -289,8 +293,11 @@ final class ProfileTransferTests: XCTestCase {
             layout: .tiled,
             layoutConfiguration: .aeroSpaceUserDefaults
         )
-        let primary = ProfileDisplayRole(name: "Built-in")
-        let studio = ProfileDisplayRole(name: "Studio Display")
+        let primary = ProfileDisplayRole(name: "Built-in", menuBarIconStyle: .laptop)
+        let studio = ProfileDisplayRole(
+            name: "Studio Display",
+            menuBarIconStyle: .horizontalMonitor
+        )
         return WindowManagerProfile(
             name: name,
             workspaces: [writing, review],

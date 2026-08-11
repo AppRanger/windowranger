@@ -1,22 +1,30 @@
 import AppKit
 import ApplicationServices
 
+enum FocusedWindowHighlightObservationSource: String, Equatable, Sendable {
+    case accessibilityFocusedWindow = "accessibility-focused-window"
+    case verifiedFocusTransaction = "verified-focus-transaction"
+}
+
 struct FocusedWindowHighlightTarget: Equatable, Sendable {
     let key: WindowKey
     let frame: WindowFrame
     let fullscreenObservation: AXBooleanAttributeObservation
     let bundleIdentifier: String?
+    let observationSource: FocusedWindowHighlightObservationSource
 
     init(
         key: WindowKey,
         frame: WindowFrame,
         fullscreenObservation: AXBooleanAttributeObservation,
-        bundleIdentifier: String? = nil
+        bundleIdentifier: String? = nil,
+        observationSource: FocusedWindowHighlightObservationSource = .accessibilityFocusedWindow
     ) {
         self.key = key
         self.frame = frame
         self.fullscreenObservation = fullscreenObservation
         self.bundleIdentifier = bundleIdentifier
+        self.observationSource = observationSource
     }
 }
 
@@ -51,6 +59,9 @@ struct FocusedWindowHighlightPanelPolicy: Equatable, Sendable {
 
 enum FocusedWindowHighlightPolicy {
     static let refreshInterval: TimeInterval = 0.1
+    /// A successful focus transaction may temporarily be ahead of AXFocusedWindow. Keep that
+    /// handoff long enough for the observed AX delay, but never poll WindowServer indefinitely.
+    static let verifiedTargetLeaseDuration: TimeInterval = 3
     static let borderWidth: CGFloat = 3
     static let borderOutset: CGFloat = 2
     static let fallbackCornerRadius: CGFloat = 10
@@ -100,6 +111,26 @@ enum FocusedWindowHighlightPolicy {
         return candidate.width > 0 && candidate.height > 0 ? candidate : bounds
     }
 
+    static func preferredTarget(
+        accessibilityTarget: FocusedWindowHighlightTarget?,
+        verifiedTarget: FocusedWindowHighlightTarget?,
+        verifiedApplicationIsActive: Bool,
+        verifiedWindowServerMatches: Bool
+    ) -> FocusedWindowHighlightTarget? {
+        guard let verifiedTarget,
+              verifiedApplicationIsActive,
+              verifiedWindowServerMatches
+        else { return accessibilityTarget }
+        if accessibilityTarget?.key == verifiedTarget.key {
+            return accessibilityTarget
+        }
+        return verifiedTarget
+    }
+
+    static func verifiedTargetLeaseIsCurrent(expiresAt: Date, now: Date) -> Bool {
+        now < expiresAt
+    }
+
     static func shouldPresent(
         target: FocusedWindowHighlightTarget?,
         enabled: Bool,
@@ -146,6 +177,7 @@ enum FocusedWindowHighlightPolicy {
 @MainActor
 protocol FocusedWindowHighlightPresenting: AnyObject {
     func update(enabled: Bool, color: NSColor, filters: FocusedWindowHighlightFilters)
+    func updateVerifiedFocusTarget(_ target: FocusedWindowHighlightTarget)
     func updateCornerRadiusOverrides(_ overrides: [String: Double])
     func updateWorkspaceContexts(_ contexts: [WindowKey: FocusedWindowHighlightWorkspaceContext])
     func setSuppressed(_ suppressed: Bool, reason: String)
@@ -157,11 +189,18 @@ protocol FocusedWindowHighlightPresenting: AnyObject {
 final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
     typealias ObservationProvider = @MainActor () -> FocusedWindowHighlightTarget?
     typealias MainScreenTopProvider = @MainActor () -> CGFloat?
+    typealias NowProvider = @MainActor () -> Date
+
+    private struct VerifiedFocusTargetLease {
+        let target: FocusedWindowHighlightTarget
+        let expiresAt: Date
+    }
 
     private let diagnostics: DiagnosticLogger
     private let ownProcessIdentifier: pid_t
     private let observationProvider: ObservationProvider
     private let mainScreenTopProvider: MainScreenTopProvider
+    private let nowProvider: NowProvider
     private var enabled = false
     private var suppressed = false
     private var color = NSColor.controlAccentColor
@@ -173,17 +212,20 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
     private var panel: FocusedWindowHighlightPanel?
     private var borderView: FocusedWindowHighlightView?
     private var presentedTarget: WindowKey?
+    private var verifiedFocusTargetLease: VerifiedFocusTargetLease?
 
     init(
         diagnostics: DiagnosticLogger = .disabled,
         ownProcessIdentifier: pid_t = ProcessInfo.processInfo.processIdentifier,
         observationProvider: @escaping ObservationProvider = FocusedWindowHighlightController.focusedTarget,
-        mainScreenTopProvider: @escaping MainScreenTopProvider = FocusedWindowHighlightController.mainScreenTop
+        mainScreenTopProvider: @escaping MainScreenTopProvider = FocusedWindowHighlightController.mainScreenTop,
+        nowProvider: @escaping NowProvider = Date.init
     ) {
         self.diagnostics = diagnostics
         self.ownProcessIdentifier = ownProcessIdentifier
         self.observationProvider = observationProvider
         self.mainScreenTopProvider = mainScreenTopProvider
+        self.nowProvider = nowProvider
     }
 
     func update(enabled: Bool, color: NSColor, filters: FocusedWindowHighlightFilters) {
@@ -192,11 +234,25 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
         self.enabled = enabled
         self.color = color
         self.filters = filters
+        if !enabled {
+            verifiedFocusTargetLease = nil
+        }
         borderView?.strokeColor = color
         let reason = enabledChanged
             ? "setting-changed"
             : filtersChanged ? "filters-changed" : "colour-changed"
         reconcileMonitoring(reason: reason)
+    }
+
+    func updateVerifiedFocusTarget(_ target: FocusedWindowHighlightTarget) {
+        verifiedFocusTargetLease = VerifiedFocusTargetLease(
+            target: target,
+            expiresAt: nowProvider().addingTimeInterval(
+                FocusedWindowHighlightPolicy.verifiedTargetLeaseDuration
+            )
+        )
+        guard enabled, !suppressed else { return }
+        refresh()
     }
 
     func updateWorkspaceContexts(
@@ -218,6 +274,9 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
     func setSuppressed(_ suppressed: Bool, reason: String) {
         guard self.suppressed != suppressed else { return }
         self.suppressed = suppressed
+        if suppressed {
+            verifiedFocusTargetLease = nil
+        }
         reconcileMonitoring(reason: reason)
     }
 
@@ -228,6 +287,7 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
 
     func shutdown() {
         enabled = false
+        verifiedFocusTargetLease = nil
         stopMonitoring()
         dismiss(reason: "shutdown")
         panel?.close()
@@ -271,7 +331,36 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
     }
 
     private func refresh() {
-        let target = observationProvider()
+        let accessibilityTarget = observationProvider()
+        let now = nowProvider()
+        if let lease = verifiedFocusTargetLease,
+           !FocusedWindowHighlightPolicy.verifiedTargetLeaseIsCurrent(
+                expiresAt: lease.expiresAt,
+                now: now
+           ) {
+            verifiedFocusTargetLease = nil
+        }
+        let verifiedFocusTarget = verifiedFocusTargetLease?.target
+        let verifiedApplicationIsActive = verifiedFocusTarget.flatMap {
+            NSRunningApplication(processIdentifier: $0.key.processIdentifier)
+        }?.isActive == true
+        let verifiedWindowServerMatches = verifiedFocusTarget.map {
+            AccessibilityWindow.frontmostOnScreenNormalWindowIdentifier(
+                for: $0.key.processIdentifier
+            ) == $0.key.windowIdentifier
+        } ?? false
+        let target = FocusedWindowHighlightPolicy.preferredTarget(
+            accessibilityTarget: accessibilityTarget,
+            verifiedTarget: verifiedFocusTarget,
+            verifiedApplicationIsActive: verifiedApplicationIsActive,
+            verifiedWindowServerMatches: verifiedWindowServerMatches
+        )
+        if let verifiedFocusTarget {
+            if accessibilityTarget?.key == verifiedFocusTarget.key ||
+                !verifiedApplicationIsActive || !verifiedWindowServerMatches {
+                self.verifiedFocusTargetLease = nil
+            }
+        }
         guard FocusedWindowHighlightPolicy.shouldPresent(
             target: target,
             enabled: enabled,
@@ -301,7 +390,10 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
             diagnostics.log(
                 category: "focused-window-highlight",
                 event: "presented",
-                fields: ["non-activating": "true"]
+                fields: [
+                    "non-activating": "true",
+                    "observation-source": target.observationSource.rawValue,
+                ]
             )
         }
         presentedTarget = target.key
@@ -372,26 +464,43 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
             system,
             kAXFocusedApplicationAttribute as CFString,
             as: AXUIElement.self
-        ), let focusedWindow = AccessibilityWindow.copyAttribute(
+        ) else { return nil }
+
+        var processIdentifier: pid_t = 0
+        AXUIElementGetPid(focusedApplication, &processIdentifier)
+        let application = NSRunningApplication(processIdentifier: processIdentifier)
+        let bundleIdentifier = application?.bundleIdentifier
+        guard let focusedWindow = AccessibilityWindow.copyAttribute(
             focusedApplication,
             kAXFocusedWindowAttribute as CFString,
             as: AXUIElement.self
         ) else { return nil }
 
-        var processIdentifier: pid_t = 0
-        AXUIElementGetPid(focusedApplication, &processIdentifier)
-        guard let key = AccessibilityWindow.identifier(
+        return target(
             for: focusedWindow,
+            processIdentifier: processIdentifier,
+            bundleIdentifier: bundleIdentifier,
+            observationSource: .accessibilityFocusedWindow
+        )
+    }
+
+    private static func target(
+        for window: AXUIElement,
+        processIdentifier: pid_t,
+        bundleIdentifier: String?,
+        observationSource: FocusedWindowHighlightObservationSource
+    ) -> FocusedWindowHighlightTarget? {
+        guard let key = AccessibilityWindow.identifier(
+            for: window,
             processIdentifier: processIdentifier
-        ), let frame = AccessibilityWindow.frame(of: focusedWindow)
+        ), let frame = AccessibilityWindow.frame(of: window)
         else { return nil }
         return FocusedWindowHighlightTarget(
             key: key,
             frame: frame,
-            fullscreenObservation: AccessibilityWindow.fullscreenObservation(of: focusedWindow),
-            bundleIdentifier: NSRunningApplication(
-                processIdentifier: processIdentifier
-            )?.bundleIdentifier
+            fullscreenObservation: AccessibilityWindow.fullscreenObservation(of: window),
+            bundleIdentifier: bundleIdentifier,
+            observationSource: observationSource
         )
     }
 

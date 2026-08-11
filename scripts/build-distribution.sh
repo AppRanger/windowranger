@@ -15,10 +15,11 @@ dmgbuild="${WINDOWRANGER_DMGBUILD:-$dmg_tool_root/bin/dmgbuild}"
 version=""
 build_number=""
 notary_profile=""
+notary_keychain="${WINDOWRANGER_NOTARY_KEYCHAIN:-}"
 preflight_only=false
 
 usage() {
-    print "Usage: $script_name --version VERSION --build-number NUMBER --notary-profile PROFILE [--preflight]"
+    print "Usage: $script_name --version VERSION --build-number NUMBER --notary-profile PROFILE [--notary-keychain PATH] [--preflight]"
     print ""
     print "Builds, Developer ID-signs, notarizes, staples, and packages a Stable or Beta release."
     print "The command never tags, pushes, creates a GitHub release, or changes repository visibility."
@@ -27,6 +28,7 @@ usage() {
     print "  WINDOWRANGER_DEVELOPER_DIR   Stable Xcode Developer directory"
     print "  WINDOWRANGER_RELEASE_ROOT   Artifact root (default: .build/releases)"
     print "  WINDOWRANGER_DMG_TOOL_ROOT  dmgbuild virtual environment (default: .build/dmg-tools)"
+    print "  WINDOWRANGER_NOTARY_KEYCHAIN  Explicit file-based keychain for the notary profile"
 }
 
 while (( $# > 0 )); do
@@ -46,6 +48,11 @@ while (( $# > 0 )); do
             notary_profile="$2"
             shift
             ;;
+        --notary-keychain)
+            (( $# >= 2 )) || { print -u2 "--notary-keychain requires a value"; exit 2; }
+            notary_keychain="$2"
+            shift
+            ;;
         --preflight) preflight_only=true ;;
         -h|--help)
             usage
@@ -63,6 +70,13 @@ done
 [[ -n "$version" ]] || { print -u2 "Missing --version"; exit 2; }
 [[ -n "$build_number" ]] || { print -u2 "Missing --build-number"; exit 2; }
 [[ -n "$notary_profile" ]] || { print -u2 "Missing --notary-profile"; exit 2; }
+
+typeset -a notary_keychain_arguments
+notary_keychain_arguments=()
+if [[ -n "$notary_keychain" ]]; then
+    notary_keychain="${notary_keychain:A}"
+    notary_keychain_arguments=(--keychain "$notary_keychain")
+fi
 
 print -r -- "$version" | /usr/bin/grep -Eq \
     '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]*)?$' || {
@@ -98,6 +112,9 @@ done
 )
 [[ -f "$export_options" ]] || blockers+=("Missing export options: $export_options")
 [[ -n "$release_team_id" ]] || blockers+=("Export options do not declare a release team ID")
+if [[ -n "$notary_keychain" && ! -f "$notary_keychain" ]]; then
+    blockers+=("Notary keychain does not exist: $notary_keychain")
+fi
 [[ -x "$dmgbuild" ]] || blockers+=(
     "DMG tools are not installed; run ./scripts/install-dmg-tools.sh"
 )
@@ -128,8 +145,9 @@ signing_identity_hash="$(print -r -- "$matching_identities" | /usr/bin/awk 'NR =
 if [[ -d "$developer_directory" ]]; then
     DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun notarytool history \
         --keychain-profile "$notary_profile" \
+        "${notary_keychain_arguments[@]}" \
         --output-format json >/dev/null 2>&1 || blockers+=(
-        "Notary keychain profile '$notary_profile' is missing or invalid"
+        "Notary keychain profile '$notary_profile' is missing or invalid${notary_keychain:+ in $notary_keychain}"
     )
 fi
 
@@ -150,6 +168,7 @@ print "  Branch: $current_branch"
 print "  Toolchain: $xcode_version"
 print "  Signing team: $release_team_id"
 print "  Notary keychain profile: $notary_profile"
+print "  Notary keychain: ${notary_keychain:-data protection keychain}"
 
 if [[ "$preflight_only" == true ]]; then
     exit 0
@@ -190,6 +209,7 @@ notarize_and_record() {
 
     DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun notarytool submit "$artifact" \
         --keychain-profile "$notary_profile" \
+        "${notary_keychain_arguments[@]}" \
         --wait \
         --output-format json > "$result_file"
 
@@ -201,7 +221,8 @@ notarize_and_record() {
     }
 
     DEVELOPER_DIR="$developer_directory" /usr/bin/xcrun notarytool log "$submission_id" "$log_file" \
-        --keychain-profile "$notary_profile"
+        --keychain-profile "$notary_profile" \
+        "${notary_keychain_arguments[@]}"
     issue_count="$(
         /usr/bin/awk '{
             line = $0
