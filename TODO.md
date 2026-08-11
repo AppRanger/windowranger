@@ -353,19 +353,40 @@ second copy of that checklist.
   later publication checkpoint.
 - **Candidate highlights:** Resizable native Settings with compact list/detail navigation; optional
   focused-window border; improved App Rule creation and alignment; Dock and wake reconciliation;
-  native glass command feedback; and optional three- or four-finger workspace swiping.
+  native glass command feedback; optional three- or four-finger workspace swiping; guarded exact
+  focus recovery; and restored macOS 27 Full menu-bar workspace clicks.
 - **Automated evidence:** The final WR-035/WR-036 integration commit passed the isolated local
   pre-push checkpoint with 478 non-hosted tests and the independent public GitHub CI check before
   merge. The promoted release commit passed the public release-branch test, analysis, unsigned
   universal Release build, and Stable/Beta DMG smoke gate. Local stable-Xcode verification then
   passed 478 tests, static analysis, universal archive, and Developer ID export before exposing a
   release-script defect: the notarization result parser assigned to zsh's read-only `status`
-  parameter. The partial output is preserved outside the candidate path. After the parser correction
-  was reviewed and promoted, repeated preflight exposed a second shell defect: with `pipefail`
+  parameter. The partial output is preserved in
+  `.build/releases/0.1.0-beta.2.failed-20260810-2118`; its app notarization submission
+  (`168cd92f-f0b9-4910-9100-2ebbda3fe980`) was accepted, but it is not the exact candidate. After
+  the parser correction was reviewed and promoted, repeated preflight exposed a second shell defect:
+  with `pipefail`
   enabled, piping the two-line `xcodebuild -version` output through `head` could intermittently exit
   141 when `head` closed the pipe early. The correction consumes the complete output with `sed` while
-  selecting its first line, preserving strict pipeline failure handling. It must be reviewed and
-  promoted before repeating packaging and recording exact-artifact evidence.
+  selecting its first line, preserving strict pipeline failure handling. Both corrections are now
+  merged into `develop` and `release/0.1.0`; their final public push gates passed 478 tests, static
+  analysis, unsigned universal Release builds, Stable/Beta DMG smoke packaging, and artifact upload.
+- **Latest source evidence:** The macOS 27 menu-bar integration checkpoint `6210a73585ff` passes the
+  complete local quick gate with 512 non-hosted tests. Its independent public GitHub CI run and the
+  release-preparation PR remain required before promotion to `release/0.1.0`.
+- **Credential hardening:** The original `WindowRanger` profile disappeared twice after being stored
+  through `notarytool`'s default Data Protection Keychain path. A replacement profile is now stored
+  explicitly in the file-based login Keychain and its history lookup passed both the normal shell
+  environment and a stripped clean environment. The distribution script and release instructions
+  now accept the same explicit keychain path for every history, submit, and log operation. Persistence
+  still needs verification after a reboot before the credential issue is considered closed.
+- **Resumed checkpoint (2026-08-11):** The maintainer resumed preparation of a fresh unpublished
+  Beta 2 candidate from the latest reviewed `develop` tree. Building, signing, notarizing, and
+  stapling the exact local DMG and ZIP is approved; tagging, uploading assets, creating a GitHub
+  release, and publication remain separate approval checkpoints.
+- **Current boundary:** No final Beta 2 DMG or ZIP exists, and no tag, assets, or GitHub release have
+  been created. Explicit file-based Keychain lookup succeeds, but persistence after reboot remains
+  a separate live-validation boundary rather than a publication claim.
 - **Testing boundary:** Install and test the packaged Beta 2 DMG itself. Exercise the remaining live
   validation items in this queue, with particular attention to Settings resizing, multi-display
   workspace routing, focused-window borders, sleep/wake, Dock auto-hide, native glass feedback, and
@@ -427,6 +448,55 @@ second copy of that checklist.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-041 — Choose or hide menu-bar display icons
+
+- **Result:** Each profile display role now owns an Automatic, Horizontal Monitor, Vertical
+  Monitor, Laptop, or None menu-bar icon choice while physical monitor bindings remain local to
+  each Mac. Every presentation path and the Settings preview share the resolved configuration;
+  None reclaims the icon width without removing workspace controls. A deferred AppDelegate update
+  resolves configuration only after `@Published` profile, binding, or topology state commits,
+  preventing the live menu bar from rendering the preceding selection.
+- **Evidence:** All 512 isolated tests pass, universal Debug builds pass with the macOS 26.5 and
+  macOS 27.0 SDKs, and a private Developer ID build was live-validated on macOS 27 across repeated
+  independent changes to both display roles. Diagnostic capture proved model, persistence, role
+  resolution, and rendered status-item values match; temporary mapping logs were removed from the
+  final source.
+
+### WR-040 — Preview and activate workspace apps from the menu bar
+
+- **Result:** Full-mode workspace segments now highlight on hover and open a delayed nonactivating
+  native-glass app shelf. The shelf handles empty and overflowing workspaces, survives pointer
+  transfer in both directions, and delegates workspace switching plus exact managed-app focus to
+  the engine without polling, private APIs, or a global event monitor.
+- **Evidence:** The integrated 512-test suite passes with production-view, geometry, grouping, and
+  exact-focus coverage. The macOS 27 Developer ID candidates were live-validated for rollover,
+  empty/populated shelf layout, glass styling, scroller policy, pointer return, app selection, and
+  unchanged workspace click routing.
+
+### WR-039 — Restore Full menu-bar workspace clicks on macOS 27
+
+- **Result:** macOS 27 Full mode uses one public status item per logical display group and resolves
+  its workspace segments from the action-time global pointer position. Workspace primary clicks
+  switch directly, secondary and fallback actions open the shared menu, each display block moves as
+  a unit, and the redundant standalone app icon is hidden. Compact, Medium, and pre-macOS-27 Full
+  retain their existing single-item path.
+- **Evidence:** The integrated 512-test suite passes, including version policy, grouped planning,
+  pointer routing, pressure, hover, menu fallback, and accessibility coverage. Matching signed
+  candidates preserved macOS 26 behavior and live-validated ordering, group movement, workspace
+  clicks, and right-click routing on macOS 27. The initial geometric-menu position jump remains a
+  documented cosmetic macOS 27 beta limitation rather than a reason to reintroduce unsafe routing.
+
+### WR-038 — Do not let stale parked-window focus undo a workspace switch
+
+- **Result:** Candidate focus now succeeds from observed exact AX or active-app plus unambiguous
+  WindowServer evidence, with a bounded one-shot AppKit activation fallback and exact retry. A
+  same-app higher-layer window invalidates WindowServer proof, competing focus still aborts, and
+  the border's verified-target handoff expires after three seconds. No per-app exception was added.
+- **Evidence:** The complete local quick gate passes 489 non-hosted tests. The signed universal
+  Debug daily build for `dea7fc77d216-dirty` was installed and verified, and the maintainer confirmed
+  workspace return and cycling remain correct with Claude, Chrome, Activity Monitor, and Excel:
+  focus borders remain present, background candidates do not advance, and workspaces do not jump.
 
 ### WR-031 — Prioritise open apps when adding an App Rule
 

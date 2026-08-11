@@ -559,6 +559,65 @@ final class UtilitySettingsTests: XCTestCase {
         XCTAssertEqual(frame, CGRect(x: 98, y: 278, width: 804, height: 604))
     }
 
+    func testFocusedWindowHighlightPrefersExactVerifiedTargetUntilAccessibilityCatchesUp() {
+        let accessibilityTarget = FocusedWindowHighlightTarget(
+            key: WindowKey(processIdentifier: 11, windowIdentifier: 1),
+            frame: WindowFrame(position: .zero, size: CGSize(width: 800, height: 600)),
+            fullscreenObservation: .falseValue
+        )
+        let verifiedTarget = FocusedWindowHighlightTarget(
+            key: WindowKey(processIdentifier: 22, windowIdentifier: 2),
+            frame: WindowFrame(position: CGPoint(x: 10, y: 10), size: CGSize(width: 900, height: 700)),
+            fullscreenObservation: .falseValue,
+            observationSource: .verifiedFocusTransaction
+        )
+
+        XCTAssertEqual(FocusedWindowHighlightPolicy.preferredTarget(
+            accessibilityTarget: accessibilityTarget,
+            verifiedTarget: verifiedTarget,
+            verifiedApplicationIsActive: true,
+            verifiedWindowServerMatches: true
+        ), verifiedTarget)
+        XCTAssertEqual(FocusedWindowHighlightPolicy.preferredTarget(
+            accessibilityTarget: nil,
+            verifiedTarget: verifiedTarget,
+            verifiedApplicationIsActive: true,
+            verifiedWindowServerMatches: true
+        ), verifiedTarget)
+        XCTAssertEqual(FocusedWindowHighlightPolicy.preferredTarget(
+            accessibilityTarget: accessibilityTarget,
+            verifiedTarget: verifiedTarget,
+            verifiedApplicationIsActive: false,
+            verifiedWindowServerMatches: true
+        ), accessibilityTarget)
+        XCTAssertEqual(FocusedWindowHighlightPolicy.preferredTarget(
+            accessibilityTarget: accessibilityTarget,
+            verifiedTarget: verifiedTarget,
+            verifiedApplicationIsActive: true,
+            verifiedWindowServerMatches: false
+        ), accessibilityTarget)
+        XCTAssertEqual(FocusedWindowHighlightPolicy.preferredTarget(
+            accessibilityTarget: verifiedTarget,
+            verifiedTarget: verifiedTarget,
+            verifiedApplicationIsActive: true,
+            verifiedWindowServerMatches: true
+        ), verifiedTarget)
+    }
+
+    func testFocusedWindowHighlightVerifiedTargetLeaseIsStrictlyBounded() {
+        let expiry = Date(timeIntervalSinceReferenceDate: 103)
+
+        XCTAssertTrue(FocusedWindowHighlightPolicy.verifiedTargetLeaseIsCurrent(
+            expiresAt: expiry,
+            now: Date(timeIntervalSinceReferenceDate: 102.999)
+        ))
+        XCTAssertFalse(FocusedWindowHighlightPolicy.verifiedTargetLeaseIsCurrent(
+            expiresAt: expiry,
+            now: expiry
+        ))
+        XCTAssertEqual(FocusedWindowHighlightPolicy.verifiedTargetLeaseDuration, 3)
+    }
+
     func testFocusedWindowHighlightPanelCannotActivateOrInterceptInput() {
         XCTAssertEqual(
             FocusedWindowHighlightPanelPolicy.nonActivating,

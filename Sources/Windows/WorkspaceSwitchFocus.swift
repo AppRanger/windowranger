@@ -20,6 +20,10 @@ struct WorkspaceSwitchFocusCandidate<Key: Hashable & Sendable>: Equatable, Senda
 }
 
 enum WorkspaceSwitchFocusPolicy {
+    static func shouldSuppressRetainedPreviousFocus(previousWindowIsVisible: Bool) -> Bool {
+        !previousWindowIsVisible
+    }
+
     /// Normal members of the destination workspace always precede keep-on-all windows. The
     /// caller's order is the existing spatial/stable order; a valid local history target is moved
     /// to the front of its group without disturbing the rest.

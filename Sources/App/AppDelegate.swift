@@ -112,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var fullscreenGameSession: FullscreenGameSessionSnapshot?
     private var pendingMenuBarPresentationUpdate: DispatchWorkItem?
     private var pendingMenuBarWorkspaceLabelUpdate: DispatchWorkItem?
+    private var pendingMenuBarDisplayIconUpdate: DispatchWorkItem?
     private var pendingMenuBarHighlightUpdate: DispatchWorkItem?
     private let tiledPlacementUndoManager = UndoManager()
 
@@ -159,6 +160,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             self.commandFeedbackPresenter.present(request)
+        }
+        engine.onVerifiedFocusTarget = { [weak self] target in
+            self?.focusedWindowHighlightPresenter.updateVerifiedFocusTarget(target)
         }
         engine.onFullscreenGameSessionChanged = { [weak self] session in
             guard let self, self.fullscreenGameSession != session else { return }
@@ -473,6 +477,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        let menuBarDisplayIconChanges: [AnyPublisher<Void, Never>] = [
+            settingsStore.$profiles
+                .removeDuplicates()
+                .dropFirst()
+                .map { _ in () }
+                .eraseToAnyPublisher(),
+            settingsStore.$activeProfileID
+                .removeDuplicates()
+                .dropFirst()
+                .map { _ in () }
+                .eraseToAnyPublisher(),
+            settingsStore.$localProfileState
+                .map(\.roleBindings)
+                .removeDuplicates()
+                .dropFirst()
+                .map { _ in () }
+                .eraseToAnyPublisher(),
+            settingsStore.$connectedDisplays
+                .removeDuplicates()
+                .dropFirst()
+                .map { _ in () }
+                .eraseToAnyPublisher(),
+        ]
+        Publishers.MergeMany(menuBarDisplayIconChanges)
+            .sink { [weak self] _ in
+                self?.scheduleMenuBarDisplayIconUpdate()
+            }
+            .store(in: &cancellables)
+
         settingsStore.$menuBarHighlightColor
             .dropFirst()
             .removeDuplicates()
@@ -533,6 +566,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingMenuBarPresentationUpdate = nil
         pendingMenuBarWorkspaceLabelUpdate?.cancel()
         pendingMenuBarWorkspaceLabelUpdate = nil
+        pendingMenuBarDisplayIconUpdate?.cancel()
+        pendingMenuBarDisplayIconUpdate = nil
         pendingMenuBarHighlightUpdate?.cancel()
         pendingMenuBarHighlightUpdate = nil
         tiledPlacementUndoManager.removeAllActions()
@@ -673,6 +708,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async(execute: work)
     }
 
+    private func scheduleMenuBarDisplayIconUpdate() {
+        pendingMenuBarDisplayIconUpdate?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingMenuBarDisplayIconUpdate = nil
+            // @Published sends from willSet. Resolve only after this deferred work runs so all
+            // contributing profile, binding, and display properties contain their committed values.
+            self.workspaceStatusBarController?.setDisplayIconConfiguration(
+                self.settingsStore.menuBarDisplayIconConfiguration
+            )
+        }
+        pendingMenuBarDisplayIconUpdate = work
+        DispatchQueue.main.async(execute: work)
+    }
+
     private func updateMenuBarPresentation() {
         menuBarState.updateConfiguration(
             workspaces: settingsStore.workspaces,
@@ -690,6 +740,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 tiledPlacementUndoManager: tiledPlacementUndoManager,
                 initialMode: settingsStore.menuBarPresentationMode,
                 initialWorkspaceLabelMode: settingsStore.menuBarWorkspaceLabelMode,
+                initialDisplayIconConfiguration: settingsStore.menuBarDisplayIconConfiguration,
                 initialHighlightColor: settingsStore.menuBarHighlightColor
             )
         } else {
@@ -698,6 +749,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             workspaceStatusBarController?.setWorkspaceLabelMode(
                 settingsStore.menuBarWorkspaceLabelMode
+            )
+            workspaceStatusBarController?.setDisplayIconConfiguration(
+                settingsStore.menuBarDisplayIconConfiguration
             )
             workspaceStatusBarController?.setHighlightColor(
                 settingsStore.menuBarHighlightColor

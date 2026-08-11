@@ -30,6 +30,12 @@ struct WindowFocusCapabilities: Equatable, Sendable {
     let raiseActionSupported: Bool
 }
 
+struct WindowServerWindowOrderEntry: Equatable, Sendable {
+    let processIdentifier: pid_t
+    let windowIdentifier: CGWindowID
+    let layer: Int
+}
+
 enum WindowAdmissionDisposition: String, Equatable, Sendable {
     case managedNormal = "managed-normal"
     case managedDialog = "managed-dialog"
@@ -252,6 +258,45 @@ enum AccessibilityWindow {
             result[CGWindowID(identifier)] = layer.intValue
         }
         return result
+    }
+
+    /// WindowServer returns on-screen windows from front to back. This observation is deliberately
+    /// separate from Accessibility focus: some applications can be visibly frontmost while their
+    /// application-level AXFocusedWindow value is temporarily unavailable.
+    static func frontmostNormalWindowIdentifier(
+        for processIdentifier: pid_t,
+        in orderedWindows: [WindowServerWindowOrderEntry]
+    ) -> CGWindowID? {
+        guard let frontmostApplicationWindow = orderedWindows.first(where: {
+            $0.processIdentifier == processIdentifier
+        }), frontmostApplicationWindow.layer == 0
+        else { return nil }
+        return frontmostApplicationWindow.windowIdentifier
+    }
+
+    static func frontmostOnScreenNormalWindowIdentifier(
+        for processIdentifier: pid_t
+    ) -> CGWindowID? {
+        guard let records = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[CFString: Any]] else { return nil }
+
+        let orderedWindows = records.compactMap { record -> WindowServerWindowOrderEntry? in
+            guard let owner = (record[kCGWindowOwnerPID] as? NSNumber)?.int32Value,
+                  let identifier = (record[kCGWindowNumber] as? NSNumber)?.uint32Value,
+                  let layer = (record[kCGWindowLayer] as? NSNumber)?.intValue
+            else { return nil }
+            return WindowServerWindowOrderEntry(
+                processIdentifier: pid_t(owner),
+                windowIdentifier: CGWindowID(identifier),
+                layer: layer
+            )
+        }
+        return frontmostNormalWindowIdentifier(
+            for: processIdentifier,
+            in: orderedWindows
+        )
     }
 
     static func admissionMetadata(

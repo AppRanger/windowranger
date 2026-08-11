@@ -252,8 +252,8 @@ final class ProfileTests: XCTestCase {
             )
         )
         let second = WorkspaceDefinition(name: "Mail", key: "m", layout: .tiled)
-        let primary = ProfileDisplayRole(name: "Desk")
-        let portrait = ProfileDisplayRole(name: "Portrait")
+        let primary = ProfileDisplayRole(name: "Desk", menuBarIconStyle: .horizontalMonitor)
+        let portrait = ProfileDisplayRole(name: "Portrait", menuBarIconStyle: .verticalMonitor)
         let pausedRule = AppRule(
             bundleIdentifier: "com.example.Mail",
             displayName: "Mail",
@@ -275,6 +275,10 @@ final class ProfileTests: XCTestCase {
         XCTAssertTrue(Set(clone.workspaces.map(\.id)).isDisjoint(with: source.workspaces.map(\.id)))
         XCTAssertTrue(Set(clone.displayRoles.map(\.id)).isDisjoint(with: source.displayRoles.map(\.id)))
         XCTAssertEqual(clone.displayMode, .independent)
+        XCTAssertEqual(
+            clone.displayRoles.map(\.menuBarIconStyle),
+            [.horizontalMonitor, .verticalMonitor]
+        )
         XCTAssertEqual(clone.workspaces.map(\.layout), [.accordion, .tiled])
         XCTAssertEqual(clone.workspaces[0].layoutConfiguration, first.layoutConfiguration)
         XCTAssertEqual(clone.appRules[0].assignedWorkspaceID, clone.workspaces[1].id)
@@ -637,6 +641,8 @@ final class ProfileTests: XCTestCase {
             }
         )
         _ = store.addWorkspace()
+        let sourceRoleID = try XCTUnwrap(store.activeProfile.displayRoles.first?.id)
+        store.setMenuBarDisplayIconStyle(.laptop, forRole: sourceRoleID)
         let source = store.activeProfile
 
         let copiedID = try XCTUnwrap(
@@ -649,6 +655,7 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(copied.workspaces.map(\.key), source.workspaces.map(\.key))
         XCTAssertTrue(Set(copied.workspaces.map(\.id)).isDisjoint(with: source.workspaces.map(\.id)))
         XCTAssertEqual(copied.displayMode, source.displayMode)
+        XCTAssertEqual(copied.displayRoles.map(\.menuBarIconStyle), [.laptop])
     }
 
     func testNewProfileRejectsBlankNameWithoutChangingLibrary() {

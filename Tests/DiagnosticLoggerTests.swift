@@ -2,6 +2,65 @@ import ApplicationServices
 import XCTest
 
 final class DiagnosticLoggerTests: XCTestCase {
+    func testWindowServerFrontmostNormalWindowRejectsApplicationWithHigherLayerWindowInFront() {
+        let entries = [
+            WindowServerWindowOrderEntry(
+                processIdentifier: 10,
+                windowIdentifier: 100,
+                layer: 3
+            ),
+            WindowServerWindowOrderEntry(
+                processIdentifier: 20,
+                windowIdentifier: 200,
+                layer: 0
+            ),
+            WindowServerWindowOrderEntry(
+                processIdentifier: 10,
+                windowIdentifier: 101,
+                layer: 0
+            ),
+            WindowServerWindowOrderEntry(
+                processIdentifier: 10,
+                windowIdentifier: 102,
+                layer: 0
+            ),
+        ]
+
+        XCTAssertNil(AccessibilityWindow.frontmostNormalWindowIdentifier(for: 10, in: entries))
+        XCTAssertEqual(
+            AccessibilityWindow.frontmostNormalWindowIdentifier(for: 20, in: entries),
+            200
+        )
+        XCTAssertNil(
+            AccessibilityWindow.frontmostNormalWindowIdentifier(for: 30, in: entries)
+        )
+    }
+
+    func testWindowServerFrontmostNormalWindowReturnsLayerZeroWhenItIsApplicationFrontmost() {
+        let entries = [
+            WindowServerWindowOrderEntry(
+                processIdentifier: 10,
+                windowIdentifier: 101,
+                layer: 0
+            ),
+            WindowServerWindowOrderEntry(
+                processIdentifier: 20,
+                windowIdentifier: 200,
+                layer: 3
+            ),
+            WindowServerWindowOrderEntry(
+                processIdentifier: 10,
+                windowIdentifier: 102,
+                layer: 0
+            ),
+        ]
+
+        XCTAssertEqual(
+            AccessibilityWindow.frontmostNormalWindowIdentifier(for: 10, in: entries),
+            101
+        )
+    }
+
     func testReleaseLoggerDoesNotCreateVerboseFile() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -300,7 +359,7 @@ final class DiagnosticLoggerTests: XCTestCase {
             [
                 .markWindowMain,
                 .raiseWindow,
-                .activateApplication,
+                .makeApplicationFrontmost,
                 .markWindowMain,
                 .focusWindowElement,
                 .focusApplicationWindow,
@@ -315,6 +374,67 @@ final class DiagnosticLoggerTests: XCTestCase {
             activatedProcessIdentifier: 100,
             focusedProcessIdentifier: 200
         ))
+    }
+
+    func testImmediateAppKitCompatibilityFallbackIsOnlyForRejectedAccessibilityWrite() {
+        XCTAssertFalse(WorkspaceEngine.shouldUseAppKitActivationFallback(
+            accessibilityFrontmostResult: .success
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldUseAppKitActivationFallback(
+            accessibilityFrontmostResult: .attributeUnsupported
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldUseAppKitActivationFallback(
+            accessibilityFrontmostResult: .cannotComplete
+        ))
+    }
+
+    func testSuccessfulAccessibilityWriteStillGetsOneFallbackWhenAppRemainsInactive() {
+        let expected = WindowKey(processIdentifier: 42394, windowIdentifier: 15153)
+        let staleSameApp = WindowKey(processIdentifier: 42394, windowIdentifier: 14533)
+
+        XCTAssertEqual(
+            WorkspaceEngine.focusCycleVerificationDecision(
+                expected: expected,
+                actual: nil,
+                applicationIsActive: false,
+                appKitActivationAttempted: false,
+                exactAttempt: 0
+            ),
+            .retryAppKitActivation
+        )
+        XCTAssertEqual(
+            WorkspaceEngine.focusCycleVerificationDecision(
+                expected: expected,
+                actual: staleSameApp,
+                applicationIsActive: false,
+                appKitActivationAttempted: false,
+                exactAttempt: 0
+            ),
+            .retryAppKitActivation
+        )
+        XCTAssertEqual(
+            WorkspaceEngine.focusCycleVerificationDecision(
+                expected: expected,
+                actual: nil,
+                applicationIsActive: false,
+                appKitActivationAttempted: true,
+                exactAttempt: 0
+            ),
+            .advanceToNextCandidate
+        )
+    }
+
+    func testActivationFallbackPhaseRetainsHistoryWithoutRepeatingActivationOnExactRetry() {
+        let fallback = FocusCandidateAttemptPhase.appKitActivationFallback
+        let exactRetry = fallback.exactRetryPhase
+
+        XCTAssertTrue(fallback.performsAppKitActivation)
+        XCTAssertTrue(fallback.appKitActivationAttempted)
+        XCTAssertEqual(fallback.exactAttempt, 0)
+        XCTAssertEqual(exactRetry, .exactRetryAfterAppKitActivation)
+        XCTAssertFalse(exactRetry.performsAppKitActivation)
+        XCTAssertTrue(exactRetry.appKitActivationAttempted)
+        XCTAssertEqual(exactRetry.exactAttempt, 1)
     }
 
     func testFocusCycleEligibilityRejectsUtilityLayerAndKeepsCapableNormalWindow() {

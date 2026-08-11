@@ -531,12 +531,14 @@ private struct GeneralSettingsView: View {
                     workspaces: store.workspaces,
                     connectedDisplays: store.connectedDisplays,
                     workspaceDisplayAssignments: store.workspaceDisplayAssignments
-                ), highlightColor: store.menuBarHighlightColor)
+                ),
+                highlightColor: store.menuBarHighlightColor,
+                displayIconConfiguration: store.menuBarDisplayIconConfiguration)
                 Text(store.menuBarPresentationMode.explanation)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if store.menuBarPresentationMode == .full {
-                    Text("The app icon remains a distinct menu target inside one stable status component. Only explicit workspace buttons switch; display symbols and group backgrounds open the menu. Labels compact and overflow is disclosed when menu-bar space is tight.")
+                    Text("Only explicit workspace buttons switch. Display areas and group backgrounds remain menu targets; labels compact and overflow is disclosed when menu-bar space is tight.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -969,13 +971,14 @@ private struct ProfilesSettingsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         LabeledContent("Role name") {
                             HStack(spacing: 8) {
-                            TextField("Role name", text: Binding(
-                                get: {
-                                    store.activeProfile.displayRoles.first(where: { $0.id == role.id })?.name
-                                        ?? role.name
-                                },
-                                set: { store.renameDisplayRole(role.id, to: $0) }
-                            ))
+                                Spacer()
+                                TextField("Role name", text: Binding(
+                                    get: {
+                                        store.activeProfile.displayRoles.first(where: { $0.id == role.id })?.name
+                                            ?? role.name
+                                    },
+                                    set: { store.renameDisplayRole(role.id, to: $0) }
+                                ))
                                 .labelsHidden()
                                 .textFieldStyle(.roundedBorder)
                                 .multilineTextAlignment(.trailing)
@@ -990,10 +993,12 @@ private struct ProfilesSettingsView: View {
                                 .frame(width: 20)
                                 .disabled(store.activeProfile.displayRoles.count == 1)
                             }
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                         }
 
                         LabeledContent("This Mac's display") {
                             HStack(spacing: 8) {
+                                Spacer()
                                 Picker("This Mac's display", selection: Binding<String?>(
                                     get: { store.roleBindings[role.id]?.lastKnownIdentifier },
                                     set: { store.bindDisplayRole(role.id, to: $0) }
@@ -1004,9 +1009,38 @@ private struct ProfilesSettingsView: View {
                                     }
                                 }
                                 .labelsHidden()
-                                .frame(width: 220)
+                                .frame(width: 220, alignment: .trailing)
                                 Color.clear.frame(width: 20, height: 1)
                             }
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        }
+
+                        LabeledContent("Menu bar icon") {
+                            HStack(spacing: 8) {
+                                Spacer()
+                                Picker(
+                                    "Menu bar icon",
+                                    selection: Binding(
+                                        get: {
+                                            store.menuBarDisplayIconStyle(forRole: role.id)
+                                        },
+                                        set: {
+                                            store.setMenuBarDisplayIconStyle($0, forRole: role.id)
+                                        }
+                                    )
+                                ) {
+                                    ForEach(MenuBarDisplayIconStyle.allCases) { style in
+                                        Label(
+                                            style.title,
+                                            systemImage: style.pickerSystemImage
+                                        ).tag(style)
+                                    }
+                                }
+                                .labelsHidden()
+                                .frame(width: 220, alignment: .trailing)
+                                Color.clear.frame(width: 20, height: 1)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                         }
                         if let note = roleBindingNote(role.id) {
                             Text(note).font(.caption).foregroundStyle(.secondary)
@@ -1019,7 +1053,7 @@ private struct ProfilesSettingsView: View {
                         _ = store.addDisplayRole()
                     }
                 }
-                Text("Role names and workspace assignments sync with the profile. Their physical monitor bindings stay on this Mac.")
+                Text("Role names, workspace assignments, and menu-bar icons sync with the profile. Physical monitor bindings stay on this Mac. Automatic derives the icon from the display bound here.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
