@@ -136,6 +136,33 @@ final class FocusedWindowDiagnosticReportTests: XCTestCase {
         XCTAssertFalse(logger.isVerbose)
     }
 
+    func testRelatedHistoryMatchesOnlyStructuredWindowFieldTokens() {
+        let metadataOnlyLogger = DiagnosticLogger(
+            buildMode: .release,
+            sink: NoOpDiagnosticSink(),
+            sessionIdentifier: "1:2",
+            isVerbose: false,
+            capturesSupportHistory: true
+        )
+        metadataOnlyLogger.log(
+            category: "1:2",
+            event: "1:2",
+            correlation: "1:2",
+            fields: ["window": "9:9"]
+        )
+
+        XCTAssertEqual(metadataOnlyLogger.relatedDiagnosticsText(windowToken: "1:2"), "")
+        XCTAssertTrue(DiagnosticLogger.fieldValue("1:2", referencesWindowToken: "1:2"))
+        XCTAssertTrue(DiagnosticLogger.fieldValue("1:2,9:9", referencesWindowToken: "1:2"))
+        XCTAssertTrue(DiagnosticLogger.fieldValue("window=1:2", referencesWindowToken: "1:2"))
+        XCTAssertFalse(DiagnosticLogger.fieldValue("11:2", referencesWindowToken: "1:2"))
+        XCTAssertFalse(DiagnosticLogger.fieldValue("1:20", referencesWindowToken: "1:2"))
+        XCTAssertFalse(DiagnosticLogger.fieldValue(
+            "2026-08-11T19:01:25.000Z",
+            referencesWindowToken: "1:2"
+        ))
+    }
+
     private func snapshot(
         appVersion: String = "0.1.0",
         appBuild: String = "42",

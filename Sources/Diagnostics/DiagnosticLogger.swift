@@ -255,7 +255,7 @@ final class DiagnosticLogger {
         var remaining = maxBytes
         for correlation in correlationOrder.reversed() {
             guard let records = correlatedRecords[correlation],
-                  records.contains(where: { String(decoding: $0, as: UTF8.self).contains(windowToken) })
+                  records.contains(where: { Self.record($0, referencesWindowToken: windowToken) })
             else { continue }
             let group = boundedActionGroup(records, maxBytes: remaining)
             guard !group.isEmpty else { continue }
@@ -265,6 +265,24 @@ final class DiagnosticLogger {
         }
         let data = groups.reversed().reduce(into: Data()) { $0.append($1) }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    static func fieldValue(_ value: String, referencesWindowToken windowToken: String) -> Bool {
+        guard !windowToken.isEmpty else { return false }
+        var searchStart = value.startIndex
+        while searchStart < value.endIndex,
+              let range = value.range(of: windowToken, range: searchStart..<value.endIndex) {
+            let preceding = range.lowerBound == value.startIndex
+                ? nil
+                : value[value.index(before: range.lowerBound)]
+            let following = range.upperBound == value.endIndex ? nil : value[range.upperBound]
+            if preceding.map(isWindowTokenCharacter) != true,
+               following.map(isWindowTokenCharacter) != true {
+                return true
+            }
+            searchStart = range.upperBound
+        }
+        return false
     }
 
     func recentDiagnosticsText(maxBytes: Int = 64_000) -> String {
@@ -327,6 +345,19 @@ final class DiagnosticLogger {
         guard !data.isEmpty else { return "" }
         let text = String(decoding: data, as: UTF8.self)
         return text.hasSuffix("\n") ? text : text + "\n"
+    }
+
+    private static func record(_ data: Data, referencesWindowToken windowToken: String) -> Bool {
+        guard let record = try? JSONDecoder().decode(DiagnosticRecord.self, from: data) else {
+            return false
+        }
+        return record.fields.values.contains {
+            fieldValue($0, referencesWindowToken: windowToken)
+        }
+    }
+
+    private static func isWindowTokenCharacter(_ character: Character) -> Bool {
+        character.isNumber || character == ":"
     }
 
     private func trimCorrelatedRecordsIfNeeded(maxBytes: Int = 512_000, maxActions: Int = 12) {
