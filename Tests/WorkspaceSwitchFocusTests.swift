@@ -94,7 +94,7 @@ final class WorkspaceSwitchFocusTests: XCTestCase {
 
     func testAlreadyActiveAppUsesExactWindowPathWithoutActivation() {
         let plan = WorkspaceEngine.exactWindowFocusPlan(applicationIsActive: true)
-        XCTAssertFalse(plan.contains(.activateApplication))
+        XCTAssertFalse(plan.contains(.makeApplicationFrontmost))
         XCTAssertTrue(plan.contains(.focusApplicationWindow))
         XCTAssertTrue(plan.contains(.raiseWindow))
     }
@@ -119,6 +119,64 @@ final class WorkspaceSwitchFocusTests: XCTestCase {
         ), .advanceToNextCandidate)
     }
 
+    func testNilAXFocusSucceedsOnlyWithActiveAppAndExactWindowServerTarget() {
+        XCTAssertEqual(WorkspaceEngine.workspaceSwitchFocusVerificationDecision(
+            expected: target,
+            actual: nil,
+            previousFocus: previous,
+            actualIsIgnored: false,
+            applicationIsActive: true,
+            windowServerTargetIsFrontmostNormalWindow: true,
+            exactAttempt: 0
+        ), .succeeded)
+        XCTAssertEqual(WorkspaceEngine.workspaceSwitchFocusVerificationDecision(
+            expected: target,
+            actual: nil,
+            previousFocus: previous,
+            actualIsIgnored: false,
+            applicationIsActive: true,
+            windowServerTargetIsFrontmostNormalWindow: false,
+            exactAttempt: 0
+        ), .retryExactTarget)
+        XCTAssertEqual(WorkspaceEngine.workspaceSwitchFocusVerificationDecision(
+            expected: target,
+            actual: nil,
+            previousFocus: previous,
+            actualIsIgnored: false,
+            applicationIsActive: false,
+            windowServerTargetIsFrontmostNormalWindow: true,
+            exactAttempt: 0
+        ), .retryAppKitActivation)
+        XCTAssertEqual(WorkspaceEngine.workspaceSwitchFocusVerificationDecision(
+            expected: target,
+            actual: nil,
+            previousFocus: previous,
+            actualIsIgnored: false,
+            applicationIsActive: false,
+            windowServerTargetIsFrontmostNormalWindow: true,
+            appKitActivationAttempted: true,
+            exactAttempt: 0
+        ), .advanceToNextCandidate)
+    }
+
+    func testWindowServerEvidenceDoesNotOverrideAnAXWindowMismatch() {
+        let wrongSameApp = WindowKey(processIdentifier: target.processIdentifier, windowIdentifier: 99)
+        XCTAssertEqual(WorkspaceEngine.focusCycleVerificationDecision(
+            expected: target,
+            actual: wrongSameApp,
+            applicationIsActive: true,
+            windowServerTargetIsFrontmostNormalWindow: true,
+            exactAttempt: 0
+        ), .retryExactTarget)
+        XCTAssertEqual(WorkspaceEngine.focusCycleVerificationDecision(
+            expected: target,
+            actual: fallback,
+            applicationIsActive: true,
+            windowServerTargetIsFrontmostNormalWindow: true,
+            exactAttempt: 0
+        ), .abortForCompetingFocus)
+    }
+
     func testStalePreviousDisplayFocusGetsOneRetryButGenuineCompetitionAborts() {
         XCTAssertEqual(WorkspaceEngine.workspaceSwitchFocusVerificationDecision(
             expected: target,
@@ -127,7 +185,7 @@ final class WorkspaceSwitchFocusTests: XCTestCase {
             actualIsIgnored: false,
             applicationIsActive: false,
             exactAttempt: 0
-        ), .retryExactTarget)
+        ), .retryAppKitActivation)
         XCTAssertEqual(WorkspaceEngine.workspaceSwitchFocusVerificationDecision(
             expected: target,
             actual: previous,
@@ -144,6 +202,46 @@ final class WorkspaceSwitchFocusTests: XCTestCase {
             applicationIsActive: true,
             exactAttempt: 0
         ), .abortForCompetingFocus)
+    }
+
+    func testFailedDestinationFocusSuppressesParkedSourceAfterNilTransition() {
+        let suppressedWindows: Set<WindowKey> = [previous]
+
+        XCTAssertTrue(WorkspaceSwitchFocusPolicy.shouldSuppressRetainedPreviousFocus(
+            previousWindowIsVisible: false
+        ))
+        XCTAssertFalse(WorkspaceSwitchFocusPolicy.shouldSuppressRetainedPreviousFocus(
+            previousWindowIsVisible: true
+        ))
+        XCTAssertFalse(WorkspaceEngine.staleParkedFocusObservationIsSuppressed(
+            focusedWindow: nil,
+            suppressedWindows: suppressedWindows
+        ))
+        XCTAssertTrue(WorkspaceEngine.staleParkedFocusObservationIsSuppressed(
+            focusedWindow: previous,
+            suppressedWindows: suppressedWindows
+        ))
+        XCTAssertFalse(WorkspaceEngine.staleParkedFocusObservationIsSuppressed(
+            focusedWindow: fallback,
+            suppressedWindows: suppressedWindows
+        ))
+    }
+
+    func testLaterExplicitActivationReleasesParkedSourceSuppression() {
+        let deadline = Date(timeIntervalSinceReferenceDate: 100)
+
+        XCTAssertEqual(WorkspaceEngine.parkedFocusActivationDisposition(
+            allowExplicitActivationAfter: deadline,
+            now: Date(timeIntervalSinceReferenceDate: 99)
+        ), .suppressStaleActivation)
+        XCTAssertEqual(WorkspaceEngine.parkedFocusActivationDisposition(
+            allowExplicitActivationAfter: deadline,
+            now: deadline
+        ), .acceptExplicitActivation)
+        XCTAssertEqual(WorkspaceEngine.parkedFocusActivationDisposition(
+            allowExplicitActivationAfter: nil,
+            now: deadline
+        ), .unaffected)
     }
 
     func testIgnoredFocusedPanelAlwaysAbortsReassertion() {

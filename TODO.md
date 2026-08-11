@@ -436,6 +436,17 @@ second copy of that checklist.
 
 ## Done
 
+### WR-038 — Do not let stale parked-window focus undo a workspace switch
+
+- **Result:** Candidate focus now succeeds from observed exact AX or active-app plus unambiguous
+  WindowServer evidence, with a bounded one-shot AppKit activation fallback and exact retry. A
+  same-app higher-layer window invalidates WindowServer proof, competing focus still aborts, and
+  the border's verified-target handoff expires after three seconds. No per-app exception was added.
+- **Evidence:** The complete local quick gate passes 489 non-hosted tests. The signed universal
+  Debug daily build for `dea7fc77d216-dirty` was installed and verified, and the maintainer confirmed
+  workspace return and cycling remain correct with Claude, Chrome, Activity Monitor, and Excel:
+  focus borders remain present, background candidates do not advance, and workspaces do not jump.
+
 ### WR-031 — Prioritise open apps when adding an App Rule
 
 - **Result:** The Add Application Rule picker groups open apps first and initializes a new rule from

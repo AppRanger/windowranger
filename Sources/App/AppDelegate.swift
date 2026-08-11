@@ -160,6 +160,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             self.commandFeedbackPresenter.present(request)
         }
+        engine.onVerifiedFocusTarget = { [weak self] target in
+            self?.focusedWindowHighlightPresenter.updateVerifiedFocusTarget(target)
+        }
         engine.onFullscreenGameSessionChanged = { [weak self] session in
             guard let self, self.fullscreenGameSession != session else { return }
             self.fullscreenGameSession = session
