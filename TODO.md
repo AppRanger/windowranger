@@ -20,6 +20,22 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-042 — Match focused-report history by structured window fields
+
+- **Type:** Diagnostics bug / Beta 2 release blocker
+- **Priority:** P1
+- **Status:** Inbox
+- **Reproduced:** The Beta 2 evidence PR's public CI run included an unrelated action group in a
+  focused-window diagnostic report. The filter searched each serialized JSON record for the raw
+  window token `1:2`; at `2026-08-11T19:01:25Z`, that token occurred inside the unrelated record's
+  timestamp and produced a false match.
+- **Expected:** A focused-window report includes an action group only when one of its structured
+  diagnostic field values refers to the exact window token. Timestamps, session identifiers,
+  categories, correlations, and longer numeric tokens must not make an unrelated action relevant.
+- **Acceptance boundary:** Decode retained diagnostic records, match only field values at exact
+  digit-and-colon token boundaries, cover the timestamp collision and adjacent-token cases, and
+  pass the complete isolated suite in public CI before rebuilding Beta 2.
+
 ### WR-028 — Rework the Command Wheel experience
 
 - **Type:** UX audit / potentially major change
@@ -386,17 +402,19 @@ second copy of that checklist.
   Beta 2 candidate from the latest reviewed `develop` tree. Building, signing, notarizing, and
   stapling the exact local DMG and ZIP is approved; tagging, uploading assets, creating a GitHub
   release, and publication remain separate approval checkpoints.
-- **Exact candidate evidence:** The local `0.1.0-beta.2` build 2 candidate was produced from
+- **Superseded candidate evidence:** A local `0.1.0-beta.2` build 2 candidate was produced from
   `a95f970f2547` in `.build/releases/0.1.0-beta.2`. The ZIP SHA-256 is
   `888c70f05c0020e30bcde5380b80f3affd760f91e39db9dee63efbb9512a2e44`; the DMG SHA-256 is
   `24d3852b79290aad1a0eb07694cc49f62dc10b9aba0bdbba32ae9863345c044d`. Apple accepted the app
   (`11c88b99-acf6-4019-a260-f64282a149ea`) and DMG
   (`9628ef87-5753-4ff6-9de1-db019e503592`) notarizations with zero logged issues. Independent
-  checksum, strict codesign, Gatekeeper, stapler, architecture, version, and build checks pass.
-- **Current boundary:** The exact local Beta 2 DMG and ZIP now exist for manual testing. No tag has
-  been created or pushed, no assets have been uploaded, and no GitHub release exists. Explicit
-  file-based Keychain lookup succeeds, but persistence after reboot remains a separate
-  live-validation boundary rather than a publication claim.
+  checksum, strict codesign, Gatekeeper, stapler, architecture, version, and build checks pass. A
+  subsequent independent CI run exposed WR-042's time-dependent focused-report history filter, so
+  this otherwise valid artifact is superseded and must not be used as the final Beta 2 candidate.
+- **Current boundary:** Rebuild the exact local Beta 2 DMG and ZIP after WR-042 is reviewed and
+  promoted. No tag has been created or pushed, no assets have been uploaded, and no GitHub release
+  exists. Explicit file-based Keychain lookup succeeds, but persistence after reboot remains a
+  separate live-validation boundary rather than a publication claim.
 - **Testing boundary:** Install and test the packaged Beta 2 DMG itself. Exercise the remaining live
   validation items in this queue, with particular attention to Settings resizing, multi-display
   workspace routing, focused-window borders, sleep/wake, Dock auto-hide, native glass feedback, and
