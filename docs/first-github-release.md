@@ -40,14 +40,18 @@ credentials in the current design.
    Development certificate is not a distribution identity.
 3. Ensure the WindowRanger App ID and any Developer ID provisioning profile support the required
    iCloud key-value entitlement.
-4. Store notarization credentials in the login Keychain under a profile name such as
-   `WindowRanger`. For Apple ID authentication, run this interactively and substitute your own
-   values:
+4. Store notarization credentials explicitly in the file-based login Keychain under a profile name
+   such as `WindowRanger`. Supplying the keychain path avoids `notarytool`'s default Data Protection
+   Keychain and makes the release script use the same deterministic store. For Apple ID
+   authentication, run this interactively and substitute your own values:
 
    ```sh
-   xcrun notarytool store-credentials WindowRanger \
+   DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+   /usr/bin/xcrun notarytool store-credentials WindowRanger \
+     --keychain "$HOME/Library/Keychains/login.keychain-db" \
      --apple-id YOUR_APPLE_ID \
-     --team-id 44NAD22AK6
+     --team-id 44NAD22AK6 \
+     --validate
    ```
 
    Omitting `--password` makes `notarytool` request the app-specific password through its secure
@@ -98,12 +102,14 @@ export WINDOWRANGER_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
   --version 0.1.0-beta.1 \
   --build-number 1 \
   --notary-profile WindowRanger \
+  --notary-keychain "$HOME/Library/Keychains/login.keychain-db" \
   --preflight
 
 ./scripts/build-distribution.sh \
   --version 0.1.0-beta.1 \
   --build-number 1 \
-  --notary-profile WindowRanger
+  --notary-profile WindowRanger \
+  --notary-keychain "$HOME/Library/Keychains/login.keychain-db"
 ```
 
 The build command:
