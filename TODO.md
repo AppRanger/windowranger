@@ -58,10 +58,7 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Feature
 - **Priority:** P2
-- **Status:** Held
-- **Hold decision (2026-08-11):** The maintainer paused Beta 2 after finding further development
-  issues. Credential hardening may continue independently, but do not build, tag, upload, create a
-  GitHub release, or publish Beta 2 until the maintainer explicitly resumes this checkpoint.
+- **Status:** Live validation
 - **Implemented:** General Settings now has an off-by-default, per-Mac three- or four-finger
   horizontal workspace swipe. A read-only HID event tap passes generic gesture contacts to a pure
   finger-count, coherence, axis, and threshold state machine. One accepted swipe dispatches the
@@ -356,7 +353,8 @@ second copy of that checklist.
   later publication checkpoint.
 - **Candidate highlights:** Resizable native Settings with compact list/detail navigation; optional
   focused-window border; improved App Rule creation and alignment; Dock and wake reconciliation;
-  native glass command feedback; and optional three- or four-finger workspace swiping.
+  native glass command feedback; optional three- or four-finger workspace swiping; guarded exact
+  focus recovery; and restored macOS 27 Full menu-bar workspace clicks.
 - **Automated evidence:** The final WR-035/WR-036 integration commit passed the isolated local
   pre-push checkpoint with 478 non-hosted tests and the independent public GitHub CI check before
   merge. The promoted release commit passed the public release-branch test, analysis, unsigned
@@ -373,14 +371,22 @@ second copy of that checklist.
   selecting its first line, preserving strict pipeline failure handling. Both corrections are now
   merged into `develop` and `release/0.1.0`; their final public push gates passed 478 tests, static
   analysis, unsigned universal Release builds, Stable/Beta DMG smoke packaging, and artifact upload.
+- **Latest source evidence:** The macOS 27 menu-bar integration checkpoint `6210a73585ff` passes the
+  complete local quick gate with 512 non-hosted tests. Its independent public GitHub CI run and the
+  release-preparation PR remain required before promotion to `release/0.1.0`.
 - **Credential hardening:** The original `WindowRanger` profile disappeared twice after being stored
   through `notarytool`'s default Data Protection Keychain path. A replacement profile is now stored
   explicitly in the file-based login Keychain and its history lookup passed both the normal shell
   environment and a stripped clean environment. The distribution script and release instructions
   now accept the same explicit keychain path for every history, submit, and log operation. Persistence
   still needs verification after a reboot before the credential issue is considered closed.
+- **Resumed checkpoint (2026-08-11):** The maintainer resumed preparation of a fresh unpublished
+  Beta 2 candidate from the latest reviewed `develop` tree. Building, signing, notarizing, and
+  stapling the exact local DMG and ZIP is approved; tagging, uploading assets, creating a GitHub
+  release, and publication remain separate approval checkpoints.
 - **Current boundary:** No final Beta 2 DMG or ZIP exists, and no tag, assets, or GitHub release have
-  been created. The release remains held independently of credential verification.
+  been created. Explicit file-based Keychain lookup succeeds, but persistence after reboot remains
+  a separate live-validation boundary rather than a publication claim.
 - **Testing boundary:** Install and test the packaged Beta 2 DMG itself. Exercise the remaining live
   validation items in this queue, with particular attention to Settings resizing, multi-display
   workspace routing, focused-window borders, sleep/wake, Dock auto-hide, native glass feedback, and
