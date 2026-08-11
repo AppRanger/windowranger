@@ -88,7 +88,8 @@ promotion and versioning. It is a design authority, not evidence that the releas
       explicitly dispatched; and the maintainer's Mac performs Developer ID signing, notarization,
       stapling, and packaging.
 - [x] Validate `scripts/build-distribution.sh` with the intended Developer ID identity and
-      `WindowRanger` notary profile; test the exact installed DMG on the maintainer's Mac.
+      `WindowRanger` notary profile stored in an explicit file-based login Keychain; test the exact
+      installed DMG on the maintainer's Mac.
 - [ ] Test the exact packaged artifact on another supported Mac or a clean macOS user account.
 - [x] Create and automatically verify the Stable and construction-themed Beta DMG layouts, including
       the `/Applications` shortcut and native drag-to-install instruction.

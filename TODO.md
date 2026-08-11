@@ -58,7 +58,10 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Feature
 - **Priority:** P2
-- **Status:** Live validation
+- **Status:** Held
+- **Hold decision (2026-08-11):** The maintainer paused Beta 2 after finding further development
+  issues. Credential hardening may continue independently, but do not build, tag, upload, create a
+  GitHub release, or publish Beta 2 until the maintainer explicitly resumes this checkpoint.
 - **Implemented:** General Settings now has an off-by-default, per-Mac three- or four-finger
   horizontal workspace swipe. A read-only HID event tap passes generic gesture contacts to a pure
   finger-count, coherence, axis, and threshold state machine. One accepted swipe dispatches the
@@ -370,10 +373,14 @@ second copy of that checklist.
   selecting its first line, preserving strict pipeline failure handling. Both corrections are now
   merged into `develop` and `release/0.1.0`; their final public push gates passed 478 tests, static
   analysis, unsigned universal Release builds, Stable/Beta DMG smoke packaging, and artifact upload.
-- **Current blocker:** Exact packaging from release commit `e7dc5ad` is blocked before credentials
-  are used because the local notarytool keychain profile `WindowRanger` is missing. Restore that
-  profile interactively, then rerun strict preflight and the credentialed distribution build. No
-  final Beta 2 DMG or ZIP exists yet, and no tag, assets, or GitHub release have been created.
+- **Credential hardening:** The original `WindowRanger` profile disappeared twice after being stored
+  through `notarytool`'s default Data Protection Keychain path. A replacement profile is now stored
+  explicitly in the file-based login Keychain and its history lookup passed both the normal shell
+  environment and a stripped clean environment. The distribution script and release instructions
+  now accept the same explicit keychain path for every history, submit, and log operation. Persistence
+  still needs verification after a reboot before the credential issue is considered closed.
+- **Current boundary:** No final Beta 2 DMG or ZIP exists, and no tag, assets, or GitHub release have
+  been created. The release remains held independently of credential verification.
 - **Testing boundary:** Install and test the packaged Beta 2 DMG itself. Exercise the remaining live
   validation items in this queue, with particular attention to Settings resizing, multi-display
   workspace routing, focused-window borders, sleep/wake, Dock auto-hide, native glass feedback, and
