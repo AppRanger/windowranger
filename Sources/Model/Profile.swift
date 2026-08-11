@@ -1,13 +1,45 @@
 import Foundation
 import Darwin
 
+enum MenuBarDisplayIconStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+    case automatic
+    case horizontalMonitor
+    case verticalMonitor
+    case laptop
+    case none
+
+    var id: String { rawValue }
+}
+
 struct ProfileDisplayRole: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     var name: String
+    var menuBarIconStyle: MenuBarDisplayIconStyle
 
-    init(id: UUID = UUID(), name: String) {
+    init(
+        id: UUID = UUID(),
+        name: String,
+        menuBarIconStyle: MenuBarDisplayIconStyle = .automatic
+    ) {
         self.id = id
         self.name = name
+        self.menuBarIconStyle = menuBarIconStyle
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case menuBarIconStyle
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        menuBarIconStyle = try container.decodeIfPresent(
+            MenuBarDisplayIconStyle.self,
+            forKey: .menuBarIconStyle
+        ) ?? .automatic
     }
 }
 
@@ -56,7 +88,13 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
             )
         }
         let clonedRoles = displayRoles.compactMap { role -> ProfileDisplayRole? in
-            roleIDMap[role.id].map { ProfileDisplayRole(id: $0, name: role.name) }
+            roleIDMap[role.id].map {
+                ProfileDisplayRole(
+                    id: $0,
+                    name: role.name,
+                    menuBarIconStyle: role.menuBarIconStyle
+                )
+            }
         }
         let clonedAssignments: [UUID: UUID] = Dictionary(
             uniqueKeysWithValues: workspaceRoleAssignments.compactMap {

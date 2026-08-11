@@ -82,10 +82,10 @@ rule from ambiguous per-window state.
 ### Synced reusable definitions
 
 The profile library can sync through iCloud key-value storage. A profile contains workspace
-definitions/order/keys/layout geometry, Unified or Independent display mode, abstract display roles,
-workspace-role assignments and typed app rules. Global preferences such as menu-bar presentation,
-general command shortcuts and command-wheel configuration use their existing global settings path
-and are not profile content.
+definitions/order/keys/layout geometry, Unified or Independent display mode, abstract display roles
+and their menu-bar icon styles, workspace-role assignments and typed app rules. Global preferences
+such as menu-bar presentation, general command shortcuts and command-wheel configuration use their
+existing global settings path and are not profile content.
 
 `SyncedProfileLibraryPolicy` validates the atomic encoded byte size before decoding, then validates
 the schema version, collection counts, user-facing name lengths and normalized structure. A remote
@@ -97,10 +97,10 @@ action and never occurs as a side effect of a failed pull.
 ### Local to one Mac
 
 The active/manual profile selection, automatic trigger mappings, runtime active-workspace state,
-monitor fingerprints, role-to-physical-monitor bindings, Accessibility state and live window session
-remain local. `WorkspaceStateStore` writes the current WindowServer-bound session beneath the user's
-cache directory using an atomic replacement. A changed WindowServer session invalidates exact window
-IDs rather than guessing.
+monitor fingerprints, role-to-physical-monitor bindings, Accessibility state and live window
+session remain local. `WorkspaceStateStore` writes the current WindowServer-bound session beneath
+the user's cache directory using an atomic replacement. A changed WindowServer session invalidates
+exact window IDs rather than guessing.
 
 Portable profile transfer serializes only reusable profile definitions into a separately versioned
 JSON transport document. Import validates the complete document, remaps every internal identity,
@@ -134,13 +134,57 @@ the recovery boundary for those cases.
 
 ## UI and focus safety
 
-The menu bar uses one stable AppKit status item. Its primary target always opens the app menu; only
-explicit Full-mode workspace buttons switch. Command feedback is a nonactivating click-through
-overlay. On macOS 26 and later its content is embedded in AppKit's public static Liquid Glass view;
-older supported releases use the system HUD material. Both surfaces use a capsule radius derived
-from the live overlay height. The surface choice never changes its panel, focus, input, timing, or
-accessibility boundary. The optional focused-window highlight uses the same
-nonactivating, click-through boundary, polls only while enabled on this Mac, and excludes
+The menu bar never assigns an `NSStatusItem.menu`, because AppKit gives an assigned menu ownership
+of every click. Compact, Medium, and Full on macOS 14–26 use one stable custom interaction view: a
+primary click outside an explicit Full workspace button, any secondary click, or the primary
+accessibility action presents the same `NSMenu`, while an explicit workspace-button primary click
+switches. macOS 27 treats one custom status-item view as
+one interaction target and rewrites nested clicks to that target, so Full uses one standard status
+item per logical display group. Workspace segments are noninteractive visuals; the owning status
+button receives one action and resolves a primary click by comparing the public global pointer X
+with those segments' live screen-space frames. Display, overflow, unresolved, right-, Control-, and
+accessibility actions present the shared menu. The standalone primary item is hidden in this grouped
+mode because every display group is already a safe menu target. Display-group items update in place;
+they are added or removed only when display topology changes. Full workspace segments expose an
+immediate visual hover state. On macOS 14–26 each native workspace button owns its standard tracking
+area; on macOS 27 the standard parent status button owns workspace-shaped tracking regions and
+resolves enter/exit with the same global screen-space geometry as clicks. This compatibility path
+does not add event monitors, access the system menu-bar process, or change gesture exclusivity.
+After a short dwell, the menu-bar controller may attach a nonactivating application shelf beneath
+the hovered workspace. The shelf reads an asynchronous, read-only application summary from the
+workspace engine's existing managed-window state; it does not enumerate Accessibility windows or
+perform writes merely because the pointer hovered. Applications are grouped by normalized bundle
+identifier, with a process fallback for bundle-less apps, and the workspace's focus history chooses
+the representative window before stable layout order. Selecting a shelf row returns one target to
+the engine, which performs the normal workspace transition and filters its existing verified focus
+pipeline to that application. If the target disappeared, the operation leaves focus neutral instead
+of selecting a different app. Keep-on-all-workspaces apps are omitted because the shelf describes
+direct workspace membership. The shelf embeds its content in AppKit's native regular Liquid Glass
+surface on macOS 26 and later, with the system menu material as the older-OS fallback. It enables a
+vertical scroller only when the bounded eight-row viewport actually overflows; the empty state and
+ordinary app lists do not advertise scrolling. Returning from the shelf to the macOS 27 status item
+crosses a small non-window gap where AppKit may omit a new tracking-area enter. During the existing
+dismissal grace, the controller therefore performs one delayed re-sample through the display
+group's existing global-pointer resolver. A resolved workspace restores the normal hover state and
+cancels dismissal; an unresolved pointer changes nothing. This remains a bounded transition check,
+not a pointer monitor or polling loop.
+Display snapshots retain their hardware-derived built-in, external, or combined icon kind. Each
+synced profile display role owns one menu-bar icon style; the active profile's local conservative
+role binding resolves that style to a live physical display. Unbound roles, ambiguous role bindings,
+and two explicit roles bound to one display fall back to Automatic instead of guessing. The
+resolved per-display configuration is injected into Compact, Medium, the pre-macOS-27 Full strip,
+macOS-27 Full display groups, Settings preview, and pressure calculations. Automatic derives the
+symbol from the bound display kind. Explicit horizontal-monitor, vertical-monitor, and laptop
+choices replace only that role's resolved display symbol; None omits both its icon view and
+pressure-budget gap. Unified mode retains its combined Automatic icon because its one logical block
+does not map to a physical role. Workspace hit targets, accessibility display names, display
+ordering, and status-item ownership do not depend on this cosmetic choice.
+Command feedback
+is a nonactivating click-through overlay. On macOS 26 and later its content is embedded in AppKit's
+public static Liquid Glass view; older supported releases use the system HUD material. Both
+surfaces use a capsule radius derived from the live overlay height. The surface choice never changes
+its panel, focus, input, timing, or accessibility boundary. The optional focused-window highlight
+uses the same nonactivating, click-through boundary, polls only while enabled on this Mac, and excludes
 WindowRanger-owned windows, apps identified as games through the same public bundle metadata used by
 full-screen safety, and full-screen windows. Its local white-by-default colour is independent of the
 synced menu-bar accent. Automated Tiled and

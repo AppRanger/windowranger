@@ -443,6 +443,44 @@ second copy of that checklist.
 
 ## Done
 
+### WR-041 — Choose or hide menu-bar display icons
+
+- **Result:** Each profile display role now owns an Automatic, Horizontal Monitor, Vertical
+  Monitor, Laptop, or None menu-bar icon choice while physical monitor bindings remain local to
+  each Mac. Every presentation path and the Settings preview share the resolved configuration;
+  None reclaims the icon width without removing workspace controls. A deferred AppDelegate update
+  resolves configuration only after `@Published` profile, binding, or topology state commits,
+  preventing the live menu bar from rendering the preceding selection.
+- **Evidence:** All 512 isolated tests pass, universal Debug builds pass with the macOS 26.5 and
+  macOS 27.0 SDKs, and a private Developer ID build was live-validated on macOS 27 across repeated
+  independent changes to both display roles. Diagnostic capture proved model, persistence, role
+  resolution, and rendered status-item values match; temporary mapping logs were removed from the
+  final source.
+
+### WR-040 — Preview and activate workspace apps from the menu bar
+
+- **Result:** Full-mode workspace segments now highlight on hover and open a delayed nonactivating
+  native-glass app shelf. The shelf handles empty and overflowing workspaces, survives pointer
+  transfer in both directions, and delegates workspace switching plus exact managed-app focus to
+  the engine without polling, private APIs, or a global event monitor.
+- **Evidence:** The integrated 512-test suite passes with production-view, geometry, grouping, and
+  exact-focus coverage. The macOS 27 Developer ID candidates were live-validated for rollover,
+  empty/populated shelf layout, glass styling, scroller policy, pointer return, app selection, and
+  unchanged workspace click routing.
+
+### WR-039 — Restore Full menu-bar workspace clicks on macOS 27
+
+- **Result:** macOS 27 Full mode uses one public status item per logical display group and resolves
+  its workspace segments from the action-time global pointer position. Workspace primary clicks
+  switch directly, secondary and fallback actions open the shared menu, each display block moves as
+  a unit, and the redundant standalone app icon is hidden. Compact, Medium, and pre-macOS-27 Full
+  retain their existing single-item path.
+- **Evidence:** The integrated 512-test suite passes, including version policy, grouped planning,
+  pointer routing, pressure, hover, menu fallback, and accessibility coverage. Matching signed
+  candidates preserved macOS 26 behavior and live-validated ordering, group movement, workspace
+  clicks, and right-click routing on macOS 27. The initial geometric-menu position jump remains a
+  documented cosmetic macOS 27 beta limitation rather than a reason to reintroduce unsafe routing.
+
 ### WR-038 — Do not let stale parked-window focus undo a workspace switch
 
 - **Result:** Candidate focus now succeeds from observed exact AX or active-app plus unambiguous

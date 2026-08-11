@@ -661,6 +661,100 @@ struct WindowAdmissionSupportRecord: Identifiable, Equatable, Sendable {
     let windowLayer: String
 }
 
+struct WorkspaceApplicationTarget: Equatable, Sendable {
+    let workspaceID: UUID
+    let bundleIdentifier: String?
+    let processIdentifier: pid_t
+
+    func matches(bundleIdentifier candidateBundleIdentifier: String?, processIdentifier: pid_t) -> Bool {
+        if let bundleIdentifier = Self.normalizedBundleIdentifier(bundleIdentifier) {
+            return Self.normalizedBundleIdentifier(candidateBundleIdentifier) == bundleIdentifier
+        }
+        return processIdentifier == self.processIdentifier
+    }
+
+    private static func normalizedBundleIdentifier(_ value: String?) -> String? {
+        let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized?.isEmpty == false ? normalized : nil
+    }
+}
+
+struct WorkspaceApplicationSummary: Identifiable, Equatable, Sendable {
+    let id: String
+    let target: WorkspaceApplicationTarget
+    let name: String
+    let windowCount: Int
+    let applicationURL: URL?
+}
+
+struct WorkspaceApplicationWindowCandidate: Equatable, Sendable {
+    let key: WindowKey
+    let workspaceID: UUID
+    let bundleIdentifier: String?
+    let processIdentifier: pid_t
+    let name: String
+    let applicationURL: URL?
+    let layoutOrder: Int
+}
+
+enum WorkspaceApplicationSummaryPolicy {
+    private enum GroupKey: Hashable {
+        case bundleIdentifier(String)
+        case processIdentifier(pid_t)
+
+        var stableIdentifier: String {
+            switch self {
+            case let .bundleIdentifier(value): "bundle:\(value)"
+            case let .processIdentifier(value): "process:\(value)"
+            }
+        }
+    }
+
+    static func summaries(
+        workspaceID: UUID,
+        candidates: [WorkspaceApplicationWindowCandidate],
+        preferredWindow: WindowKey?
+    ) -> [WorkspaceApplicationSummary] {
+        let grouped = Dictionary(grouping: candidates.filter { $0.workspaceID == workspaceID }) {
+            candidate -> GroupKey in
+            if let bundleIdentifier = normalizedBundleIdentifier(candidate.bundleIdentifier) {
+                return .bundleIdentifier(bundleIdentifier)
+            }
+            return .processIdentifier(candidate.processIdentifier)
+        }
+        return grouped.compactMap { groupKey, group -> WorkspaceApplicationSummary? in
+            guard let representative = group.sorted(by: { lhs, rhs in
+                if lhs.key == preferredWindow { return true }
+                if rhs.key == preferredWindow { return false }
+                if lhs.layoutOrder != rhs.layoutOrder { return lhs.layoutOrder < rhs.layoutOrder }
+                if lhs.processIdentifier != rhs.processIdentifier {
+                    return lhs.processIdentifier < rhs.processIdentifier
+                }
+                return lhs.key.windowIdentifier < rhs.key.windowIdentifier
+            }).first else { return nil }
+            return WorkspaceApplicationSummary(
+                id: "\(workspaceID.uuidString)|\(groupKey.stableIdentifier)",
+                target: WorkspaceApplicationTarget(
+                    workspaceID: workspaceID,
+                    bundleIdentifier: representative.bundleIdentifier,
+                    processIdentifier: representative.processIdentifier
+                ),
+                name: representative.name,
+                windowCount: group.count,
+                applicationURL: representative.applicationURL
+            )
+        }.sorted { lhs, rhs in
+            let comparison = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+            return comparison == .orderedSame ? lhs.id < rhs.id : comparison == .orderedAscending
+        }
+    }
+
+    private static func normalizedBundleIdentifier(_ value: String?) -> String? {
+        let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized?.isEmpty == false ? normalized : nil
+    }
+}
+
 final class WorkspaceEngine {
     var onStateChanged: ((WorkspaceEngineState) -> Void)?
     var onWorkspaceLayoutChanged: ((UUID, WorkspaceLayout) -> Void)?
@@ -1801,63 +1895,135 @@ final class WorkspaceEngine {
             ?? .failed("AXValue conversion failed")
     }
 
+    func workspaceApplications(
+        for workspaceID: UUID,
+        completion: @escaping ([WorkspaceApplicationSummary]) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self,
+                  self.workspaces.contains(where: { $0.id == workspaceID })
+            else {
+                DispatchQueue.main.async { completion([]) }
+                return
+            }
+            let candidates = self.windows.compactMap { key, tracked -> WorkspaceApplicationWindowCandidate? in
+                guard tracked.workspaceID == workspaceID,
+                      !self.ignoredWindowKeys.contains(key),
+                      !self.temporarilyDeferredWindowKeys.contains(key),
+                      !self.resolvedRule(for: tracked.bundleIdentifier).keepsOnAllWorkspaces,
+                      let application = NSRunningApplication(
+                        processIdentifier: tracked.processIdentifier
+                      )
+                else { return nil }
+                return WorkspaceApplicationWindowCandidate(
+                    key: key,
+                    workspaceID: tracked.workspaceID,
+                    bundleIdentifier: tracked.bundleIdentifier ?? application.bundleIdentifier,
+                    processIdentifier: tracked.processIdentifier,
+                    name: application.localizedName
+                        ?? tracked.bundleIdentifier
+                        ?? "Application",
+                    applicationURL: application.bundleURL,
+                    layoutOrder: tracked.layoutOrder
+                )
+            }
+            let summaries = WorkspaceApplicationSummaryPolicy.summaries(
+                workspaceID: workspaceID,
+                candidates: candidates,
+                preferredWindow: self.lastFocusedWindow[workspaceID]
+            )
+            DispatchQueue.main.async { completion(summaries) }
+        }
+    }
+
     func switchToWorkspace(_ id: UUID, correlationID: String? = nil) {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
-            guard let self,
-                  self.workspaces.contains(where: { $0.id == id })
-            else { return }
-
-            let rawFocusedBefore = self.focusedWindowSnapshot()
-            self.refreshWindows(correlationID: correlationID)
-            let displays = Self.activeDisplays()
-            let interactionDisplay = self.interactionDisplayResolution(
-                focused: self.interactionFocusedWindowSnapshot(rawFocusedBefore),
-                displays: displays
-            )
-            if self.displayMode == .independent {
-                self.switchIndependentDisplay(
-                    to: id,
-                    sourceInteractionDisplayIdentifier: interactionDisplay.identifier,
-                    previousFocusKey: rawFocusedBefore?.key,
-                    displays: displays,
-                    correlationID: correlationID
-                )
-                return
-            }
-            guard id != self.currentWorkspaceID else { return }
-            let sourceWorkspaceID = self.currentWorkspaceID
-            let token = self.beginCorrelatedAction(
-                correlationID: correlationID,
-                interactionDisplayIdentifier: interactionDisplay.identifier,
-                expectedFocusTarget: nil
-            )
-            self.logWorkspaceSwitchBegin(
-                workspaceID: id,
-                sourceWorkspaceID: sourceWorkspaceID,
-                sourceInteractionDisplayIdentifier: interactionDisplay.identifier,
-                destination: WorkspaceSwitchDestination(
-                    logicalDisplayIdentifier: interactionDisplay.identifier,
-                    physicalDisplayIdentifier: interactionDisplay.identifier,
-                    usedDisconnectedHomeFallback: false
-                ),
-                correlationID: correlationID,
-                reason: "unified-interaction-display"
-            )
-            self.previousWorkspaceID = sourceWorkspaceID
-            self.currentWorkspaceID = id
-            self.applyVisibilityTransition(from: sourceWorkspaceID, to: id, correlationID: correlationID)
-            self.persistState(preservingPendingRestores: true)
-            self.emitState()
-            self.focusWorkspaceAfterSwitch(
-                workspaceID: id,
-                destinationDisplayIdentifier: interactionDisplay.identifier,
-                displays: displays,
-                correlationID: correlationID,
-                token: token,
-                previousFocusKey: rawFocusedBefore?.key
+            self?.activateWorkspace(
+                id,
+                selectedApplication: nil,
+                correlationID: correlationID
             )
         }
+    }
+
+    func activateWorkspaceApplication(
+        _ target: WorkspaceApplicationTarget,
+        correlationID: String? = nil
+    ) {
+        let correlationID = correlationID ?? diagnostics.makeCorrelationID()
+        queue.async { [weak self] in
+            self?.activateWorkspace(
+                target.workspaceID,
+                selectedApplication: target,
+                correlationID: correlationID
+            )
+        }
+    }
+
+    private func activateWorkspace(
+        _ id: UUID,
+        selectedApplication: WorkspaceApplicationTarget?,
+        correlationID: String
+    ) {
+        guard workspaces.contains(where: { $0.id == id }) else { return }
+
+        let rawFocusedBefore = focusedWindowSnapshot()
+        refreshWindows(correlationID: correlationID)
+        let displays = Self.activeDisplays()
+        let interactionDisplay = interactionDisplayResolution(
+            focused: interactionFocusedWindowSnapshot(rawFocusedBefore),
+            displays: displays
+        )
+        if displayMode == .independent {
+            switchIndependentDisplay(
+                to: id,
+                sourceInteractionDisplayIdentifier: interactionDisplay.identifier,
+                previousFocusKey: rawFocusedBefore?.key,
+                displays: displays,
+                correlationID: correlationID,
+                selectedApplication: selectedApplication
+            )
+            return
+        }
+        let alreadyActive = id == currentWorkspaceID
+        guard !alreadyActive || selectedApplication != nil else { return }
+        let sourceWorkspaceID = currentWorkspaceID
+        let token = beginCorrelatedAction(
+            correlationID: correlationID,
+            interactionDisplayIdentifier: interactionDisplay.identifier,
+            expectedFocusTarget: nil
+        )
+        logWorkspaceSwitchBegin(
+            workspaceID: id,
+            sourceWorkspaceID: sourceWorkspaceID,
+            sourceInteractionDisplayIdentifier: interactionDisplay.identifier,
+            destination: WorkspaceSwitchDestination(
+                logicalDisplayIdentifier: interactionDisplay.identifier,
+                physicalDisplayIdentifier: interactionDisplay.identifier,
+                usedDisconnectedHomeFallback: false
+            ),
+            correlationID: correlationID,
+            reason: alreadyActive
+                ? "unified-workspace-already-active-selected-app"
+                : "unified-interaction-display"
+        )
+        if !alreadyActive {
+            previousWorkspaceID = sourceWorkspaceID
+            currentWorkspaceID = id
+            applyVisibilityTransition(from: sourceWorkspaceID, to: id, correlationID: correlationID)
+            persistState(preservingPendingRestores: true)
+            emitState()
+        }
+        focusWorkspaceAfterSwitch(
+            workspaceID: id,
+            destinationDisplayIdentifier: interactionDisplay.identifier,
+            displays: displays,
+            correlationID: correlationID,
+            token: token,
+            previousFocusKey: rawFocusedBefore?.key,
+            selectedApplication: selectedApplication
+        )
     }
 
     func switchToPreviousWorkspace(correlationID: String? = nil) {
@@ -7255,7 +7421,8 @@ final class WorkspaceEngine {
         sourceInteractionDisplayIdentifier: String,
         previousFocusKey: WindowKey?,
         displays: [DisplaySnapshot],
-        correlationID: String
+        correlationID: String,
+        selectedApplication: WorkspaceApplicationTarget? = nil
     ) {
         reconcileIndependentActiveWorkspaces(displays: displays)
         let logicalDisplayIdentifier = workspaceHomeDisplayIdentifier(
@@ -7330,7 +7497,8 @@ final class WorkspaceEngine {
             displays: displays,
             correlationID: correlationID,
             token: token,
-            previousFocusKey: previousFocusKey
+            previousFocusKey: previousFocusKey,
+            selectedApplication: selectedApplication
         )
     }
 
@@ -8717,7 +8885,8 @@ final class WorkspaceEngine {
         displays: [DisplaySnapshot],
         correlationID: String,
         token: FocusVerificationToken,
-        previousFocusKey: WindowKey?
+        previousFocusKey: WindowKey?,
+        selectedApplication: WorkspaceApplicationTarget? = nil
     ) {
         guard isFocusActionGenerationCurrent(token.generation) else {
             diagnostics.log(
@@ -8731,7 +8900,11 @@ final class WorkspaceEngine {
         if let preferredKey = lastFocusedWindow[workspaceID],
            let preferredSession = fullscreenSessions[preferredKey],
            preferredSession.workspaceID == workspaceID,
-           preferredSession.displayIdentifier == destinationDisplayIdentifier {
+           preferredSession.displayIdentifier == destinationDisplayIdentifier,
+           selectedApplication?.matches(
+            bundleIdentifier: preferredSession.bundleIdentifier,
+            processIdentifier: preferredSession.processIdentifier
+           ) != false {
             focusFullscreenSessionAfterSwitch(
                 preferredSession,
                 workspaceID: workspaceID,
@@ -8741,17 +8914,30 @@ final class WorkspaceEngine {
             )
             return
         }
-        let attemptOrder = orderedWorkspaceSwitchFocusCandidates(
+        let unfilteredAttemptOrder = orderedWorkspaceSwitchFocusCandidates(
             workspaceID: workspaceID,
             destinationDisplayIdentifier: destinationDisplayIdentifier,
             displays: displays,
             correlationID: correlationID
         )
+        let attemptOrder = selectedApplication.map { selectedApplication in
+            unfilteredAttemptOrder.filter { key in
+                guard let tracked = windows[key] else { return false }
+                return selectedApplication.matches(
+                    bundleIdentifier: tracked.bundleIdentifier,
+                    processIdentifier: tracked.processIdentifier
+                )
+            }
+        } ?? unfilteredAttemptOrder
         guard let target = attemptOrder.first else {
             if let fallbackSession = fullscreenSessions.values
                 .filter({
                     $0.workspaceID == workspaceID &&
-                        $0.displayIdentifier == destinationDisplayIdentifier
+                        $0.displayIdentifier == destinationDisplayIdentifier &&
+                        selectedApplication?.matches(
+                            bundleIdentifier: $0.bundleIdentifier,
+                            processIdentifier: $0.processIdentifier
+                        ) != false
                 })
                 .sorted(by: { $0.enteredAt > $1.enteredAt })
                 .first {
@@ -8780,6 +8966,9 @@ final class WorkspaceEngine {
                 fields: [
                     "workspace": Self.shortIdentifier(workspaceID.uuidString),
                     "display": Self.shortIdentifier(destinationDisplayIdentifier),
+                    "selected-application": selectedApplication?.bundleIdentifier
+                        ?? selectedApplication.map { String($0.processIdentifier) }
+                        ?? "none",
                     "result": "neutral-no-focus-steal",
                     "active-after": diagnosticActiveWorkspaceMap(),
                 ]
@@ -8797,6 +8986,9 @@ final class WorkspaceEngine {
                 "display": Self.shortIdentifier(destinationDisplayIdentifier),
                 "preferred-history": lastFocusedWindow[workspaceID].map(Self.diagnosticWindowKey) ?? "none",
                 "attempt-order": attemptOrder.map(Self.diagnosticWindowKey).joined(separator: ","),
+                "selected-application": selectedApplication?.bundleIdentifier
+                    ?? selectedApplication.map { String($0.processIdentifier) }
+                    ?? "none",
                 "active-after": diagnosticActiveWorkspaceMap(),
             ]
         )

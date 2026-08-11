@@ -92,6 +92,86 @@ final class WorkspaceSwitchFocusTests: XCTestCase {
         )
     }
 
+    func testWorkspaceApplicationSummariesGroupByBundleAndPreferWorkspaceHistory() {
+        let workspaceID = UUID(uuidString: "A0000000-0000-0000-0000-000000000001")!
+        let otherWorkspaceID = UUID(uuidString: "A0000000-0000-0000-0000-000000000002")!
+        let chromeFirst = WindowKey(processIdentifier: 10, windowIdentifier: 1)
+        let chromePreferred = WindowKey(processIdentifier: 11, windowIdentifier: 2)
+        let safari = WindowKey(processIdentifier: 20, windowIdentifier: 3)
+        let summaries = WorkspaceApplicationSummaryPolicy.summaries(
+            workspaceID: workspaceID,
+            candidates: [
+                WorkspaceApplicationWindowCandidate(
+                    key: safari,
+                    workspaceID: workspaceID,
+                    bundleIdentifier: "com.apple.Safari",
+                    processIdentifier: safari.processIdentifier,
+                    name: "Safari",
+                    applicationURL: URL(fileURLWithPath: "/Applications/Safari.app"),
+                    layoutOrder: 0
+                ),
+                WorkspaceApplicationWindowCandidate(
+                    key: chromeFirst,
+                    workspaceID: workspaceID,
+                    bundleIdentifier: "com.google.Chrome",
+                    processIdentifier: chromeFirst.processIdentifier,
+                    name: "Chrome",
+                    applicationURL: URL(fileURLWithPath: "/Applications/Chrome.app"),
+                    layoutOrder: 1
+                ),
+                WorkspaceApplicationWindowCandidate(
+                    key: chromePreferred,
+                    workspaceID: workspaceID,
+                    bundleIdentifier: "COM.GOOGLE.CHROME",
+                    processIdentifier: chromePreferred.processIdentifier,
+                    name: "Chrome",
+                    applicationURL: URL(fileURLWithPath: "/Applications/Chrome.app"),
+                    layoutOrder: 2
+                ),
+                WorkspaceApplicationWindowCandidate(
+                    key: previous,
+                    workspaceID: otherWorkspaceID,
+                    bundleIdentifier: "com.example.Other",
+                    processIdentifier: previous.processIdentifier,
+                    name: "Other",
+                    applicationURL: nil,
+                    layoutOrder: 0
+                ),
+            ],
+            preferredWindow: chromePreferred
+        )
+
+        XCTAssertEqual(summaries.map(\.name), ["Chrome", "Safari"])
+        XCTAssertEqual(summaries[0].windowCount, 2)
+        XCTAssertEqual(summaries[0].target.processIdentifier, chromePreferred.processIdentifier)
+        XCTAssertEqual(summaries[0].target.workspaceID, workspaceID)
+    }
+
+    func testWorkspaceApplicationTargetMatchesBundleAcrossProcessChangesAndFallsBackToPID() {
+        let workspaceID = UUID(uuidString: "A0000000-0000-0000-0000-000000000001")!
+        let bundleTarget = WorkspaceApplicationTarget(
+            workspaceID: workspaceID,
+            bundleIdentifier: "com.google.Chrome",
+            processIdentifier: 10
+        )
+        XCTAssertTrue(bundleTarget.matches(
+            bundleIdentifier: "COM.GOOGLE.CHROME",
+            processIdentifier: 99
+        ))
+        XCTAssertFalse(bundleTarget.matches(
+            bundleIdentifier: "com.apple.Safari",
+            processIdentifier: 10
+        ))
+
+        let processTarget = WorkspaceApplicationTarget(
+            workspaceID: workspaceID,
+            bundleIdentifier: nil,
+            processIdentifier: 10
+        )
+        XCTAssertTrue(processTarget.matches(bundleIdentifier: nil, processIdentifier: 10))
+        XCTAssertFalse(processTarget.matches(bundleIdentifier: nil, processIdentifier: 11))
+    }
+
     func testAlreadyActiveAppUsesExactWindowPathWithoutActivation() {
         let plan = WorkspaceEngine.exactWindowFocusPlan(applicationIsActive: true)
         XCTAssertFalse(plan.contains(.makeApplicationFrontmost))
