@@ -396,6 +396,19 @@ High-frequency command feedback uses one centered, pill-shaped, click-through no
 
 Switching to a workspace focuses an eligible window in that workspace on the resolved destination display. In Independent Displays mode, the workspace's logical home chooses which active-workspace slot changes, while its currently connected home or safe physical fallback chooses where focus is attempted; other displays remain untouched. Local focus history is preferred, then deterministic visible local order. If macOS rejects every destination focus attempt, a stale focus report for the just-parked source window cannot reverse the explicit workspace switch; a later explicit app activation still follows that app normally. An empty workspace does not focus a parked window or steal focus from another display. Unified mode retains the actual interaction display rather than defaulting to the main display.
 
+When the target application is inactive, WindowRanger prepares and raises the exact destination
+window, then uses the public application-level Accessibility frontmost attribute. It falls back to
+AppKit activation only when that Accessibility write is rejected, and retains the same bounded exact-
+window verification and generation cancellation for both paths. Already-active applications use
+only the exact-window path and are not reactivated. If an active application temporarily exposes no
+Accessibility focused window, verification succeeds only when WindowServer independently identifies
+the exact requested window as that application's frontmost on-screen normal window; a reported AX
+window mismatch or competing application still fails closed. The optional focused-window border uses
+the target already proven by that focus transaction during the temporary AX gap. It independently
+revalidates the active application and exact WindowServer window on every poll, and retains its
+fullscreen and workspace filters, so it need not wait for the delayed focused-window attribute or
+perform another focus action.
+
 Physical display-role bindings are local to each Mac. The app first matches the stable runtime display UUID, then may use a portable vendor/model/serial fingerprint when reconnecting. If multiple identical displays match, it does not guess; the workspace's synced abstract home remains intact while its physical placement falls back safely until the user chooses a binding. Option-Shift-Tab swaps the current Independent Displays workspace onto the next connected role while keeping both displays' active-workspace invariants valid.
 
 **Open at login** uses macOS's native login-item service and changes only after an explicit Settings toggle. **Automatically unhide applications when focusing their windows** is an opt-in compatibility setting, off by default, and throttles duplicate attempts to avoid activation loops. Automated tests inject substitutes and never alter the live login-item state.

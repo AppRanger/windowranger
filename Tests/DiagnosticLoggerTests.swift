@@ -2,6 +2,43 @@ import ApplicationServices
 import XCTest
 
 final class DiagnosticLoggerTests: XCTestCase {
+    func testWindowServerFrontmostNormalWindowUsesFrontToBackOrderForApplication() {
+        let entries = [
+            WindowServerWindowOrderEntry(
+                processIdentifier: 10,
+                windowIdentifier: 100,
+                layer: 3
+            ),
+            WindowServerWindowOrderEntry(
+                processIdentifier: 20,
+                windowIdentifier: 200,
+                layer: 0
+            ),
+            WindowServerWindowOrderEntry(
+                processIdentifier: 10,
+                windowIdentifier: 101,
+                layer: 0
+            ),
+            WindowServerWindowOrderEntry(
+                processIdentifier: 10,
+                windowIdentifier: 102,
+                layer: 0
+            ),
+        ]
+
+        XCTAssertEqual(
+            AccessibilityWindow.frontmostNormalWindowIdentifier(for: 10, in: entries),
+            101
+        )
+        XCTAssertEqual(
+            AccessibilityWindow.frontmostNormalWindowIdentifier(for: 20, in: entries),
+            200
+        )
+        XCTAssertNil(
+            AccessibilityWindow.frontmostNormalWindowIdentifier(for: 30, in: entries)
+        )
+    }
+
     func testReleaseLoggerDoesNotCreateVerboseFile() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -300,7 +337,7 @@ final class DiagnosticLoggerTests: XCTestCase {
             [
                 .markWindowMain,
                 .raiseWindow,
-                .activateApplication,
+                .makeApplicationFrontmost,
                 .markWindowMain,
                 .focusWindowElement,
                 .focusApplicationWindow,
@@ -314,6 +351,18 @@ final class DiagnosticLoggerTests: XCTestCase {
         XCTAssertFalse(WorkspaceEngine.shouldReassertAfterActivation(
             activatedProcessIdentifier: 100,
             focusedProcessIdentifier: 200
+        ))
+    }
+
+    func testAppKitActivationIsOnlyFallbackForRejectedAccessibilityFrontmostWrite() {
+        XCTAssertFalse(WorkspaceEngine.shouldUseAppKitActivationFallback(
+            accessibilityFrontmostResult: .success
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldUseAppKitActivationFallback(
+            accessibilityFrontmostResult: .attributeUnsupported
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldUseAppKitActivationFallback(
+            accessibilityFrontmostResult: .cannotComplete
         ))
     }
 

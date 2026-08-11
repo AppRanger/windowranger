@@ -94,7 +94,7 @@ final class WorkspaceSwitchFocusTests: XCTestCase {
 
     func testAlreadyActiveAppUsesExactWindowPathWithoutActivation() {
         let plan = WorkspaceEngine.exactWindowFocusPlan(applicationIsActive: true)
-        XCTAssertFalse(plan.contains(.activateApplication))
+        XCTAssertFalse(plan.contains(.makeApplicationFrontmost))
         XCTAssertTrue(plan.contains(.focusApplicationWindow))
         XCTAssertTrue(plan.contains(.raiseWindow))
     }
@@ -117,6 +117,54 @@ final class WorkspaceSwitchFocusTests: XCTestCase {
             applicationIsActive: true,
             exactAttempt: 1
         ), .advanceToNextCandidate)
+    }
+
+    func testNilAXFocusSucceedsOnlyWithActiveAppAndExactWindowServerTarget() {
+        XCTAssertEqual(WorkspaceEngine.workspaceSwitchFocusVerificationDecision(
+            expected: target,
+            actual: nil,
+            previousFocus: previous,
+            actualIsIgnored: false,
+            applicationIsActive: true,
+            windowServerTargetIsFrontmostNormalWindow: true,
+            exactAttempt: 0
+        ), .succeeded)
+        XCTAssertEqual(WorkspaceEngine.workspaceSwitchFocusVerificationDecision(
+            expected: target,
+            actual: nil,
+            previousFocus: previous,
+            actualIsIgnored: false,
+            applicationIsActive: true,
+            windowServerTargetIsFrontmostNormalWindow: false,
+            exactAttempt: 0
+        ), .retryExactTarget)
+        XCTAssertEqual(WorkspaceEngine.workspaceSwitchFocusVerificationDecision(
+            expected: target,
+            actual: nil,
+            previousFocus: previous,
+            actualIsIgnored: false,
+            applicationIsActive: false,
+            windowServerTargetIsFrontmostNormalWindow: true,
+            exactAttempt: 0
+        ), .advanceToNextCandidate)
+    }
+
+    func testWindowServerEvidenceDoesNotOverrideAnAXWindowMismatch() {
+        let wrongSameApp = WindowKey(processIdentifier: target.processIdentifier, windowIdentifier: 99)
+        XCTAssertEqual(WorkspaceEngine.focusCycleVerificationDecision(
+            expected: target,
+            actual: wrongSameApp,
+            applicationIsActive: true,
+            windowServerTargetIsFrontmostNormalWindow: true,
+            exactAttempt: 0
+        ), .retryExactTarget)
+        XCTAssertEqual(WorkspaceEngine.focusCycleVerificationDecision(
+            expected: target,
+            actual: fallback,
+            applicationIsActive: true,
+            windowServerTargetIsFrontmostNormalWindow: true,
+            exactAttempt: 0
+        ), .abortForCompetingFocus)
     }
 
     func testStalePreviousDisplayFocusGetsOneRetryButGenuineCompetitionAborts() {

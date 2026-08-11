@@ -167,7 +167,18 @@ stream. Accepted swipes use `cycleWorkspace`, preserving its ordered wraparound 
 Displays interaction routing. Sleep, inactive login sessions, full-screen games, shortcut recording,
 display changes, and profile transitions cancel or suspend observation.
 
-Exact focus operations use bounded activation/focus/raise verification and generation tokens.
+Exact focus operations use bounded activation/focus/raise verification and generation tokens. For an
+inactive target application, the engine prepares the exact window before setting the public
+application-level Accessibility frontmost attribute; AppKit activation is used only when that write
+is rejected. Already-active applications remain on the exact-window-only path. Verification normally
+requires the exact Accessibility focused-window identity. When that value is temporarily absent, it
+accepts the target only if the application is active and WindowServer independently reports that
+exact window as the application's frontmost on-screen layer-0 window. A different Accessibility
+window still wins as competing or mismatched evidence. Once a focus transaction succeeds, it may
+forward that already-known target to the focused-window border as observation only. The border
+revalidates that the application remains active and the exact target remains its WindowServer-
+frontmost on-screen layer-0 window on every poll, then discards the handoff when Accessibility
+catches up or either proof changes. It retains the existing fullscreen and workspace-filter checks.
 Programmatic focus intent is separated from genuine user competition so stale notifications do not
 bounce work back to another display or workspace.
 

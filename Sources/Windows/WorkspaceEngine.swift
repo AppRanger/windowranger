@@ -79,7 +79,7 @@ enum ExactWindowFocusStep: Equatable, Sendable {
     case markWindowMain
     case focusWindowElement
     case focusApplicationWindow
-    case activateApplication
+    case makeApplicationFrontmost
     case raiseWindow
 }
 
@@ -641,6 +641,7 @@ final class WorkspaceEngine {
     var onCommandFeedback: ((CommandFeedbackRequest) -> Void)?
     var onWorkspaceDisplayAssignmentsChanged: (([UUID: String]) -> Void)?
     var onFullscreenGameSessionChanged: ((FullscreenGameSessionSnapshot?) -> Void)?
+    var onVerifiedFocusTarget: ((FocusedWindowHighlightTarget) -> Void)?
 
     private struct TrackedWindow {
         let key: WindowKey
@@ -6861,12 +6862,18 @@ final class WorkspaceEngine {
             : [
                 .markWindowMain,
                 .raiseWindow,
-                .activateApplication,
+                .makeApplicationFrontmost,
                 .markWindowMain,
                 .focusWindowElement,
                 .focusApplicationWindow,
                 .raiseWindow,
             ]
+    }
+
+    static func shouldUseAppKitActivationFallback(
+        accessibilityFrontmostResult: AXError
+    ) -> Bool {
+        accessibilityFrontmostResult != .success
     }
 
     static func focusCycleAttemptOrder<T: Equatable>(
@@ -6899,10 +6906,16 @@ final class WorkspaceEngine {
         expected: WindowKey,
         actual: WindowKey?,
         applicationIsActive: Bool,
+        windowServerTargetIsFrontmostNormalWindow: Bool = false,
         exactAttempt: Int,
         maximumExactAttempts: Int = 1
     ) -> FocusCycleVerificationDecision {
         if actual == expected { return .succeeded }
+        if actual == nil,
+           applicationIsActive,
+           windowServerTargetIsFrontmostNormalWindow {
+            return .succeeded
+        }
         if let actual, actual.processIdentifier != expected.processIdentifier {
             return .abortForCompetingFocus
         }
@@ -6920,6 +6933,7 @@ final class WorkspaceEngine {
         previousFocus: WindowKey?,
         actualIsIgnored: Bool,
         applicationIsActive: Bool,
+        windowServerTargetIsFrontmostNormalWindow: Bool = false,
         exactAttempt: Int,
         maximumExactAttempts: Int = 1
     ) -> FocusCycleVerificationDecision {
@@ -6931,6 +6945,7 @@ final class WorkspaceEngine {
             expected: expected,
             actual: actual,
             applicationIsActive: applicationIsActive,
+            windowServerTargetIsFrontmostNormalWindow: windowServerTargetIsFrontmostNormalWindow,
             exactAttempt: exactAttempt,
             maximumExactAttempts: maximumExactAttempts
         )
@@ -9016,6 +9031,10 @@ final class WorkspaceEngine {
             let applicationIsActive = NSRunningApplication(
                 processIdentifier: targetKey.processIdentifier
             )?.isActive == true
+            let windowServerFrontmostWindow =
+                AccessibilityWindow.frontmostOnScreenNormalWindowIdentifier(
+                    for: targetKey.processIdentifier
+                )
             let actualIsIgnored = Self.shouldIgnoreFocusObservation(
                 focusedWindow: actual,
                 ignoredWindowKeys: self.ignoredWindowKeys
@@ -9029,6 +9048,8 @@ final class WorkspaceEngine {
                 previousFocus: previousFocusKey,
                 actualIsIgnored: actualIsIgnored,
                 applicationIsActive: applicationIsActive,
+                windowServerTargetIsFrontmostNormalWindow:
+                    windowServerFrontmostWindow == targetKey.windowIdentifier,
                 exactAttempt: exactAttempt,
                 maximumExactAttempts: 1
             )
@@ -9041,6 +9062,10 @@ final class WorkspaceEngine {
                     "actual-window": actual.map(Self.diagnosticWindowKey) ?? "none",
                     "previous-window": previousFocusKey.map(Self.diagnosticWindowKey) ?? "none",
                     "application-active": String(applicationIsActive),
+                    "windowserver-frontmost-window": windowServerFrontmostWindow.map(String.init) ?? "none",
+                    "windowserver-target-match": String(
+                        windowServerFrontmostWindow == targetKey.windowIdentifier
+                    ),
                     "actual-window-ignored": String(actualIsIgnored),
                     "exact-attempt": String(exactAttempt),
                     "decision": String(describing: decision),
@@ -9051,6 +9076,10 @@ final class WorkspaceEngine {
             switch decision {
             case .succeeded:
                 self.lastObservedFocusedWindow = targetKey
+                self.emitVerifiedFocusHighlightTarget(
+                    target,
+                    correlationID: correlationID
+                )
                 self.diagnostics.log(
                     category: "workspace-switch-focus",
                     event: "complete",
@@ -9262,6 +9291,10 @@ final class WorkspaceEngine {
             let applicationIsActive = NSRunningApplication(
                 processIdentifier: targetKey.processIdentifier
             )?.isActive == true
+            let windowServerFrontmostWindow =
+                AccessibilityWindow.frontmostOnScreenNormalWindowIdentifier(
+                    for: targetKey.processIdentifier
+                )
             let actualIsIgnored = Self.shouldIgnoreFocusObservation(
                 focusedWindow: actual,
                 ignoredWindowKeys: self.ignoredWindowKeys
@@ -9272,6 +9305,8 @@ final class WorkspaceEngine {
                     expected: targetKey,
                     actual: actual,
                     applicationIsActive: applicationIsActive,
+                    windowServerTargetIsFrontmostNormalWindow:
+                        windowServerFrontmostWindow == targetKey.windowIdentifier,
                     exactAttempt: exactAttempt,
                     maximumExactAttempts: 1
                 )
@@ -9283,6 +9318,10 @@ final class WorkspaceEngine {
                     "expected-window": Self.diagnosticWindowKey(targetKey),
                     "actual-window": actual.map(Self.diagnosticWindowKey) ?? "none",
                     "application-active": String(applicationIsActive),
+                    "windowserver-frontmost-window": windowServerFrontmostWindow.map(String.init) ?? "none",
+                    "windowserver-target-match": String(
+                        windowServerFrontmostWindow == targetKey.windowIdentifier
+                    ),
                     "actual-window-ignored": String(actualIsIgnored),
                     "exact-attempt": String(exactAttempt),
                     "decision": String(describing: decision),
@@ -9292,6 +9331,10 @@ final class WorkspaceEngine {
             switch decision {
             case .succeeded:
                 self.lastObservedFocusedWindow = targetKey
+                self.emitVerifiedFocusHighlightTarget(
+                    target,
+                    correlationID: correlationID
+                )
                 self.diagnostics.log(
                     category: "focus-cycle",
                     event: "complete",
@@ -9441,9 +9484,12 @@ final class WorkspaceEngine {
             return
         }
 
-        // App activation chooses an application, not a specific window. Prepare and raise the
-        // exact target first (the ordering used by AeroSpace), then reassert it again from the
-        // activation notification. This prevents activation from making another same-app window
+        // Making an application frontmost chooses an application, not a specific window. Prepare
+        // and raise the exact target first, then use the public application-level AXFrontmost
+        // attribute. AppKit activation is a fallback only when Accessibility rejects that write;
+        // unlike NSRunningApplication activation, AXFrontmost produced a prompt handoff for the
+        // affected apps in the controlled macOS 27 test. Reassert the exact target again from the
+        // activation notification so another same-app window cannot win the application handoff.
         applyExactWindowFocus(
             key,
             tracked: tracked,
@@ -9466,7 +9512,19 @@ final class WorkspaceEngine {
                 return
             }
             let unhidden = unhideDecision == .attempt ? application?.unhide() == true : false
-            let activated = application?.activate() == true
+            let applicationElement = AXUIElementCreateApplication(key.processIdentifier)
+            let accessibilityFrontmostResult = AXUIElementSetAttributeValue(
+                applicationElement,
+                kAXFrontmostAttribute as CFString,
+                true as CFTypeRef
+            )
+            let appKitFallbackAttempted = Self.shouldUseAppKitActivationFallback(
+                accessibilityFrontmostResult: accessibilityFrontmostResult
+            )
+            let appKitFallbackSucceeded = appKitFallbackAttempted
+                ? application?.activate() == true
+                : false
+            let activated = accessibilityFrontmostResult == .success || appKitFallbackSucceeded
             self?.diagnostics.log(
                 category: "focus-action",
                 event: "application-activate",
@@ -9476,7 +9534,10 @@ final class WorkspaceEngine {
                     "success": String(activated),
                     "automatic-unhide": unhideDecision.rawValue,
                     "unhide-success": String(unhidden),
-                    "ordering": "exact-window-before-activate-then-reassert",
+                    "accessibility-frontmost-result": String(accessibilityFrontmostResult.rawValue),
+                    "appkit-fallback-attempted": String(appKitFallbackAttempted),
+                    "appkit-fallback-success": String(appKitFallbackSucceeded),
+                    "ordering": "exact-window-before-frontmost-then-reassert",
                 ]
             )
         }
@@ -9896,6 +9957,29 @@ final class WorkspaceEngine {
 
     private func emitFloatingToggleResult(_ result: FloatingToggleResult) {
         emitCommandFeedback(result.commandFeedbackMessage)
+    }
+
+    private func emitVerifiedFocusHighlightTarget(
+        _ window: TrackedWindow,
+        correlationID: String
+    ) {
+        guard focusedWindowHighlightEnabled,
+              let frame = AccessibilityWindow.frame(of: window.element)
+        else { return }
+        let target = FocusedWindowHighlightTarget(
+            key: window.key,
+            frame: frame,
+            fullscreenObservation: AccessibilityWindow.fullscreenObservation(of: window.element),
+            bundleIdentifier: window.bundleIdentifier,
+            observationSource: .verifiedFocusTransaction
+        )
+        diagnostics.log(
+            category: "focused-window-highlight",
+            event: "verified-target-forwarded",
+            correlation: correlationID,
+            fields: ["window": Self.diagnosticWindowKey(window.key)]
+        )
+        DispatchQueue.main.async { [weak self] in self?.onVerifiedFocusTarget?(target) }
     }
 
     private func emitCommandFeedback(
