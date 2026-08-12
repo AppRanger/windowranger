@@ -110,3 +110,5 @@ promotion and versioning. It is a design authority, not evidence that the releas
 - [x] Developer ID-sign, notarize, staple, Gatekeeper-check, and verify the exact Beta app and DMG.
 - [x] Publish `v0.1.0-beta.1` only after explicit maintainer approval, preserving its verified tag
       and five uploaded assets.
+- [x] Publish `v0.1.0-beta.2` only after exact-artifact maintainer testing and explicit approval,
+      preserving release commit `82b2fa381ae4` and its five round-trip-verified assets.

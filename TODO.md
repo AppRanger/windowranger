@@ -340,81 +340,6 @@ adding engineering tasks.
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
-### WR-037 — Prepare WindowRanger 0.1.0 Beta 2
-
-- **Type:** Beta release checkpoint
-- **Priority:** P1
-- **Status:** Live validation
-- **Approved scope:** Promote the reviewed `develop` checkpoint through `release/0.1.0`, assign
-  public version `0.1.0-beta.2` and monotonically increasing build number `2`, and create the exact
-  Developer ID-signed, notarized, stapled DMG and ZIP locally for maintainer testing. Do not create
-  or push the release tag, upload assets, create a GitHub release, or publish Beta 2 until the exact
-  artifact passes the applicable manual regression and the maintainer explicitly approves that
-  later publication checkpoint.
-- **Candidate highlights:** Resizable native Settings with compact list/detail navigation; optional
-  focused-window border; improved App Rule creation and alignment; Dock and wake reconciliation;
-  native glass command feedback; optional three- or four-finger workspace swiping; guarded exact
-  focus recovery; and restored macOS 27 Full menu-bar workspace clicks.
-- **Automated evidence:** The final WR-035/WR-036 integration commit passed the isolated local
-  pre-push checkpoint with 478 non-hosted tests and the independent public GitHub CI check before
-  merge. The promoted release commit passed the public release-branch test, analysis, unsigned
-  universal Release build, and Stable/Beta DMG smoke gate. Local stable-Xcode verification then
-  passed 478 tests, static analysis, universal archive, and Developer ID export before exposing a
-  release-script defect: the notarization result parser assigned to zsh's read-only `status`
-  parameter. The partial output is preserved in
-  `.build/releases/0.1.0-beta.2.failed-20260810-2118`; its app notarization submission
-  (`168cd92f-f0b9-4910-9100-2ebbda3fe980`) was accepted, but it is not the exact candidate. After
-  the parser correction was reviewed and promoted, repeated preflight exposed a second shell defect:
-  with `pipefail`
-  enabled, piping the two-line `xcodebuild -version` output through `head` could intermittently exit
-  141 when `head` closed the pipe early. The correction consumes the complete output with `sed` while
-  selecting its first line, preserving strict pipeline failure handling. Both corrections are now
-  merged into `develop` and `release/0.1.0`; their final public push gates passed 478 tests, static
-  analysis, unsigned universal Release builds, Stable/Beta DMG smoke packaging, and artifact upload.
-- **Latest source evidence:** Release commit `a95f970f2547` has the exact same Git tree as the
-  reviewed `develop` checkpoint `eda425e447d3`. Its public release-branch CI run passed 512 tests,
-  static analysis, an unsigned universal Release build, Stable/Beta DMG smoke packaging, and
-  artifact upload. Stable Xcode 26.6 then passed the same 512-test suite, static analysis, universal
-  archive, and Developer ID export locally.
-- **Credential hardening:** The original `WindowRanger` profile disappeared twice after being stored
-  through `notarytool`'s default Data Protection Keychain path. A replacement profile is now stored
-  explicitly in the file-based login Keychain and its history lookup passed both the normal shell
-  environment and a stripped clean environment. The distribution script and release instructions
-  now accept the same explicit keychain path for every history, submit, and log operation. Persistence
-  still needs verification after a reboot before the credential issue is considered closed.
-- **Resumed checkpoint (2026-08-11):** The maintainer resumed preparation of a fresh unpublished
-  Beta 2 candidate from the latest reviewed `develop` tree. Building, signing, notarizing, and
-  stapling the exact local DMG and ZIP is approved; tagging, uploading assets, creating a GitHub
-  release, and publication remain separate approval checkpoints.
-- **Superseded candidate evidence:** A local `0.1.0-beta.2` build 2 candidate was produced from
-  `a95f970f2547` in `.build/releases/0.1.0-beta.2`. The ZIP SHA-256 is
-  `888c70f05c0020e30bcde5380b80f3affd760f91e39db9dee63efbb9512a2e44`; the DMG SHA-256 is
-  `24d3852b79290aad1a0eb07694cc49f62dc10b9aba0bdbba32ae9863345c044d`. Apple accepted the app
-  (`11c88b99-acf6-4019-a260-f64282a149ea`) and DMG
-  (`9628ef87-5753-4ff6-9de1-db019e503592`) notarizations with zero logged issues. Independent
-  checksum, strict codesign, Gatekeeper, stapler, architecture, version, and build checks pass. A
-  subsequent independent CI run exposed WR-042's time-dependent focused-report history filter, so
-  this otherwise valid artifact is superseded and must not be used as the final Beta 2 candidate.
-- **Final candidate evidence:** The exact release commit `82b2fa381ae4` has the same Git tree as the
-  reviewed `develop` checkpoint and passed the public release-branch gate with 513 tests, static
-  analysis, unsigned universal Release build, Stable/Beta DMG smoke packages, and artifact upload.
-  The local Xcode 26.6 distribution build then passed the same 513-test suite and static analysis,
-  produced a universal Developer ID-signed app, and completed app and DMG notarization with zero
-  issues. Independent checksum, strict codesign, Gatekeeper, stapler, architecture, version, build,
-  and DMG integrity checks pass. The final ZIP SHA-256 is
-  `875ff04430f0de5cea67309e77463f2087cd47183f77b5e5f4722c46904e29e4`; the final DMG SHA-256 is
-  `06dd521c56812230a995fe98bb00c0909866c45fde2f3b68d51962a887def0b3`. Apple accepted the app
-  (`b3ab3d79-d5d4-4cf3-bece-f92a01d07939`) and DMG
-  (`4df96eb3-c9d8-4221-a0b6-2437e00d4d63`) notarization submissions.
-- **Current boundary:** The final local Beta 2 DMG and ZIP are ready for packaged-app testing. No tag
-  has been created or pushed, no assets have been uploaded, and no GitHub release exists. Explicit
-  file-based Keychain lookup succeeds, but persistence after reboot remains a separate
-  live-validation boundary rather than a publication claim.
-- **Testing boundary:** Install and test the packaged Beta 2 DMG itself. Exercise the remaining live
-  validation items in this queue, with particular attention to Settings resizing, multi-display
-  workspace routing, focused-window borders, sleep/wake, Dock auto-hide, native glass feedback, and
-  physical three- and four-finger trackpad gestures.
-
 ### WR-012 — Clean build and package verification
 
 - **Type:** Release epic
@@ -471,6 +396,16 @@ second copy of that checklist.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-037 — Publish WindowRanger 0.1.0 Beta 2
+
+- **Result:** Published
+  [`v0.1.0-beta.2`](https://github.com/windowranger/windowranger/releases/tag/v0.1.0-beta.2) as a
+  GitHub prerelease on 12 August 2026 after maintainer testing and explicit approval. The protected
+  annotated tag points to reviewed release commit `82b2fa381ae4`; the Developer ID-signed,
+  notarized, stapled DMG and ZIP plus checksums and provenance manifest were downloaded after
+  publication and round-trip verified against that immutable source and the recorded SHA-256
+  values. Remaining product live-validation items stay independently tracked.
 
 ### WR-042 — Match focused-report history by structured window fields
 
