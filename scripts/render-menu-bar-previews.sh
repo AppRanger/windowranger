@@ -32,4 +32,4 @@ WINDOWRANGER_MENU_SNAPSHOT_DIR="$output_directory" \
     -XCTest WindowRangerTests.MenuBarVisualSnapshotTests/testOffscreenProductionMenuBarComponents \
     "$test_bundle"
 
-print "Rendered Compact, Medium, and Full previews to: $output_directory"
+print "Rendered Compact Names, Compact Keys, Compact Key Icon Review, Medium, and Full previews to: $output_directory"
