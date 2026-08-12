@@ -56,7 +56,7 @@ final class RadialMenuTriggerController {
         apply(effects)
         // Press-to-toggle intentionally keeps no held-key phase in the trigger state machine.
         // Explicit lifecycle/profile/shortcut cancellations must nevertheless dismiss it.
-        if effects.isEmpty, menuController.isPresented {
+        if effects.isEmpty, menuController.hasActivePresentationRequest {
             menuController.dismiss(reason: reason)
         }
     }
@@ -405,7 +405,6 @@ final class GlobeFnHoldActivationController {
     private var state = GlobeFnGestureStateMachine()
     private var normalizer = GlobeFnEventNormalizer()
     private var thresholdTask: GlobeFnScheduledTask?
-    private var safetyTask: GlobeFnScheduledTask?
     private var suppressionTask: GlobeFnScheduledTask?
     private var monitor: GlobeFnEventMonitoring?
     private var desiredEnabled = false
@@ -611,28 +610,9 @@ final class GlobeFnHoldActivationController {
                         holdDelay: self.holdDelay
                     ))
                 }
-                safetyTask?.cancel()
-                safetyTask = scheduler.schedule(
-                    after: GlobeFnGestureStateMachine.maximumGestureDuration
-                ) { [weak self] in
-                    guard let self else { return }
-                    self.safetyTask = nil
-                    _ = self.apply(self.state.handle(
-                        .cancel(reason: "gesture-safety-timeout"),
-                        holdDelay: self.holdDelay
-                    ))
-                    self.normalizer.reset()
-                    self.diagnostics.log(
-                        category: "globe-fn-trigger",
-                        event: "gesture-safety-timeout",
-                        fields: [:]
-                    )
-                }
             case let .cancelThreshold(reason):
                 thresholdTask?.cancel()
                 thresholdTask = nil
-                safetyTask?.cancel()
-                safetyTask = nil
                 diagnostics.log(
                     category: "globe-fn-trigger",
                     event: "threshold-cancelled",
@@ -646,16 +626,12 @@ final class GlobeFnHoldActivationController {
                 )
                 radialTrigger.beginRecognizedHold()
             case .releaseHold:
-                safetyTask?.cancel()
-                safetyTask = nil
                 radialTrigger.handle(
                     .released,
                     style: .holdToShow,
                     holdDelay: holdDelay
                 )
             case let .cancelHold(reason):
-                safetyTask?.cancel()
-                safetyTask = nil
                 radialTrigger.cancel(reason: "globe-fn-\(reason)")
             case let .scheduleSuppressionExpiry(generation, delay):
                 suppressionTask?.cancel()
@@ -715,6 +691,7 @@ struct RadialMenuInteractionState: Equatable, Sendable {
     private(set) var selectedInnerIndex: Int?
     private(set) var activeGroupIndex: Int?
     private(set) var selectedOuterIndex: Int?
+    private(set) var pendingInnerIndex: Int?
 
     mutating func selectPointer(
         _ selection: RadialMenuGeometry.Selection?,
@@ -723,11 +700,18 @@ struct RadialMenuInteractionState: Equatable, Sendable {
         switch selection?.ring {
         case .inner:
             guard let index = selection?.index, childCounts.indices.contains(index) else { return [] }
+            if let activeGroupIndex, index != activeGroupIndex {
+                pendingInnerIndex = index
+                selectedInnerIndex = activeGroupIndex
+                selectedOuterIndex = nil
+                return [.scheduleGroupDwell(index)]
+            }
+            pendingInnerIndex = nil
             selectedInnerIndex = index
             selectedOuterIndex = nil
             if childCounts[index] > 0 {
-                guard activeGroupIndex != index else { return [] }
-                activeGroupIndex = nil
+                guard activeGroupIndex != index else { return [.cancelGroupDwell] }
+                pendingInnerIndex = index
                 return [.scheduleGroupDwell(index)]
             }
             activeGroupIndex = nil
@@ -738,12 +722,15 @@ struct RadialMenuInteractionState: Equatable, Sendable {
                   let index = selection?.index,
                   (0..<childCounts[group]).contains(index)
             else { return [] }
+            pendingInnerIndex = nil
+            selectedInnerIndex = group
             selectedOuterIndex = index
-            return []
+            return [.cancelGroupDwell]
         case nil:
+            pendingInnerIndex = nil
             selectedInnerIndex = nil
             selectedOuterIndex = nil
-            return []
+            return [.cancelGroupDwell]
         }
     }
 
@@ -752,22 +739,25 @@ struct RadialMenuInteractionState: Equatable, Sendable {
               childCounts.indices.contains(index),
               childCounts[index] > 0
         else { return [] }
+        pendingInnerIndex = nil
         activeGroupIndex = index
         selectedOuterIndex = nil
         return [.cancelGroupDwell]
     }
 
     mutating func dwellElapsed(for index: Int, childCounts: [Int]) -> [RadialMenuInteractionEffect] {
-        guard selectedInnerIndex == index,
-              childCounts.indices.contains(index),
-              childCounts[index] > 0
+        guard pendingInnerIndex == index,
+              childCounts.indices.contains(index)
         else { return [] }
-        activeGroupIndex = index
+        pendingInnerIndex = nil
+        selectedInnerIndex = index
+        activeGroupIndex = childCounts[index] > 0 ? index : nil
         selectedOuterIndex = nil
         return [.cancelGroupDwell]
     }
 
     mutating func moveSelection(_ offset: Int, childCounts: [Int]) -> [RadialMenuInteractionEffect] {
+        pendingInnerIndex = nil
         if let group = activeGroupIndex,
            childCounts.indices.contains(group),
            selectedOuterIndex != nil,
@@ -793,6 +783,7 @@ struct RadialMenuInteractionState: Equatable, Sendable {
               childCounts.indices.contains(index),
               childCounts[index] > 0
         else { return [] }
+        pendingInnerIndex = nil
         activeGroupIndex = index
         selectedOuterIndex = 0
         return [.cancelGroupDwell]
@@ -800,6 +791,7 @@ struct RadialMenuInteractionState: Equatable, Sendable {
 
     mutating func returnInward() -> [RadialMenuInteractionEffect] {
         guard let activeGroupIndex else { return [] }
+        pendingInnerIndex = nil
         selectedInnerIndex = activeGroupIndex
         selectedOuterIndex = nil
         self.activeGroupIndex = nil
@@ -807,6 +799,7 @@ struct RadialMenuInteractionState: Equatable, Sendable {
     }
 
     mutating func clear() -> [RadialMenuInteractionEffect] {
+        pendingInnerIndex = nil
         selectedInnerIndex = nil
         activeGroupIndex = nil
         selectedOuterIndex = nil
@@ -820,6 +813,8 @@ struct RadialMenuInteractionState: Equatable, Sendable {
 
 @MainActor
 final class RadialMenuPresentationModel: ObservableObject {
+    private static let initialGroupDisclosureDelay = 110
+    private static let openGroupSwitchDelay = 350
     let menu: RadialMenuModel
     let activationStyle: RadialMenuActivationStyle
     @Published private var interaction = RadialMenuInteractionState()
@@ -847,6 +842,7 @@ final class RadialMenuPresentationModel: ObservableObject {
     }
 
     var selectedItem: RadialMenuItem? {
+        guard interaction.pendingInnerIndex == nil else { return nil }
         if let selectedOuterIndex, activeChildren.indices.contains(selectedOuterIndex) {
             return activeChildren[selectedOuterIndex]
         }
@@ -898,6 +894,7 @@ final class RadialMenuPresentationModel: ObservableObject {
 
     func pointerMoved(to point: CGPoint, center: CGPoint) {
         if activationStyle == .holdToShow,
+           activeGroupIndex == nil,
            let selectedInnerIndex,
            items.indices.contains(selectedInnerIndex),
            items[selectedInnerIndex].isGroup,
@@ -925,6 +922,16 @@ final class RadialMenuPresentationModel: ObservableObject {
     }
 
     func highlightedCommandItem() -> RadialMenuItem? {
+        // A group remains latched while the pointer crosses another inner wedge so users can
+        // travel naturally to any outer child. Releasing on a direct command is unambiguous,
+        // though, and should commit that wedge rather than dismiss as if nothing were selected.
+        if let pendingInnerIndex = interaction.pendingInnerIndex,
+           items.indices.contains(pendingInnerIndex) {
+            let pending = items[pendingInnerIndex]
+            if pending.children.isEmpty, pending.command != nil {
+                return pending
+            }
+        }
         guard let selectedItem, selectedItem.command != nil else { return nil }
         return selectedItem
     }
@@ -935,11 +942,11 @@ final class RadialMenuPresentationModel: ObservableObject {
         }
     }
 
-    private func scheduleGroupDwell(_ index: Int) {
+    private func scheduleGroupDwell(_ index: Int, delayMilliseconds: Int) {
         dwellWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.openGroupAfterDwell(index) }
         dwellWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(110), execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMilliseconds), execute: work)
     }
 
     private func mutateInteraction(
@@ -958,7 +965,12 @@ final class RadialMenuPresentationModel: ObservableObject {
         for effect in effects {
             switch effect {
             case let .scheduleGroupDwell(index):
-                scheduleGroupDwell(index)
+                scheduleGroupDwell(
+                    index,
+                    delayMilliseconds: priorGroupIndex == nil
+                        ? Self.initialGroupDisclosureDelay
+                        : Self.openGroupSwitchDelay
+                )
             case .cancelGroupDwell:
                 dwellWorkItem?.cancel()
                 dwellWorkItem = nil
@@ -969,7 +981,7 @@ final class RadialMenuPresentationModel: ObservableObject {
 
 @MainActor
 final class RadialMenuController: NSObject, NSWindowDelegate {
-    static let panelSize = CGSize(width: 360, height: 360)
+    static let panelSize = CGSize(width: 450, height: 450)
 
     private let engine: WorkspaceEngine
     private let dispatcher: WindowManagerCommandDispatcher
@@ -987,6 +999,8 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
     private var localKeyboardMonitor: Any?
     private var observers: [NSObjectProtocol] = []
     private var isValidating = false
+    private var toggleRequestGeneration: UInt64 = 0
+    private var pendingToggleRequest: UInt64?
     var onDismissed: ((String) -> Void)?
 
     init(
@@ -1005,14 +1019,23 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
     }
 
     var isPresented: Bool { panel?.isVisible == true }
+    var hasActivePresentationRequest: Bool { isPresented || pendingToggleRequest != nil }
 
     func toggle() {
-        if isPresented {
+        if hasActivePresentationRequest {
             dismiss(reason: "trigger-toggled")
             return
         }
-        engine.radialCommandContext { [weak self] context in
+        toggleRequestGeneration &+= 1
+        let request = toggleRequestGeneration
+        pendingToggleRequest = request
+        engine.radialCommandContext(
+            focusingWindowAt: CGEvent(source: nil)?.location
+        ) { [weak self] context in
             guard let self else { return }
+            defer { self.engine.radialPointerFocusPresentationFinished() }
+            guard self.pendingToggleRequest == request else { return }
+            self.pendingToggleRequest = nil
             self.present(self.contextEnricher(context), activationStyle: .pressToToggle)
         }
     }
@@ -1046,13 +1069,32 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
                 completion(false)
                 return
             }
-            self.present(
-                captured,
-                activationStyle: .holdToShow,
-                correlationID: correlationID,
-                triggerGeneration: triggerGeneration
-            )
-            completion(self.isPresented)
+            let pointerLocation = CGEvent(source: nil)?.location
+            self.engine.radialCommandContext(
+                focusingWindowAt: pointerLocation
+            ) { [weak self] targeted in
+                guard let self else {
+                    completion(false)
+                    return
+                }
+                defer { self.engine.radialPointerFocusPresentationFinished() }
+                guard isStillCurrent() else {
+                    completion(false)
+                    return
+                }
+                let targeted = self.contextEnricher(targeted)
+                guard self.hasRelevantActions(in: targeted) else {
+                    completion(false)
+                    return
+                }
+                self.present(
+                    targeted,
+                    activationStyle: .holdToShow,
+                    correlationID: correlationID,
+                    triggerGeneration: triggerGeneration
+                )
+                completion(self.isPresented)
+            }
         }
     }
 
@@ -1079,6 +1121,7 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
     }
 
     func dismiss(reason: String) {
+        pendingToggleRequest = nil
         guard let panel else { return }
         session.dismiss()
         diagnostics.log(
@@ -1511,17 +1554,23 @@ struct RadialMenuView: View {
                         center: center,
                         radius: RadialMenuGeometry.innerItemRadius
                     )
-                    VStack(spacing: 3) {
-                        Image(systemName: item.systemImage)
-                            .font(.system(size: 17, weight: .semibold))
+                    let itemAngle = RadialMenuGeometry.itemAngle(index: index, count: model.items.count)
+                    ZStack {
+                        RadialMenuSymbol(systemImage: item.systemImage, size: 20, weight: .semibold)
+                            .frame(width: 30, height: 30)
                         if item.isGroup {
-                            Image(systemName: "arrowtriangle.right.fill")
-                                .font(.system(size: 5, weight: .bold))
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 7, weight: .bold))
                                 .foregroundStyle(model.selectedInnerIndex == index ? Color.white.opacity(0.9) : Color.secondary)
+                                .rotationEffect(.radians(Double(itemAngle)))
+                                .offset(
+                                    x: cos(itemAngle) * 22,
+                                    y: sin(itemAngle) * 22
+                                )
                         }
                     }
                     .foregroundStyle(model.selectedInnerIndex == index ? Color.white : Color.primary)
-                    .frame(width: 54, height: 54)
+                    .frame(width: 60, height: 60)
                     .allowsHitTesting(false)
                     .accessibilityLabel(item.label)
                     .accessibilityHint(
@@ -1585,12 +1634,17 @@ struct RadialMenuView: View {
                             center: center,
                             geometry: model.items[groupIndex].childGeometry
                         )
-                        VStack(spacing: 3) {
-                            Image(systemName: child.systemImage)
-                                .font(.system(size: 18, weight: .semibold))
+                        ZStack(alignment: .topTrailing) {
+                            RadialMenuSymbol(systemImage: child.systemImage, size: 23, weight: .semibold)
+                                .frame(width: 34, height: 34)
+                            if child.isCurrent {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .offset(x: 6, y: -4)
+                            }
                         }
                         .foregroundStyle(model.selectedOuterIndex == childIndex ? Color.white : Color.primary)
-                        .frame(width: 82, height: 54)
+                        .frame(width: 44, height: 44)
                         .allowsHitTesting(false)
                         .accessibilityLabel(child.label)
                         .accessibilityHint(child.alternateCommand == nil
@@ -1608,47 +1662,65 @@ struct RadialMenuView: View {
                         lineWidth: contrast == .increased ? 2 : 1
                     ))
                     .frame(
-                        width: RadialMenuGeometry.centerDeadZone * 1.88,
-                        height: RadialMenuGeometry.centerDeadZone * 1.88
+                        width: RadialMenuGeometry.centerDeadZone * 1.9,
+                        height: RadialMenuGeometry.centerDeadZone * 1.9
                     )
 
-                Button {
-                    model.cancel?()
-                } label: {
-                    Group {
-                        if let preview = model.selectedItem?.placementPreview {
-                            TiledPlacementMiniPreview(preview: preview)
-                        } else {
-                            VStack(spacing: 3) {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 17, weight: .medium))
+                Group {
+                    if let preview = model.selectedItem?.freeformPlacementPreview {
+                        FreeformPlacementMiniPreview(preview: preview)
+                    } else if let preview = model.selectedItem?.placementPreview {
+                        TiledPlacementMiniPreview(preview: preview)
+                    } else if let selectedItem = model.selectedItem {
+                        VStack(spacing: 4) {
+                            RadialMenuSymbol(systemImage: selectedItem.systemImage, size: 16, weight: .semibold)
+                                .foregroundStyle(.secondary)
+                            Text(selectedItem.label)
+                                .font(.system(size: 12, weight: .semibold))
+                                .lineLimit(3)
+                                .minimumScaleFactor(0.72)
+                                .multilineTextAlignment(.center)
+                            if let detail = selectedItem.detail {
+                                Text(detail)
+                                    .font(.system(size: 8, weight: .medium))
                                     .foregroundStyle(.secondary)
-                                Text(model.selectedItem?.label ?? model.menu.title)
-                                    .font(.system(size: 12, weight: .semibold))
                                     .lineLimit(2)
+                                    .minimumScaleFactor(0.75)
                                     .multilineTextAlignment(.center)
-                                Text(model.selectedItem == nil ? model.menu.subtitle : "")
-                                    .font(.system(size: 9))
+                            }
+                        }
+                    } else {
+                        VStack(spacing: 4) {
+                            Text(model.menu.title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.72)
+                                .multilineTextAlignment(.center)
+                            Text(model.menu.subtitle)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.7)
+                                .multilineTextAlignment(.center)
+                            if let note = model.menu.stateNote {
+                                Text(note)
+                                    .font(.system(size: 8, weight: .medium))
                                     .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                if model.selectedItem == nil, let note = model.menu.stateNote {
-                                    Text(note)
-                                        .font(.system(size: 8, weight: .medium))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                        .multilineTextAlignment(.center)
-                                }
+                                    .lineLimit(2)
+                                    .minimumScaleFactor(0.7)
+                                    .multilineTextAlignment(.center)
                             }
                         }
                     }
-                    .frame(
-                        width: RadialMenuGeometry.centerDeadZone * 1.75,
-                        height: RadialMenuGeometry.centerDeadZone * 1.75
-                    )
-                    .contentShape(Circle())
                 }
-                .buttonStyle(.plain)
+                .frame(
+                    width: RadialMenuGeometry.centerDeadZone * 1.68,
+                    height: RadialMenuGeometry.centerDeadZone * 1.68
+                )
+                .contentShape(Circle())
+                .onTapGesture { model.cancel?() }
                 .accessibilityLabel("Cancel command wheel")
+                .accessibilityAddTraits(.isButton)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
@@ -1668,6 +1740,69 @@ struct RadialMenuView: View {
         .frame(width: RadialMenuController.panelSize.width, height: RadialMenuController.panelSize.height)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Contextual command wheel")
+    }
+}
+
+/// Keeps the wheel on real SF Symbols while giving Accordion the same wide-primary-pane
+/// proportion as the layout it represents. SF Symbols does not provide that exact weighting,
+/// so the standard three-pane symbol is adjusted as one symbol rather than redrawn from shapes.
+private struct RadialMenuSymbol: View {
+    let systemImage: String
+    let size: CGFloat
+    let weight: Font.Weight
+
+    @ViewBuilder
+    var body: some View {
+        if systemImage == WorkspaceLayout.accordion.systemImage {
+            AccordionLayoutSymbol(size: size, weight: weight)
+        } else {
+            Image(systemName: systemImage)
+                .font(.system(size: size, weight: weight))
+        }
+    }
+}
+
+/// Uses the real rounded-window SF Symbol with two square-ended native strokes. The dividers are
+/// positioned independently so the central Accordion pane is genuinely wider, and their butt caps
+/// meet the inside edges cleanly rather than appearing short at wheel size.
+private struct AccordionLayoutSymbol: View {
+    let size: CGFloat
+    let weight: Font.Weight
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "rectangle")
+                .font(.system(size: size, weight: weight))
+            AccordionDivider()
+                .stroke(
+                    style: StrokeStyle(
+                        lineWidth: size * 0.095,
+                        lineCap: .butt
+                    )
+                )
+                .frame(width: size * 0.095, height: size * 0.69)
+                .offset(x: -size * 0.23)
+            AccordionDivider()
+                .stroke(
+                    style: StrokeStyle(
+                        lineWidth: size * 0.095,
+                        lineCap: .butt
+                    )
+                )
+                .frame(width: size * 0.095, height: size * 0.69)
+                .offset(x: size * 0.23)
+        }
+        .frame(width: size * 1.22, height: size)
+    }
+}
+
+private struct AccordionDivider: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let x = rect.midX
+        path.move(to: CGPoint(x: x, y: rect.minY))
+        path.addLine(to: CGPoint(x: x, y: rect.maxY))
+        return path
     }
 }
 
@@ -1712,6 +1847,37 @@ private struct TiledPlacementMiniPreview: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Preview \(preview.placement.title) tiled placement")
+    }
+}
+
+private struct FreeformPlacementMiniPreview: View {
+    let preview: FreeformPlacementPreview
+
+    var body: some View {
+        VStack(spacing: 3) {
+            GeometryReader { proxy in
+                let source = preview.displayBounds
+                let target = CGRect(origin: preview.targetFrame.position, size: preview.targetFrame.size)
+                let x = (target.minX - source.minX) / max(1, source.width) * proxy.size.width
+                let y = (target.minY - source.minY) / max(1, source.height) * proxy.size.height
+                let width = target.width / max(1, source.width) * proxy.size.width
+                let height = target.height / max(1, source.height) * proxy.size.height
+                RoundedRectangle(cornerRadius: 3)
+                    .stroke(Color.primary.opacity(0.35), lineWidth: 1)
+                    .overlay(alignment: .topLeading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color.accentColor)
+                            .overlay(RoundedRectangle(cornerRadius: 2).stroke(.white.opacity(0.55), lineWidth: 0.7))
+                            .frame(width: max(3, width - 2), height: max(3, height - 2))
+                            .offset(x: x + 1, y: y + 1)
+                    }
+            }
+            .frame(width: 54, height: 38)
+            Text(preview.placement.title)
+                .font(.system(size: 8, weight: .semibold))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Preview \(preview.placement.title) Freeform placement")
     }
 }
 

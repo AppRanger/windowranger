@@ -760,6 +760,7 @@ final class WorkspaceEngine {
     var onWorkspaceLayoutChanged: ((UUID, WorkspaceLayout) -> Void)?
     var onWorkspaceLayoutConfigurationChanged: ((UUID, WorkspaceLayoutConfiguration) -> Void)?
     var onTiledPlacementCommitted: ((TiledPlacementUndoTransaction) -> Void)?
+    var onFreeformPlacementCommitted: ((FreeformPlacementUndoTransaction) -> Void)?
     var onCommandFeedback: ((CommandFeedbackRequest) -> Void)?
     var onWorkspaceDisplayAssignmentsChanged: (([UUID: String]) -> Void)?
     var onFullscreenGameSessionChanged: ((FullscreenGameSessionSnapshot?) -> Void)?
@@ -824,6 +825,17 @@ final class WorkspaceEngine {
         let previews: [VisualPlacement: TiledPlacementPreview]
     }
 
+    private struct FreeformPlacementCommitContext {
+        let validationToken: String
+        let createdAt: Date
+        let focusedWindow: WindowKey
+        let workspaceID: UUID
+        let displayIdentifier: String
+        let displayBounds: CGRect
+        let originalFrame: WindowFrame
+        let previews: [VisualPlacement: FreeformPlacementPreview]
+    }
+
     private struct DirectionalMoveGestureContext {
         let identifier: String
         let createdAt: Date
@@ -865,6 +877,7 @@ final class WorkspaceEngine {
     private var windows: [WindowKey: TrackedWindow] = [:]
     private var tiledTrees: [TiledLayoutPartitionKey: TiledNode]
     private var radialPlacementCommitContext: TiledPlacementCommitContext? = nil
+    private var radialFreeformPlacementCommitContext: FreeformPlacementCommitContext? = nil
     private var directionalMoveGestureContext: DirectionalMoveGestureContext? = nil
     private var manualTiledDragSession: ManualTiledDragSession? = nil
     private var ignoredWindowKeys = Set<WindowKey>()
@@ -878,6 +891,9 @@ final class WorkspaceEngine {
     private var programmaticFocusDeadline = Date.distantPast
     private var programmaticFocusCorrelationID: String?
     private var programmaticFocusGeneration: UInt64?
+    private var radialPointerFocusProcessIdentifier: pid_t?
+    private var radialPointerFocusDeadline = Date.distantPast
+    private var radialPointerFocusGeneration: UInt64?
     private var focusActionGeneration: UInt64 = 0
     private let focusActionGenerationLock = NSLock()
     private let profileTransitionGenerationGate = ProfileTransitionGenerationGate()
@@ -1331,6 +1347,7 @@ final class WorkspaceEngine {
                 self.lastFocusedWindow.removeAll()
                 self.tiledTrees.removeAll()
                 self.radialPlacementCommitContext = nil
+                self.radialFreeformPlacementCommitContext = nil
                 self.directionalMoveGestureContext = nil
             } else {
                 self.lastFocusedWindow = self.lastFocusedWindow.filter {
@@ -3436,10 +3453,28 @@ final class WorkspaceEngine {
         }
     }
 
-    func applicationActivated(processIdentifier: pid_t) {
+    func applicationActivated(
+        processIdentifier: pid_t,
+        radialInteractionCancellation: @escaping @MainActor (Bool) -> Void = { _ in }
+    ) {
         queue.async { [weak self] in
             guard let self else { return }
             self.noteApplicationActivation(processIdentifier: processIdentifier)
+            let shouldCancelRadialInteraction = Self.shouldCancelRadialInteractionForActivation(
+                activatedProcessIdentifier: processIdentifier,
+                expectedProcessIdentifier: self.radialPointerFocusProcessIdentifier,
+                programmaticFocusDeadline: self.radialPointerFocusDeadline,
+                now: Date(),
+                verificationIsCurrent: self.radialPointerFocusGeneration.map(
+                    self.isFocusActionGenerationCurrent
+                ) ?? true
+            )
+            if !shouldCancelRadialInteraction {
+                self.clearRadialPointerFocusIntent()
+            }
+            DispatchQueue.main.async {
+                radialInteractionCancellation(shouldCancelRadialInteraction)
+            }
             guard Self.shouldProcessApplicationActivation(
                 processIdentifier: processIdentifier,
                 ownProcessIdentifier: self.ownProcessIdentifier
@@ -4377,6 +4412,7 @@ final class WorkspaceEngine {
         }
         lastFocusedWindow[tracked.workspaceID] = focusedWindow
         radialPlacementCommitContext = nil
+        radialFreeformPlacementCommitContext = nil
         directionalMoveGestureContext = nil
         lastBackgroundLayoutSignature = nil
         diagnostics.log(
@@ -4466,6 +4502,7 @@ final class WorkspaceEngine {
             windows[key]?.layoutWeight = effectiveShares[key] ?? 1
         }
         radialPlacementCommitContext = nil
+        radialFreeformPlacementCommitContext = nil
         directionalMoveGestureContext = nil
         lastBackgroundLayoutSignature = nil
         diagnostics.log(
@@ -4668,11 +4705,68 @@ final class WorkspaceEngine {
         )
     }
 
+    private func makeFreeformPlacementCommitContext(
+        validationToken: String,
+        createdAt: Date,
+        focusedWindow: WindowKey,
+        workspaceID: UUID,
+        displayIdentifier: String,
+        displays: [DisplaySnapshot]
+    ) -> FreeformPlacementCommitContext? {
+        guard workspaceLayout(for: workspaceID) == .none,
+              let display = displays.first(where: { $0.identifier == displayIdentifier }),
+              let tracked = windows[focusedWindow],
+              tracked.workspaceID == workspaceID,
+              let originalFrame = AccessibilityWindow.frame(of: tracked.element),
+              FullscreenSessionPolicy.allowsGeometryWrite(
+                  hasFullscreenSession: fullscreenSessions[focusedWindow] != nil,
+                  isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains(focusedWindow)
+              ),
+              Self.shouldIncludeInLayout(
+                  layoutOverride: tracked.layoutOverride,
+                  admissionDecision: tracked.admissionDecision,
+                  rule: resolvedRule(for: tracked.bundleIdentifier)
+              )
+        else { return nil }
+        let previews = Dictionary(
+            uniqueKeysWithValues: VisualPlacement.compassOrder.compactMap { placement in
+                FreeformPlacementEngine.preview(
+                    focusedWindow: focusedWindow,
+                    displayIdentifier: displayIdentifier,
+                    originalFrame: originalFrame,
+                    placement: placement,
+                    displayBounds: display.usableBounds
+                ).map { (placement, $0) }
+            }
+        )
+        guard !previews.isEmpty else { return nil }
+        return FreeformPlacementCommitContext(
+            validationToken: validationToken,
+            createdAt: createdAt,
+            focusedWindow: focusedWindow,
+            workspaceID: workspaceID,
+            displayIdentifier: displayIdentifier,
+            displayBounds: display.usableBounds,
+            originalFrame: originalFrame,
+            previews: previews
+        )
+    }
+
     /// `refreshWindows`: merely previewing the wheel must never trigger discovery-driven layout or
     /// visibility writes. The normal engine poll remains responsible for keeping tracking current.
-    func radialCommandContext(completion: @escaping (RadialCommandContext) -> Void) {
+    func radialCommandContext(
+        focusingWindowAt pointerLocation: CGPoint? = nil,
+        completion: @escaping (RadialCommandContext) -> Void
+    ) {
         queue.async { [weak self] in
             guard let self else { return }
+            if let pointerLocation,
+               self.focusPointerWindowForRadialMenu(
+                   at: pointerLocation,
+                   completion: completion
+               ) {
+                return
+            }
             let displays = Self.activeDisplays()
             let rawFocused = self.focusedWindowSnapshot()
             let focused = self.interactionFocusedWindowSnapshot(rawFocused)
@@ -4731,6 +4825,7 @@ final class WorkspaceEngine {
                 RadialWorkspaceOption(
                     id: definition.id,
                     name: definition.name,
+                    key: definition.key,
                     layout: definition.layout,
                     homeDisplayIdentifier: self.workspaceHomeDisplayIdentifier(
                         for: definition.id,
@@ -4837,6 +4932,20 @@ final class WorkspaceEngine {
                 placementContext?.previews[$0]
             }
             self.radialPlacementCommitContext = placementContext
+            let freeformPlacementContext = focusedKey.flatMap { focusedKey in
+                self.makeFreeformPlacementCommitContext(
+                    validationToken: token,
+                    createdAt: Date(),
+                    focusedWindow: focusedKey,
+                    workspaceID: workspace.id,
+                    displayIdentifier: interactionDisplay.identifier,
+                    displays: displays
+                )
+            }
+            let freeformPlacementPreviews = VisualPlacement.compassOrder.compactMap {
+                freeformPlacementContext?.previews[$0]
+            }
+            self.radialFreeformPlacementCommitContext = freeformPlacementContext
 
             let context = RadialCommandContext(
                 focusedWindow: focusedWindow,
@@ -4859,10 +4968,107 @@ final class WorkspaceEngine {
                 workspaces: options,
                 supportedCommands: RadialCommandCapability.current,
                 validationToken: token,
-                tiledPlacementPreviews: tiledPlacementPreviews
+                tiledPlacementPreviews: tiledPlacementPreviews,
+                freeformPlacementPreviews: freeformPlacementPreviews
             )
             DispatchQueue.main.async { completion(context) }
         }
+    }
+
+    /// Opening the wheel is explicit pointer intent. Resolve the actual frontmost WindowServer
+    /// surface first, focus only an eligible tracked window, then capture a fresh context after the
+    /// exact-focus pipeline has had its bounded observation window. Returning true means capture
+    /// has been deferred and the supplied completion will be called by that continuation.
+    private func focusPointerWindowForRadialMenu(
+        at pointerLocation: CGPoint,
+        completion: @escaping (RadialCommandContext) -> Void
+    ) -> Bool {
+        guard let orderedWindows = AccessibilityWindow.onScreenPointerOrder() else { return false }
+        let displays = Self.activeDisplays()
+        let eligibleKeys = Set(windows.compactMap { key, tracked -> WindowKey? in
+            guard key.processIdentifier != ownProcessIdentifier,
+                  !ignoredWindowKeys.contains(key),
+                  staleParkedFocusSuppression[key] == nil,
+                  Self.shouldWindowBeVisible(
+                      workspaceID: tracked.workspaceID,
+                      activeWorkspaceIDs: activeWorkspaceIDs,
+                      rule: resolvedRule(for: tracked.bundleIdentifier)
+                  ),
+                  let frame = AccessibilityWindow.frame(of: tracked.element),
+                  Self.isMeaningfullyVisible(frame, displays: displays)
+            else { return nil }
+            let capabilities = AccessibilityWindow.focusCapabilities(
+                of: tracked.element,
+                processIdentifier: tracked.processIdentifier,
+                windowIdentifier: key.windowIdentifier
+            )
+            return AccessibilityWindow.isEligibleFocusCycleCandidate(capabilities) ? key : nil
+        })
+        guard let target = AccessibilityWindow.pointerTargetWindow(
+            at: pointerLocation,
+            in: orderedWindows,
+            eligibleWindowKeys: eligibleKeys
+        ), let tracked = windows[target]
+        else { return false }
+
+        let current = interactionFocusedWindowSnapshot()?.key
+        guard current != target else {
+            diagnostics.log(
+                category: "radial-menu",
+                event: "pointer-focus-kept",
+                fields: ["window": Self.diagnosticWindowKey(target), "reason": "already-focused"]
+            )
+            return false
+        }
+
+        let correlationID = diagnostics.makeCorrelationID()
+        let displayIdentifier = Self.displayPlacement(
+            for: AccessibilityWindow.frame(of: tracked.element) ?? tracked.restoreFrame,
+            displays: displays
+        )?.displayIdentifier ?? interactionDisplayIdentifier()
+        let token = beginCorrelatedAction(
+            correlationID: correlationID,
+            interactionDisplayIdentifier: displayIdentifier,
+            expectedFocusTarget: target
+        )
+        radialPointerFocusProcessIdentifier = target.processIdentifier
+        radialPointerFocusDeadline = Date().addingTimeInterval(1.25)
+        radialPointerFocusGeneration = token.generation
+        staleParkedFocusSuppression.removeValue(forKey: target)
+        diagnostics.log(
+            category: "radial-menu",
+            event: "pointer-focus-requested",
+            correlation: correlationID,
+            fields: [
+                "window": Self.diagnosticWindowKey(target),
+                "display": Self.shortIdentifier(displayIdentifier),
+                "prior-window": current.map(Self.diagnosticWindowKey) ?? "none",
+            ]
+        )
+        focusManagedWindow(
+            target,
+            tracked: tracked,
+            correlationID: correlationID,
+            token: token,
+            allowImmediateAppKitCompatibilityFallback: true
+        )
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let observed = self.interactionFocusedWindowSnapshot()?.key
+            self.diagnostics.log(
+                category: "radial-menu",
+                event: "pointer-focus-observed",
+                correlation: correlationID,
+                fields: [
+                    "expected-window": Self.diagnosticWindowKey(target),
+                    "actual-window": observed.map(Self.diagnosticWindowKey) ?? "none",
+                    "confirmed": String(observed == target),
+                ]
+            )
+            self.radialCommandContext(completion: completion)
+        }
+        queue.asyncAfter(deadline: .now() + .milliseconds(220), execute: workItem)
+        return true
     }
 
     /// Resolves the Settings utility destination without refreshing discovery or applying AX
@@ -5110,6 +5316,173 @@ final class WorkspaceEngine {
                 correlationID: correlationID,
                 usesKeyboardFocusRetention: false
             )
+        }
+    }
+
+    /// Commits one pure Freeform frame proposal. The command changes only the focused window's
+    /// stored and live frame; it never creates or mutates Tiled layout state.
+    func placeFocusedFreeformWindow(
+        at placement: VisualPlacement,
+        validationToken: String,
+        correlationID: String? = nil
+    ) {
+        let correlationID = correlationID ?? diagnostics.makeCorrelationID()
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard let commit = self.radialFreeformPlacementCommitContext,
+                  commit.validationToken == validationToken,
+                  Date().timeIntervalSince(commit.createdAt) <= 30,
+                  let preview = commit.previews[placement]
+            else {
+                self.diagnostics.log(
+                    category: "radial-menu",
+                    event: "freeform-placement-rejected",
+                    correlation: correlationID,
+                    fields: ["placement": placement.rawValue, "reason": "stale-context"]
+                )
+                return
+            }
+            self.radialFreeformPlacementCommitContext = nil
+            let displays = Self.activeDisplays()
+            guard self.isWorkspaceActive(commit.workspaceID),
+                  self.workspaceLayout(for: commit.workspaceID) == .none,
+                  self.interactionFocusedWindowSnapshot()?.key == commit.focusedWindow,
+                  let display = displays.first(where: { $0.identifier == commit.displayIdentifier }),
+                  display.usableBounds == commit.displayBounds,
+                  var tracked = self.windows[commit.focusedWindow],
+                  tracked.workspaceID == commit.workspaceID,
+                  FullscreenSessionPolicy.allowsGeometryWrite(
+                      hasFullscreenSession: self.fullscreenSessions[commit.focusedWindow] != nil,
+                      isTemporarilyDeferred: self.temporarilyDeferredWindowKeys.contains(commit.focusedWindow)
+                  ),
+                  let currentFrame = AccessibilityWindow.frame(of: tracked.element),
+                  AccessibilityWindow.framesMatch(currentFrame, commit.originalFrame)
+            else {
+                self.diagnostics.log(
+                    category: "radial-menu",
+                    event: "freeform-placement-rejected",
+                    correlation: correlationID,
+                    fields: ["placement": placement.rawValue, "reason": "runtime-context-changed"]
+                )
+                return
+            }
+
+            let focusToken = self.beginCorrelatedAction(
+                correlationID: correlationID,
+                interactionDisplayIdentifier: commit.displayIdentifier,
+                expectedFocusTarget: commit.focusedWindow
+            )
+            self.prepareProgrammaticFocusIntent(commit.focusedWindow, correlationID: correlationID, duration: 0.8)
+            self.applyFrameChanges(
+                [FrameChange(window: tracked, frame: preview.targetFrame)],
+                correlationID: correlationID
+            )
+            guard let appliedFrame = AccessibilityWindow.frame(of: tracked.element),
+                  AccessibilityWindow.framesMatch(appliedFrame, preview.targetFrame)
+            else {
+                self.diagnostics.log(
+                    category: "radial-menu",
+                    event: "freeform-placement-rejected",
+                    correlation: correlationID,
+                    fields: ["placement": placement.rawValue, "reason": "frame-write-not-retained"]
+                )
+                self.emitCommandFeedback("Place was not accepted by this window.", correlationID: correlationID)
+                return
+            }
+            tracked.restoreFrame = appliedFrame
+            tracked.displayPlacement = Self.displayPlacement(for: appliedFrame, displays: displays)
+            self.windows[tracked.key] = tracked
+            self.lastFocusedWindow[commit.workspaceID] = commit.focusedWindow
+            self.persistState(preservingPendingRestores: true)
+            self.emitState()
+            self.emitCommandFeedback("Place: \(placement.title)", correlationID: correlationID)
+            self.diagnostics.log(
+                category: "radial-menu",
+                event: "freeform-placement-committed",
+                correlation: correlationID,
+                fields: [
+                    "placement": placement.rawValue,
+                    "workspace": Self.shortIdentifier(commit.workspaceID.uuidString),
+                    "display": Self.shortIdentifier(commit.displayIdentifier),
+                    "window": Self.diagnosticWindowKey(commit.focusedWindow),
+                    "from-frame": Self.diagnosticFrame(commit.originalFrame),
+                    "to-frame": Self.diagnosticFrame(appliedFrame),
+                ]
+            )
+            if !AccessibilityWindow.framesMatch(commit.originalFrame, appliedFrame) {
+                let transaction = FreeformPlacementUndoTransaction(
+                    focusedWindow: commit.focusedWindow,
+                    workspaceID: commit.workspaceID,
+                    displayIdentifier: commit.displayIdentifier,
+                    beforeFrame: commit.originalFrame,
+                    afterFrame: appliedFrame,
+                    actionName: "Place Window \(placement.title)"
+                )
+                DispatchQueue.main.async { [weak self] in
+                    self?.onFreeformPlacementCommitted?(transaction)
+                }
+            }
+            self.verifyFocusAfterAction(
+                expected: commit.focusedWindow,
+                correlationID: correlationID,
+                action: "radial-freeform-place",
+                token: focusToken,
+                mayRecoverNilFocus: true
+            )
+        }
+    }
+
+    func applyFreeformPlacementHistory(
+        _ transaction: FreeformPlacementUndoTransaction,
+        direction: FreeformPlacementHistoryDirection,
+        correlationID: String? = nil
+    ) -> Bool {
+        let correlationID = correlationID ?? diagnostics.makeCorrelationID()
+        return queue.sync { () -> Bool in
+            let displays = Self.activeDisplays()
+            guard isWorkspaceActive(transaction.workspaceID),
+                  workspaceLayout(for: transaction.workspaceID) == .none,
+                  var tracked = windows[transaction.focusedWindow],
+                  tracked.workspaceID == transaction.workspaceID,
+                  FullscreenSessionPolicy.allowsGeometryWrite(
+                      hasFullscreenSession: fullscreenSessions[transaction.focusedWindow] != nil,
+                      isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains(transaction.focusedWindow)
+                  ),
+                  displays.contains(where: { $0.identifier == transaction.displayIdentifier }),
+                  let currentFrame = AccessibilityWindow.frame(of: tracked.element),
+                  AccessibilityWindow.framesMatch(currentFrame, transaction.expectedFrame(for: direction))
+            else {
+                diagnostics.log(
+                    category: "freeform-placement-history",
+                    event: "rejected",
+                    correlation: correlationID,
+                    fields: ["direction": direction.rawValue, "reason": "context-or-frame-changed"]
+                )
+                return false
+            }
+            let target = transaction.targetFrame(for: direction)
+            applyFrameChanges([FrameChange(window: tracked, frame: target)], correlationID: correlationID)
+            guard let applied = AccessibilityWindow.frame(of: tracked.element),
+                  AccessibilityWindow.framesMatch(applied, target)
+            else { return false }
+            tracked.restoreFrame = applied
+            tracked.displayPlacement = Self.displayPlacement(for: applied, displays: displays)
+            windows[tracked.key] = tracked
+            persistState(preservingPendingRestores: true)
+            emitState()
+            emitCommandFeedback(
+                direction == .undo
+                    ? "Undid \(transaction.actionName.lowercased())."
+                    : "Redid \(transaction.actionName.lowercased()).",
+                correlationID: correlationID
+            )
+            diagnostics.log(
+                category: "freeform-placement-history",
+                event: "applied",
+                correlation: correlationID,
+                fields: ["direction": direction.rawValue, "window": Self.diagnosticWindowKey(tracked.key)]
+            )
+            return true
         }
     }
 
@@ -5896,6 +6269,7 @@ final class WorkspaceEngine {
         tiledTrees.removeAll()
         lastSolvedTiledFrames.removeAll()
         radialPlacementCommitContext = nil
+        radialFreeformPlacementCommitContext = nil
         directionalMoveGestureContext = nil
         manualTiledDragSession = nil
         invalidateFocusWorkForLifecycle()
@@ -6217,6 +6591,11 @@ final class WorkspaceEngine {
                 !$0.participantKeys.isDisjoint(with: removedTrackedWindowKeys)
             }) == true {
                 radialPlacementCommitContext = nil
+            }
+            if radialFreeformPlacementCommitContext.map({
+                removedTrackedWindowKeys.contains($0.focusedWindow)
+            }) == true {
+                radialFreeformPlacementCommitContext = nil
             }
             if let gestureContext = directionalMoveGestureContext {
                 let removedFocus = gestureContext.focusedWindow.map {
@@ -7642,6 +8021,31 @@ final class WorkspaceEngine {
         processIdentifier != ownProcessIdentifier
     }
 
+    /// Application activation normally cancels an in-flight command-wheel gesture. The one safe
+    /// exception is the activation WindowRanger itself just requested to target the pointer window
+    /// for that same gesture. The target, deadline, and focus generation must all still agree; any
+    /// external or stale activation continues to cancel immediately.
+    static func shouldCancelRadialInteractionForActivation(
+        activatedProcessIdentifier: pid_t,
+        expectedProcessIdentifier: pid_t?,
+        programmaticFocusDeadline: Date,
+        now: Date,
+        verificationIsCurrent: Bool
+    ) -> Bool {
+        guard let expectedProcessIdentifier,
+              activatedProcessIdentifier == expectedProcessIdentifier,
+              now < programmaticFocusDeadline,
+              verificationIsCurrent
+        else { return true }
+        return false
+    }
+
+    func radialPointerFocusPresentationFinished() {
+        queue.async { [weak self] in
+            self?.clearRadialPointerFocusIntent()
+        }
+    }
+
     @discardableResult
     private func beginCorrelatedAction(
         correlationID: String,
@@ -7694,6 +8098,12 @@ final class WorkspaceEngine {
         programmaticFocusDeadline = .distantPast
         programmaticFocusCorrelationID = nil
         programmaticFocusGeneration = nil
+    }
+
+    private func clearRadialPointerFocusIntent() {
+        radialPointerFocusProcessIdentifier = nil
+        radialPointerFocusDeadline = .distantPast
+        radialPointerFocusGeneration = nil
     }
 
     private func interactionWorkspaceResolution(

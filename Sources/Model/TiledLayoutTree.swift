@@ -35,14 +35,14 @@ enum VisualPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var systemImage: String {
         switch self {
-        case .topLeft: "arrow.up.left"
-        case .top: "arrow.up"
-        case .topRight: "arrow.up.right"
-        case .left: "arrow.left"
-        case .right: "arrow.right"
-        case .bottomLeft: "arrow.down.left"
-        case .bottom: "arrow.down"
-        case .bottomRight: "arrow.down.right"
+        case .topLeft: "rectangle.inset.topleft.filled"
+        case .top: "rectangle.tophalf.inset.filled"
+        case .topRight: "rectangle.inset.topright.filled"
+        case .left: "rectangle.lefthalf.inset.filled"
+        case .right: "rectangle.righthalf.inset.filled"
+        case .bottomLeft: "rectangle.inset.bottomleft.filled"
+        case .bottom: "rectangle.bottomhalf.inset.filled"
+        case .bottomRight: "rectangle.inset.bottomright.filled"
         }
     }
 

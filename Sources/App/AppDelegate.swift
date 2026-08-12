@@ -146,6 +146,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         engine.onTiledPlacementCommitted = { [weak self] transaction in
             self?.registerTiledPlacementHistory(transaction, direction: .undo)
         }
+        engine.onFreeformPlacementCommitted = { [weak self] transaction in
+            self?.registerFreeformPlacementHistory(transaction, direction: .undo)
+        }
         engine.onCommandFeedback = { [weak self] request in
             guard let self else { return }
             if let gameSession = self.fullscreenGameSession,
@@ -228,11 +231,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             }
             .sink { [weak self] application in
-                self?.hotKeyManager.cancelDirectionalMoveGesture(reason: "application-activated")
-                self?.globeFnHoldActivationController.cancel(reason: "application-activated")
-                self?.workspaceSwipeController.cancel(reason: "application-activated")
-                self?.radialMenuTriggerController.cancel(reason: "application-activated")
-                self?.engine.applicationActivated(processIdentifier: application.processIdentifier)
+                guard let self else { return }
+                self.hotKeyManager.cancelDirectionalMoveGesture(reason: "application-activated")
+                self.workspaceSwipeController.cancel(reason: "application-activated")
+                self.engine.applicationActivated(
+                    processIdentifier: application.processIdentifier
+                ) { [weak self] shouldCancelRadialInteraction in
+                    guard let self, shouldCancelRadialInteraction else { return }
+                    self.globeFnHoldActivationController.cancel(reason: "application-activated")
+                    self.radialMenuTriggerController.cancel(reason: "application-activated")
+                }
             }
             .store(in: &cancellables)
 
@@ -772,6 +780,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             target.registerTiledPlacementHistory(
+                transaction,
+                direction: direction == .undo ? .redo : .undo
+            )
+        }
+        tiledPlacementUndoManager.setActionName(transaction.actionName)
+        workspaceStatusBarController?.rebuild()
+    }
+
+    private func registerFreeformPlacementHistory(
+        _ transaction: FreeformPlacementUndoTransaction,
+        direction: FreeformPlacementHistoryDirection
+    ) {
+        tiledPlacementUndoManager.registerUndo(withTarget: self) { target in
+            guard target.engine.applyFreeformPlacementHistory(
+                transaction,
+                direction: direction
+            ) else {
+                target.workspaceStatusBarController?.rebuild()
+                return
+            }
+            target.registerFreeformPlacementHistory(
                 transaction,
                 direction: direction == .undo ? .redo : .undo
             )

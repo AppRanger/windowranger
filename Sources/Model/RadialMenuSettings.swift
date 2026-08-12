@@ -451,9 +451,6 @@ struct GlobeFnGestureStateMachine: Equatable, Sendable {
     }
 
     static let nativeSuppressionWindow: TimeInterval = 0.5
-    /// Last-resort cleanup when a keyboard disappears without delivering Fn-up.
-    /// Normal release and lifecycle events cancel this much sooner.
-    static let maximumGestureDuration: TimeInterval = 10
 
     private var phase: Phase = .idle
     private(set) var latestGeneration: UInt64 = 0
@@ -586,6 +583,13 @@ struct GlobeFnGestureStateMachine: Equatable, Sendable {
         case .candidate:
             phase = .blockedAwaitingFunctionRelease
             return [.cancelThreshold(reason: "competing-\(input.rawValue)")]
+        case .held where input == .mouseButton || input == .systemDefined:
+            // Once the deliberate hold has opened the wheel, pointer input belongs to the wheel.
+            // Some keyboards also emit a system-defined event beside a click while Fn remains
+            // down, so treating either event as a competing chord makes clickable wedges dismiss
+            // before SwiftUI receives the completed click. They remain disqualifying during the
+            // pre-threshold candidate phase, preserving quick Fn-click and native Globe behavior.
+            return []
         case .held:
             phase = .blockedAwaitingFunctionRelease
             return [
