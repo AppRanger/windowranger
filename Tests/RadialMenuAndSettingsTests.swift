@@ -893,6 +893,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(scheduler.pendingCount, 1)
         scheduler.runNext()
         XCTAssertEqual(radial.beginRecognizedHoldCount, 1)
+        XCTAssertEqual(monitor.filteringChanges.last, true)
 
         XCTAssertFalse(monitor.send(.flagsChanged(functionDown: false, otherModifiersDown: false)))
         XCTAssertEqual(radial.events, [.released])
@@ -906,6 +907,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             keyCode: GlobeFnEventNormalizer.nativeGlobeActionKeyCode,
             isRepeat: false
         )))
+        XCTAssertEqual(monitor.filteringChanges.last, false)
         XCTAssertEqual(radial.cancelReasons, [])
     }
 
@@ -1000,7 +1002,8 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         let scheduler = TestGlobeFnScheduler()
         let firstMonitor = TestGlobeFnEventMonitor(startResults: [false])
         let secondMonitor = TestGlobeFnEventMonitor(startResults: [true])
-        var monitors = [firstMonitor, secondMonitor]
+        let thirdMonitor = TestGlobeFnEventMonitor(startResults: [true])
+        var monitors = [firstMonitor, secondMonitor, thirdMonitor]
         let controller = GlobeFnHoldActivationController(
             radialTrigger: radial,
             scheduler: scheduler,
@@ -1025,22 +1028,54 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         controller.cancel(reason: "system-will-sleep")
         XCTAssertEqual(radial.cancelReasons.last, "globe-fn-system-will-sleep")
 
-        secondMonitor.reenableResult = true
         secondMonitor.interrupt(.timedOut)
-        XCTAssertEqual(secondMonitor.reenableCount, 1)
+        XCTAssertGreaterThanOrEqual(secondMonitor.stopCount, 1)
+        XCTAssertNotNil(issues.last!)
+        XCTAssertEqual(secondMonitor.filteringChanges.last, false)
+
+        controller.retryMonitor(reason: "explicit-toggle")
+        XCTAssertEqual(thirdMonitor.startCount, 1)
         XCTAssertNil(issues.last!)
 
-        secondMonitor.reenableResult = false
-        secondMonitor.interrupt(.disabledByUserInput)
-        XCTAssertEqual(secondMonitor.reenableCount, 2)
+        thirdMonitor.interrupt(.disabledByUserInput)
+        XCTAssertGreaterThanOrEqual(thirdMonitor.stopCount, 1)
         XCTAssertNotNil(issues.last!)
 
         controller.update(enabled: false, holdDelay: 0.2)
-        XCTAssertGreaterThanOrEqual(secondMonitor.stopCount, 1)
         XCTAssertFalse(controller.receive(.flagsChanged(
             functionDown: true,
             otherModifiersDown: false
         )))
+    }
+
+    func testGlobeFnNativeEventFilterOnlySuppressesSyntheticGlobeKeyWhenArmed() {
+        XCTAssertFalse(GlobeFnNativeEventFilterPolicy.shouldSuppress(
+            keyCode: 0,
+            nativeGlobeFilteringEnabled: true
+        ))
+        XCTAssertFalse(GlobeFnNativeEventFilterPolicy.shouldSuppress(
+            keyCode: GlobeFnEventNormalizer.nativeGlobeActionKeyCode,
+            nativeGlobeFilteringEnabled: false
+        ))
+        XCTAssertTrue(GlobeFnNativeEventFilterPolicy.shouldSuppress(
+            keyCode: GlobeFnEventNormalizer.nativeGlobeActionKeyCode,
+            nativeGlobeFilteringEnabled: true
+        ))
+    }
+
+    func testForegroundGameInputProtectionCoversBorderlessDeclaredGames() {
+        XCTAssertFalse(ForegroundGameInputProtectionPolicy.shouldSuppressOptionalInputMonitors(
+            isDeclaredGameApplicationActive: false,
+            hasNativeFullscreenGameSession: false
+        ))
+        XCTAssertTrue(ForegroundGameInputProtectionPolicy.shouldSuppressOptionalInputMonitors(
+            isDeclaredGameApplicationActive: true,
+            hasNativeFullscreenGameSession: false
+        ))
+        XCTAssertTrue(ForegroundGameInputProtectionPolicy.shouldSuppressOptionalInputMonitors(
+            isDeclaredGameApplicationActive: false,
+            hasNativeFullscreenGameSession: true
+        ))
     }
 
     @MainActor
@@ -1142,6 +1177,10 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertFalse(sink.text.localizedCaseInsensitiveContains("keycode"))
         XCTAssertFalse(sink.text.localizedCaseInsensitiveContains("key-code"))
         XCTAssertFalse(sink.text.localizedCaseInsensitiveContains("window-title"))
+
+        monitor.interrupt(.timedOut)
+        XCTAssertTrue(sink.text.contains("monitor-stopped-fail-open"))
+        XCTAssertFalse(sink.text.contains("monitor-reenabled"))
     }
 
     func testCarbonPressReleaseRoutingDoesNotRunOrdinaryCommandsTwice() {
@@ -2980,11 +3019,10 @@ private final class TestGlobeFnScheduler: GlobeFnScheduling {
 private final class TestGlobeFnEventMonitor: GlobeFnEventMonitoring {
     var eventHandler: CGGlobeFnEventMonitor.EventHandler?
     var interruptionHandler: CGGlobeFnEventMonitor.InterruptionHandler?
-    var reenableResult = true
     private var startResults: [Bool]
     private(set) var startCount = 0
     private(set) var stopCount = 0
-    private(set) var reenableCount = 0
+    private(set) var filteringChanges: [Bool] = []
 
     init(startResults: [Bool] = [true]) {
         self.startResults = startResults
@@ -2997,11 +3035,11 @@ private final class TestGlobeFnEventMonitor: GlobeFnEventMonitoring {
 
     func stop() {
         stopCount += 1
+        filteringChanges.append(false)
     }
 
-    func reenable() -> Bool {
-        reenableCount += 1
-        return reenableResult
+    func setNativeGlobeFilteringEnabled(_ enabled: Bool) {
+        filteringChanges.append(enabled)
     }
 
     func send(_ event: GlobeFnObservedEvent) -> Bool {

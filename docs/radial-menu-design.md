@@ -148,10 +148,11 @@ Common cancellation events are Escape, centre selection, outside click, short ho
 ### Optional Globe/Fn hold
 
 The hardware gesture is an additional device-local trigger; it does not replace the saved global
-shortcut or change that shortcut's Press-to-Toggle/Hold-to-Show setting. When enabled, a public
+shortcut or change that shortcut's Press-to-Toggle/Hold-to-Show setting. When enabled, a passive
 Quartz session event tap observes `maskSecondaryFn`, keyboard, mouse-button, and system-defined
-events. It does not request permission and is installed only when the app already has its normal
-Accessibility trust.
+events without participating in their delivery. A separate active tap receives only key down/up on
+a dedicated user-interactive run loop. Neither requests permission, and they are installed only
+when the app already has its normal Accessibility trust.
 
 - Fn alone starts a candidate. Crossing the shared hold delay opens the existing Hold-to-Show
   session exactly once; Fn release uses the normal release-commit/no-selection-cancel path.
@@ -159,8 +160,15 @@ Accessibility trust.
   configured Globe quick-tap action. WindowRanger never invokes or replays the emoji picker.
 - Any key, function/media event, mouse button, or other modifier before or during the candidate
   cancels it. The entire Fn chord remains untouched.
-- Only the native Globe action event associated with an accepted long hold is filtered, preventing
-  the same release from also invoking the Mac's quick-tap action. Event-tap failure fails open.
+- The active callback fast-passes every ordinary key without consulting MainActor state. Only the
+  native Globe action event associated with an accepted long hold is filtered, preventing the same
+  release from also invoking the Mac's quick-tap action.
+- Event-tap failure and timeout fail open. A timeout stops the monitor instead of automatically
+  re-enabling an unresponsive filter; toggling the setting is the explicit retry boundary.
+- A foreground application declared as a game through public bundle metadata suspends both optional
+  Globe/Fn and workspace-swipe monitors, including for borderless windows. This is intentionally
+  separate from native-fullscreen geometry protection, and the ordinary saved wheel shortcut remains
+  available.
 - Escape, the ordinary wheel shortcut, app/session/lifecycle changes, monitor interruption, and
   configuration changes supersede the gesture. Once accepted, a deliberate hold has no fixed
   duration and remains active until Fn release or one of those explicit cancellation signals.
@@ -347,7 +355,7 @@ Diagnostics never include window titles, document names, URLs, typed content, fu
   group-switch dwell; outward disclosure; latched travel through the centre and other inner wedges;
   inward return; keyboard traversal; Escape/centre/outside cancellation.
 - Press and Hold threshold, short tap, valid release, no-selection release, Option alternate, stale generation, rapid re-entry, and reentrancy.
-- Globe/Fn default-off/local persistence, unchanged quick tap, exact/below/above threshold, one open per hold, indefinite accepted hold, release commit, no-selection and Escape cancellation, every chord class/modifier ordering, duplicate flags, monitor failure/retry/timeout, lifecycle/configuration cancellation, ordinary-shortcut supersession, and reuse of the nonactivating interaction-display context.
+- Globe/Fn default-off/local persistence, unchanged quick tap, exact/below/above threshold, one open per hold, indefinite accepted hold, release commit, no-selection and Escape cancellation, every chord class/modifier ordering, duplicate flags, passive ordinary-input observation, synthetic-Globe-only active filtering, timeout fail-open/manual retry, borderless declared-game suspension, lifecycle/configuration cancellation, ordinary-shortcut supersession, and reuse of the nonactivating interaction-display context.
 - Stable workspace/profile ordering, active/current state, Resume Automatic, send-only and Move & Follow, profile transition routing.
 - Freeform eight-way fixed-frame proposals, Accordion resize, Tiled eight-way structural proposals,
   flat-to-tree conversion, edge/corner transformations, preview/commit frame identity, zero AX writes

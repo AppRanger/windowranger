@@ -110,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var preparedForTermination = false
     private var isShortcutRecording = false
     private var fullscreenGameSession: FullscreenGameSessionSnapshot?
+    private var isForegroundDeclaredGameApplication = false
     private var pendingMenuBarPresentationUpdate: DispatchWorkItem?
     private var pendingMenuBarWorkspaceLabelUpdate: DispatchWorkItem?
     private var pendingMenuBarDisplayIconUpdate: DispatchWorkItem?
@@ -190,6 +191,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         engine.onWorkspaceDisplayAssignmentsChanged = { [weak self] assignments in
             self?.settingsStore.assignWorkspaces(assignments)
         }
+        if let frontmostApplication = NSWorkspace.shared.frontmostApplication {
+            updateForegroundDeclaredGameInputProtection(for: frontmostApplication)
+        }
         registerHotKeys()
         updateGlobeFnHoldActivation()
         updateWorkspaceSwipeActivation()
@@ -232,6 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .sink { [weak self] application in
                 guard let self else { return }
+                self.updateForegroundDeclaredGameInputProtection(for: application)
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "application-activated")
                 self.workspaceSwipeController.cancel(reason: "application-activated")
                 self.engine.applicationActivated(
@@ -656,8 +661,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isShortcutRecording: isShortcutRecording,
             holdDelay: holdDelay ?? settingsStore.radialMenuHoldDelay
         )
+        let inputMonitoringSuppressed = ForegroundGameInputProtectionPolicy
+            .shouldSuppressOptionalInputMonitors(
+                isDeclaredGameApplicationActive: isForegroundDeclaredGameApplication,
+                hasNativeFullscreenGameSession: fullscreenGameSession != nil
+            )
         globeFnHoldActivationController.update(
-            enabled: runtimeSettings.isEnabled && fullscreenGameSession == nil,
+            enabled: runtimeSettings.isEnabled && !inputMonitoringSuppressed,
             holdDelay: runtimeSettings.holdDelay
         )
     }
@@ -675,9 +685,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             reason: "fullscreen-game-session"
         )
         workspaceSwipeController.setSuppressed(
+            isForegroundDeclaredGameApplication,
+            reason: "foreground-declared-game"
+        )
+        workspaceSwipeController.setSuppressed(
             isShortcutRecording,
             reason: "shortcut-recording"
         )
+    }
+
+    private func updateForegroundDeclaredGameInputProtection(
+        for application: NSRunningApplication
+    ) {
+        let bundle = application.bundleURL.flatMap { Bundle(url: $0) }
+        let isDeclaredGame = FullscreenGameMetadataPolicy.isDeclaredGame(bundle: bundle)
+        guard isForegroundDeclaredGameApplication != isDeclaredGame else { return }
+        isForegroundDeclaredGameApplication = isDeclaredGame
+
+        let reason = isDeclaredGame ? "foreground-declared-game" : "foreground-declared-game-ended"
+        diagnostics.log(
+            category: "input-protection",
+            event: isDeclaredGame ? "foreground-game-started" : "foreground-game-ended",
+            fields: [
+                "bundle": application.bundleIdentifier ?? "unknown",
+                "active-input-filter": "false",
+            ]
+        )
+        if isDeclaredGame {
+            globeFnHoldActivationController.cancel(reason: reason)
+            radialMenuTriggerController.cancel(reason: reason)
+            commandFeedbackPresenter.dismiss(reason: reason)
+        }
+        updateGlobeFnHoldActivation()
+        updateWorkspaceSwipeActivation()
     }
 
     private func scheduleMenuBarPresentationUpdate(_ mode: MenuBarPresentationMode) {

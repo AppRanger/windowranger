@@ -367,6 +367,30 @@ enum GlobeFnObservedEvent: Equatable, Sendable {
     case systemDefined
 }
 
+/// The active Quartz filter exists only to discard the synthetic native Globe key after an
+/// accepted hold. Every ordinary key and mouse event must pass without consulting app state.
+enum GlobeFnNativeEventFilterPolicy {
+    static func shouldSuppress(
+        keyCode: UInt16,
+        nativeGlobeFilteringEnabled: Bool
+    ) -> Bool {
+        nativeGlobeFilteringEnabled &&
+            keyCode == GlobeFnEventNormalizer.nativeGlobeActionKeyCode
+    }
+}
+
+/// Input-monitor suspension is intentionally broader than native-fullscreen geometry protection.
+/// A borderless declared game still needs an unobstructed keyboard and mouse path even though its
+/// window remains an ordinary non-fullscreen Accessibility object.
+enum ForegroundGameInputProtectionPolicy {
+    static func shouldSuppressOptionalInputMonitors(
+        isDeclaredGameApplicationActive: Bool,
+        hasNativeFullscreenGameSession: Bool
+    ) -> Bool {
+        isDeclaredGameApplicationActive || hasNativeFullscreenGameSession
+    }
+}
+
 enum GlobeFnGestureInputEvent: Equatable, Sendable {
     case functionChanged(isDown: Bool, otherModifiersDown: Bool)
     case competingInput(GlobeFnCompetingInput)

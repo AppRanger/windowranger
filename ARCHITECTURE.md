@@ -205,6 +205,16 @@ keeps the macOS 27 baseline for later releases until a future design change is v
 overrides are local appearance state rather than synced App Rule actions because the correct
 rendering depends on this Mac and OS. The radial command wheel is nonactivating until a validated
 action is committed.
+
+The optional Globe/Fn wheel trigger keeps observation and filtering on separate safety boundaries.
+A passive session tap observes modifier, keyboard, mouse-button, and system-defined competition and
+can never delay or divert those events. A dedicated user-interactive run loop owns the narrow active
+tap; its callback fast-passes every ordinary key and can discard only the synthetic native Globe
+action while an accepted hold has armed that one suppression. macOS timeout or user-input disablement
+stops the monitor and fails open rather than re-enabling it. Foreground applications identified as
+games through public bundle metadata suspend the Globe/Fn and workspace-swipe monitors even when
+their window is borderless; this does not broaden the native-fullscreen geometry guard.
+
 Settings is an explicit app-owned floating utility: it may activate and focus, but it is excluded
 from third-party discovery, layout and persistence.
 
@@ -215,8 +225,9 @@ three or four fingers to move coherently and horizontally past one threshold, th
 gesture ends so it cannot emit multiple commands. The adapter returns every event unchanged, retains
 no touch history after the gesture, and fails closed if macOS does not expose the generic gesture
 stream. Accepted swipes use `cycleWorkspace`, preserving its ordered wraparound and Independent
-Displays interaction routing. Sleep, inactive login sessions, full-screen games, shortcut recording,
-display changes, and profile transitions cancel or suspend observation.
+Displays interaction routing. Sleep, inactive login sessions, foreground declared games,
+full-screen games, shortcut recording, display changes, and profile transitions cancel or suspend
+observation.
 
 Exact focus operations use bounded activation/focus/raise verification and generation tokens. For an
 inactive target application, the engine prepares the exact window before setting the public
