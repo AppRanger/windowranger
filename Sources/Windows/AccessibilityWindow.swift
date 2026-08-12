@@ -36,6 +36,12 @@ struct WindowServerWindowOrderEntry: Equatable, Sendable {
     let layer: Int
 }
 
+struct WindowServerPointerEntry: Equatable, Sendable {
+    let key: WindowKey
+    let layer: Int
+    let bounds: CGRect
+}
+
 enum WindowAdmissionDisposition: String, Equatable, Sendable {
     case managedNormal = "managed-normal"
     case managedDialog = "managed-dialog"
@@ -258,6 +264,49 @@ enum AccessibilityWindow {
             result[CGWindowID(identifier)] = layer.intValue
         }
         return result
+    }
+
+    /// WindowServer supplies on-screen windows in front-to-back order and in the same global,
+    /// top-left coordinate space used by AX window frames and CGEvent pointer locations.
+    static func onScreenPointerOrder() -> [WindowServerPointerEntry]? {
+        guard let records = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[CFString: Any]] else { return nil }
+
+        return records.compactMap { record in
+            guard let owner = (record[kCGWindowOwnerPID] as? NSNumber)?.int32Value,
+                  let identifier = (record[kCGWindowNumber] as? NSNumber)?.uint32Value,
+                  let layer = (record[kCGWindowLayer] as? NSNumber)?.intValue,
+                  let boundsDictionary = record[kCGWindowBounds] as? NSDictionary
+            else { return nil }
+            var bounds = CGRect.zero
+            guard CGRectMakeWithDictionaryRepresentation(boundsDictionary as CFDictionary, &bounds) else {
+                return nil
+            }
+            return WindowServerPointerEntry(
+                key: WindowKey(
+                    processIdentifier: pid_t(owner),
+                    windowIdentifier: CGWindowID(identifier)
+                ),
+                layer: layer,
+                bounds: bounds
+            )
+        }
+    }
+
+    /// Resolve only the actual frontmost WindowServer surface at the pointer. If that surface is
+    /// not an eligible normal window, fail closed rather than clicking through it to another app.
+    static func pointerTargetWindow(
+        at pointer: CGPoint,
+        in orderedWindows: [WindowServerPointerEntry],
+        eligibleWindowKeys: Set<WindowKey>
+    ) -> WindowKey? {
+        guard let frontmostHit = orderedWindows.first(where: { $0.bounds.contains(pointer) }),
+              frontmostHit.layer == 0,
+              eligibleWindowKeys.contains(frontmostHit.key)
+        else { return nil }
+        return frontmostHit.key
     }
 
     /// WindowServer returns on-screen windows from front to back. This observation is deliberately

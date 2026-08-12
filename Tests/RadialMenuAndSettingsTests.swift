@@ -24,6 +24,37 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         layout: .none
     )
 
+    func testActionFirstTopLevelSymbolsHaveDistinctSilhouettes() {
+        let metadata = RadialCommandCatalogue.allMetadata
+
+        XCTAssertEqual(metadata.count, RadialTopLevelItemID.allKnown.count)
+        XCTAssertEqual(Set(metadata.map(\.systemImage)).count, metadata.count)
+        XCTAssertEqual(
+            metadata.first { $0.reference == .nextSpace }?.systemImage,
+            "arrow.forward.square"
+        )
+        XCTAssertEqual(
+            metadata.first { $0.reference == .previousSpace }?.systemImage,
+            "arrow.backward.square"
+        )
+    }
+
+    func testPlacementSymbolsDescribeTheirOccupiedScreenRegions() {
+        XCTAssertEqual(
+            VisualPlacement.compassOrder.map(\.systemImage),
+            [
+                "rectangle.tophalf.inset.filled",
+                "rectangle.inset.topright.filled",
+                "rectangle.righthalf.inset.filled",
+                "rectangle.inset.bottomright.filled",
+                "rectangle.bottomhalf.inset.filled",
+                "rectangle.inset.bottomleft.filled",
+                "rectangle.lefthalf.inset.filled",
+                "rectangle.inset.topleft.filled",
+            ]
+        )
+    }
+
     func testNoFocusedWindowShowsOnlyTruthfulWorkspaceAndLayoutItems() {
         let menu = RadialCommandContextBuilder.build(from: context(window: nil))
 
@@ -39,14 +70,26 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertFalse(menu.items.contains { $0.id == RadialTopLevelItemID.resize.rawValue })
     }
 
+    func testWorkspaceDestinationsUseConfiguredKeysInsteadOfListPositions() {
+        let menu = RadialCommandContextBuilder.build(from: context(window: nil))
+        let go = try! XCTUnwrap(menu.items.first { $0.id == RadialTopLevelItemID.goToSpace.rawValue })
+
+        XCTAssertEqual(go.children.map(\.systemImage), ["m.square", "b.square"])
+    }
+
     func testLayoutTypeHasPrimaryCycleAndThreeGeneratedChildrenWithCurrentState() {
         for layout in WorkspaceLayout.allCases {
             let menu = RadialCommandContextBuilder.build(from: context(layout: layout, window: nil))
             let item = try! XCTUnwrap(menu.items.first { $0.id == RadialTopLevelItemID.layoutType.rawValue })
             XCTAssertEqual(item.command, .cycleLayout(1))
+            XCTAssertEqual(item.systemImage, layout.systemImage)
             XCTAssertEqual(item.children.map(\.command), WorkspaceLayout.allCases.map { .setLayout($0) })
             XCTAssertEqual(item.children.filter(\.isCurrent).count, 1)
             XCTAssertTrue(item.children.first(where: { $0.command == .setLayout(.none) })?.label.contains("Freeform") == true)
+            let current = try! XCTUnwrap(item.children.first(where: \.isCurrent))
+            XCTAssertEqual(current.systemImage, layout.systemImage)
+            XCTAssertEqual(current.label, layout.title)
+            XCTAssertEqual(current.detail, "Current layout · select to reapply")
         }
     }
 
@@ -54,16 +97,61 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         let menu = RadialCommandContextBuilder.build(from: context(window: window(.managed)))
         let place = try! XCTUnwrap(menu.items.first { $0.id == RadialTopLevelItemID.resize.rawValue })
 
-        XCTAssertEqual(place.label, "Place")
+        XCTAssertEqual(place.label, "Place Window")
         XCTAssertEqual(place.childGeometry, .compass)
         XCTAssertEqual(place.children.compactMap { $0.placementPreview?.placement }, VisualPlacement.compassOrder)
         XCTAssertTrue(place.children.allSatisfy { $0.command != nil && $0.placementPreview != nil })
     }
 
-    func testFreeformOmitsResizeWithoutChangingLayoutType() {
+    func testFreeformGetsLoopStyleCompassPlacementWithoutChangingLayoutType() {
         let menu = RadialCommandContextBuilder.build(from: context(layout: .none, window: window(.managed)))
-        XCTAssertFalse(menu.items.contains { $0.id == RadialTopLevelItemID.resize.rawValue })
+        let place = try! XCTUnwrap(menu.items.first { $0.id == RadialTopLevelItemID.resize.rawValue })
+        XCTAssertEqual(place.label, "Place Window")
+        XCTAssertEqual(place.childGeometry, .compass)
+        XCTAssertEqual(
+            place.children.compactMap { $0.freeformPlacementPreview?.placement },
+            VisualPlacement.compassOrder
+        )
+        XCTAssertTrue(place.children.allSatisfy { child in
+            guard case .placeFreeformWindow = child.command else { return false }
+            return child.placementPreview == nil && child.freeformPlacementPreview != nil
+        })
         XCTAssertTrue(menu.items.contains { $0.id == RadialTopLevelItemID.moveToSpace.rawValue })
+    }
+
+    func testFreeformPlacementFramesUseUsableHalvesAndQuarters() {
+        let bounds = CGRect(x: -1600, y: 40, width: 1601, height: 1001)
+
+        XCTAssertEqual(
+            FreeformPlacementEngine.frame(for: .left, in: bounds),
+            WindowFrame(position: CGPoint(x: -1600, y: 40), size: CGSize(width: 800, height: 1001))
+        )
+        XCTAssertEqual(
+            FreeformPlacementEngine.frame(for: .bottomRight, in: bounds),
+            WindowFrame(position: CGPoint(x: -800, y: 540), size: CGSize(width: 801, height: 501))
+        )
+        XCTAssertEqual(
+            FreeformPlacementEngine.frame(for: .top, in: bounds),
+            WindowFrame(position: CGPoint(x: -1600, y: 40), size: CGSize(width: 1601, height: 500))
+        )
+    }
+
+    func testFreeformPlacementHistorySelectsExactExpectedAndTargetFrames() {
+        let before = WindowFrame(position: CGPoint(x: 100, y: 100), size: CGSize(width: 900, height: 700))
+        let after = WindowFrame(position: .zero, size: CGSize(width: 960, height: 1080))
+        let transaction = FreeformPlacementUndoTransaction(
+            focusedWindow: WindowKey(processIdentifier: 42, windowIdentifier: 99),
+            workspaceID: workspaceA.id,
+            displayIdentifier: "external",
+            beforeFrame: before,
+            afterFrame: after,
+            actionName: "Place Window Left"
+        )
+
+        XCTAssertEqual(transaction.expectedFrame(for: .undo), after)
+        XCTAssertEqual(transaction.targetFrame(for: .undo), before)
+        XCTAssertEqual(transaction.expectedFrame(for: .redo), before)
+        XCTAssertEqual(transaction.targetFrame(for: .redo), after)
     }
 
     func testAccordionResizeUsesOnlyTruthfulSizeActions() {
@@ -112,6 +200,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(comms.command, .moveFocusedWindow(workspaceB.id))
         XCTAssertEqual(comms.alternateCommand, .moveFocusedWindowAndFollow(workspaceB.id))
         XCTAssertEqual(move.children.map(\.label), [workspaceB.name, workspaceC.name])
+        XCTAssertEqual(move.children.map(\.systemImage), ["m.square", "b.square"])
     }
 
     func testIndependentMoveDestinationsStayOnInteractionDisplay() {
@@ -135,8 +224,10 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         let profiles = try! XCTUnwrap(RadialCommandContextBuilder.build(from: value).items.first {
             $0.id == RadialTopLevelItemID.profiles.rawValue
         })
-        XCTAssertEqual(profiles.label, "Profiles · Laptop active")
+        XCTAssertEqual(profiles.label, "Profiles")
+        XCTAssertEqual(profiles.detail, "Laptop active")
         XCTAssertEqual(profiles.children.map(\.label), ["Studio", "Resume Automatic"])
+        XCTAssertEqual(profiles.children.map(\.systemImage), ["2.circle", "arrow.triangle.2.circlepath"])
         XCTAssertEqual(profiles.children[0].command, .selectProfile(second))
         XCTAssertEqual(profiles.children[1].command, .resumeAutomaticProfileSelection)
     }
@@ -260,6 +351,9 @@ final class RadialMenuAndSettingsTests: XCTestCase {
                 XCTAssertEqual(angles[1] - angles[0], .pi * 2 / CGFloat(count), accuracy: 0.000_001)
             }
         }
+        XCTAssertEqual(RadialMenuGeometry.itemAngle(index: 0, count: 4), -.pi / 2, accuracy: 0.000_001)
+        XCTAssertEqual(RadialMenuGeometry.itemAngle(index: 1, count: 4), 0, accuracy: 0.000_001)
+        XCTAssertEqual(RadialMenuGeometry.itemAngle(index: 2, count: 4), .pi / 2, accuracy: 0.000_001)
     }
 
     func testWheelDefinitionCodingStableOrderAndUnknownItemRepair() throws {
@@ -288,6 +382,22 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(definition.items, [.goToSpace, .layoutType])
         XCTAssertTrue(definition.removeItem(id: .layoutType))
         XCTAssertEqual(definition.items, [.goToSpace])
+    }
+
+    func testWheelCatalogueOffersOnlyItemsNotAlreadySaved() {
+        XCTAssertEqual(
+            RadialCommandCatalogue.availableMetadata(excluding: []).map(\.reference),
+            RadialTopLevelItemID.allKnown
+        )
+        XCTAssertEqual(
+            RadialCommandCatalogue.availableMetadata(excluding: [.moveToSpace, .layoutType])
+                .map(\.reference),
+            RadialTopLevelItemID.allKnown.filter { $0 != .moveToSpace && $0 != .layoutType }
+        )
+        XCTAssertTrue(
+            RadialCommandCatalogue.availableMetadata(excluding: RadialTopLevelItemID.allKnown)
+                .isEmpty
+        )
     }
 
     func testLegacyOneLevelDefaultMigratesOnceToNineProviderItems() throws {
@@ -362,6 +472,68 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertNil(state.selectedOuterIndex)
     }
 
+    func testOpenGroupStaysLatchedAcrossCentreAndOtherInnerWedges() {
+        var state = RadialMenuInteractionState()
+        let childCounts = [3, 0, 4]
+
+        _ = state.selectPointer(.init(ring: .inner, index: 0), childCounts: childCounts)
+        _ = state.dwellElapsed(for: 0, childCounts: childCounts)
+        XCTAssertEqual(state.activeGroupIndex, 0)
+
+        _ = state.selectPointer(nil, childCounts: childCounts)
+        XCTAssertEqual(state.activeGroupIndex, 0, "The neutral centre must not collapse an open group")
+        XCTAssertNil(state.selectedInnerIndex)
+
+        XCTAssertEqual(
+            state.selectPointer(.init(ring: .inner, index: 2), childCounts: childCounts),
+            [.scheduleGroupDwell(2)]
+        )
+        XCTAssertEqual(state.activeGroupIndex, 0, "Crossing another inner wedge keeps the original submenu")
+        XCTAssertEqual(state.selectedInnerIndex, 0)
+        XCTAssertEqual(state.pendingInnerIndex, 2)
+
+        _ = state.selectPointer(.init(ring: .outer, index: 1), childCounts: childCounts)
+        XCTAssertEqual(state.activeGroupIndex, 0)
+        XCTAssertEqual(state.selectedOuterIndex, 1)
+        XCTAssertNil(state.pendingInnerIndex)
+        _ = state.dwellElapsed(for: 2, childCounts: childCounts)
+        XCTAssertEqual(state.activeGroupIndex, 0, "Reaching the outer ring invalidates the crossed wedge dwell")
+
+        _ = state.selectPointer(.init(ring: .inner, index: 2), childCounts: childCounts)
+        _ = state.dwellElapsed(for: 2, childCounts: childCounts)
+        XCTAssertEqual(state.activeGroupIndex, 2, "A deliberate dwell still switches to another group")
+
+        _ = state.selectPointer(.init(ring: .inner, index: 1), childCounts: childCounts)
+        _ = state.dwellElapsed(for: 1, childCounts: childCounts)
+        XCTAssertNil(state.activeGroupIndex, "A deliberate dwell can return to a direct inner command")
+        XCTAssertEqual(state.selectedInnerIndex, 1)
+    }
+
+    @MainActor
+    func testHoldReleaseCommitsPendingDirectItemWithoutCollapsingOpenGroupDuringTravel() {
+        let menu = RadialCommandContextBuilder.build(from: context(window: window(.managed)))
+        let presentation = RadialMenuPresentationModel(menu: menu, activationStyle: .holdToShow)
+        let groupIndex = try! XCTUnwrap(menu.items.firstIndex { $0.id == RadialTopLevelItemID.goToSpace.rawValue })
+        let nextIndex = try! XCTUnwrap(menu.items.firstIndex { $0.id == RadialTopLevelItemID.nextSpace.rawValue })
+        let center = CGPoint(x: 310, y: 310)
+        let radius = (RadialMenuGeometry.centerDeadZone + RadialMenuGeometry.innerOuterRadius) / 2
+        let groupAngle = RadialMenuGeometry.itemAngle(index: groupIndex, count: menu.items.count)
+        let nextAngle = RadialMenuGeometry.itemAngle(index: nextIndex, count: menu.items.count)
+
+        presentation.pointerMoved(
+            to: CGPoint(x: center.x + cos(groupAngle) * radius, y: center.y + sin(groupAngle) * radius),
+            center: center
+        )
+        presentation.openGroupAfterDwell(groupIndex)
+        presentation.pointerMoved(
+            to: CGPoint(x: center.x + cos(nextAngle) * radius, y: center.y + sin(nextAngle) * radius),
+            center: center
+        )
+
+        XCTAssertEqual(presentation.activeGroupIndex, groupIndex)
+        XCTAssertEqual(presentation.highlightedCommandItem()?.command, .cycleWorkspace(1))
+    }
+
     @MainActor
     func testDirectPlusSubmenuClickCommitsPrimaryWhileSubmenuOnlyClickOpensChildren() {
         let menu = RadialCommandContextBuilder.build(from: context(window: window(.managed)))
@@ -413,7 +585,9 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         let go = try! XCTUnwrap(RadialCommandContextBuilder.build(from: context(window: nil)).items.first {
             $0.id == RadialTopLevelItemID.goToSpace.rawValue
         })
-        XCTAssertEqual(go.label, "Go to Space · Code active")
+        XCTAssertEqual(go.label, "Go to Space")
+        XCTAssertEqual(go.detail, "Code active")
+        XCTAssertTrue(go.children.allSatisfy { $0.systemImage != "square" })
         XCTAssertFalse(go.children.contains { $0.command == .switchWorkspace(workspaceA.id) })
         XCTAssertTrue(go.children.allSatisfy { $0.command != nil })
     }
@@ -605,6 +779,35 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(state.handle(.nativeGlobeKey(isDown: true), holdDelay: 0.2), [])
     }
 
+    func testGlobeFnAcceptedHoldAllowsWheelPointerInputUntilRelease() {
+        var state = GlobeFnGestureStateMachine()
+        _ = state.handle(
+            .functionChanged(isDown: true, otherModifiersDown: false),
+            holdDelay: 0.2
+        )
+        XCTAssertEqual(
+            state.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2),
+            [.activateHold(generation: 1)]
+        )
+
+        XCTAssertEqual(state.handle(.competingInput(.mouseButton), holdDelay: 0.2), [])
+        XCTAssertEqual(state.handle(.competingInput(.systemDefined), holdDelay: 0.2), [])
+        XCTAssertEqual(state.phaseName, "held")
+        XCTAssertEqual(
+            state.handle(
+                .functionChanged(isDown: false, otherModifiersDown: false),
+                holdDelay: 0.2
+            ),
+            [
+                .releaseHold(generation: 1),
+                .scheduleSuppressionExpiry(
+                    generation: 1,
+                    delay: GlobeFnGestureStateMachine.nativeSuppressionWindow
+                ),
+            ]
+        )
+    }
+
     func testGlobeFnNormalizerIgnoresDuplicateFlagsAndRecognizesEveryChordClass() {
         var normalizer = GlobeFnEventNormalizer()
         XCTAssertEqual(
@@ -687,7 +890,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         controller.update(enabled: true, holdDelay: 0.2)
         XCTAssertEqual(monitor.startCount, 1)
         XCTAssertFalse(monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false)))
-        XCTAssertEqual(scheduler.pendingCount, 2)
+        XCTAssertEqual(scheduler.pendingCount, 1)
         scheduler.runNext()
         XCTAssertEqual(radial.beginRecognizedHoldCount, 1)
 
@@ -841,7 +1044,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     @MainActor
-    func testGlobeFnRuntimeSafetyTimeoutCancelsMissingKeyboardRelease() {
+    func testGlobeFnRuntimeAcceptedHoldHasNoFixedDurationAndReleasesNormally() {
         let radial = TestGlobeFnRadialTrigger()
         let scheduler = TestGlobeFnScheduler()
         let monitor = TestGlobeFnEventMonitor()
@@ -857,17 +1060,49 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 
         controller.update(enabled: true, holdDelay: 0.2)
         _ = monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
-        XCTAssertEqual(scheduler.pendingDelays, [0.2, 10])
+        XCTAssertEqual(scheduler.pendingDelays, [0.2])
 
         scheduler.runNext()
         XCTAssertEqual(radial.beginRecognizedHoldCount, 1)
-        scheduler.runNext()
+        XCTAssertEqual(scheduler.pendingCount, 0)
+        scheduler.runAll()
 
-        XCTAssertEqual(radial.cancelReasons, ["globe-fn-gesture-safety-timeout"])
+        XCTAssertEqual(radial.cancelReasons, [])
         XCTAssertFalse(
             monitor.send(.flagsChanged(functionDown: false, otherModifiersDown: false))
         )
-        XCTAssertFalse(radial.events.contains(.released))
+        XCTAssertEqual(radial.events, [.released])
+    }
+
+    @MainActor
+    func testGlobeFnRuntimeAcceptedHoldKeepsWheelOpenForMouseClickEvents() {
+        let radial = TestGlobeFnRadialTrigger()
+        let scheduler = TestGlobeFnScheduler()
+        let monitor = TestGlobeFnEventMonitor()
+        let controller = GlobeFnHoldActivationController(
+            radialTrigger: radial,
+            scheduler: scheduler,
+            monitorFactory: { handler, interruption in
+                monitor.eventHandler = handler
+                monitor.interruptionHandler = interruption
+                return monitor
+            }
+        )
+
+        controller.update(enabled: true, holdDelay: 0.2)
+        _ = monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
+        scheduler.runNext()
+        XCTAssertEqual(radial.beginRecognizedHoldCount, 1)
+
+        XCTAssertFalse(monitor.send(.mouseButtonDown))
+        XCTAssertFalse(monitor.send(.systemDefined))
+        XCTAssertEqual(radial.cancelReasons, [])
+
+        XCTAssertFalse(monitor.send(.flagsChanged(
+            functionDown: false,
+            otherModifiersDown: false
+        )))
+        XCTAssertEqual(radial.events, [.released])
     }
 
     @MainActor
@@ -2462,9 +2697,9 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         canSmartResize: Bool = false
     ) -> RadialCommandContext {
         let options = [
-            RadialWorkspaceOption(id: workspaceA.id, name: workspaceA.name, layout: layout, homeDisplayIdentifier: "external"),
-            RadialWorkspaceOption(id: workspaceB.id, name: workspaceB.name, layout: workspaceB.layout, homeDisplayIdentifier: "main"),
-            RadialWorkspaceOption(id: workspaceC.id, name: workspaceC.name, layout: workspaceC.layout, homeDisplayIdentifier: "external"),
+            RadialWorkspaceOption(id: workspaceA.id, name: workspaceA.name, key: workspaceA.key, layout: layout, homeDisplayIdentifier: "external"),
+            RadialWorkspaceOption(id: workspaceB.id, name: workspaceB.name, key: workspaceB.key, layout: workspaceB.layout, homeDisplayIdentifier: "main"),
+            RadialWorkspaceOption(id: workspaceC.id, name: workspaceC.name, key: workspaceC.key, layout: workspaceC.layout, homeDisplayIdentifier: "external"),
         ]
         var value = RadialCommandContext(
             focusedWindow: window,
@@ -2511,6 +2746,21 @@ final class RadialMenuAndSettingsTests: XCTestCase {
                         configuration: .aeroSpaceUserDefaults
                     )
                 }
+            }
+        } else if layout == .none,
+                  let window,
+                  let originalFrame = window.frame {
+            value.freeformPlacementPreviews = VisualPlacement.compassOrder.compactMap {
+                FreeformPlacementEngine.preview(
+                    focusedWindow: WindowKey(
+                        processIdentifier: window.processIdentifier,
+                        windowIdentifier: window.windowIdentifier
+                    ),
+                    displayIdentifier: value.displayIdentifier,
+                    originalFrame: originalFrame,
+                    placement: $0,
+                    displayBounds: value.displayBounds
+                )
             }
         }
         return value

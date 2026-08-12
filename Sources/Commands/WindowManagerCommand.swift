@@ -22,6 +22,7 @@ enum WindowManagerCommand: Hashable, Sendable {
     case moveCurrentWorkspaceToNextDisplay
     case moveCurrentWorkspaceToDisplay(String)
     case placeTiledWindow(VisualPlacement, validationToken: String)
+    case placeFreeformWindow(VisualPlacement, validationToken: String)
     case selectProfile(UUID)
     case resumeAutomaticProfileSelection
 
@@ -82,6 +83,12 @@ enum WindowManagerCommand: Hashable, Sendable {
         case let .placeTiledWindow(placement, validationToken):
             [
                 "action": "place-tiled-window",
+                "placement": placement.rawValue,
+                "validation-token": String(validationToken.prefix(16)),
+            ]
+        case let .placeFreeformWindow(placement, validationToken):
+            [
+                "action": "place-freeform-window",
                 "placement": placement.rawValue,
                 "validation-token": String(validationToken.prefix(16)),
             ]
@@ -178,6 +185,12 @@ final class WindowManagerCommandDispatcher {
                 )
             case let .placeTiledWindow(placement, validationToken):
                 engine?.placeFocusedTiledWindow(
+                    at: placement,
+                    validationToken: validationToken,
+                    correlationID: correlationID
+                )
+            case let .placeFreeformWindow(placement, validationToken):
+                engine?.placeFocusedFreeformWindow(
                     at: placement,
                     validationToken: validationToken,
                     correlationID: correlationID

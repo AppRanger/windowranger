@@ -264,16 +264,23 @@ open the corresponding Workspaces inspector instead of leaving a stale destinati
 The command wheel is a global interaction preference, not part of a profile. Its shortcut uses the
 same recorder, conflict detection, and reset behavior as other global commands, with
 **Control-Option-Space** as the migration-safe default. **Press to Toggle** preserves the original
-interaction. **Hold to Show** waits for the configured 0.15–1.0 second threshold, captures one exact
-window/workspace/display context, and commits the highlighted command on release; a short tap,
+interaction. When opening, the wheel first resolves the frontmost eligible window beneath the
+pointer, focuses that exact window, and builds its context from the confirmed focus; desktop,
+transient UI, and ineligible windows safely retain the existing focus. The expected application
+activation used to focus that pointer window preserves the in-flight wheel gesture; unrelated or
+stale application activation still cancels it. **Hold to Show** waits for the
+configured 0.15–1.0 second threshold, captures one exact window/workspace/display context, and
+commits the highlighted command on release; a short tap,
 Escape, stale context, or release without a valid selection cancels safely. The initial Carbon-based
 recorder still requires a modifier plus a non-modifier key.
 
 An additional **Hold Globe/Fn to show Command Wheel** option is available and defaults off. It is
 local to each Mac rather than profile-owned or iCloud-synced. A quick tap and any Fn chord are
 forwarded unchanged so macOS keeps the user's native Globe action; only a deliberate hold past the
-shared delay opens the same nonactivating wheel, and release commits its current selection. The app
-never invokes or replays the emoji picker. Compatible built-in and external keyboards share the
+shared delay opens the same nonactivating wheel, with no fixed hold-duration limit, and release
+commits its current selection. Once open, mouse clicks operate the wheel without being mistaken for
+a competing Fn chord. The app never invokes or replays the emoji picker. Compatible
+built-in and external keyboards share the
 same public-event behavior because Quartz does not provide a dependable device identity here. The
 implementation follows Apple's public event-tap/Accessibility interfaces and was compared with
 [Loop at pinned revision `2467291f3095a571e80fdb0024845d4dedf111c9`](https://github.com/MrKai77/Loop/tree/2467291f3095a571e80fdb0024845d4dedf111c9).
@@ -283,12 +290,20 @@ stores only an ordered catalogue of top-level type IDs. Each provider resolves a
 action and generated outer-ring children from one immutable runtime context; the renderer and
 Settings editor contain no workspace/profile/layout business rules. Every visible inner item gets an
 equal wedge around the full circle, and invalid items or empty groups close cleanly without dead
-slots. The built-in order is:
+slots. The centre gives full selected-action and context text enough room without ellipses. Generated
+outer actions use fixed-centre semantic symbols while the centre carries their complete label;
+workspace destinations use their configured alphanumeric key, while profile destinations use stable
+numbered symbols rather than repeated placeholders.
+Once a group opens, it stays available while the
+pointer crosses the centre or another inner wedge toward an outer child. Reaching the outer ring
+cancels that crossed-wedge switch, while deliberately dwelling on another inner item changes groups.
+The built-in order is:
 
 1. **Move to Space** — generated valid destinations; send-only by default, with Option for the
    existing one-shot Move & Follow action.
-2. **Resize / Place** — Tiled gets eight compass placements with an exact no-write preview;
-   Accordion gets truthful Smaller/Larger actions; Freeform omits the item.
+2. **Resize / Place Window** — Freeform gets Loop-style usable-screen halves and quarters with an exact
+   no-write preview; Tiled gets eight structural compass placements; Accordion gets truthful
+   Smaller/Larger actions.
 3. **Go to Space** — generated valid workspace destinations, excluding the current no-op.
 4. **Next Space** — direct action.
 5. **Previous Space** — direct action.
@@ -298,10 +313,11 @@ slots. The built-in order is:
 9. **Layout Type** — inner click cycles; outer choices select or reapply Freeform, Tiled, and
    Accordion.
 
-Command Wheel Settings keeps the shortcut and Press/Hold controls, a code-native two-ring preview,
+Command Wheel Settings keeps the shortcut and Press/Hold controls, a compact production-wheel preview,
 and the ordered top-level catalogue editor together. Items can be added, hidden, and drag-reordered;
 their children are generated automatically and are never manually persisted. Edits participate in
-native Undo. Repair removes unresolved references and Reset restores the built-in definition, so a
+native Undo. Add becomes unavailable once every command family is present. Repair removes unresolved
+references and Reset restores the built-in definition, so a
 damaged or empty saved definition cannot make the wheel inaccessible.
 
 The visual and hold-interaction design was informed by the [official Loop repository](https://github.com/MrKai77/Loop),
@@ -358,7 +374,7 @@ and AppKit's main-actor
 
 Inactive windows are parked at the lower-right desktop edge because public macOS APIs do not provide a per-window hide operation. Unified mode keeps one active workspace across every display. Independent Displays mode gives each display its own active workspace and assigns each workspace an abstract display-role home. Role assignments sync with their profile, while this Mac retains the physical UUID/fingerprint binding locally; a disconnected role falls back safely and returns on reconnect. The Settings recovery button restores every tracked window; if a prior crash or force-stop left only a parked coordinate to recover, it centers that window on the main display without resizing it. A normal app quit performs the same cleanup. Animation suppression is temporary and app-scoped; it does not change macOS system animation or Accessibility settings.
 
-Layout is selected independently for each workspace. **Freeform** preserves manual window frames and stops automatic positioning or resizing; WindowRanger still manages workspace visibility, focus, persistence, display assignment, and quit/wake recovery. Tiled uses a session-local, non-overlapping binary split tree derived migration-safely from stable order and per-window weight. Resizing a focused tile adjusts the nearest compatible divider, a position-only title-bar drag can swap it with the tile under the pointer on release, and contextual edge/corner placement previews and commits through the same tree calculation. Accordion follows the current AeroSpace-style overlapping stack with the focused window promoted to its primary pane. Both automatic layouts can resolve orientation from the display shape or use an explicit horizontal/vertical direction, with per-workspace inner gaps, outer screen padding, and configurable Accordion visible-edge padding. In Unified mode each display's windows are laid out separately according to saved display affinity; Independent Displays mode lays the workspace out only on its assigned display. The persisted raw value remains `none`, so existing and legacy saved definitions migrate without changing behavior.
+Layout is selected independently for each workspace. **Freeform** preserves manual window frames and stops automatic positioning or resizing; its contextual Place wheel can explicitly snap only the focused window to a usable-screen half or quarter, with an exact preview and Undo. WindowRanger still manages workspace visibility, focus, persistence, display assignment, and quit/wake recovery. Tiled uses a session-local, non-overlapping binary split tree derived migration-safely from stable order and per-window weight. Resizing a focused tile adjusts the nearest compatible divider, a position-only title-bar drag can swap it with the tile under the pointer on release, and contextual edge/corner placement previews and commits through the same tree calculation. Accordion follows the current AeroSpace-style overlapping stack with the focused window promoted to its primary pane. Both automatic layouts can resolve orientation from the display shape or use an explicit horizontal/vertical direction, with per-workspace inner gaps, outer screen padding, and configurable Accordion visible-edge padding. In Unified mode each display's windows are laid out separately according to saved display affinity; Independent Displays mode lays the workspace out only on its assigned display. The persisted raw value remains `none`, so existing and legacy saved definitions migrate without changing behavior.
 
 Tiled and Accordion preserve AppKit's menu-bar, camera-housing, and visible-Dock safe edges. When the
 user's Dock preference is auto-hide, WindowRanger deliberately restores only the configured Dock

@@ -61,6 +61,72 @@ final class DiagnosticLoggerTests: XCTestCase {
         )
     }
 
+    func testPointerTargetUsesFrontmostEligibleSurfaceWithoutClickingThrough() {
+        let front = WindowKey(processIdentifier: 10, windowIdentifier: 101)
+        let back = WindowKey(processIdentifier: 20, windowIdentifier: 201)
+        let entries = [
+            WindowServerPointerEntry(
+                key: front,
+                layer: 0,
+                bounds: CGRect(x: 100, y: 100, width: 400, height: 300)
+            ),
+            WindowServerPointerEntry(
+                key: back,
+                layer: 0,
+                bounds: CGRect(x: 0, y: 0, width: 800, height: 600)
+            ),
+        ]
+
+        XCTAssertEqual(
+            AccessibilityWindow.pointerTargetWindow(
+                at: CGPoint(x: 200, y: 200),
+                in: entries,
+                eligibleWindowKeys: [front, back]
+            ),
+            front
+        )
+        XCTAssertNil(
+            AccessibilityWindow.pointerTargetWindow(
+                at: CGPoint(x: 200, y: 200),
+                in: entries,
+                eligibleWindowKeys: [back]
+            ),
+            "An ineligible front surface must block selection of a covered window."
+        )
+    }
+
+    func testPointerTargetRejectsPanelsAndDesktopMisses() {
+        let panel = WindowKey(processIdentifier: 10, windowIdentifier: 102)
+        let normal = WindowKey(processIdentifier: 20, windowIdentifier: 202)
+        let entries = [
+            WindowServerPointerEntry(
+                key: panel,
+                layer: 3,
+                bounds: CGRect(x: 100, y: 100, width: 300, height: 200)
+            ),
+            WindowServerPointerEntry(
+                key: normal,
+                layer: 0,
+                bounds: CGRect(x: 0, y: 0, width: 800, height: 600)
+            ),
+        ]
+
+        XCTAssertNil(
+            AccessibilityWindow.pointerTargetWindow(
+                at: CGPoint(x: 150, y: 150),
+                in: entries,
+                eligibleWindowKeys: [normal]
+            )
+        )
+        XCTAssertNil(
+            AccessibilityWindow.pointerTargetWindow(
+                at: CGPoint(x: 900, y: 700),
+                in: entries,
+                eligibleWindowKeys: [normal]
+            )
+        )
+    }
+
     func testReleaseLoggerDoesNotCreateVerboseFile() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -373,6 +439,40 @@ final class DiagnosticLoggerTests: XCTestCase {
         XCTAssertFalse(WorkspaceEngine.shouldReassertAfterActivation(
             activatedProcessIdentifier: 100,
             focusedProcessIdentifier: 200
+        ))
+    }
+
+    func testPointerFocusActivationPreservesOnlyItsCurrentRadialInteraction() {
+        let now = Date(timeIntervalSince1970: 10)
+        let deadline = now.addingTimeInterval(1)
+
+        XCTAssertFalse(WorkspaceEngine.shouldCancelRadialInteractionForActivation(
+            activatedProcessIdentifier: 100,
+            expectedProcessIdentifier: 100,
+            programmaticFocusDeadline: deadline,
+            now: now,
+            verificationIsCurrent: true
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldCancelRadialInteractionForActivation(
+            activatedProcessIdentifier: 200,
+            expectedProcessIdentifier: 100,
+            programmaticFocusDeadline: deadline,
+            now: now,
+            verificationIsCurrent: true
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldCancelRadialInteractionForActivation(
+            activatedProcessIdentifier: 100,
+            expectedProcessIdentifier: 100,
+            programmaticFocusDeadline: now,
+            now: now,
+            verificationIsCurrent: true
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldCancelRadialInteractionForActivation(
+            activatedProcessIdentifier: 100,
+            expectedProcessIdentifier: 100,
+            programmaticFocusDeadline: deadline,
+            now: now,
+            verificationIsCurrent: false
         ))
     }
 

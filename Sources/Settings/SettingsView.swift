@@ -3052,7 +3052,7 @@ private struct RadialMenuSettingsView: View {
                 CommandWheelPreview(definition: store.radialWheelDefinition)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
-                Text("The wheel opens at the pointer on the interaction display. Its inner ring mixes direct actions and groups; a group reveals its valid actions on the outer ring. Empty groups and unavailable actions close up automatically.")
+                Text("The wheel opens at the pointer and first focuses the eligible window directly beneath it. Its inner ring mixes direct actions and groups; a group reveals its valid actions on the outer ring. Desktop, transient UI, and unavailable actions fall back safely.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text("Move across a ring to select. Return or Space activates, Tab enters a group, Shift-Tab or Delete returns inward, and Escape always cancels. The centre is a generous cancel zone.")
@@ -3099,6 +3099,10 @@ private struct RadialMenuSettingsView: View {
                             }
                         }
                     }
+                    .disabled(availableItems.isEmpty)
+                    .help(availableItems.isEmpty
+                        ? "Every available command family is already in the wheel"
+                        : "Add a command family to the wheel")
                     Spacer()
                     Button("Reset to Built-In Default") {
                         store.resetRadialWheelDefinition(undoManager: undoManager)
@@ -3115,8 +3119,7 @@ private struct RadialMenuSettingsView: View {
     }
 
     private var availableItems: [RadialCommandMetadata] {
-        let existing = Set(store.radialWheelDefinition.items)
-        return RadialCommandCatalogue.allMetadata.filter { !existing.contains($0.reference) }
+        RadialCommandCatalogue.availableMetadata(excluding: store.radialWheelDefinition.items)
     }
 
     private func beginShortcutRecording() {
@@ -3227,78 +3230,104 @@ private struct CommandWheelEditorRow: View {
     }
 }
 
-private struct CommandWheelPreview: View {
+struct CommandWheelPreview: View {
     let definition: RadialWheelDefinition
 
-    private var previewItems: [RadialTopLevelItemID] {
-        Array(definition.items.prefix(10))
-    }
-
-    private var previewGroup: RadialTopLevelItemID? {
-        previewItems.first { !RadialCommandCatalogue.previewChildSystemImages(for: $0).isEmpty }
-    }
-
-    private var previewChildren: [String] {
-        previewGroup.map(RadialCommandCatalogue.previewChildSystemImages) ?? []
-    }
-
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(.black.opacity(0.20))
-                .background(.ultraThinMaterial, in: Circle())
-                .frame(width: 214, height: 214)
-            Circle()
-                .fill(.ultraThinMaterial)
-                .overlay(Circle().stroke(Color.primary.opacity(0.14), lineWidth: 1))
-                .frame(width: 128, height: 128)
-            ForEach(Array(previewItems.enumerated()), id: \.element.id) { index, item in
-                let center = RadialMenuGeometry.itemCenter(
-                    index: index,
-                    count: previewItems.count,
-                    center: CGPoint(x: 120, y: 120),
-                    radius: 45
-                )
-                Image(systemName: previewImage(for: item))
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(item == previewGroup ? Color.accentColor : Color.primary)
-                    .frame(width: 24, height: 24)
-                    .background(Color.primary.opacity(item == previewGroup ? 0.14 : 0.06), in: Circle())
-                    .position(center)
-            }
-
-            ForEach(Array(previewChildren.enumerated()), id: \.offset) { index, image in
-                let center = RadialMenuGeometry.itemCenter(
-                    index: index,
-                    count: previewChildren.count,
-                    center: CGPoint(x: 120, y: 120),
-                    radius: 91
-                )
-                Image(systemName: image)
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 26, height: 22)
-                    .background(Color.primary.opacity(0.07), in: Capsule())
-                    .position(center)
-            }
-
-            VStack(spacing: 2) {
-                Text("Contextual")
-                    .font(.caption2.weight(.semibold))
-                Text("Generated actions")
-                    .font(.system(size: 8))
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(width: 240, height: 240)
+        RadialMenuView(model: CommandWheelPreviewFixture.presentation(definition: definition))
+            .scaleEffect(0.72)
+            .frame(width: 324, height: 324)
+            .allowsHitTesting(false)
+            .id(definition.items.map(\.rawValue).joined(separator: "|"))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            "Command wheel preview with \(previewItems.count) saved inner items and \(previewChildren.count) generated outer actions"
+            "Production command wheel preview with \(definition.items.count) saved command families"
         )
     }
+}
 
-    private func previewImage(for item: RadialTopLevelItemID) -> String {
-        RadialCommandCatalogue.metadata(for: item)?.systemImage ?? "questionmark"
+@MainActor
+private enum CommandWheelPreviewFixture {
+    static func presentation(definition: RadialWheelDefinition) -> RadialMenuPresentationModel {
+        let menu = RadialCommandContextBuilder.build(from: context, definition: definition)
+        let presentation = RadialMenuPresentationModel(menu: menu)
+        if let groupIndex = menu.items.firstIndex(where: \.isGroup) {
+            for _ in 0...groupIndex { presentation.moveSelection(1) }
+            presentation.enterSelectedGroup()
+        }
+        return presentation
     }
+
+    private static let context: RadialCommandContext = {
+        let activeWorkspaceID = UUID(uuidString: "71000000-0000-0000-0000-000000000001")!
+        let workspaces = [
+            RadialWorkspaceOption(
+                id: activeWorkspaceID,
+                name: "Focus",
+                key: "f",
+                layout: .accordion,
+                homeDisplayIdentifier: "preview-display"
+            ),
+            RadialWorkspaceOption(
+                id: UUID(uuidString: "71000000-0000-0000-0000-000000000002")!,
+                name: "Writing",
+                key: "w",
+                layout: .none,
+                homeDisplayIdentifier: "preview-display"
+            ),
+            RadialWorkspaceOption(
+                id: UUID(uuidString: "71000000-0000-0000-0000-000000000003")!,
+                name: "Review",
+                key: "r",
+                layout: .tiled,
+                homeDisplayIdentifier: "preview-display"
+            ),
+        ]
+        let activeProfileID = UUID(uuidString: "72000000-0000-0000-0000-000000000001")!
+        return RadialCommandContext(
+            focusedWindow: RadialFocusedWindowContext(
+                processIdentifier: 42,
+                windowIdentifier: 900,
+                workspaceID: activeWorkspaceID,
+                frame: WindowFrame(
+                    position: CGPoint(x: 160, y: 120),
+                    size: CGSize(width: 960, height: 720)
+                ),
+                layoutState: .managed,
+                isAutomaticallyFloatingDialog: false,
+                isAppRuleExcluded: false,
+                keepsOnAllWorkspaces: false
+            ),
+            focusSource: .focusedManagedWindow,
+            workspaceID: activeWorkspaceID,
+            workspaceName: "Focus",
+            layout: .accordion,
+            displayIdentifier: "preview-display",
+            displayName: "Studio Display",
+            displayBounds: CGRect(x: 0, y: 0, width: 1_920, height: 1_080),
+            displayMode: .independent,
+            focusFollowsMovedWindow: false,
+            connectedDisplayIdentifiers: ["preview-display"],
+            connectedDisplays: [
+                RadialDisplayOption(id: "preview-display", name: "Studio Display", isMain: true),
+            ],
+            availableFocusDirections: Set(WindowDirection.allCases),
+            availableMoveDirections: Set(WindowDirection.allCases),
+            canSmartResize: true,
+            workspaces: workspaces,
+            supportedCommands: RadialCommandCapability.current,
+            validationToken: "settings-preview",
+            profiles: [
+                RadialProfileOption(id: activeProfileID, name: "Laptop"),
+                RadialProfileOption(
+                    id: UUID(uuidString: "72000000-0000-0000-0000-000000000002")!,
+                    name: "Studio"
+                ),
+            ],
+            activeProfileID: activeProfileID,
+            isProfileManuallyPinned: true
+        )
+    }()
 }
 
 #if DEBUG
