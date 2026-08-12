@@ -41,6 +41,24 @@ smallest useful outcome and acceptance boundary.
 
 ## Done — command wheel pass
 
+### WR-047 — Keep Globe/Fn monitoring off the ordinary input path
+
+- **Type:** Input-safety bug
+- **Priority:** P1
+- **Status:** Done
+- **Diagnostic-backed cause:** With Hold Globe/Fn enabled, World of Warcraft kept a stable frame
+  rate but delayed keyboard and mouse-button responses. The active session tap placed every ordinary
+  input event behind WindowRanger's main run loop; Quartz timeouts then caused automatic re-enablement
+  of the same blocking filter. Borderless play did not engage the native-fullscreen guard.
+- **Implemented:** Ordinary input is now observed by a passive tap. A dedicated user-interactive run
+  loop fast-passes ordinary keys and filters only the synthetic Globe event during an accepted hold;
+  interruption stops and fails open. Publicly declared foreground games suspend the optional
+  Globe/Fn and workspace-swipe monitors even when borderless, without broadening geometry safety.
+- **Evidence:** The focused 120-test suite, complete 533-test suite, and universal Debug build pass.
+  The signed Debug daily candidate `f143af57c9a1-dirty` was installed with verified identity,
+  signature, revision, and running path. With Hold Globe/Fn enabled, the user repeated the World of
+  Warcraft test and confirmed the input lag was fixed.
+
 ### WR-045 — Focus the pointer window before opening the command wheel
 
 - **Type:** UX / interaction targeting

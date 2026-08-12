@@ -279,8 +279,13 @@ local to each Mac rather than profile-owned or iCloud-synced. A quick tap and an
 forwarded unchanged so macOS keeps the user's native Globe action; only a deliberate hold past the
 shared delay opens the same nonactivating wheel, with no fixed hold-duration limit, and release
 commits its current selection. Once open, mouse clicks operate the wheel without being mistaken for
-a competing Fn chord. The app never invokes or replays the emoji picker. Compatible
-built-in and external keyboards share the
+a competing Fn chord. Ordinary keys, modifiers, and mouse buttons are observed by a passive tap;
+only the synthetic native Globe action can enter the active filter, on a dedicated input run loop,
+and only after an accepted hold. A tap timeout stops Globe/Fn monitoring and leaves input
+unfiltered until the option is toggled. When a publicly declared game is foreground, WindowRanger
+suspends this optional monitor even for borderless play; the saved ordinary Command Wheel shortcut
+remains available. The app never invokes or replays the emoji picker. Compatible built-in and
+external keyboards share the
 same public-event behavior because Quartz does not provide a dependable device identity here. The
 implementation follows Apple's public event-tap/Accessibility interfaces and was compared with
 [Loop at pinned revision `2467291f3095a571e80fdb0024845d4dedf111c9`](https://github.com/MrKai77/Loop/tree/2467291f3095a571e80fdb0024845d4dedf111c9).

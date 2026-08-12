@@ -253,12 +253,146 @@ enum GlobeFnEventMonitorInterruption: String, Equatable, Sendable {
 protocol GlobeFnEventMonitoring: AnyObject {
     func start() -> Bool
     func stop()
-    func reenable() -> Bool
+    func setNativeGlobeFilteringEnabled(_ enabled: Bool)
 }
 
-/// One centrally owned public Quartz event tap. It forwards every event except a synthetic native
-/// Globe action that the pure state machine explicitly associates with an accepted hold. It never
-/// requests permission; failure is reported to Settings and can be retried safely.
+/// Thread-safe state read by the dedicated active-filter callback. Ordinary keys fast-path without
+/// taking this lock; only the synthetic native Globe key consults it.
+private final class GlobeFnNativeFilterState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var enabled = false
+
+    func setEnabled(_ enabled: Bool) {
+        lock.lock()
+        self.enabled = enabled
+        lock.unlock()
+    }
+
+    func shouldSuppress(keyCode: UInt16) -> Bool {
+        guard keyCode == GlobeFnEventNormalizer.nativeGlobeActionKeyCode else { return false }
+        lock.lock()
+        let enabled = self.enabled
+        lock.unlock()
+        return GlobeFnNativeEventFilterPolicy.shouldSuppress(
+            keyCode: keyCode,
+            nativeGlobeFilteringEnabled: enabled
+        )
+    }
+}
+
+/// Owns one event-tap source on a dedicated user-interactive run loop. Keeping the active filter
+/// independent of AppKit's main loop means UI, Accessibility, layout, and diagnostic work cannot
+/// hold ordinary input delivery behind the filter.
+private final class GlobeFnActiveTapRunLoopHost: @unchecked Sendable {
+    private let eventTap: CFMachPort
+    private let retainedContext: AnyObject
+    private let lock = NSLock()
+    private var runLoop: CFRunLoop?
+    private var runLoopSource: CFRunLoopSource?
+    private var thread: Thread?
+    private var started = false
+
+    init(eventTap: CFMachPort, retainedContext: AnyObject) {
+        self.eventTap = eventTap
+        self.retainedContext = retainedContext
+    }
+
+    func start() -> Bool {
+        let ready = DispatchSemaphore(value: 0)
+        let thread = Thread { [self] in
+            let currentRunLoop = CFRunLoopGetCurrent()
+            guard let source = CFMachPortCreateRunLoopSource(
+                kCFAllocatorDefault,
+                eventTap,
+                0
+            ) else {
+                ready.signal()
+                return
+            }
+
+            lock.lock()
+            runLoop = currentRunLoop
+            runLoopSource = source
+            lock.unlock()
+
+            CFRunLoopAddSource(currentRunLoop, source, .defaultMode)
+            CGEvent.tapEnable(tap: eventTap, enable: true)
+
+            lock.lock()
+            started = CGEvent.tapIsEnabled(tap: eventTap)
+            let shouldRun = started
+            lock.unlock()
+            ready.signal()
+
+            if shouldRun { CFRunLoopRun() }
+
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+            CFRunLoopRemoveSource(currentRunLoop, source, .defaultMode)
+            CFMachPortInvalidate(eventTap)
+            lock.lock()
+            runLoopSource = nil
+            runLoop = nil
+            self.thread = nil
+            started = false
+            lock.unlock()
+        }
+        thread.name = "WindowRanger Globe/Fn Filter"
+        thread.qualityOfService = .userInteractive
+        lock.lock()
+        self.thread = thread
+        lock.unlock()
+        thread.start()
+
+        guard ready.wait(timeout: .now() + 1) == .success else {
+            stop()
+            return false
+        }
+        lock.lock()
+        let result = started
+        lock.unlock()
+        return result
+    }
+
+    func stop() {
+        lock.lock()
+        let runLoop = self.runLoop
+        let source = runLoopSource
+        lock.unlock()
+        guard let runLoop else {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+            CFMachPortInvalidate(eventTap)
+            return
+        }
+
+        let eventTap = self.eventTap
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue) {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+            if let source {
+                CFRunLoopRemoveSource(runLoop, source, .defaultMode)
+            }
+            CFMachPortInvalidate(eventTap)
+            CFRunLoopStop(runLoop)
+        }
+        CFRunLoopWakeUp(runLoop)
+    }
+}
+
+private final class GlobeFnActiveFilterContext: @unchecked Sendable {
+    let filterState: GlobeFnNativeFilterState
+    let interruptionHandler: @Sendable (GlobeFnEventMonitorInterruption) -> Void
+
+    init(
+        filterState: GlobeFnNativeFilterState,
+        interruptionHandler: @escaping @Sendable (GlobeFnEventMonitorInterruption) -> Void
+    ) {
+        self.filterState = filterState
+        self.interruptionHandler = interruptionHandler
+    }
+}
+
+/// A passive tap observes Fn state and competing input without participating in delivery. A second
+/// active tap sees key events on its own run loop and fast-passes every key except the synthetic
+/// native Globe action while an accepted hold has explicitly armed suppression.
 @MainActor
 final class CGGlobeFnEventMonitor: GlobeFnEventMonitoring {
     typealias EventHandler = @MainActor (GlobeFnObservedEvent) -> Bool
@@ -266,8 +400,10 @@ final class CGGlobeFnEventMonitor: GlobeFnEventMonitoring {
 
     private let eventHandler: EventHandler
     private let interruptionHandler: InterruptionHandler
-    private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
+    private let nativeFilterState = GlobeFnNativeFilterState()
+    private var observationTap: CFMachPort?
+    private var observationRunLoopSource: CFRunLoopSource?
+    private var activeTapHost: GlobeFnActiveTapRunLoopHost?
     private static let systemDefinedEventType = CGEventType(rawValue: 14)!
 
     init(
@@ -283,14 +419,10 @@ final class CGGlobeFnEventMonitor: GlobeFnEventMonitoring {
     }
 
     func start() -> Bool {
-        if let eventTap, CFMachPortIsValid(eventTap) {
-            CGEvent.tapEnable(tap: eventTap, enable: true)
-            return CGEvent.tapIsEnabled(tap: eventTap)
-        }
-
+        stop()
         guard AXIsProcessTrusted() else { return false }
 
-        let observedTypes: [CGEventType] = [
+        let passivelyObservedTypes: [CGEventType] = [
             .flagsChanged,
             .keyDown,
             .keyUp,
@@ -299,64 +431,121 @@ final class CGGlobeFnEventMonitor: GlobeFnEventMonitoring {
             .otherMouseDown,
             Self.systemDefinedEventType,
         ]
-        let mask = observedTypes.reduce(CGEventMask(0)) {
+        let observationMask = passivelyObservedTypes.reduce(CGEventMask(0)) {
             $0 | (CGEventMask(1) << $1.rawValue)
         }
-        let callback: CGEventTapCallBack = { _, type, event, userInfo in
+        let observationCallback: CGEventTapCallBack = { _, type, event, userInfo in
             guard let userInfo else { return Unmanaged.passUnretained(event) }
             let monitor = Unmanaged<CGGlobeFnEventMonitor>
                 .fromOpaque(userInfo)
                 .takeUnretainedValue()
-            return MainActor.assumeIsolated {
-                if monitor.process(type: type, event: event) {
-                    return nil
+            MainActor.assumeIsolated {
+                monitor.observe(type: type, event: event)
+            }
+            return Unmanaged.passUnretained(event)
+        }
+        guard let observationTap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .tailAppendEventTap,
+            options: .listenOnly,
+            eventsOfInterest: observationMask,
+            callback: observationCallback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ), let observationSource = CFMachPortCreateRunLoopSource(
+            kCFAllocatorDefault,
+            observationTap,
+            0
+        )
+        else { return false }
+
+        let filterContext = GlobeFnActiveFilterContext(
+            filterState: nativeFilterState,
+            interruptionHandler: { [weak self] interruption in
+                Task { @MainActor [weak self] in
+                    self?.interruptionHandler(interruption)
                 }
+            }
+        )
+        let activeCallback: CGEventTapCallBack = { _, type, event, userInfo in
+            guard let userInfo else { return Unmanaged.passUnretained(event) }
+            let context = Unmanaged<GlobeFnActiveFilterContext>
+                .fromOpaque(userInfo)
+                .takeUnretainedValue()
+            switch type {
+            case .tapDisabledByTimeout:
+                context.interruptionHandler(.timedOut)
+                return Unmanaged.passUnretained(event)
+            case .tapDisabledByUserInput:
+                context.interruptionHandler(.disabledByUserInput)
+                return Unmanaged.passUnretained(event)
+            case .keyDown, .keyUp:
+                let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+                return context.filterState.shouldSuppress(keyCode: keyCode)
+                    ? nil
+                    : Unmanaged.passUnretained(event)
+            default:
                 return Unmanaged.passUnretained(event)
             }
         }
-        guard let eventTap = CGEvent.tapCreate(
+        let keyMask = [CGEventType.keyDown, .keyUp].reduce(CGEventMask(0)) {
+            $0 | (CGEventMask(1) << $1.rawValue)
+        }
+        guard let activeTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: callback,
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ), let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
-        else { return false }
+            eventsOfInterest: keyMask,
+            callback: activeCallback,
+            userInfo: Unmanaged.passUnretained(filterContext).toOpaque()
+        ) else {
+            CFMachPortInvalidate(observationTap)
+            return false
+        }
+        let activeHost = GlobeFnActiveTapRunLoopHost(
+            eventTap: activeTap,
+            retainedContext: filterContext
+        )
+        guard activeHost.start() else {
+            activeHost.stop()
+            CFMachPortInvalidate(observationTap)
+            return false
+        }
 
-        self.eventTap = eventTap
-        runLoopSource = source
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: eventTap, enable: true)
-        return CGEvent.tapIsEnabled(tap: eventTap)
+        self.observationTap = observationTap
+        observationRunLoopSource = observationSource
+        self.activeTapHost = activeHost
+        CFRunLoopAddSource(CFRunLoopGetMain(), observationSource, .commonModes)
+        CGEvent.tapEnable(tap: observationTap, enable: true)
+        let observationEnabled = CGEvent.tapIsEnabled(tap: observationTap)
+        if !observationEnabled { stop() }
+        return observationEnabled
     }
 
     func stop() {
-        if let source = runLoopSource {
+        nativeFilterState.setEnabled(false)
+        if let source = observationRunLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }
-        if let eventTap {
-            CGEvent.tapEnable(tap: eventTap, enable: false)
-            CFMachPortInvalidate(eventTap)
+        if let observationTap {
+            CGEvent.tapEnable(tap: observationTap, enable: false)
+            CFMachPortInvalidate(observationTap)
         }
-        runLoopSource = nil
-        eventTap = nil
+        activeTapHost?.stop()
+        observationRunLoopSource = nil
+        observationTap = nil
+        activeTapHost = nil
     }
 
-    func reenable() -> Bool {
-        guard let eventTap, CFMachPortIsValid(eventTap) else { return false }
-        CGEvent.tapEnable(tap: eventTap, enable: true)
-        return CGEvent.tapIsEnabled(tap: eventTap)
+    func setNativeGlobeFilteringEnabled(_ enabled: Bool) {
+        nativeFilterState.setEnabled(enabled)
     }
 
-    private func process(type: CGEventType, event: CGEvent) -> Bool {
+    private func observe(type: CGEventType, event: CGEvent) {
         switch type {
         case .tapDisabledByTimeout:
-            interruptionHandler(.timedOut)
-            return false
+            Task { @MainActor [weak self] in self?.interruptionHandler(.timedOut) }
         case .tapDisabledByUserInput:
-            interruptionHandler(.disabledByUserInput)
-            return false
+            Task { @MainActor [weak self] in self?.interruptionHandler(.disabledByUserInput) }
         case .flagsChanged:
             let flags = event.flags
             let otherModifiers: CGEventFlags = [
@@ -368,22 +557,22 @@ final class CGGlobeFnEventMonitor: GlobeFnEventMonitoring {
                 .maskHelp,
                 .maskNumericPad,
             ]
-            return eventHandler(.flagsChanged(
+            _ = eventHandler(.flagsChanged(
                 functionDown: flags.contains(.maskSecondaryFn),
                 otherModifiersDown: !flags.intersection(otherModifiers).isEmpty
             ))
         case .keyDown, .keyUp:
-            return eventHandler(.keyChanged(
+            _ = eventHandler(.keyChanged(
                 isDown: type == .keyDown,
                 keyCode: UInt16(event.getIntegerValueField(.keyboardEventKeycode)),
                 isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
             ))
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
-            return eventHandler(.mouseButtonDown)
+            _ = eventHandler(.mouseButtonDown)
         case let eventType where eventType == Self.systemDefinedEventType:
-            return eventHandler(.systemDefined)
+            _ = eventHandler(.systemDefined)
         default:
-            return false
+            break
         }
     }
 }
@@ -580,23 +769,42 @@ final class GlobeFnHoldActivationController {
     }
 
     private func monitorInterrupted(_ interruption: GlobeFnEventMonitorInterruption) {
+        guard monitor != nil else { return }
         cancel(reason: interruption.rawValue)
-        let restored = monitor?.reenable() == true
-        if !restored {
-            monitor?.stop()
-            monitor = nil
-            lastObservedFunctionState = nil
-        }
-        runtimeIssueChanged?(restored ? nil : "Globe/Fn monitoring stopped and could not be restored. Toggle the option to retry.")
+        monitor?.stop()
+        monitor = nil
+        lastObservedFunctionState = nil
+        runtimeIssueChanged?(
+            "Globe/Fn monitoring stopped after macOS reported an unresponsive input filter. Toggle the option off and on to retry."
+        )
         diagnostics.log(
             category: "globe-fn-trigger",
-            event: restored ? "monitor-reenabled" : "monitor-reenable-failed",
+            event: "monitor-stopped-fail-open",
             fields: ["reason": interruption.rawValue]
         )
     }
 
     @discardableResult
     private func apply(_ effects: [GlobeFnGestureEffect]) -> Bool {
+        if effects.contains(where: {
+            if case .activateHold = $0 { return true }
+            return false
+        }) {
+            monitor?.setNativeGlobeFilteringEnabled(true)
+        }
+        defer {
+            let explicitlyCancelled = effects.contains(where: {
+                switch $0 {
+                case .cancelHold, .cancelSuppressionExpiry:
+                    return true
+                default:
+                    return false
+                }
+            })
+            if explicitlyCancelled || state.phaseName == "idle" {
+                monitor?.setNativeGlobeFilteringEnabled(false)
+            }
+        }
         var shouldSuppress = false
         for effect in effects {
             switch effect {
