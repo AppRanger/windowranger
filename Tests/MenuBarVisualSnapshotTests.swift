@@ -25,23 +25,37 @@ final class MenuBarVisualSnapshotTests: XCTestCase {
         for snapshot in snapshots {
             let view = MenuBarSnapshotCanvas(snapshot: snapshot)
             let data = try renderRetinaPNG(view)
+            let labelModeSuffix = snapshot.mode == .compact
+                ? "-\(snapshot.workspaceLabelMode.rawValue)"
+                : ""
             let url = outputDirectory.appendingPathComponent(
-                "windowranger-menu-bar-\(snapshot.mode.rawValue).png"
+                "windowranger-menu-bar-\(snapshot.mode.rawValue)\(labelModeSuffix).png"
             )
             try data.write(to: url, options: .atomic)
             XCTAssertGreaterThan(data.count, 1_000)
         }
+        let keyIconReview = try XCTUnwrap(compactKeyIconReviewSnapshot(from: snapshots))
+        let keyIconReviewData = try renderRetinaPNG(
+            CompactKeyIconReviewCanvas(snapshot: keyIconReview)
+        )
+        try keyIconReviewData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-menu-bar-compact-key-icon-review.png"
+            ),
+            options: .atomic
+        )
+        XCTAssertGreaterThan(keyIconReviewData.count, 1_000)
     }
 
     @MainActor
     private func representativeSnapshots() -> [MenuBarPresentationSnapshot] {
         let workspaces = [
-            workspace("30000000-0000-0000-0000-000000000001", "1"),
-            workspace("30000000-0000-0000-0000-000000000002", "2"),
-            workspace("30000000-0000-0000-0000-000000000003", "3"),
-            workspace("30000000-0000-0000-0000-000000000007", "7"),
-            workspace("30000000-0000-0000-0000-000000000008", "8"),
-            workspace("30000000-0000-0000-0000-000000000009", "9"),
+            workspace("30000000-0000-0000-0000-000000000001", "Focus", "M"),
+            workspace("30000000-0000-0000-0000-000000000002", "Writing", "2"),
+            workspace("30000000-0000-0000-0000-000000000003", "Chat", "3"),
+            workspace("30000000-0000-0000-0000-000000000007", "Review", "7"),
+            workspace("30000000-0000-0000-0000-000000000008", "Utilities", "8"),
+            workspace("30000000-0000-0000-0000-000000000009", "Meetings", "2"),
         ]
         let builtIn = DisplaySnapshot(
             identifier: "fixture-built-in",
@@ -59,7 +73,7 @@ final class MenuBarVisualSnapshotTests: XCTestCase {
         let assignments = Dictionary(uniqueKeysWithValues: workspaces.enumerated().map {
             ($0.element.id, $0.offset < 3 ? builtIn.identifier : external.identifier)
         })
-        return MenuBarPresentationMode.allCases.map { mode in
+        let nameSnapshots = MenuBarPresentationMode.allCases.map { mode in
             let builtInActive = mode == .full ? workspaces[1].id : workspaces[0].id
             let interaction = mode == .compact ? builtInActive : workspaces[5].id
             let state = WorkspaceEngineState(
@@ -82,10 +96,55 @@ final class MenuBarVisualSnapshotTests: XCTestCase {
                 workspaceDisplayAssignments: assignments
             )
         }
+        guard let compactName = nameSnapshots.first(where: { $0.mode == .compact }) else {
+            return nameSnapshots
+        }
+        let compactKey = MenuBarPresentationSnapshot(
+            mode: .compact,
+            workspaceLabelMode: .key,
+            displayMode: compactName.displayMode,
+            interactionWorkspaceID: compactName.interactionWorkspaceID,
+            displays: compactName.displays
+        )
+        return nameSnapshots + [compactKey]
     }
 
-    private func workspace(_ id: String, _ name: String) -> WorkspaceDefinition {
-        WorkspaceDefinition(id: UUID(uuidString: id)!, name: name, key: name)
+    private func workspace(_ id: String, _ name: String, _ key: String) -> WorkspaceDefinition {
+        WorkspaceDefinition(id: UUID(uuidString: id)!, name: name, key: key)
+    }
+
+    private func compactKeyIconReviewSnapshot(
+        from snapshots: [MenuBarPresentationSnapshot]
+    ) -> MenuBarPresentationSnapshot? {
+        guard let source = snapshots.first(where: { $0.mode == .compact })?.displays.first else {
+            return nil
+        }
+        let variants: [(String, MenuBarDisplayIconKind)] = [
+            ("review-horizontal", .external),
+            ("review-vertical", .external),
+            ("review-laptop", .builtIn),
+            ("review-combined", .combined),
+        ]
+        let displays = variants.map { identifier, iconKind in
+            MenuBarDisplayItem(
+                id: identifier,
+                name: identifier,
+                iconKind: iconKind,
+                isInteractionDisplay: identifier == "review-horizontal",
+                activeWorkspaceID: source.activeWorkspaceID,
+                activeWorkspaceName: source.activeWorkspaceName,
+                activeWorkspaceCompactName: source.activeWorkspaceCompactName,
+                activeWorkspaceKey: "M",
+                workspaces: source.workspaces
+            )
+        }
+        return MenuBarPresentationSnapshot(
+            mode: .compact,
+            workspaceLabelMode: .key,
+            displayMode: .independent,
+            interactionWorkspaceID: source.activeWorkspaceID,
+            displays: displays
+        )
     }
 
     @MainActor
@@ -496,11 +555,36 @@ private struct MenuBarSnapshotCanvas: View {
     let snapshot: MenuBarPresentationSnapshot
 
     var body: some View {
-        MenuBarStatusContentRepresentable(snapshot: snapshot, availableWidth: 620)
-            .fixedSize()
-        .foregroundStyle(.white)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
+        MenuBarSettingsPreview(
+            snapshot: snapshot,
+            displayIconConfiguration: MenuBarDisplayIconConfiguration(
+                stylesByDisplayIdentifier: [
+                    "fixture-built-in": .laptop,
+                    "fixture-external": .horizontalMonitor,
+                ]
+            )
+        )
+        .background(Color(red: 0.075, green: 0.075, blue: 0.085))
+        .environment(\.colorScheme, .dark)
+        .fixedSize()
+    }
+}
+
+private struct CompactKeyIconReviewCanvas: View {
+    let snapshot: MenuBarPresentationSnapshot
+
+    var body: some View {
+        MenuBarSettingsPreview(
+            snapshot: snapshot,
+            displayIconConfiguration: MenuBarDisplayIconConfiguration(
+                stylesByDisplayIdentifier: [
+                    "review-horizontal": .horizontalMonitor,
+                    "review-vertical": .verticalMonitor,
+                    "review-laptop": .laptop,
+                    "review-combined": .automatic,
+                ]
+            )
+        )
         .background(Color(red: 0.075, green: 0.075, blue: 0.085))
         .environment(\.colorScheme, .dark)
         .fixedSize()

@@ -557,31 +557,25 @@ final class MenuBarPresentationTests: XCTestCase {
         XCTAssertNotNil(layout.overflowSummary)
     }
 
-    func testDisplayGroupStatusItemsAreLimitedToFullModeOnMacOS27AndLater() {
+    func testDisplayGroupStatusItemsCoverEveryModeOnMacOS27AndLater() {
         let macOS26 = OperatingSystemVersion(majorVersion: 26, minorVersion: 6, patchVersion: 0)
         let macOS27 = OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 0)
         let macOS28 = OperatingSystemVersion(majorVersion: 28, minorVersion: 0, patchVersion: 0)
 
-        XCTAssertFalse(MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
-            for: .full,
-            operatingSystemVersion: macOS26
-        ))
-        XCTAssertFalse(MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
-            for: .compact,
-            operatingSystemVersion: macOS27
-        ))
-        XCTAssertFalse(MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
-            for: .medium,
-            operatingSystemVersion: macOS27
-        ))
-        XCTAssertTrue(MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
-            for: .full,
-            operatingSystemVersion: macOS27
-        ))
-        XCTAssertTrue(MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
-            for: .full,
-            operatingSystemVersion: macOS28
-        ))
+        for mode in MenuBarPresentationMode.allCases {
+            XCTAssertFalse(MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
+                for: mode,
+                operatingSystemVersion: macOS26
+            ))
+            XCTAssertTrue(MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
+                for: mode,
+                operatingSystemVersion: macOS27
+            ))
+            XCTAssertTrue(MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
+                for: mode,
+                operatingSystemVersion: macOS28
+            ))
+        }
     }
 
     func testDisplayGroupStatusItemActivationSeparatesPointerAndMenuActions() {
@@ -605,6 +599,44 @@ final class MenuBarPresentationTests: XCTestCase {
             eventType: nil,
             modifierFlags: []
         ))
+
+        let workspaceTarget = MenuBarHitTarget.workspace(
+            workspaceID: workspace2.id,
+            displayIdentifier: mainDisplay.identifier
+        )
+        XCTAssertEqual(MenuBarStatusItemActivationPolicy.action(
+            for: .compact,
+            eventType: .leftMouseDown,
+            modifierFlags: [],
+            pointerTarget: workspaceTarget
+        ), .openMenu)
+        XCTAssertEqual(MenuBarStatusItemActivationPolicy.action(
+            for: .medium,
+            eventType: .leftMouseDown,
+            modifierFlags: [],
+            pointerTarget: workspaceTarget
+        ), .openMenu)
+        XCTAssertEqual(MenuBarStatusItemActivationPolicy.action(
+            for: .full,
+            eventType: .leftMouseDown,
+            modifierFlags: [],
+            pointerTarget: workspaceTarget
+        ), .switchWorkspace(
+            workspaceID: workspace2.id,
+            displayIdentifier: mainDisplay.identifier
+        ))
+        XCTAssertEqual(MenuBarStatusItemActivationPolicy.action(
+            for: .full,
+            eventType: .rightMouseDown,
+            modifierFlags: [],
+            pointerTarget: workspaceTarget
+        ), .openMenu)
+        XCTAssertEqual(MenuBarStatusItemActivationPolicy.action(
+            for: .full,
+            eventType: .leftMouseDown,
+            modifierFlags: [],
+            pointerTarget: nil
+        ), .openMenu)
     }
 
     func testDisplayGroupStatusItemPlanKeepsOneMovableItemPerDisplay() {
@@ -627,6 +659,30 @@ final class MenuBarPresentationTests: XCTestCase {
                 .map(\.group.display.id),
             groups.reversed().map(\.group.display.id)
         )
+    }
+
+    func testInformationalModesPlanOneMenuOnlyItemPerLogicalDisplay() {
+        let medium = independentSnapshot(displays: [mainDisplay, externalDisplay])
+
+        for mode in [MenuBarPresentationMode.compact, .medium] {
+            let groups = MenuBarDisplayGroupStatusItemPlanner.groups(
+                for: medium.replacingMode(mode),
+                availableWidth: 620
+            )
+
+            XCTAssertEqual(groups.map(\.mode), [mode, mode])
+            XCTAssertEqual(groups.map(\.group.display.id), [
+                mainDisplay.identifier,
+                externalDisplay.identifier,
+            ])
+            XCTAssertEqual(groups[0].group.visibleWorkspaces.map(\.id), [workspace1.id])
+            XCTAssertEqual(groups[1].group.visibleWorkspaces.map(\.id), [workspace3.id])
+            XCTAssertTrue(groups.allSatisfy { group in
+                group.group.hiddenWorkspaces.isEmpty
+                    && group.overflowCount == 0
+                    && group.overflowSummary == nil
+            })
+        }
     }
 
     func testDisplayGroupStatusItemPlanCarriesPressureOverflowInLastGroup() {
@@ -871,6 +927,139 @@ final class MenuBarPresentationTests: XCTestCase {
             x: content.bounds.midX,
             y: content.bounds.midY
         )))
+    }
+
+    @MainActor
+    func testInformationalDisplayGroupContentStaysMenuOnly() throws {
+        let medium = independentSnapshot(displays: [mainDisplay])
+
+        for mode in [MenuBarPresentationMode.compact, .medium] {
+            let plan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+                for: medium.replacingMode(mode),
+                availableWidth: 620
+            ).first)
+            let content = MenuBarDisplayGroupContentView(
+                plan: plan,
+                workspaceLabelMode: medium.workspaceLabelMode,
+                highlightColor: .default
+            )
+            layout(content)
+
+            XCTAssertEqual(content.mode, mode)
+            XCTAssertGreaterThanOrEqual(content.intrinsicContentSize.width, 16)
+            XCTAssertTrue(content.workspaceTrackingRegions(in: content).isEmpty)
+            XCTAssertTrue(content.screenSpaceTargets().isEmpty)
+            XCTAssertNil(content.hitTest(NSPoint(
+                x: content.bounds.midX,
+                y: content.bounds.midY
+            )))
+        }
+    }
+
+    @MainActor
+    func testCompactDisplayGroupGivesACompactedNameMoreWidthThanAKey() throws {
+        let snapshot = MenuBarPresentationResolver.resolve(
+            mode: .compact,
+            workspaceLabelMode: .name,
+            displayMode: .independent,
+            state: engineState(
+                current: workspace2.id,
+                active: [workspace2.id],
+                activeByDisplay: [mainDisplay.identifier: workspace2.id]
+            ),
+            workspaces: [workspace1, workspace2],
+            connectedDisplays: [mainDisplay],
+            workspaceDisplayAssignments: [
+                workspace1.id: mainDisplay.identifier,
+                workspace2.id: mainDisplay.identifier,
+            ]
+        )
+        let plan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+            for: snapshot,
+            availableWidth: 620
+        ).first)
+        let keyContent = MenuBarDisplayGroupContentView(
+            plan: plan,
+            workspaceLabelMode: .key,
+            highlightColor: .default
+        )
+        let nameContent = MenuBarDisplayGroupContentView(
+            plan: plan,
+            workspaceLabelMode: .name,
+            highlightColor: .default
+        )
+        layout(keyContent)
+        layout(nameContent)
+
+        let keyPresentation = MenuBarCompactDisplayPresentation.resolve(
+            display: plan.group.display,
+            workspaceLabelMode: .key,
+            displayIconConfiguration: .automatic
+        )
+        let namePresentation = MenuBarCompactDisplayPresentation.resolve(
+            display: plan.group.display,
+            workspaceLabelMode: .name,
+            displayIconConfiguration: .automatic
+        )
+        let hiddenIconPresentation = MenuBarCompactDisplayPresentation.resolve(
+            display: plan.group.display,
+            workspaceLabelMode: .key,
+            displayIconConfiguration: MenuBarDisplayIconConfiguration(
+                stylesByDisplayIdentifier: [mainDisplay.identifier: .none]
+            )
+        )
+
+        XCTAssertEqual(keyPresentation.layout, .keyInsideIcon)
+        XCTAssertEqual(keyPresentation.label, "W")
+        XCTAssertEqual(keyPresentation.systemImage, "display")
+        XCTAssertEqual(namePresentation.layout, .inlineLabel)
+        XCTAssertEqual(namePresentation.label, "Writ…")
+        XCTAssertEqual(namePresentation.systemImage, "display")
+        XCTAssertEqual(hiddenIconPresentation.layout, .inlineLabel)
+        XCTAssertEqual(hiddenIconPresentation.label, "W")
+        XCTAssertNil(hiddenIconPresentation.systemImage)
+        XCTAssertGreaterThan(
+            nameContent.intrinsicContentSize.width,
+            keyContent.intrinsicContentSize.width
+        )
+        XCTAssertTrue(nameContent.workspaceTrackingRegions(in: nameContent).isEmpty)
+        XCTAssertNil(nameContent.hitTest(NSPoint(
+            x: nameContent.bounds.midX,
+            y: nameContent.bounds.midY
+        )))
+    }
+
+    func testCompactKeyOverlaysUseTheSafeAreaForEachSupportedDisplaySymbol() {
+        let horizontal = MenuBarCompactKeyOverlayMetrics.resolve(
+            systemImage: "display",
+            labelCharacterCount: 1
+        )
+        let vertical = MenuBarCompactKeyOverlayMetrics.resolve(
+            systemImage: "rectangle.portrait",
+            labelCharacterCount: 1
+        )
+        let laptop = MenuBarCompactKeyOverlayMetrics.resolve(
+            systemImage: "laptopcomputer",
+            labelCharacterCount: 1
+        )
+        let combined = MenuBarCompactKeyOverlayMetrics.resolve(
+            systemImage: "display.2",
+            labelCharacterCount: 1
+        )
+
+        XCTAssertLessThan(vertical.labelWidth, horizontal.labelWidth)
+        XCTAssertLessThan(laptop.labelWidth, horizontal.labelWidth)
+        XCTAssertLessThan(laptop.labelPointSize, horizontal.labelPointSize)
+        XCTAssertGreaterThan(combined.labelOffsetX, 0)
+        XCTAssertGreaterThan(combined.labelOffsetY, horizontal.labelOffsetY)
+        XCTAssertGreaterThan(combined.componentWidth, horizontal.componentWidth)
+
+        let multiCharacterLaptop = MenuBarCompactKeyOverlayMetrics.resolve(
+            systemImage: "laptopcomputer",
+            labelCharacterCount: 2
+        )
+        XCTAssertLessThan(multiCharacterLaptop.labelPointSize, laptop.labelPointSize)
+        XCTAssertEqual(multiCharacterLaptop.labelWidth, laptop.labelWidth)
     }
 
     @MainActor

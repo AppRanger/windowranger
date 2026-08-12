@@ -397,6 +397,19 @@ second copy of that checklist.
 
 ## Done
 
+### WR-043 — Use system display groups for Compact and Medium menu-bar styles
+
+- **Result:** Compact, Medium, and Full on macOS 27 now use one movable standard status item per
+  logical display without a redundant app glyph. Compact adapts keys and names to the configured
+  display symbol, Medium retains readable workspace chips, Settings embeds the same production
+  views, and only Full exposes workspace switching and hover geometry. macOS 14–26 retain the
+  established single-item compatibility path.
+- **Evidence:** The focused 41-test menu-bar suite and all 517 non-hosted tests pass, the unsigned
+  universal Debug app builds, and the four-symbol visual fixture covers horizontal, portrait,
+  laptop, and combined-display key safe areas. The Apple Development-signed universal candidate was
+  installed with its signature and embedded revision verified; the maintainer live-validated the
+  final macOS 27 Compact layout and confirmed the symbol alignment looks correct.
+
 ### WR-037 — Publish WindowRanger 0.1.0 Beta 2
 
 - **Result:** Published
