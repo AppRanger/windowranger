@@ -634,7 +634,8 @@ final class WorkspaceDefinitionTests: XCTestCase {
 
         XCTAssertEqual(decision, WindowAdmissionDecision(
             disposition: .ignoredTransientPopup,
-            reason: .verifiedBundleNonNormalLayer
+            reason: .verifiedBundleNonNormalLayer,
+            compatibilityProfileIdentifier: "codex-transient-non-normal-layer-v1"
         ))
         XCTAssertFalse(decision.disposition.admitsNewWindow)
         XCTAssertTrue(decision.disposition.evictsTrackedWindow)
@@ -674,8 +675,123 @@ final class WorkspaceDefinitionTests: XCTestCase {
 
         XCTAssertEqual(decision.disposition, .managedNormal)
         XCTAssertEqual(decision.reason, .ambiguousDialogMetadata)
-        XCTAssertTrue(AccessibilityWindow.hasVerifiedTransientNonNormalLayers("COM.OPENAI.CODEX"))
-        XCTAssertFalse(AccessibilityWindow.hasVerifiedTransientNonNormalLayers("com.example.UnusualWindowLevels"))
+        XCTAssertTrue(AccessibilityWindow.mayNeedDirectLayerResolutionForCompatibility("COM.OPENAI.CODEX"))
+        XCTAssertFalse(AccessibilityWindow.mayNeedDirectLayerResolutionForCompatibility("com.example.UnusualWindowLevels"))
+        XCTAssertNil(decision.compatibilityProfileIdentifier)
+    }
+
+    func testCompatibilityProfilesRequireBundleAndEveryDeclaredSurfaceSignal() {
+        let profile = WindowCompatibilityProfile(
+            identifier: "example-picker-v1",
+            bundleIdentifiers: ["com.example.Editor"],
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            layer: .exact(3),
+            modalObservation: .trueValue,
+            closeButton: .present,
+            positionSettable: .falseValue,
+            disposition: .ignoredTransientPopup,
+            reason: .verifiedBundleNonNormalLayer
+        )
+        let matching = WindowAdmissionMetadata(
+            bundleIdentifier: "COM.EXAMPLE.EDITOR",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 3,
+            isMinimized: false,
+            modalObservation: .trueValue,
+            closeButton: .present,
+            positionSettable: .falseValue
+        )
+
+        XCTAssertTrue(profile.matches(matching))
+        XCTAssertEqual(profile.decision().compatibilityProfileIdentifier, "example-picker-v1")
+        XCTAssertFalse(profile.matches(WindowAdmissionMetadata(
+            bundleIdentifier: "com.example.Editor",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 3,
+            isMinimized: false,
+            modalObservation: .falseValue,
+            closeButton: .present,
+            positionSettable: .falseValue
+        )))
+        XCTAssertFalse(profile.matches(WindowAdmissionMetadata(
+            bundleIdentifier: "com.example.Other",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 3,
+            isMinimized: false,
+            modalObservation: .trueValue,
+            closeButton: .present,
+            positionSettable: .falseValue
+        )))
+
+        let coreCandidate = WindowAdmissionMetadata(
+            bundleIdentifier: "com.example.Editor",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 3,
+            isMinimized: false,
+            closeButton: .present
+        )
+        XCTAssertTrue(AccessibilityWindow.shouldCollectSupportMetadataForCompatibility(
+            coreCandidate,
+            profiles: [profile]
+        ))
+        XCTAssertFalse(AccessibilityWindow.shouldCollectSupportMetadataForCompatibility(
+            WindowAdmissionMetadata(
+                bundleIdentifier: "com.example.Editor",
+                role: kAXWindowRole as String,
+                subrole: kAXStandardWindowSubrole as String,
+                windowLayer: 3,
+                isMinimized: false,
+                closeButton: .present
+            ),
+            profiles: [profile]
+        ))
+    }
+
+    func testBuiltInCompatibilityRegistryCannotContainWholeAppPolicy() {
+        let profiles = AccessibilityWindow.builtInCompatibilityProfiles
+
+        XCTAssertEqual(Set(profiles.map(\.identifier)).count, profiles.count)
+        for profile in profiles {
+            XCTAssertFalse(profile.identifier.isEmpty)
+            XCTAssertFalse(profile.bundleIdentifiers.isEmpty)
+            XCTAssertTrue(profile.bundleIdentifiers.allSatisfy { $0 == $0.lowercased() })
+            XCTAssertTrue(
+                profile.role != nil ||
+                    profile.subrole != nil ||
+                    profile.layer != nil ||
+                    profile.modalObservation != nil ||
+                    profile.focusedObservation != nil ||
+                    profile.mainObservation != nil ||
+                    profile.fullscreenButton != nil ||
+                    profile.minimizeButton != nil ||
+                    profile.closeButton != nil ||
+                    profile.zoomButton != nil ||
+                    profile.positionSettable != nil ||
+                    profile.sizeSettable != nil,
+                "A compatibility profile must identify a surface, not apply policy to a whole app"
+            )
+        }
+    }
+
+    func testOverlappingCompatibilityProfilesDoNotSelectBySourceOrder() throws {
+        let profile = try XCTUnwrap(AccessibilityWindow.builtInCompatibilityProfiles.first)
+        let metadata = WindowAdmissionMetadata(
+            bundleIdentifier: "com.openai.codex",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 3,
+            isMinimized: false
+        )
+
+        XCTAssertNil(AccessibilityWindow.uniqueMatchingCompatibilityProfile(
+            for: metadata,
+            in: [profile, profile]
+        ))
     }
 
     func testHighConfidenceSheetAndSystemDialogMetadataFloatAutomatically() {
@@ -1039,8 +1155,15 @@ final class WorkspaceDefinitionTests: XCTestCase {
             subrole: kAXDialogSubrole as String,
             windowLayer: 0,
             isMinimized: false,
+            modalObservation: .trueValue,
+            focusedObservation: .falseValue,
+            mainObservation: .trueValue,
             fullscreenButton: .absent,
-            closeButton: .present
+            minimizeButton: .absent,
+            closeButton: .present,
+            zoomButton: .absent,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue
         )
         let decision = AccessibilityWindow.admissionDecision(for: metadata)
         let fields = WorkspaceEngine.admissionDiagnosticFields(
@@ -1053,7 +1176,15 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertTrue(WorkspaceEngine.shouldLogAdmissionDecisionChange(previous: nil, current: decision))
         XCTAssertFalse(WorkspaceEngine.shouldLogAdmissionDecisionChange(previous: decision, current: decision))
         XCTAssertEqual(fields["automatic-floating"], "true")
+        XCTAssertEqual(fields["ax-modal"], "true")
+        XCTAssertEqual(fields["ax-focused"], "false")
+        XCTAssertEqual(fields["ax-main"], "true")
         XCTAssertEqual(fields["fullscreen-button"], "absent")
+        XCTAssertEqual(fields["minimize-button"], "absent")
+        XCTAssertEqual(fields["zoom-button"], "absent")
+        XCTAssertEqual(fields["position-settable"], "true")
+        XCTAssertEqual(fields["size-settable"], "false")
+        XCTAssertEqual(fields["compatibility-profile"], "none")
         XCTAssertNil(fields["title"])
         XCTAssertNil(fields["document"])
         XCTAssertNil(fields["url"])
@@ -1161,7 +1292,8 @@ final class WorkspaceDefinitionTests: XCTestCase {
                 ),
                 ignoredKey: WindowAdmissionDecision(
                     disposition: .ignoredTransientPopup,
-                    reason: .verifiedBundleNonNormalLayer
+                    reason: .verifiedBundleNonNormalLayer,
+                    compatibilityProfileIdentifier: "codex-transient-non-normal-layer-v1"
                 ),
             ],
             metadata: [
@@ -1170,7 +1302,16 @@ final class WorkspaceDefinitionTests: XCTestCase {
                     role: "AXWindow",
                     subrole: "AXSystemDialog",
                     windowLayer: 0,
-                    isMinimized: false
+                    isMinimized: false,
+                    modalObservation: .trueValue,
+                    focusedObservation: .trueValue,
+                    mainObservation: .trueValue,
+                    fullscreenButton: .absent,
+                    minimizeButton: .absent,
+                    closeButton: .present,
+                    zoomButton: .absent,
+                    positionSettable: .trueValue,
+                    sizeSettable: .falseValue
                 ),
                 ignoredKey: WindowAdmissionMetadata(
                     bundleIdentifier: "com.openai.codex",
@@ -1186,7 +1327,23 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertEqual(records[0].disposition, "managed-dialog")
         XCTAssertEqual(records[1].reason, "verified-bundle-non-normal-layer")
         XCTAssertEqual(records[1].windowLayer, "3")
+        XCTAssertEqual(
+            records[1].compatibilityProfileIdentifier,
+            "codex-transient-non-normal-layer-v1"
+        )
+        XCTAssertEqual(records[0].modalObservation, "true")
+        XCTAssertEqual(records[0].positionSettable, "true")
+        XCTAssertEqual(records[0].sizeSettable, "false")
         XCTAssertFalse(String(describing: records).lowercased().contains("title"))
+
+        let snapshot = try? XCTUnwrap(
+            WindowAdmissionSupportSnapshot(records: records).encodedString()
+        )
+        XCTAssertTrue(snapshot?.contains("\"schemaVersion\" : 2") == true)
+        XCTAssertTrue(snapshot?.contains("\"modalObservation\" : \"true\"") == true)
+        XCTAssertTrue(snapshot?.contains("codex-transient-non-normal-layer-v1") == true)
+        XCTAssertFalse(snapshot?.lowercased().contains("title") == true)
+        XCTAssertFalse(snapshot?.contains("/Users/") == true)
     }
 
     func testAssignedWorkspaceUsesItsIndependentDisplayHome() {

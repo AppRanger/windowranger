@@ -3378,6 +3378,8 @@ private struct DiagnosticsSettingsView: View {
                 HStack {
                     Text("Privacy-safe current classifications")
                     Spacer()
+                    Button("Copy Snapshot") { copyAdmissionSnapshot() }
+                        .disabled(admissionRecords.isEmpty)
                     Button("Refresh") { refreshAdmissionRecords() }
                 }
                 if !hasLoadedAdmissionRecords {
@@ -3402,12 +3404,20 @@ private struct DiagnosticsSettingsView: View {
                             Text("Reason: \(record.reason) · AX: \(record.role) / \(record.subrole) · layer \(record.windowLayer) · window \(record.id)")
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
+                            if let profile = record.compatibilityProfileIdentifier {
+                                Text("Built-in compatibility: \(profile)")
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text("Modal \(record.modalObservation) · focused \(record.focusedObservation) · main \(record.mainObservation) · controls F/M/C/Z \(record.fullscreenButton)/\(record.minimizeButton)/\(record.closeButton)/\(record.zoomButton) · move \(record.positionSettable) · resize \(record.sizeSettable)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 3)
                     }
                     .frame(minHeight: 180)
                 }
-                Text("This view never includes window titles, document names, URLs, typed content, file paths, or window contents. Refresh reads the engine's existing classification snapshot and does not move or refocus windows.")
+                Text("This view never includes window titles, document names, URLs, typed content, file paths, or window contents. Refresh performs read-only capability queries for already tracked windows; it does not re-enumerate, move, resize, or refocus them.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -3441,6 +3451,14 @@ private struct DiagnosticsSettingsView: View {
             admissionRecords = records
             hasLoadedAdmissionRecords = true
         }
+    }
+
+    private func copyAdmissionSnapshot() {
+        guard let snapshot = WindowAdmissionSupportSnapshot(records: admissionRecords).encodedString() else {
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(snapshot, forType: .string)
     }
 }
 #endif
