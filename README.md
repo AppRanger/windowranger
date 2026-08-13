@@ -88,6 +88,7 @@ Default shortcuts:
 | Place at a Tiled corner | Control-Option plus two perpendicular arrows within 200 ms |
 | Smart resize smaller / larger | Control-Option-`-` / `=` |
 | Move current workspace to next display | Option-Shift-Tab |
+| Toggle Quick App | Control-Option-Backtick (configurable) |
 | Open contextual command wheel | Control-Option-Space (configurable) |
 
 Shortcut validation has one shared model for global commands, the command-wheel trigger, and every
@@ -198,9 +199,22 @@ after a relevant geometry input changes or the user explicitly requests the layo
 
 A profile is a reusable configuration, never a snapshot of open windows. Each profile contains its
 ordered workspace definitions and keys, per-workspace layout and geometry, Unified or Independent
-Displays mode, abstract display roles and workspace-role homes, and the complete app-rule collection
-including paused rules. Exact open-window IDs, workspace membership, frames, and focus remain local
-session state and are not copied into a profile.
+Displays mode, abstract display roles and workspace-role homes, the complete app-rule collection
+including paused rules, and one optional Quick App with its presentation settings. An application
+is either a Quick App or has normal App Rules within one profile, never both. Exact
+open-window IDs, workspace membership, frames, and focus remain local session state and are not
+copied into a profile.
+
+The profile Quick App is a Quake-style single-window overlay for an already running app. Its
+configurable shortcut defaults to Control-Option-Backtick. The one unambiguous standard window for
+that app animates from a chosen screen edge, defaulting to a roll-down from the top at full usable
+width and 80 percent height; the animation can be disabled. Left and right presentations use the
+same percentage as screen width. Pressing the shortcut again or focusing another app retracts and
+parks it. While pinned,
+that window stays outside normal workspace layout, reset, focus cycling, and frame persistence.
+Profiles can choose different apps and heights, while the shortcut remains a global preference.
+WindowRanger reports a clear no-op when the app has no available window or multiple ambiguous
+windows rather than launching or guessing.
 
 Profile definitions are stored as one versioned value and sync atomically through iCloud when sync is
 enabled. New installations start local-only until **Sync settings with iCloud** is explicitly enabled.

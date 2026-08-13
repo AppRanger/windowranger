@@ -853,6 +853,16 @@ final class WorkspaceEngine {
         let candidateTarget: WindowKey?
     }
 
+    private struct DropDownAppSession {
+        let windowKey: WindowKey
+        let bundleIdentifier: String
+        let direction: DropDownAppDirection
+        let isAnimationEnabled: Bool
+        var isPresented: Bool
+        var displayIdentifier: String?
+        var previousFocusKey: WindowKey?
+    }
+
     private enum ManualTiledMoveReconciliation: Equatable {
         case none
         case dragInProgress
@@ -870,6 +880,9 @@ final class WorkspaceEngine {
     private var displayMode: MultiDisplayMode
     private var workspaceDisplayAssignments: [UUID: String]
     private var appRulesByBundleIdentifier: [String: AppRule]
+    private var dropDownAppConfiguration: DropDownAppConfiguration?
+    private var dropDownAppSession: DropDownAppSession?
+    private var dropDownAnimationGeneration: UInt64 = 0
     private var focusFollowsMovedWindow: Bool
     private var automaticallyUnhideApplications: Bool
     private var focusedWindowHighlightEnabled: Bool
@@ -935,6 +948,7 @@ final class WorkspaceEngine {
         displayMode: MultiDisplayMode = .unified,
         workspaceDisplayAssignments: [UUID: String] = [:],
         appRules: [AppRule] = [],
+        dropDownApp: DropDownAppConfiguration? = nil,
         focusFollowsMovedWindow: Bool = false,
         automaticallyUnhideApplications: Bool = false,
         focusedWindowHighlightEnabled: Bool = false,
@@ -947,6 +961,7 @@ final class WorkspaceEngine {
         self.displayMode = displayMode
         self.workspaceDisplayAssignments = workspaceDisplayAssignments
         appRulesByBundleIdentifier = Self.indexedAppRules(appRules)
+        dropDownAppConfiguration = dropDownApp?.normalized()
         self.focusFollowsMovedWindow = focusFollowsMovedWindow
         self.automaticallyUnhideApplications = automaticallyUnhideApplications
         self.focusedWindowHighlightEnabled = focusedWindowHighlightEnabled
@@ -1039,6 +1054,7 @@ final class WorkspaceEngine {
     /// synchronous queue hand-off gives persistence a bounded opportunity to finish.
     func prepareForSystemSleep() {
         queue.sync {
+            restoreAndClearDropDownAppSession(reason: "system-sleep")
             let focused = interactionFocusedWindowSnapshot()
             let tracked = focused.flatMap { windows[$0.key] }
             let displays = Self.activeDisplays()
@@ -1157,10 +1173,83 @@ final class WorkspaceEngine {
             wakeReconciliationWorkItem = nil
             directionalMoveGestureContext = nil
             manualTiledDragSession = nil
+            dropDownAnimationGeneration &+= 1
+            dropDownAppSession = nil
             // Preserve workspace membership and original frames before the safety escape hatch
             // places every managed window on the main display.
             persistState(preservingPendingRestores: true, waitForCompletion: true)
             restoreManagedWindowsForQuit()
+        }
+    }
+
+    func updateDropDownAppConfiguration(_ configuration: DropDownAppConfiguration?) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let normalized = configuration?.normalized()
+            guard normalized != self.dropDownAppConfiguration else { return }
+            self.restoreAndClearDropDownAppSession(reason: "configuration-changed")
+            self.dropDownAppConfiguration = normalized
+            self.applyVisibility()
+            self.persistState(preservingPendingRestores: true)
+            self.emitState()
+        }
+    }
+
+    func toggleDropDownApp(correlationID: String? = nil) {
+        let correlationID = correlationID ?? diagnostics.makeCorrelationID()
+        queue.async { [weak self] in
+            guard let self else { return }
+            guard let configuration = self.dropDownAppConfiguration else {
+                self.emitCommandFeedback(
+                    "Choose a Quick App in Applications first.",
+                    correlationID: correlationID
+                )
+                return
+            }
+            self.refreshWindows(correlationID: correlationID)
+            if self.dropDownAppSession?.isPresented == true {
+                self.hideDropDownApp(
+                    restorePreviousFocus: true,
+                    reason: "shortcut-toggle",
+                    correlationID: correlationID
+                )
+                return
+            }
+
+            let matching = self.windows.values.filter {
+                $0.bundleIdentifier?.caseInsensitiveCompare(configuration.bundleIdentifier) == .orderedSame &&
+                    !self.temporarilyDeferredWindowKeys.contains($0.key) &&
+                    self.fullscreenSessions[$0.key] == nil
+            }
+            let target: TrackedWindow
+            if let session = self.dropDownAppSession,
+               let existing = self.windows[session.windowKey],
+               matching.contains(where: { $0.key == existing.key }) {
+                target = existing
+            } else {
+                guard matching.count == 1, let only = matching.first else {
+                    let message = matching.isEmpty
+                        ? "(configuration.displayName) is not running with an available window."
+                        : "(configuration.displayName) has more than one available window. Close the extras before using it as the Quick App."
+                    self.emitCommandFeedback(message, correlationID: correlationID)
+                    return
+                }
+                target = only
+                self.dropDownAppSession = DropDownAppSession(
+                    windowKey: only.key,
+                    bundleIdentifier: configuration.bundleIdentifier,
+                    direction: configuration.direction,
+                    isAnimationEnabled: configuration.isAnimationEnabled,
+                    isPresented: false,
+                    displayIdentifier: nil,
+                    previousFocusKey: nil
+                )
+            }
+            self.showDropDownApp(
+                target,
+                configuration: configuration,
+                correlationID: correlationID
+            )
         }
     }
 
@@ -1216,6 +1305,8 @@ final class WorkspaceEngine {
                 return
             }
             let switchingProfile = self.currentProfileID != configuration.profileID
+            self.restoreAndClearDropDownAppSession(reason: "profile-transition")
+            self.dropDownAppConfiguration = configuration.dropDownApp?.normalized()
             self.directionalMoveGestureContext = nil
             self.invalidateFocusWorkForLifecycle()
             self.pendingFocusVerification?.cancel()
@@ -1560,6 +1651,7 @@ final class WorkspaceEngine {
 
             for key in self.windows.keys {
                 guard var tracked = self.windows[key],
+                      !self.isDropDownAppWindow(key),
                       let bundleIdentifier = tracked.bundleIdentifier
                 else { continue }
                 let previous = self.resolvedRule(for: bundleIdentifier, in: previousRules)
@@ -1924,7 +2016,8 @@ final class WorkspaceEngine {
                 return
             }
             let candidates = self.windows.compactMap { key, tracked -> WorkspaceApplicationWindowCandidate? in
-                guard tracked.workspaceID == workspaceID,
+                guard !self.isDropDownAppWindow(key),
+                      tracked.workspaceID == workspaceID,
                       !self.ignoredWindowKeys.contains(key),
                       !self.temporarilyDeferredWindowKeys.contains(key),
                       !self.resolvedRule(for: tracked.bundleIdentifier).keepsOnAllWorkspaces,
@@ -2253,6 +2346,7 @@ final class WorkspaceEngine {
             let now = Date()
             self.focusCycleRejectedUntil = self.focusCycleRejectedUntil.filter { $0.value > now }
             let candidates = self.windows.compactMap { key, tracked -> (WindowKey, TrackedWindow, WindowFrame, String)? in
+                guard !self.isDropDownAppWindow(key) else { return nil }
                 let rule = self.resolvedRule(for: tracked.bundleIdentifier)
                 let workspaceMatches = tracked.workspaceID == workspaceID || rule.keepsOnAllWorkspaces
                 let visible = Self.shouldWindowBeVisible(
@@ -3475,6 +3569,15 @@ final class WorkspaceEngine {
             DispatchQueue.main.async {
                 radialInteractionCancellation(shouldCancelRadialInteraction)
             }
+            if let dropDownSession = self.dropDownAppSession,
+               dropDownSession.isPresented,
+               dropDownSession.windowKey.processIdentifier != processIdentifier {
+                self.hideDropDownApp(
+                    restorePreviousFocus: false,
+                    reason: "another-app-focused",
+                    correlationID: nil
+                )
+            }
             guard Self.shouldProcessApplicationActivation(
                 processIdentifier: processIdentifier,
                 ownProcessIdentifier: self.ownProcessIdentifier
@@ -3486,12 +3589,31 @@ final class WorkspaceEngine {
                 )
                 return
             }
+            if let dropDownSession = self.dropDownAppSession,
+               dropDownSession.isPresented,
+               dropDownSession.windowKey.processIdentifier == processIdentifier {
+                self.diagnostics.log(
+                    category: "drop-down-app",
+                    event: "target-activation-observed",
+                    fields: ["window": Self.diagnosticWindowKey(dropDownSession.windowKey)]
+                )
+            }
             let intendedTarget = self.programmaticFocusTarget
             let intendedCorrelationID = self.programmaticFocusCorrelationID
             let intendedGeneration = self.programmaticFocusGeneration
             let intendedTargetIsCurrent = Date() < self.programmaticFocusDeadline &&
                 (intendedGeneration.map(self.isFocusActionGenerationCurrent) ?? true)
             self.refreshWindows()
+
+            if let dropDownSession = self.dropDownAppSession,
+               dropDownSession.isPresented,
+               dropDownSession.windowKey.processIdentifier == processIdentifier,
+               intendedTarget != dropDownSession.windowKey {
+                self.lastObservedFocusedWindow = dropDownSession.windowKey
+                self.recentInteractionFocusTarget = nil
+                self.recentInteractionDisplayDeadline = .distantPast
+                return
+            }
 
             let now = Date()
             self.supersededProgrammaticActivationUntil =
@@ -4160,6 +4282,7 @@ final class WorkspaceEngine {
         let now = Date()
         focusCycleRejectedUntil = focusCycleRejectedUntil.filter { $0.value > now }
         return windows.compactMap { key, tracked -> (WindowKey, WindowFrame)? in
+            guard !isDropDownAppWindow(key) else { return nil }
             let rule = resolvedRule(for: tracked.bundleIdentifier)
             let workspaceMatches = tracked.workspaceID == workspaceID || rule.keepsOnAllWorkspaces
             let visible = Self.shouldWindowBeVisible(
@@ -4232,6 +4355,7 @@ final class WorkspaceEngine {
         correlationID: String?
     ) -> [DirectionalWindowCandidate<WindowKey>] {
         windows.compactMap { key, tracked in
+            guard !isDropDownAppWindow(key) else { return nil }
             let rule = resolvedRule(for: tracked.bundleIdentifier)
             let workspaceMatches = tracked.workspaceID == workspaceID || rule.keepsOnAllWorkspaces
             let visible = Self.shouldWindowBeVisible(
@@ -4527,7 +4651,8 @@ final class WorkspaceEngine {
         correlationID: String?
     ) -> [WindowKey] {
         windows.values.filter { tracked in
-            guard tracked.workspaceID == workspaceID,
+            guard !isDropDownAppWindow(tracked.key),
+                  tracked.workspaceID == workspaceID,
                   Self.shouldIncludeInLayout(
                       layoutOverride: tracked.layoutOverride,
                       admissionDecision: tracked.admissionDecision,
@@ -4987,6 +5112,7 @@ final class WorkspaceEngine {
         let displays = Self.activeDisplays()
         let eligibleKeys = Set(windows.compactMap { key, tracked -> WindowKey? in
             guard key.processIdentifier != ownProcessIdentifier,
+                  !isDropDownAppWindow(key),
                   !ignoredWindowKeys.contains(key),
                   staleParkedFocusSuppression[key] == nil,
                   Self.shouldWindowBeVisible(
@@ -5145,7 +5271,7 @@ final class WorkspaceEngine {
         queue.async { [weak self] in
             guard let self else { return }
             self.refreshWindows()
-            self.reapplyWorkspaceRules(to: Array(self.windows.keys))
+            self.reapplyWorkspaceRules(to: self.windows.keys.filter { !self.isDropDownAppWindow($0) })
             self.applyVisibleWindows(self.windows.values, displays: Self.activeDisplays())
             self.persistState(preservingPendingRestores: true)
             self.emitState()
@@ -5180,7 +5306,7 @@ final class WorkspaceEngine {
             let workspaceID = workspaceResolution.workspaceID
             guard self.isWorkspaceActive(workspaceID) else { return }
             let initialTargetKeys = self.windows.values
-                .filter { $0.workspaceID == workspaceID }
+                .filter { $0.workspaceID == workspaceID && !self.isDropDownAppWindow($0.key) }
                 .map(\.key)
             let reroutedByRules = self.reapplyWorkspaceRules(to: initialTargetKeys)
             let resetFocusContextKey = focusContextKey.flatMap { key in
@@ -6302,6 +6428,9 @@ final class WorkspaceEngine {
                 managedWindowCount: windows.count
             )
         }
+        if topologyChanged, dropDownAppSession != nil {
+            restoreAndClearDropDownAppSession(reason: "display-topology-changed")
+        }
         if topologyChanged,
            let recentInteractionDisplayIdentifier,
            !displays.contains(where: { $0.identifier == recentInteractionDisplayIdentifier }) {
@@ -6453,7 +6582,8 @@ final class WorkspaceEngine {
                         admissionDecision: tracked.admissionDecision,
                         rule: rule
                     )
-                    if isWorkspaceActive(tracked.workspaceID),
+                    if !isDropDownAppWindow(key),
+                       isWorkspaceActive(tracked.workspaceID),
                        (workspaceLayout(for: tracked.workspaceID) == .none ||
                         !layoutDecision.includesInLayout ||
                         previousAdmissionDecision.automaticallyFloats != admissionDecision.automaticallyFloats),
@@ -6569,6 +6699,11 @@ final class WorkspaceEngine {
         )
         let removedTrackedWindows = windows.filter { removedTrackedWindowKeys.contains($0.key) }
         if !removedTrackedWindowKeys.isEmpty {
+            if let dropDownKey = dropDownAppSession?.windowKey,
+               removedTrackedWindowKeys.contains(dropDownKey) {
+                dropDownAnimationGeneration &+= 1
+                dropDownAppSession = nil
+            }
             windows = windows.filter { !removedTrackedWindowKeys.contains($0.key) }
             lastFocusedWindow = WindowEnumerationLifecycle.pruning(
                 lastFocusedWindow,
@@ -6702,7 +6837,8 @@ final class WorkspaceEngine {
         }
 
         var manualTiledDragInProgress = false
-        if performAXWrites, !isStartup, !topologyChanged, let focused {
+        if performAXWrites, !isStartup, !topologyChanged, let focused,
+           !isDropDownAppWindow(focused) {
             let moveReconciliation = reconcileManualTiledMove(
                 focusedWindow: focused,
                 observedFrames: observedFrames,
@@ -6737,6 +6873,7 @@ final class WorkspaceEngine {
         ) {
             let visibleManagedWindows = windows.values.filter {
                 !temporarilyDeferredWindowKeys.contains($0.key) &&
+                !isDropDownAppWindow($0.key) &&
                 Self.shouldWindowBeVisible(
                     workspaceID: $0.workspaceID,
                     activeWorkspaceIDs: activeWorkspaceIDs,
@@ -7153,6 +7290,7 @@ final class WorkspaceEngine {
             }
             return $0.key.windowIdentifier < $1.key.windowIdentifier
         }.compactMap { tracked in
+            guard !isDropDownAppWindow(tracked.key) else { return nil }
             let rule = resolvedRule(for: tracked.bundleIdentifier)
             guard Self.shouldWindowBeVisible(
                 workspaceID: tracked.workspaceID,
@@ -7931,12 +8069,16 @@ final class WorkspaceEngine {
         guard let rawFocusedWindow else { return nil }
         let unusableAnchor = rawFocusedWindow.key.processIdentifier == ownProcessIdentifier ||
             ignoredWindowKeys.contains(rawFocusedWindow.key) ||
+            isDropDownAppWindow(rawFocusedWindow.key) ||
             staleParkedFocusSuppression[rawFocusedWindow.key] != nil
         guard unusableAnchor else { return rawFocusedWindow }
 
         let fallbackKeys = [recentInteractionFocusTarget, lastObservedFocusedWindow].compactMap { $0 }
         for key in fallbackKeys {
-            guard staleParkedFocusSuppression[key] == nil, let tracked = windows[key] else { continue }
+            guard !isDropDownAppWindow(key),
+                  staleParkedFocusSuppression[key] == nil,
+                  let tracked = windows[key]
+            else { continue }
             return FocusedWindowSnapshot(
                 key: key,
                 element: tracked.element,
@@ -8129,6 +8271,187 @@ final class WorkspaceEngine {
         focusedWindowSnapshot()?.key
     }
 
+    private func showDropDownApp(
+        _ target: TrackedWindow,
+        configuration: DropDownAppConfiguration,
+        correlationID: String
+    ) {
+        let displays = Self.activeDisplays()
+        guard let display = dropDownTargetDisplay(displays: displays) else {
+            emitCommandFeedback("No display is available for the Quick App.", correlationID: correlationID)
+            return
+        }
+        let focusedKey = interactionFocusedWindowSnapshot()?.key
+        let previousFocus = focusedKey == target.key ? nil : focusedKey
+        let presented = DropDownAppGeometry.presentedFrame(
+            in: display.usableBounds,
+            sizeFraction: configuration.heightFraction,
+            direction: configuration.direction
+        )
+        let retracted = DropDownAppGeometry.retractedFrame(
+            for: presented,
+            in: display.usableBounds,
+            direction: configuration.direction
+        )
+        dropDownAnimationGeneration &+= 1
+        let generation = dropDownAnimationGeneration
+        dropDownAppSession = DropDownAppSession(
+            windowKey: target.key,
+            bundleIdentifier: configuration.bundleIdentifier,
+            direction: configuration.direction,
+            isAnimationEnabled: configuration.isAnimationEnabled,
+            isPresented: true,
+            displayIdentifier: display.identifier,
+            previousFocusKey: previousFocus
+        )
+        if configuration.isAnimationEnabled {
+            AccessibilityWindow.setFrame(retracted, of: target.element)
+            animateDropDownApp(
+                target,
+                frames: DropDownAppGeometry.animationFrames(from: retracted, to: presented),
+                generation: generation
+            )
+        } else {
+            AccessibilityWindow.setFrame(presented, of: target.element)
+        }
+        focusManagedWindow(target.key, tracked: target, correlationID: correlationID)
+        diagnostics.log(
+            category: "drop-down-app",
+            event: "shown",
+            correlation: correlationID,
+            fields: [
+                "window": Self.diagnosticWindowKey(target.key),
+                "display": display.identifier,
+                "size-percent": String(Int((configuration.heightFraction * 100).rounded())),
+                "direction": configuration.direction.rawValue,
+                "animated": String(configuration.isAnimationEnabled),
+            ]
+        )
+    }
+
+    private func hideDropDownApp(
+        restorePreviousFocus: Bool,
+        reason: String,
+        correlationID: String?
+    ) {
+        guard var session = dropDownAppSession,
+              session.isPresented,
+              let target = windows[session.windowKey]
+        else { return }
+        session.isPresented = false
+        dropDownAppSession = session
+        dropDownAnimationGeneration &+= 1
+        let generation = dropDownAnimationGeneration
+        let displays = Self.activeDisplays()
+        let current = AccessibilityWindow.frame(of: target.element)
+        let display = session.displayIdentifier.flatMap { identifier in
+            displays.first { $0.identifier == identifier }
+        } ?? dropDownTargetDisplay(displays: displays)
+        if let current, let display {
+            let retracted = DropDownAppGeometry.retractedFrame(
+                for: current,
+                in: display.usableBounds,
+                direction: session.direction
+            )
+            let parkAfterRetraction = { [weak self] in
+                guard let self,
+                      self.dropDownAnimationGeneration == generation,
+                      self.dropDownAppSession?.isPresented == false,
+                      let latest = self.windows[target.key]
+                else { return }
+                self.applyPositionChanges([
+                    PositionChange(window: latest, position: self.parkingPosition(displays: displays)),
+                ], correlationID: correlationID)
+            }
+            if session.isAnimationEnabled {
+                animateDropDownApp(
+                    target,
+                    frames: DropDownAppGeometry.animationFrames(from: current, to: retracted),
+                    generation: generation,
+                    completion: parkAfterRetraction
+                )
+            } else {
+                parkAfterRetraction()
+            }
+        } else {
+            applyPositionChanges([
+                PositionChange(window: target, position: parkingPosition(displays: displays)),
+            ], correlationID: correlationID)
+        }
+        if restorePreviousFocus,
+           let previousFocusKey = session.previousFocusKey,
+           let previous = windows[previousFocusKey] {
+            focusManagedWindow(previousFocusKey, tracked: previous, correlationID: correlationID)
+        } else {
+            clearProgrammaticFocusIntent()
+        }
+        diagnostics.log(
+            category: "drop-down-app",
+            event: "hidden",
+            correlation: correlationID,
+            fields: [
+                "window": Self.diagnosticWindowKey(target.key),
+                "reason": reason,
+                "restored-previous-focus": String(restorePreviousFocus),
+            ]
+        )
+    }
+
+    private func animateDropDownApp(
+        _ target: TrackedWindow,
+        frames: [WindowFrame],
+        generation: UInt64,
+        completion: (() -> Void)? = nil
+    ) {
+        guard !frames.isEmpty else {
+            completion?()
+            return
+        }
+        let interval = DropDownAppGeometry.animationDuration / Double(frames.count)
+        for (index, frame) in frames.enumerated() {
+            queue.asyncAfter(deadline: .now() + (interval * Double(index + 1))) { [weak self] in
+                guard let self,
+                      self.dropDownAnimationGeneration == generation,
+                      self.windows[target.key] != nil
+                else { return }
+                AccessibilityWindow.setFrame(frame, of: target.element)
+                if index == frames.count - 1 { completion?() }
+            }
+        }
+    }
+
+    private func restoreAndClearDropDownAppSession(reason: String) {
+        guard let session = dropDownAppSession else { return }
+        dropDownAnimationGeneration &+= 1
+        if let target = windows[session.windowKey] {
+            applyFrameChanges([FrameChange(window: target, frame: target.restoreFrame)])
+        }
+        dropDownAppSession = nil
+        diagnostics.log(
+            category: "drop-down-app",
+            event: "session-cleared",
+            fields: ["reason": reason]
+        )
+    }
+
+    private func dropDownTargetDisplay(displays: [DisplaySnapshot]) -> DisplaySnapshot? {
+        let pointer = CGEvent(source: nil)?.location
+        if let pointer, let pointerDisplay = displays.first(where: { $0.bounds.contains(pointer) }) {
+            return pointerDisplay
+        }
+        let interactionDisplayIdentifier = interactionDisplayResolution(
+            focused: interactionFocusedWindowSnapshot(),
+            displays: displays
+        ).identifier
+        return displays.first(where: { $0.identifier == interactionDisplayIdentifier })
+            ?? displays.first(where: \.isMain)
+            ?? displays.first
+    }
+
+    private func isDropDownAppWindow(_ key: WindowKey) -> Bool {
+        dropDownAppSession?.windowKey == key
+    }
+
     @discardableResult
     private func applyVisibility(
         displays: [DisplaySnapshot]? = nil,
@@ -8148,6 +8471,7 @@ final class WorkspaceEngine {
         let expectedLayoutFrames = applyVisibleWindows(
             windows.values.filter {
                 isEligible($0) &&
+                !isDropDownAppWindow($0.key) &&
                 Self.shouldWindowBeVisible(
                     workspaceID: $0.workspaceID,
                     activeWorkspaceIDs: activeWorkspaceIDs,
@@ -8160,6 +8484,7 @@ final class WorkspaceEngine {
         applyPositionChanges(windows.values
             .filter {
                 isEligible($0) &&
+                !isDropDownAppWindow($0.key) &&
                 !Self.shouldWindowBeVisible(
                     workspaceID: $0.workspaceID,
                     activeWorkspaceIDs: activeWorkspaceIDs,
@@ -8169,6 +8494,15 @@ final class WorkspaceEngine {
             .map { PositionChange(window: $0, position: parkingPosition) },
             correlationID: correlationID
         )
+        if let session = dropDownAppSession,
+           !session.isPresented,
+           let target = windows[session.windowKey],
+           isEligible(target) {
+            applyPositionChanges(
+                [PositionChange(window: target, position: parkingPosition)],
+                correlationID: correlationID
+            )
+        }
         return expectedLayoutFrames
     }
 
@@ -8184,13 +8518,16 @@ final class WorkspaceEngine {
         // Destination first reduces the blank/flicker interval; unrelated parked workspaces get
         // no AX traffic at all.
         applyVisibleWindows(
-            windows.values.filter { $0.workspaceID == targetWorkspaceID },
+            windows.values.filter {
+                $0.workspaceID == targetWorkspaceID && !isDropDownAppWindow($0.key)
+            },
             displays: displays,
             correlationID: correlationID
         )
         applyPositionChanges(windows.values
             .filter {
                 $0.workspaceID == sourceWorkspaceID &&
+                    !isDropDownAppWindow($0.key) &&
                     !resolvedRule(for: $0.bundleIdentifier).keepsOnAllWorkspaces
             }
             .map { PositionChange(window: $0, position: parkingPosition) },
@@ -8208,6 +8545,7 @@ final class WorkspaceEngine {
         var frameChanges: [FrameChange] = []
         var expectedLayoutFrames: [WindowKey: WindowFrame] = [:]
         let writeEligibleWindows = trackedWindows.filter {
+            !isDropDownAppWindow($0.key) &&
             FullscreenSessionPolicy.allowsGeometryWrite(
                 hasFullscreenSession: fullscreenSessions[$0.key] != nil,
                 isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains($0.key)
@@ -8435,6 +8773,7 @@ final class WorkspaceEngine {
         guard !workspaceIDs.isEmpty else { return }
         for key in windows.keys {
             guard var tracked = windows[key],
+                  !isDropDownAppWindow(key),
                   FullscreenSessionPolicy.allowsGeometryWrite(
                     hasFullscreenSession: fullscreenSessions[key] != nil,
                     isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains(key)
@@ -9461,6 +9800,7 @@ final class WorkspaceEngine {
         focusCycleRejectedUntil = focusCycleRejectedUntil.filter { $0.value > now }
         let candidates: [(WorkspaceSwitchFocusCandidate<WindowKey>, WindowFrame)] = windows.compactMap {
             key, tracked in
+            guard !isDropDownAppWindow(key) else { return nil }
             let rule = resolvedRule(for: tracked.bundleIdentifier)
             let frame = AccessibilityWindow.frame(of: tracked.element)
             let actualDisplayIdentifier = frame.flatMap {

@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         displayMode: settingsStore.multiDisplayMode,
         workspaceDisplayAssignments: settingsStore.workspaceDisplayHomesForEngine,
         appRules: settingsStore.appRules,
+        dropDownApp: settingsStore.dropDownApp,
         focusFollowsMovedWindow: settingsStore.focusFollowsMovedWindow,
         automaticallyUnhideApplications: settingsStore.automaticallyUnhideApplications,
         focusedWindowHighlightEnabled: settingsStore.focusedWindowHighlightEnabled,
@@ -376,6 +377,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.updateGlobeFnHoldActivation(radialMenuEnabled: enabled)
         }
         .store(in: &cancellables)
+
+        settingsStore.$dropDownApp
+            .dropFirst()
+            .filter { [weak self] _ in self?.settingsStore.isApplyingProfileActivation == false }
+            .removeDuplicates()
+            .debounce(for: .milliseconds(100), scheduler: RunLoop.main)
+            .sink { [weak self] configuration in
+                self?.engine.updateDropDownAppConfiguration(configuration)
+            }
+            .store(in: &cancellables)
 
         settingsStore.$radialMenuGlobeFnHoldEnabled
             .dropFirst()

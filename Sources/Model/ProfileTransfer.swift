@@ -30,6 +30,7 @@ struct PortableProfileDefinition: Codable, Equatable, Sendable {
     var displayRoles: [ProfileDisplayRole]
     var workspaceRoleAssignments: [UUID: UUID]
     var appRules: [AppRule]
+    var dropDownApp: DropDownAppConfiguration?
 
     init(profile: WindowManagerProfile) {
         id = profile.id
@@ -39,6 +40,7 @@ struct PortableProfileDefinition: Codable, Equatable, Sendable {
         displayRoles = profile.displayRoles
         workspaceRoleAssignments = profile.workspaceRoleAssignments
         appRules = profile.appRules
+        dropDownApp = profile.dropDownApp
     }
 }
 
@@ -259,6 +261,26 @@ enum ProfileTransferCodec {
                     "more than \(maximumAppRulesPerProfile) application rules in one profile"
                 )
             }
+            if let dropDownApp = profile.dropDownApp {
+                let bundleIdentifier = dropDownApp.bundleIdentifier
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !bundleIdentifier.isEmpty,
+                      bundleIdentifier.count <= maximumBundleIdentifierLength,
+                      bundleIdentifier.rangeOfCharacter(from: .newlines) == nil
+                else { throw ProfileTransferError.invalidValue("Quick App bundle identifier") }
+                try validateLabel(dropDownApp.displayName, field: "Quick App display name")
+                let heightRange = ClosedRange(
+                    uncheckedBounds: (
+                        DropDownAppConfiguration.minimumHeightFraction,
+                        DropDownAppConfiguration.maximumHeightFraction
+                    )
+                )
+                guard dropDownApp.heightFraction.isFinite,
+                      heightRange.contains(dropDownApp.heightFraction)
+                else {
+                    throw ProfileTransferError.invalidValue("Quick App size")
+                }
+            }
 
             var workspaceIDs = Set<UUID>()
             var usedKeys = Set<String>()
@@ -368,7 +390,10 @@ enum ProfileTransferCodec {
                     return (remappedWorkspaceID, remappedRoleID)
                 }
             )
-            let rules = try source.appRules.map { rule -> AppRule in
+            let quickAppBundleIdentifier = source.dropDownApp?.bundleIdentifier.lowercased()
+            let rules = try source.appRules.filter { rule in
+                rule.bundleIdentifier.lowercased() != quickAppBundleIdentifier
+            }.map { rule -> AppRule in
                 var remapped = rule
                 if let workspaceID = rule.assignedWorkspaceID {
                     guard let importedWorkspaceID = workspaceIDMap[workspaceID] else {
@@ -385,7 +410,8 @@ enum ProfileTransferCodec {
                 displayMode: source.displayMode,
                 displayRoles: roles,
                 workspaceRoleAssignments: assignments,
-                appRules: rules
+                appRules: rules,
+                dropDownApp: source.dropDownApp
             )
             guard profile.normalized() == profile else {
                 throw ProfileTransferError.invalidValue("profile normalization would discard data")
