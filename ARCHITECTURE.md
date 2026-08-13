@@ -236,6 +236,10 @@ observed result rather than the setter return: if the app remains inactive, one 
 activation fallback is allowed before at most one exact-window retry. A genuine competing or ignored
 focus aborts the transaction. One-shot focus paths that do not advance through candidates retain the
 immediate AppKit compatibility fallback only when Accessibility rejects the frontmost write.
+An ordinary layer-0 standard window with read-only focus attributes remains a candidate only when it
+reports itself as both its application's focused and main window and supports raising; the same exact
+WindowServer verification must still succeed after activation. Read-only windows without that local
+identity remain excluded.
 Already-active applications remain on the exact-window-only path. Verification normally requires the
 exact Accessibility focused-window identity. When that value is temporarily absent, it accepts the
 target only if the application is active and WindowServer independently reports that exact layer-0

@@ -330,6 +330,13 @@ struct RadialMenuModel: Equatable, Sendable {
 }
 
 enum RadialCommandCatalogue {
+    enum SymbolName {
+        static let moveToSpace = "windowranger.move-to-space"
+        static let placeWindow = "windowranger.place-window"
+        static let goToSpace = "windowranger.go-to-space"
+        static let resetWindowsInSpace = "windowranger.reset-windows-in-space"
+    }
+
     static let knownItemIDs = Set(RadialTopLevelItemID.allKnown)
     static let allMetadata = RadialTopLevelItemID.allKnown.compactMap(metadata)
 
@@ -355,14 +362,18 @@ enum RadialCommandCatalogue {
         case .moveToSpace: .init(
             reference: reference,
             title: "Move to Space",
-            systemImage: "rectangle.portrait.and.arrow.forward"
+            systemImage: SymbolName.moveToSpace
         )
-        case .resize: .init(reference: reference, title: "Resize", systemImage: "viewfinder")
-        case .goToSpace: .init(reference: reference, title: "Go to Space", systemImage: "scope")
-        case .nextSpace: .init(reference: reference, title: "Next Space", systemImage: "arrow.forward.square")
-        case .previousSpace: .init(reference: reference, title: "Previous Space", systemImage: "arrow.backward.square")
+        case .resize: .init(reference: reference, title: "Resize", systemImage: SymbolName.placeWindow)
+        case .goToSpace: .init(reference: reference, title: "Go to Space", systemImage: SymbolName.goToSpace)
+        case .nextSpace: .init(reference: reference, title: "Next Space", systemImage: "arrow.right")
+        case .previousSpace: .init(reference: reference, title: "Previous Space", systemImage: "arrow.left")
         case .profiles: .init(reference: reference, title: "Profiles", systemImage: "rectangle.stack.badge.person.crop")
-        case .resetWindowsInSpace: .init(reference: reference, title: "Reset Windows in Space", systemImage: "arrow.counterclockwise.square")
+        case .resetWindowsInSpace: .init(
+            reference: reference,
+            title: "Reset Windows in Space",
+            systemImage: SymbolName.resetWindowsInSpace
+        )
         case .resetAllWindows: .init(reference: reference, title: "Reset All Windows", systemImage: "arrow.trianglehead.2.counterclockwise")
         case .layoutType: .init(reference: reference, title: "Layout Type", systemImage: "rectangle.split.3x1")
         default: nil

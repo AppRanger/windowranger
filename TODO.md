@@ -211,6 +211,92 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-049 — Refine Command Wheel workspace-action icons
+
+- **Type:** Visual refinement
+- **Priority:** P2
+- **Status:** Inbox
+- **User-observed:** Go to Space, Place Window, Reset Windows in Space, Next Space, Previous Space,
+  and Move to Space still needed clearer and more consistent iconography after the first Command
+  Wheel visual pass. The user selected the first of three generated directions: framed-window
+  transfer and placement symbols, a workspace grid with a navigation target, plain traversal
+  arrows, and a single-window clockwise restore loop.
+- **Implemented:** The six top-level actions now follow that selected grammar using monochrome SF
+  Symbols and small system-symbol compositions that inherit the wheel's existing size, colour,
+  selection, centre, accessibility, and Settings-preview behavior. Move and Place share a window
+  silhouette but differ through transfer-arrow versus focus-frame treatment; Go combines the
+  workspace grid with a small target; Previous/Next are plain opposing arrows; current-space reset
+  encloses one window in a single clockwise loop, while Reset All retains its separate
+  two-arrow silhouette. No wheel geometry, labels, commands, hit regions, or activation behavior
+  changed.
+- **Fidelity revision:** Live inspection showed the initial Option 1 approximation still differed
+  visibly by a few pixels: Reset used the wrong loop geometry and an undersized browser-style
+  window, the navigation arrows were short and heavy, and the framed/target compositions were
+  optically small. The current candidate uses an explicit title-bar window made from native SF
+  Symbols, a correctly oriented clockwise restore loop, longer regular-weight traversal arrows,
+  and measured optical sizing for Move, Place, and Go. Enlarged source-versus-production crops now
+  accompany the full 20-point wheel render; this revision has not been installed.
+- **Product decision:** The current symbols are an intentionally provisional WIP checkpoint. The
+  user wants to review the complete Command Wheel catalogue in Apple's SF Symbols app and prefer
+  unchanged native symbols wherever they communicate the action clearly, combining or authoring a
+  custom symbol only for the remaining gaps. That systematic visual pass is deferred; it does not
+  block the already validated Command Wheel functionality.
+- **Automated evidence:** The revised candidate's visual snapshot suites pass, and local quick
+  verification passes all 535 non-hosted tests. Coverage fixes the six catalogue symbol
+  identities, verifies every layered SF Symbol is available, and renders nine real production wheel
+  states offscreen. A same-input comparison of the 1,254-pixel selected reference normalized beside
+  the 1,240-pixel Retina production render, including equal-scale enlarged crops of each icon. An
+  unsigned universal arm64/x86_64 Debug app build succeeds.
+- **Installed evidence:** With explicit maintainer approval, the signed universal Debug daily build
+  for `3868a49e8dc8-dirty` was installed and verified with CDHash
+  `63998709b7486f80db4487361558c0583cd1fc06`. A separate daily installation from the WR-046
+  worktree then replaced it with `f143af57c9a1-dirty` at 09:25; that running build contains the old
+  icon identifiers. With fresh maintainer approval, the Option 1 build was reinstalled at 09:32 and
+  is again running from `/Applications/WindowRanger.app`; its embedded revision, strict signature,
+  two architectures, process path, and all four composite symbol identifiers were verified. The
+  superseded WR-046 build is now retained at the non-launchable rollback path.
+- **Next boundary:** Inventory every top-level, generated-child, layout, placement, and indicator
+  symbol as Keep, Replace with native SF Symbol, or Custom Symbol required. Then compare the chosen
+  family at live selected/unselected wheel scale and in Settings before completing WR-049.
+
+### WR-048 — Protect global reset and cycle read-only focused windows
+
+- **Type:** Command safety / focus compatibility bug
+- **Priority:** P1
+- **Status:** Done
+- **User-observed:** Windows from several virtual spaces appeared together and Previous/Next window
+  cycling stopped working. The expected behavior is that releasing a held Globe/Fn gesture cannot
+  accidentally run a global recovery command, and every unambiguous managed window in the active
+  workspace remains reachable through cycling.
+- **Diagnostic-backed cause:** At 08:24:28 the held Command Wheel committed **Reset All Windows** on
+  Globe/Fn release, which deliberately brought every managed window onscreen without changing its
+  saved workspace assignment. Later, workspace 1 contained Chrome and NoteRanger, but NoteRanger
+  exposed its ordinary layer-0 standard window as locally focused and main while making all three
+  Accessibility focus attributes read-only. The shared candidate gate therefore excluded it and
+  every cycle command ended with `no-candidate`.
+- **Implemented:** In Hold-to-Show, **Reset All Windows** now requires an explicit click or Return;
+  merely highlighting it and releasing Globe/Fn dismisses the wheel, with centre text and an
+  accessibility hint explaining the confirmation. Press-to-Toggle behavior is unchanged. Focus
+  candidate admission now permits the narrowly identifiable read-only case where a standard,
+  visible, raiseable layer-0 window reports itself as both its application's focused and main
+  window. Ambiguous and state-less read-only windows remain excluded, and the existing exact
+  WindowServer verification remains authoritative after activation.
+- **Automated evidence:** The focused diagnostic and Command Wheel suites pass 166 tests and local
+  quick verification passes all 534 non-hosted tests. Coverage includes protected hold-release,
+  explicit click availability, unchanged toggle behavior, the locally selected main-window fallback,
+  and rejection of an ambiguous read-only window. The unsigned universal arm64/x86_64 Debug app
+  also builds successfully.
+- **Installed evidence:** With explicit maintainer approval, the signed universal Debug daily build
+  for `3868a49e8dc8-dirty` is installed and running from `/Applications/WindowRanger.app`. Its Apple
+  Development signature, Team ID `44NAD22AK6`, bundle identity, embedded revision, two architectures,
+  strict code-signing verification, and running executable path were verified. Its CDHash is
+  `437e2988e393780d909704e7dd59d4029883c116`; the prior daily copy remains at the repository-defined
+  non-launchable rollback path.
+- **Live result:** In the installed signed Debug build, Globe/Fn release over **Reset All Windows**
+  no longer performs recovery, an explicit activation still does, and cycling through the affected
+  workspace works again. The user confirmed the Command Wheel functionality works well and approved
+  merging this checkpoint while keeping only the icon refinement as WIP.
+
 ### WR-036 — Swipe between workspaces
 
 - **Type:** Feature

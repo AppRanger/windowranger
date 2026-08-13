@@ -315,6 +315,7 @@ The built-in order is:
 6. **Profiles** — generated reusable profiles and Resume Automatic only when meaningful.
 7. **Reset Windows in Space** — direct, current-workspace recovery.
 8. **Reset All Windows** — direct, explicitly broad recovery using the established safe reset path.
+   Hold-to-Show requires a click or Return so Globe/Fn release alone cannot run it.
 9. **Layout Type** — inner click cycles; outer choices select or reapply Freeform, Tiled, and
    Accordion.
 

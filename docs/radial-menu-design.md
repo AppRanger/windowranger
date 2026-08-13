@@ -1,6 +1,7 @@
 # Contextual Radial Menu
 
-**Status:** Implemented and automated-test/visual-QA verified; live interaction tuning pending
+**Status:** Functionality implemented, automated-test verified, and live validated; icon-family
+refinement remains WIP under WR-049
 
 ## Goals
 
@@ -35,12 +36,16 @@ Reference mapping:
 - A group discloses a complete outer ring around the same centre. The outer hierarchy is visually quieter than the selected inner wedge.
 - Icons remain compact and monochrome. Both rings use fixed optical icon centres; generated outer
   actions are icon-only while hover, keyboard selection, accessibility, and help expose their full
-  label. The action-first grammar uses a transfer symbol for Move to Space, a target for Place,
-  a navigation target for Go to Space, directional workspace-reset symbols for Previous/Next,
+  label. The action-first grammar uses a framed-window transfer symbol for Move to Space, a framed
+  window target for Place, a workspace-grid navigation target for Go to Space, plain directional
+  arrows for Previous/Next,
   layered workspace/profile symbols, scoped restore symbols, and a split-pane layout symbol.
   Placement children show the occupied half or corner inside one window frame instead of generic
   direction arrows. Workspace and profile destinations use stable ordinals rather than repeated
   placeholders.
+  The current top-level compositions are a provisional visual checkpoint. WR-049 tracks a complete
+  catalogue review that prefers unchanged native SF Symbols where suitable and reserves custom
+  symbols for actions without a clear native match; this does not change command semantics.
 - A disclosure chevron distinguishes groups from direct-only commands without creating a separate
   hit target. It follows the wedge angle and points radially toward the generated outer ring.
 - Reduced Motion removes bloom/scale movement; increased contrast strengthens separators and selection outlines.
@@ -254,7 +259,10 @@ The tiled tree, preview, migration, persistence, and atomic commit semantics are
 ### 8. Reset All Windows
 
 - Direct-only and labelled/accessibly described as affecting every managed window.
-- Uses the existing broad “Bring All Managed Windows Back On Screen” recovery path. That established path has no confirmation, so the wheel does not invent a divergent confirmation policy; its explicit label and feedback make scope unmistakable.
+- Uses the existing broad “Bring All Managed Windows Back On Screen” recovery path.
+- In Hold-to-Show, highlighting the item and releasing the trigger dismisses without running it.
+  The centre and accessibility hint require an explicit click or Return. Press-to-Toggle retains
+  ordinary direct-command activation.
 
 ### 9. Layout Type
 
