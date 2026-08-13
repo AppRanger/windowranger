@@ -11,7 +11,7 @@ rolling Dev builds from `develop`. Stable and opt-in Beta updates will use Spark
 will remain outside automatic updates.
 
 Download the signed and notarized
-[`v0.1.0-beta.2` GitHub prerelease](https://github.com/windowranger/windowranger/releases/tag/v0.1.0-beta.2)
+[`v0.1.0-beta.2` GitHub prerelease](https://github.com/appranger/windowranger/releases/tag/v0.1.0-beta.2)
 as a DMG, with a notarized ZIP as a fallback. GitHub's automatically generated source archives are
 not an installable macOS app.
 
@@ -167,13 +167,13 @@ The selected three-column Workspaces Settings screen has the same isolated produ
 The current selected-reference review and durable output paths are recorded in `design-qa.md`.
 
 The scheme runs as **Debug** from Xcode and archives as **Release**. Both configurations currently
-use the `com.windowranger.WindowRanger` bundle identifier, but Apple Development and Developer ID
+use the `dev.appranger.WindowRanger` bundle identifier, but Apple Development and Developer ID
 signatures have different designated requirements. macOS can therefore require separate
 Accessibility approval when switching between the Xcode Debug product and the installed release;
 only one copy should run at a time. A distinct development-only app identity is tracked separately
 and will not change the Stable/Beta identity without an explicit decision. Debug app runs write
 structured JSON Lines diagnostics to
-`~/Library/Logs/com.windowranger.WindowRanger/diagnostics.jsonl`; the file rotates at 1 MB and retains two
+`~/Library/Logs/dev.appranger.WindowRanger/diagnostics.jsonl`; the file rotates at 1 MB and retains two
 1 MB backups. Release builds do not create this verbose file. Unit tests use memory or no-op loggers
 and never write there.
 
@@ -356,7 +356,14 @@ WindowServer session and never becomes synced profile configuration.
 
 ## Current behaviour and limits
 
-Window membership, original positions, per-window floating overrides, and the active workspace are saved locally in `~/Library/Caches/com.windowranger.WindowRanger/workspace-state.json` for the active profile. On a normal quit, the state is saved before every managed window is made visible again. On the next launch, exact window-ID and app-bundle matches are returned only when the saved profile and WindowServer session remain valid; the previously active workspace is shown, and inactive workspaces are parked again.
+Window membership, original positions, per-window floating overrides, and the active workspace are saved locally in `~/Library/Caches/dev.appranger.WindowRanger/workspace-state.json` for the active profile. On a normal quit, the state is saved before every managed window is made visible again. On the next launch, exact window-ID and app-bundle matches are returned only when the saved profile and WindowServer session remain valid; the previously active workspace is shown, and inactive workspaces are parked again.
+
+The AppRanger identity migration copies missing preferences and the current-session recovery cache
+from `com.windowranger.WindowRanger` once, without deleting or overwriting either identity's data.
+The iCloud key-value entitlement deliberately continues using the existing WindowRanger store so
+opt-in synced settings remain available. Because macOS treats the new signed identifier as a new
+application identity, users upgrading from an older Beta must grant Accessibility access again and
+reconfirm Launch at Login if they use it.
 
 Recovery-state replacement is atomic and private to the user. A failed write remains retryable, an
 externally removed cache file is recreated on the next persistence tick even when workspace state has

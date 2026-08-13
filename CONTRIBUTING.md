@@ -37,7 +37,7 @@ You need:
 Clone the repository, then generate the Xcode project only when needed:
 
 ```sh
-git clone https://github.com/windowranger/windowranger.git
+git clone https://github.com/appranger/windowranger.git
 cd windowranger
 xcodegen generate
 open WindowRanger.xcodeproj

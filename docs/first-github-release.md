@@ -5,7 +5,7 @@ explicitly pre-release and several live, accessibility, privacy, and packaging g
 
 As of 10 August 2026, that exact Beta is Developer ID-signed, notarized, stapled, packaged, tested by
 the maintainer, and published as a
-[GitHub prerelease](https://github.com/windowranger/windowranger/releases/tag/v0.1.0-beta.1). The tag
+[GitHub prerelease](https://github.com/appranger/windowranger/releases/tag/v0.1.0-beta.1). The tag
 and artifacts remain at commit `04b5750b1fe3b183c1259d132a0a8e985f8b4e0e`.
 
 This runbook uses a local-first release pipeline:

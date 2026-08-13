@@ -73,7 +73,7 @@ that synchronous cleanup.
 
 Debug app runs can write structured JSON Lines diagnostics to:
 
-`~/Library/Logs/com.windowranger.WindowRanger/diagnostics.jsonl`
+`~/Library/Logs/dev.appranger.WindowRanger/diagnostics.jsonl`
 
 The file is bounded at 1 MB with two 1 MB backups. Option-clicking the status item in any build
 reveals a read-only focused-window report for that menu opening. The report is capped at 64 KB,

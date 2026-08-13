@@ -8,7 +8,7 @@
     <string>developer-id</string>
     <key>provisioningProfiles</key>
     <dict>
-        <key>com.windowranger.WindowRanger</key>
+        <key>dev.appranger.WindowRanger</key>
         <string>WindowRanger Developer ID</string>
     </dict>
     <key>signingCertificate</key>

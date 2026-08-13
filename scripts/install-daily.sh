@@ -75,7 +75,7 @@ built_app="$derived_data_directory/Build/Products/$configuration/WindowRanger.ap
 
 /usr/bin/codesign --verify --deep --strict "$built_app"
 built_bundle_identifier=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$built_app/Contents/Info.plist")
-[[ "$built_bundle_identifier" == "com.windowranger.WindowRanger" ]] || {
+[[ "$built_bundle_identifier" == "dev.appranger.WindowRanger" ]] || {
     print -u2 "Unexpected bundle identifier: $built_bundle_identifier"
     exit 1
 }

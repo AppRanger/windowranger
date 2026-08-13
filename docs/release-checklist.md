@@ -11,10 +11,10 @@ promotion and versioning. It is a design authority, not evidence that the releas
 - [x] Select the product name and complete preliminary clearance: **WindowRanger**.
 - [x] Confirm the copyright line in `LICENSE` with the maintainer as part of the explicit
       first-publication approval.
-- [x] Select `com.windowranger.WindowRanger` as the public bundle identifier; the private development
-      identity intentionally does not migrate.
-- [x] Confirm Developer ID ownership and team `44NAD22AK6`; verify the exported app's Developer ID
-      designated requirement and public bundle identifier.
+- [x] Select `dev.appranger.WindowRanger` as the public bundle identifier.
+- [x] Confirm Developer ID ownership and team `44NAD22AK6`.
+- [ ] Create or refresh the Developer ID provisioning profile for `dev.appranger.WindowRanger`,
+      then verify the exported app's designated requirement and public bundle identifier.
 - [x] Finalize the first-Beta app icon, menu-bar identity, versioning and support language.
 
 ## Licensing and repository hygiene

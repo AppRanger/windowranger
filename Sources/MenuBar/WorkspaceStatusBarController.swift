@@ -1087,7 +1087,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         displayIconConfiguration = initialDisplayIconConfiguration
         highlightColor = initialHighlightColor
         super.init()
-        statusItem.autosaveName = "com.windowranger.WindowRanger.primary-status"
+        statusItem.autosaveName = "\(ApplicationIdentity.bundleIdentifier).primary-status"
         appMenu.autoenablesItems = false
         appMenu.delegate = self
         // An assigned NSStatusItem menu owns every click. The custom host keeps workspace buttons
@@ -1272,7 +1272,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             // Keep the established autosave identity so a user's grouped Full-mode placement also
             // applies when Compact or Medium reuses these same physical display-group slots.
-            item.autosaveName = "com.windowranger.WindowRanger.full-display-group-\(slot)"
+            item.autosaveName = "\(ApplicationIdentity.bundleIdentifier).full-display-group-\(slot)"
             displayGroupStatusItems.append(ManagedDisplayGroupStatusItem(
                 statusItem: item,
                 contentView: nil,
