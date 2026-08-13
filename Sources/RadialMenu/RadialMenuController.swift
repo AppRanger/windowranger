@@ -1064,6 +1064,14 @@ final class RadialMenuPresentationModel: ObservableObject {
         return nil
     }
 
+    var selectedItemDetail: String? {
+        guard let selectedItem else { return nil }
+        if requiresExplicitActivation(selectedItem) {
+            return "Click or press Return to confirm"
+        }
+        return selectedItem.detail
+    }
+
     func activate(_ item: RadialMenuItem, useAlternate: Bool = false) {
         if let command = useAlternate ? (item.alternateCommand ?? item.command) : item.command,
            command == item.command || command == item.alternateCommand {
@@ -1130,6 +1138,29 @@ final class RadialMenuPresentationModel: ObservableObject {
     }
 
     func highlightedCommandItem() -> RadialMenuItem? {
+        guard let item = highlightedCommandItemBeforeReleaseProtection(),
+              !requiresExplicitActivation(item)
+        else { return nil }
+        return item
+    }
+
+    var highlightedItemRequiresExplicitActivation: Bool {
+        highlightedCommandItemBeforeReleaseProtection().map(requiresExplicitActivation) == true
+    }
+
+    func accessibilityHint(for item: RadialMenuItem) -> String {
+        if requiresExplicitActivation(item) {
+            return "Click or press Return to confirm. Releasing Globe or Fn will not run this command."
+        }
+        if item.isGroup {
+            return item.command == nil
+                ? "Opens generated commands on the outer ring"
+                : "Click performs the primary command; moving outward opens generated commands"
+        }
+        return "Performs this command"
+    }
+
+    private func highlightedCommandItemBeforeReleaseProtection() -> RadialMenuItem? {
         // A group remains latched while the pointer crosses another inner wedge so users can
         // travel naturally to any outer child. Releasing on a direct command is unambiguous,
         // though, and should commit that wedge rather than dismiss as if nothing were selected.
@@ -1142,6 +1173,10 @@ final class RadialMenuPresentationModel: ObservableObject {
         }
         guard let selectedItem, selectedItem.command != nil else { return nil }
         return selectedItem
+    }
+
+    private func requiresExplicitActivation(_ item: RadialMenuItem) -> Bool {
+        activationStyle == .holdToShow && item.command == .resetAllWindows
     }
 
     func openGroupAfterDwell(_ index: Int) {
@@ -1307,6 +1342,10 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
     }
 
     func commitHighlightedOrDismiss() {
+        if presentation?.highlightedItemRequiresExplicitActivation == true {
+            dismiss(reason: "trigger-released-requires-explicit-activation")
+            return
+        }
         guard let item = presentation?.highlightedCommandItem() else {
             dismiss(reason: "trigger-released-without-action")
             return
@@ -1781,13 +1820,7 @@ struct RadialMenuView: View {
                     .frame(width: 60, height: 60)
                     .allowsHitTesting(false)
                     .accessibilityLabel(item.label)
-                    .accessibilityHint(
-                        item.isGroup
-                            ? (item.command == nil
-                                ? "Opens generated commands on the outer ring"
-                                : "Click performs the primary command; moving outward opens generated commands")
-                            : "Performs this command"
-                    )
+                    .accessibilityHint(model.accessibilityHint(for: item))
                     .position(itemCenter)
                 }
 
@@ -1888,7 +1921,7 @@ struct RadialMenuView: View {
                                 .lineLimit(3)
                                 .minimumScaleFactor(0.72)
                                 .multilineTextAlignment(.center)
-                            if let detail = selectedItem.detail {
+                            if let detail = model.selectedItemDetail {
                                 Text(detail)
                                     .font(.system(size: 8, weight: .medium))
                                     .foregroundStyle(.secondary)
@@ -1951,21 +1984,137 @@ struct RadialMenuView: View {
     }
 }
 
-/// Keeps the wheel on real SF Symbols while giving Accordion the same wide-primary-pane
-/// proportion as the layout it represents. SF Symbols does not provide that exact weighting,
-/// so the standard three-pane symbol is adjusted as one symbol rather than redrawn from shapes.
-private struct RadialMenuSymbol: View {
+/// Keeps the wheel on one monochrome SF Symbols vocabulary. The selected action-first command
+/// glyphs are small compositions of system symbols so their distinct meaning survives at wheel,
+/// centre, and Settings sizes without shipping a second icon asset set.
+struct RadialMenuSymbol: View {
     let systemImage: String
     let size: CGFloat
     let weight: Font.Weight
 
     @ViewBuilder
     var body: some View {
-        if systemImage == WorkspaceLayout.accordion.systemImage {
+        switch systemImage {
+        case RadialCommandCatalogue.SymbolName.moveToSpace:
+            RadialMoveToSpaceSymbol(size: size, weight: weight)
+        case RadialCommandCatalogue.SymbolName.placeWindow:
+            RadialPlaceWindowSymbol(size: size, weight: weight)
+        case RadialCommandCatalogue.SymbolName.goToSpace:
+            RadialGoToSpaceSymbol(size: size, weight: weight)
+        case RadialCommandCatalogue.SymbolName.resetWindowsInSpace:
+            RadialResetWindowsInSpaceSymbol(size: size, weight: weight)
+        case "arrow.right", "arrow.left":
+            Image(systemName: systemImage)
+                .font(.system(size: size * 1.28, weight: .regular))
+        case WorkspaceLayout.accordion.systemImage:
             AccordionLayoutSymbol(size: size, weight: weight)
-        } else {
+        default:
             Image(systemName: systemImage)
                 .font(.system(size: size, weight: weight))
+        }
+    }
+}
+
+/// A framed window plus an outward transfer arrow distinguishes moving the focused window from
+/// navigating the current workspace. Every layer is an SF Symbol and shares the inherited colour.
+private struct RadialMoveToSpaceSymbol: View {
+    let size: CGFloat
+    let weight: Font.Weight
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "viewfinder")
+                .font(.system(size: size * 1.28, weight: weight))
+                .mask(alignment: .top) {
+                    Rectangle()
+                        .frame(height: size * 0.4)
+                }
+                .offset(y: -size * 0.14)
+            Image(systemName: "minus")
+                .font(.system(size: size * 0.48, weight: .bold))
+                .offset(y: -size * 0.43)
+            RadialWindowGlyph(size: size, weight: weight)
+                .offset(x: -size * 0.08, y: size * 0.12)
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: size * 0.52, weight: .semibold))
+                .offset(x: size * 0.4, y: -size * 0.25)
+        }
+        .frame(width: size * 1.28, height: size * 1.18)
+    }
+}
+
+/// The same focused-window frame without a transfer arrow reads as placing or resizing the
+/// current window, rather than moving between workspaces.
+private struct RadialPlaceWindowSymbol: View {
+    let size: CGFloat
+    let weight: Font.Weight
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "viewfinder")
+                .font(.system(size: size * 1.22, weight: weight))
+            Image(systemName: "rectangle")
+                .font(.system(size: size * 0.58, weight: weight))
+        }
+        .frame(width: size * 1.18, height: size * 1.18)
+    }
+}
+
+/// Workspace tiles plus a small navigation target separate Go to Space from Place Window's
+/// single framed window and Move to Space's transfer arrow.
+private struct RadialGoToSpaceSymbol: View {
+    let size: CGFloat
+    let weight: Font.Weight
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "square")
+                .font(.system(size: size * 0.43, weight: .bold))
+                .offset(x: -size * 0.25, y: -size * 0.25)
+            Image(systemName: "square")
+                .font(.system(size: size * 0.43, weight: .bold))
+                .offset(x: size * 0.25, y: -size * 0.25)
+            Image(systemName: "square")
+                .font(.system(size: size * 0.43, weight: .bold))
+                .offset(x: -size * 0.25, y: size * 0.25)
+            Image(systemName: "scope")
+                .font(.system(size: size * 0.68, weight: .bold))
+                .offset(x: size * 0.29, y: size * 0.29)
+        }
+        .frame(width: size * 1.22, height: size * 1.18)
+    }
+}
+
+/// The current-space reset combines a single window with the selected clockwise restore loop;
+/// Reset All retains the separate two-arrow circular symbol from the surrounding catalogue.
+private struct RadialResetWindowsInSpaceSymbol: View {
+    let size: CGFloat
+    let weight: Font.Weight
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: size * 1.48, weight: .regular))
+            RadialWindowGlyph(size: size * 0.7, weight: weight)
+                .offset(x: -size * 0.06, y: size * 0.08)
+        }
+        .frame(width: size * 1.12, height: size * 1.12)
+    }
+}
+
+/// A compact title-bar window assembled from native SF Symbols. Keeping the title bar explicit
+/// avoids the three-dot browser treatment of `macwindow` and matches the selected icon grammar.
+private struct RadialWindowGlyph: View {
+    let size: CGFloat
+    let weight: Font.Weight
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "rectangle")
+                .font(.system(size: size, weight: weight))
+            Image(systemName: "minus")
+                .font(.system(size: size * 0.62, weight: .bold))
+                .offset(y: -size * 0.16)
         }
     }
 }

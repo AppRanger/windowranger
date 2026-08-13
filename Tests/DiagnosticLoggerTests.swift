@@ -579,6 +579,40 @@ final class DiagnosticLoggerTests: XCTestCase {
             raiseActionSupported: true
         )
         XCTAssertFalse(AccessibilityWindow.isEligibleFocusCycleCandidate(nonFocusable))
+
+        let activationOnlyMainWindow = WindowFocusCapabilities(
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            isFocused: true,
+            isMain: true,
+            focusedAttributeSettable: false,
+            mainAttributeSettable: false,
+            applicationFocusedWindowAttributeSettable: false,
+            raiseActionSupported: true
+        )
+        XCTAssertTrue(
+            AccessibilityWindow.isEligibleFocusCycleCandidate(activationOnlyMainWindow),
+            "A locally selected main window can use verified raise-and-activate focus"
+        )
+
+        let ambiguousActivationOnlyWindow = WindowFocusCapabilities(
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            isFocused: false,
+            isMain: true,
+            focusedAttributeSettable: false,
+            mainAttributeSettable: false,
+            applicationFocusedWindowAttributeSettable: false,
+            raiseActionSupported: true
+        )
+        XCTAssertFalse(
+            AccessibilityWindow.isEligibleFocusCycleCandidate(ambiguousActivationOnlyWindow),
+            "A read-only window must identify itself as both focused and main before activation fallback"
+        )
     }
 
     func testSameAppWrongWindowRetriesThenAdvancesDespiteSuccessfulAXWrites() {

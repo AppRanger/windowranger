@@ -3095,7 +3095,7 @@ private struct RadialMenuSettingsView: View {
                                     definition.add(metadata.reference)
                                 }
                             } label: {
-                                Label(metadata.title, systemImage: metadata.systemImage)
+                                CommandWheelMetadataLabel(metadata: metadata)
                             }
                         }
                     }
@@ -3172,8 +3172,14 @@ private struct CommandWheelEditorRow: View {
     var body: some View {
         HStack {
             let metadata = RadialCommandCatalogue.metadata(for: item)
-            Label(metadata?.title ?? "Unavailable item", systemImage: metadata?.systemImage ?? "questionmark.diamond")
-                .fontWeight(.medium)
+            Group {
+                if let metadata {
+                    CommandWheelMetadataLabel(metadata: metadata)
+                } else {
+                    Label("Unavailable item", systemImage: "questionmark.diamond")
+                }
+            }
+            .fontWeight(.medium)
             Text("Contextual").font(.caption).foregroundStyle(.secondary)
             Spacer()
             editorControls
@@ -3227,6 +3233,21 @@ private struct CommandWheelEditorRow: View {
             actionName: "Reorder Wheel Items",
             undoManager: undoManager
         ) { $0.moveItem(id: item, offset: offset) }
+    }
+}
+
+private struct CommandWheelMetadataLabel: View {
+    let metadata: RadialCommandMetadata
+
+    var body: some View {
+        HStack(spacing: 6) {
+            RadialMenuSymbol(systemImage: metadata.systemImage, size: 14, weight: .semibold)
+                .frame(width: 18, height: 18)
+                .accessibilityHidden(true)
+            Text(metadata.title)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(metadata.title)
     }
 }
 

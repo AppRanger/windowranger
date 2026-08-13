@@ -466,9 +466,17 @@ enum AccessibilityWindow {
               capabilities.raiseActionSupported
         else { return false }
 
-        return capabilities.focusedAttributeSettable ||
+        let hasWritableFocusRoute = capabilities.focusedAttributeSettable ||
             capabilities.mainAttributeSettable ||
             capabilities.applicationFocusedWindowAttributeSettable
+        if hasWritableFocusRoute { return true }
+
+        // Some ordinary document apps expose their locally selected main window truthfully but
+        // make every AX focus attribute read-only. The focus pipeline can still raise that exact
+        // window, activate its application, and verify the WindowServer target before accepting it.
+        // Requiring both local flags keeps ambiguous secondary windows and apps that expose no
+        // focused-window state out of candidate selection.
+        return capabilities.isFocused == true && capabilities.isMain == true
     }
 
     /// Best-effort neutral focus for the uncommon case where the last visible window is sent away.

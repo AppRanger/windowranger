@@ -72,6 +72,73 @@ final result: passed
 
 ---
 
+# Command Wheel Option 1 Icon Refinement QA
+
+## Evidence
+
+- **Source visual truth:**
+  `/Users/chris/.codex/generated_images/019ff4d3-2ed6-7c61-bb88-5f1e3ded820b/exec-16077120-e8e8-4f1d-9273-6e9032bf36fa.png`
+  (1,254 x 1,254 pixels, generated visual direction).
+- **Rendered implementation:**
+  `.build/radial-menu-icon-option-1-fidelity/windowranger-radial-base.png`
+  (1,240 x 1,240 pixels for the 620 x 620-point production `RadialMenuView` at 2x).
+- **Combined comparison input:**
+  `.build/radial-menu-icon-option-1-fidelity/option-1-six-icon-focused.png`
+  (1,440 x 960 pixels). Each of the six 124-pixel source regions is paired directly with its
+  production counterpart and enlarged by the same factor; no density-only differences were
+  treated as findings.
+- **State:** Both views show the complete top-level action ring over the same dark presentation
+  context. The generated source highlights Place Window while retaining neutral centre copy, a
+  state the production interaction model does not emit. Icon fidelity was therefore judged across
+  the complete annulus rather than from the reference accent or centre content.
+- **Focused region:** the combined input deliberately magnifies every action. This was added after
+  the signed live wheel revealed one- or two-pixel alignment and scale differences that the earlier
+  whole-wheel-only comparison missed.
+
+## Findings and comparison history
+
+- **P2 resolved — Move to Space was too dense and untidy at production size.** The revised
+  composition restores the reference's two upper focus corners and central title-bar stroke, keeps
+  the transfer arrow outside the window, and uses one explicit title-bar window instead of the
+  three-dot browser treatment.
+- **P2 resolved — Reset Windows in Space had the wrong geometry.** The installed candidate used an
+  oversized arrowhead, a pinched loop, and an undersized browser-style window. The revised symbol
+  uses a clockwise open loop, a centered explicit title-bar window, and regular optical weight.
+- **P2 resolved — the remaining four actions drifted from the set.** Place and Go are enlarged to
+  the reference's optical footprint, Go uses three independent workspace tiles rather than a
+  colliding four-tile grid, and Previous/Next use longer regular-weight opposing arrows.
+- **Final icon result:** Place Window is a framed single window; Go to Space is a workspace grid
+  with a lower-right navigation target; Previous and Next are plain opposing arrows; Move and
+  current-space Reset retain distinct transfer and restore silhouettes. Reset All, Layout Type,
+  Profiles, disclosure chevrons, and generated child symbols remain intentionally unchanged.
+- **Typography and copy:** unchanged; the production San Francisco hierarchy, centre text,
+  truncation rules, and accessibility labels remain authoritative.
+- **Spacing and layout rhythm:** unchanged. Every icon remains inside the existing fixed optical
+  frame, with no wedge, ring, centre, disclosure, or hit-region movement.
+- **Colours and tokens:** unchanged. The compositions inherit the existing monochrome foreground,
+  accent selection, contrast, and material tokens.
+- **Image quality and asset fidelity:** the implementation uses sharp native SF Symbols at every
+  render scale rather than shipping the generated bitmap. The generated glow is presentation
+  context, not part of the selected icon grammar.
+- **Content and interaction:** commands, labels, selection behavior, keyboard paths, pointer paths,
+  and accessibility semantics are unchanged. The same composite renderer is used in the wheel,
+  centre, Settings catalogue, and Settings production preview.
+
+## Verification
+
+- Focused production-wheel and Settings snapshot suites: 2 tests passed during final rendering.
+- Complete non-hosted local checkpoint: 535 tests passed.
+- Offscreen production evidence: nine wheel states rendered successfully for the fidelity revision.
+- Unsigned Debug application: universal arm64/x86_64 build passed.
+- Signed-app visual validation: pending explicit installation approval.
+
+No actionable P0/P1/P2 mismatch remains in the scoped icon pass. Live scale, animation, and varied
+desktop backgrounds remain the signed-app validation boundary.
+
+final result: passed
+
+---
+
 # Workspace Settings Design QA
 
 ## Scope and reference

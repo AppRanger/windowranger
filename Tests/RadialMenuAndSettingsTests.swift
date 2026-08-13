@@ -31,12 +31,47 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(Set(metadata.map(\.systemImage)).count, metadata.count)
         XCTAssertEqual(
             metadata.first { $0.reference == .nextSpace }?.systemImage,
-            "arrow.forward.square"
+            "arrow.right"
         )
         XCTAssertEqual(
             metadata.first { $0.reference == .previousSpace }?.systemImage,
-            "arrow.backward.square"
+            "arrow.left"
         )
+        XCTAssertEqual(
+            metadata.first { $0.reference == .moveToSpace }?.systemImage,
+            RadialCommandCatalogue.SymbolName.moveToSpace
+        )
+        XCTAssertEqual(
+            metadata.first { $0.reference == .resize }?.systemImage,
+            RadialCommandCatalogue.SymbolName.placeWindow
+        )
+        XCTAssertEqual(
+            metadata.first { $0.reference == .goToSpace }?.systemImage,
+            RadialCommandCatalogue.SymbolName.goToSpace
+        )
+        XCTAssertEqual(
+            metadata.first { $0.reference == .resetWindowsInSpace }?.systemImage,
+            RadialCommandCatalogue.SymbolName.resetWindowsInSpace
+        )
+    }
+
+    func testActionFirstCompositionsUseAvailableSystemSymbolLayers() {
+        for systemImage in [
+            "rectangle",
+            "minus",
+            "arrow.up.right",
+            "viewfinder",
+            "square",
+            "scope",
+            "arrow.clockwise",
+            "arrow.right",
+            "arrow.left",
+        ] {
+            XCTAssertNotNil(
+                NSImage(systemSymbolName: systemImage, accessibilityDescription: nil),
+                "Missing SF Symbol layer: \(systemImage)"
+            )
+        }
     }
 
     func testPlacementSymbolsDescribeTheirOccupiedScreenRegions() {
@@ -532,6 +567,36 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 
         XCTAssertEqual(presentation.activeGroupIndex, groupIndex)
         XCTAssertEqual(presentation.highlightedCommandItem()?.command, .cycleWorkspace(1))
+    }
+
+    @MainActor
+    func testHoldReleaseCannotAccidentallyCommitResetAllWindows() {
+        let menu = RadialCommandContextBuilder.build(from: context(window: window(.managed)))
+        let resetIndex = try! XCTUnwrap(menu.items.firstIndex {
+            $0.id == RadialTopLevelItemID.resetAllWindows.rawValue
+        })
+        let center = CGPoint(x: 310, y: 310)
+        let radius = (RadialMenuGeometry.centerDeadZone + RadialMenuGeometry.innerOuterRadius) / 2
+        let angle = RadialMenuGeometry.itemAngle(index: resetIndex, count: menu.items.count)
+        let point = CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
+
+        let hold = RadialMenuPresentationModel(menu: menu, activationStyle: .holdToShow)
+        var commits: [WindowManagerCommand] = []
+        hold.commitItem = { item, _ in commits.append(item.command!) }
+        hold.pointerMoved(to: point, center: center)
+
+        XCTAssertEqual(hold.selectedItem?.command, .resetAllWindows)
+        XCTAssertEqual(hold.selectedItemDetail, "Click or press Return to confirm")
+        XCTAssertTrue(hold.highlightedItemRequiresExplicitActivation)
+        XCTAssertNil(hold.highlightedCommandItem(), "Globe/Fn release must not run the global reset")
+
+        hold.activate(try! XCTUnwrap(hold.selectedItem))
+        XCTAssertEqual(commits, [.resetAllWindows], "An explicit click keeps the recovery command available")
+
+        let toggle = RadialMenuPresentationModel(menu: menu, activationStyle: .pressToToggle)
+        toggle.pointerMoved(to: point, center: center)
+        XCTAssertEqual(toggle.highlightedCommandItem()?.command, .resetAllWindows)
+        XCTAssertFalse(toggle.highlightedItemRequiresExplicitActivation)
     }
 
     @MainActor
