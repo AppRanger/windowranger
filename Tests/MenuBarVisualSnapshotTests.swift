@@ -368,6 +368,36 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             )
         }
 
+        store.appRules = []
+        store.dropDownApp = DropDownAppConfiguration(
+            bundleIdentifier: "com.example.Terminal",
+            displayName: "Terminal",
+            heightFraction: 0.8,
+            isAnimationEnabled: true,
+            direction: .top
+        )
+        navigation.select(.appRules)
+        let quickAppData = try renderRetinaPNG(view, size: Self.snapshotSize)
+        XCTAssertGreaterThan(quickAppData.count, 25_000)
+        try quickAppData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-quick-app.png"
+            ),
+            options: .atomic
+        )
+        let darkQuickAppData = try renderRetinaPNG(
+            darkView,
+            size: Self.snapshotSize,
+            appearance: .darkAqua
+        )
+        XCTAssertGreaterThan(darkQuickAppData.count, 25_000)
+        try darkQuickAppData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-quick-app-dark.png"
+            ),
+            options: .atomic
+        )
+
         let compactSize = SettingsWindowMetrics.minimumSize
         navigation.select(.profiles)
         let compactProfilesView = SettingsView(
@@ -451,6 +481,60 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
                 options: .atomic
             )
         }
+
+        navigation.select(.appRules)
+        let compactQuickAppView = SettingsView(
+            store: store,
+            engine: engine,
+            navigation: navigation,
+            windowCoordinator: coordinator,
+            diagnostics: .disabled,
+            shortcutRecordingStateChanged: { _ in }
+        )
+        .frame(width: compactSize.width, height: compactSize.height)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, .light)
+        .environment(\.controlActiveState, .key)
+        let compactQuickAppData = try renderRetinaPNG(
+            compactQuickAppView,
+            size: compactSize
+        )
+        XCTAssertGreaterThan(compactQuickAppData.count, 15_000)
+        try compactQuickAppData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-quick-app-compact.png"
+            ),
+            options: .atomic
+        )
+
+        let quickAppAccessibilitySize = CGSize(width: 1_180, height: 900)
+        let quickAppAccessibilityView = SettingsView(
+            store: store,
+            engine: engine,
+            navigation: navigation,
+            windowCoordinator: coordinator,
+            diagnostics: .disabled,
+            shortcutRecordingStateChanged: { _ in }
+        )
+        .frame(
+            width: quickAppAccessibilitySize.width,
+            height: quickAppAccessibilitySize.height
+        )
+        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, .light)
+        .environment(\.controlActiveState, .key)
+        .environment(\.dynamicTypeSize, .accessibility2)
+        let quickAppAccessibilityData = try renderRetinaPNG(
+            quickAppAccessibilityView,
+            size: quickAppAccessibilitySize
+        )
+        XCTAssertGreaterThan(quickAppAccessibilityData.count, 25_000)
+        try quickAppAccessibilityData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-quick-app-accessibility-text.png"
+            ),
+            options: .atomic
+        )
 
         let largeTextSize = CGSize(width: 1_180, height: 900)
         let largeTextData = try renderRetinaPNG(

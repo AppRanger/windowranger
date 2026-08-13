@@ -46,6 +46,7 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
     case selectAccordion
     case selectTiled
     case toggleFloating
+    case toggleDropDownApp
     case focusLeft
     case focusDown
     case focusUp
@@ -71,6 +72,7 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
         case .selectAccordion: "Select Accordion"
         case .selectTiled: "Select Tiled"
         case .toggleFloating: "Toggle focused window Floating"
+        case .toggleDropDownApp: "Toggle Quick App"
         case .focusLeft: "Focus left"
         case .focusDown: "Focus down"
         case .focusUp: "Focus up"
@@ -96,6 +98,7 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
         case .selectAccordion: .selectLayoutFromShortcut(.accordion)
         case .selectTiled: .selectLayoutFromShortcut(.tiled)
         case .toggleFloating: .toggleFloating
+        case .toggleDropDownApp: .toggleDropDownApp
         case .focusLeft: .focusDirection(.left)
         case .focusDown: .focusDirection(.down)
         case .focusUp: .focusDirection(.up)
@@ -121,6 +124,7 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
         case .selectAccordion: .init(keyCode: 43, modifiers: UInt32(optionKey))
         case .selectTiled: .init(keyCode: 47, modifiers: UInt32(optionKey))
         case .toggleFloating: .init(keyCode: 3, modifiers: UInt32(controlKey | optionKey))
+        case .toggleDropDownApp: .init(keyCode: 50, modifiers: UInt32(controlKey | optionKey))
         case .focusLeft: .init(keyCode: 4, modifiers: UInt32(optionKey))
         case .focusDown: .init(keyCode: 38, modifiers: UInt32(optionKey))
         case .focusUp: .init(keyCode: 40, modifiers: UInt32(optionKey))

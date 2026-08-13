@@ -83,7 +83,9 @@ rule from ambiguous per-window state.
 
 The profile library can sync through iCloud key-value storage. A profile contains workspace
 definitions/order/keys/layout geometry, Unified or Independent display mode, abstract display roles
-and their menu-bar icon styles, workspace-role assignments and typed app rules. Global preferences
+and their menu-bar icon styles, workspace-role assignments, typed app rules, and an optional
+Quick App bundle identifier/display name/presentation. Normalization makes Quick App ownership
+mutually exclusive with an App Rule for the same bundle identifier. Global preferences
 such as menu-bar presentation, general command shortcuts and command-wheel configuration use their
 existing global settings path and are not profile content.
 
@@ -131,6 +133,18 @@ invalidate the existing layout signature and reflow without a restart.
 On graceful quit, persistent assignment state is saved before managed windows are returned to
 visible frames. A debugger Stop or crash cannot run synchronous cleanup; startup reconciliation is
 the recovery boundary for those cases.
+
+The profile-aware Quick App is an engine-owned temporary presentation override. It resolves only
+one unambiguous admitted standard window for the configured bundle and targets the pointer/interaction
+display's usable bounds. Its optional Top, Bottom, Left, or Right movement uses generation-gated
+frame steps so a hide, profile switch, sleep, termination, or newer toggle supersedes delayed
+animation writes. Top expands from a collapsed frame at the usable top edge because macOS clamps
+ordinary app windows positioned above the menu bar; the other directions slide from beyond their
+screen edge. Once selected, the window is
+excluded from normal visibility, layout, focus-cycle, reset, manual-geometry reconciliation, and
+background-signature participation. The engine parks it while hidden, preserves its durable restore
+frame, restores it before configuration/profile changes and lifecycle cleanup, and ignores its own
+programmatic activation when deciding whether another app has taken focus.
 
 ## UI and focus safety
 

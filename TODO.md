@@ -20,6 +20,54 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-050 — Add a profile-aware Quick App
+
+- **Type:** Feature
+- **Priority:** P2
+- **Status:** Live validation
+- **Requested outcome:** Each profile may assign at most one application as a Quake-style Quick App.
+  A configurable global shortcut, initially Control-Option-Backtick, presents that app over the
+  current work and toggles it away. Moving focus to another application also hides it. The presented
+  window optionally animates from a configurable screen edge, defaulting to the top, and uses a
+  configurable proportion of the interaction display, defaulting to 80 percent.
+- **Smallest useful scope:** Store one optional bundle identifier and one presentation-size setting
+  in each reusable profile; store the shortcut in the existing global shortcut system. Resolve one
+  unambiguous eligible standard window for the configured app, activate and place it on the current
+  interaction display, and restore its prior frame/visibility state when toggled or when genuine
+  user focus moves elsewhere. Do not launch an absent app, choose among multiple ambiguous windows,
+  change native macOS Spaces, or broaden normal window admission.
+- **Safety boundaries:** The Quick App window remains outside ordinary workspace layout, parking,
+  focus cycling, reset, and persistence while presented. Profile changes, app/window termination,
+  display changes, sleep, shutdown, shortcut reconfiguration, and superseding commands must cancel
+  or safely restore a current session. Programmatic activation must not be mistaken for a user focus
+  departure. Tests stay behind injected adapters and never register a real hotkey or move live
+  windows.
+- **Acceptance:** Focused tests cover profile isolation, shortcut collisions, 80-percent default and
+  clamping, toggle show/hide, focus-loss hide, exact-window ambiguity, geometry on non-origin and
+  multi-display frames, interrupted animation/session generations, and restoration boundaries. The
+  complete non-hosted suite and universal Debug build pass; final behavior remains in Live validation
+  until a signed build is exercised with a real assigned app on at least two profiles.
+- **Implemented:** Profile storage/clone/transfer, a unified Applications settings list where each
+  bundle has either normal App Rules or the one optional Quick App, explicit confirmed conversion
+  between modes, visible list summaries, an intent-led mode selector, shortcut and behavior context,
+  a focused Quick App presentation editor, safer destructive actions, profile context, and a useful
+  empty state. Application removal uses the one consistent delete control in the Applications list.
+  The installed-app picker closes when an app is selected; Quick App provides 25–100
+  percent height/width control and optional animation from the Top, Bottom, Left, or
+  Right with Top enabled by default, global shortcut recording with Control-Option-Backtick default,
+  a top-edge roll-down that remains visible despite macOS offscreen-position clamping, contextual
+  guidance for apps that do not resize smoothly, exact-window
+  ambiguity feedback, focus-loss hide, focus restoration on shortcut hide, and engine exclusions for
+  layout/parking/focus/reset/background persistence. Profile changes, sleep, termination, window
+  disappearance, and newer animation generations clear or restore the session safely.
+- **Automated verification:** Universal Debug app build passed with signing disabled. The complete
+  non-hosted suite passed 546 tests, including profile compatibility and mutual-exclusion migration,
+  App Rules/Quick App conversion, default/clamping, shortcut, four-edge non-origin geometry,
+  retraction, and animation-completion coverage.
+- **Live validation needed:** Install a signed daily build only after explicit approval. Select a
+  one-window app in two profiles, confirm show/toggle/focus-loss behavior and 80-percent geometry on
+  each relevant display, then exercise a profile change and normal quit while the window is shown.
+
 ### WR-030 — Investigate Battle.net focused-window compatibility
 
 - **Type:** Compatibility research / possible bug
