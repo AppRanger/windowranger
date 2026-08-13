@@ -651,14 +651,43 @@ struct WorkspaceEngineState: Equatable {
     }
 }
 
-struct WindowAdmissionSupportRecord: Identifiable, Equatable, Sendable {
+struct WindowAdmissionSupportRecord: Identifiable, Equatable, Sendable, Codable {
     let id: String
     let bundleIdentifier: String
     let disposition: String
     let reason: String
+    let compatibilityProfileIdentifier: String?
     let role: String
     let subrole: String
     let windowLayer: String
+    let isMinimized: Bool
+    let isFullscreen: Bool
+    let modalObservation: String
+    let focusedObservation: String
+    let mainObservation: String
+    let fullscreenButton: String
+    let minimizeButton: String
+    let closeButton: String
+    let zoomButton: String
+    let positionSettable: String
+    let sizeSettable: String
+}
+
+struct WindowAdmissionSupportSnapshot: Equatable, Sendable, Codable {
+    let schemaVersion: Int
+    let records: [WindowAdmissionSupportRecord]
+
+    init(records: [WindowAdmissionSupportRecord]) {
+        schemaVersion = 2
+        self.records = records
+    }
+
+    func encodedString() -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(self) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
 }
 
 struct WorkspaceApplicationTarget: Equatable, Sendable {
@@ -1712,6 +1741,13 @@ final class WorkspaceEngine {
     ) {
         queue.async { [weak self] in
             guard let self else { return }
+            for (key, tracked) in self.windows {
+                guard let coreMetadata = self.admissionMetadataByWindow[key] else { continue }
+                self.admissionMetadataByWindow[key] = AccessibilityWindow.admissionSupportMetadata(
+                    of: tracked.element,
+                    coreMetadata: coreMetadata
+                )
+            }
             let records = Self.admissionSupportRecords(
                 decisions: self.admissionDecisionByWindow,
                 metadata: self.admissionMetadataByWindow
@@ -6477,7 +6513,7 @@ final class WorkspaceEngine {
                 let directlyResolvedLayer: Int?
                 if visibleLayer == nil,
                    lastKnownWindowLayer[key] == nil,
-                   AccessibilityWindow.hasVerifiedTransientNonNormalLayers(app.bundleIdentifier) {
+                   AccessibilityWindow.mayNeedDirectLayerResolutionForCompatibility(app.bundleIdentifier) {
                     // Upgrade recovery: an old build may already have parked a popup outside the
                     // visible WindowServer list. Resolve only allowlisted apps individually once;
                     // nil remains genuinely unknown and is admitted conservatively.
@@ -6503,14 +6539,39 @@ final class WorkspaceEngine {
                     fullscreenAuthoritativeFalseCounts[key] =
                         fullscreenResolution.consecutiveAuthoritativeFalseObservations
                 }
-                let admissionMetadata = AccessibilityWindow.admissionMetadata(
+                let coreAdmissionMetadata = AccessibilityWindow.admissionMetadata(
                     of: element,
                     bundleIdentifier: app.bundleIdentifier,
                     windowLayer: effectiveLayer,
                     fullscreenObservation: fullscreenObservation,
                     effectiveFullscreen: fullscreenResolution.isFullscreen
                 )
+                let collectsCompatibilitySupportMetadata = AccessibilityWindow
+                    .shouldCollectSupportMetadataForCompatibility(coreAdmissionMetadata)
+                let admissionMetadata = collectsCompatibilitySupportMetadata
+                    ? AccessibilityWindow.admissionSupportMetadata(
+                        of: element,
+                        coreMetadata: coreAdmissionMetadata
+                    )
+                    : coreAdmissionMetadata
                 let admissionDecision = AccessibilityWindow.admissionDecision(for: admissionMetadata)
+                let previousAdmissionDecision = admissionDecisionByWindow[key]
+                var recordedAdmissionMetadata = collectsCompatibilitySupportMetadata
+                    ? admissionMetadata
+                    : admissionMetadata.retainingSupportEvidence(
+                        from: admissionMetadataByWindow[key]
+                    )
+                if previousAdmissionDecision != admissionDecision,
+                   !admissionDecision.disposition.admitsNewWindow,
+                   admissionDecision.reason != .minimized,
+                   admissionDecision.reason != .fullscreen {
+                    // Ignored or unsupported surfaces are not retained as managed windows, so this
+                    // transition is the only safe opportunity to capture their fixture evidence.
+                    recordedAdmissionMetadata = AccessibilityWindow.admissionSupportMetadata(
+                        of: element,
+                        coreMetadata: admissionMetadata
+                    )
+                }
                 let observedFrame = AccessibilityWindow.frame(of: element)
                 if let observedFrame {
                     observedFrames[key] = observedFrame
@@ -6526,7 +6587,7 @@ final class WorkspaceEngine {
                 )
                 recordAdmissionDecision(
                     admissionDecision,
-                    metadata: admissionMetadata,
+                    metadata: recordedAdmissionMetadata,
                     key: key,
                     layerSource: visibleLayer != nil
                         ? "window-server-batch"
@@ -6542,7 +6603,7 @@ final class WorkspaceEngine {
                         key,
                         bundleIdentifier: app.bundleIdentifier,
                         decision: admissionDecision,
-                        metadata: admissionMetadata,
+                        metadata: recordedAdmissionMetadata,
                         correlationID: correlationID
                     )
                     evictedIgnoredManagedState = evictedIgnoredManagedState || removal.changedManagedState
@@ -7101,13 +7162,21 @@ final class WorkspaceEngine {
             "ax-subrole": metadata.subrole ?? "unknown",
             "window-layer": metadata.windowLayer.map(String.init) ?? "unknown",
             "layer-source": layerSource,
+            "ax-modal": metadata.modalObservation.rawValue,
+            "ax-focused": metadata.focusedObservation.rawValue,
+            "ax-main": metadata.mainObservation.rawValue,
             "fullscreen-button": metadata.fullscreenButton.rawValue,
+            "minimize-button": metadata.minimizeButton.rawValue,
             "is-fullscreen": String(metadata.isFullscreen),
             "fullscreen-observation": metadata.fullscreenObservation.rawValue,
             "is-minimized": String(metadata.isMinimized),
             "close-button": metadata.closeButton.rawValue,
+            "zoom-button": metadata.zoomButton.rawValue,
+            "position-settable": metadata.positionSettable.rawValue,
+            "size-settable": metadata.sizeSettable.rawValue,
             "disposition": decision.disposition.rawValue,
             "reason": decision.reason.rawValue,
+            "compatibility-profile": decision.compatibilityProfileIdentifier ?? "none",
             "automatic-floating": String(decision.automaticallyFloats),
         ]
     }
@@ -7123,9 +7192,21 @@ final class WorkspaceEngine {
                 bundleIdentifier: metadata.bundleIdentifier ?? "unknown",
                 disposition: decision.disposition.rawValue,
                 reason: decision.reason.rawValue,
+                compatibilityProfileIdentifier: decision.compatibilityProfileIdentifier,
                 role: metadata.role ?? "unknown",
                 subrole: metadata.subrole ?? "unknown",
-                windowLayer: metadata.windowLayer.map(String.init) ?? "unknown"
+                windowLayer: metadata.windowLayer.map(String.init) ?? "unknown",
+                isMinimized: metadata.isMinimized,
+                isFullscreen: metadata.isFullscreen,
+                modalObservation: metadata.modalObservation.rawValue,
+                focusedObservation: metadata.focusedObservation.rawValue,
+                mainObservation: metadata.mainObservation.rawValue,
+                fullscreenButton: metadata.fullscreenButton.rawValue,
+                minimizeButton: metadata.minimizeButton.rawValue,
+                closeButton: metadata.closeButton.rawValue,
+                zoomButton: metadata.zoomButton.rawValue,
+                positionSettable: metadata.positionSettable.rawValue,
+                sizeSettable: metadata.sizeSettable.rawValue
             )
         }
         .sorted {

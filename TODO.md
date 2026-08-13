@@ -259,6 +259,37 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-051 — Strengthen window-admission evidence and fixtures
+
+- **Type:** Safety hardening / compatibility research
+- **Priority:** P1
+- **Status:** Live validation
+- **Requested:** Compare established open-source macOS window managers and make WindowRanger's
+  distinction between normal windows, dialogs, modal surfaces, floating panels, toolbars, and
+  transient popups more robust.
+- **Research result:** AeroSpace's useful pattern is a real-window/dialog/popup classifier backed by
+  captured Accessibility fixtures. yabai requires a root window and a narrow role/subrole set while
+  recording move/resize capability; Amethyst requires a movable standard window. Preserve
+  WindowRanger's central four-way admission boundary, privacy rules, title/size independence, and
+  verified bundle-specific exceptions rather than copying broad app blacklists or heuristic lists.
+- **Implemented:** Admission now records authoritative/unsupported/unavailable modal, focus,
+  main-window, window-control, position-settable, and size-settable observations. Debug Settings
+  presents that evidence and copies deterministic versioned JSON suitable for fixture capture. A
+  table-driven corpus locks current standard, missing-subrole, sheet, system-dialog, dialog,
+  floating-window, non-normal-layer, minimized, fullscreen, toolbar-role, and unknown-subrole
+  decisions. The prior one-off Codex layer check is now the first versioned built-in compatibility
+  profile. Profiles match bundle plus declared surface evidence, report their identifier in Debug
+  Settings, logs, and snapshot JSON, and remain separate from personal App Rules. This checkpoint
+  deliberately does not change admission, layout, parking, focus, persistence, or recovery behaviour.
+- **Automated evidence:** Focused admission, registry matching, false-match, and snapshot verification
+  passes 8 tests. Local quick verification passes all 541 non-hosted tests, including test-isolation
+  validation; it does not build, launch, sign, install, stop, or automate WindowRanger.app.
+- **Remaining validation:** With explicit install approval, use a signed Debug build to refresh and
+  copy admission snapshots for representative normal windows, dialogs, sheets, floating panels,
+  titlebarless windows, and transient popups. Confirm the UI remains readable, the copied JSON has
+  no titles or content-bearing metadata, and refreshing/copying performs no window or focus writes.
+  Only then use those fixtures to propose any classifier behaviour change.
+
 ### WR-049 — Refine Command Wheel workspace-action icons
 
 - **Type:** Visual refinement

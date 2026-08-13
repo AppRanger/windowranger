@@ -60,16 +60,38 @@ ineligible, or ignored transient/popup. Ignored objects never enter membership, 
 focus cycling or recovery. The verified non-normal-layer Codex pet/panels are excluded here rather
 than patched out later.
 
+Built-in compatibility profiles are versioned, declarative corrections for verified application
+surfaces. A profile matches a normalized bundle identifier plus only the role, subrole, layer,
+modal, control-presence, or move/resize evidence needed to distinguish that surface. It produces an
+ordinary admission disposition and records the matched profile identifier in diagnostics. Profiles
+must be backed by a privacy-safe fixture and must not encode a user's workspace assignment or layout
+preference. The bundled registry is intentionally local to the signed app; there is no remotely
+updated exception list.
+
 Effective layout participation follows this order:
 
-1. ignored/transient or temporarily unsafe windows are untouched;
-2. an app rule that excludes layout remains authoritative;
-3. explicit per-window floating state controls otherwise eligible normal windows;
-4. high-confidence dialog classification automatically floats a dialog;
-5. remaining windows participate in the workspace's Freeform, Tiled or Accordion behavior.
+1. a narrowly matched built-in compatibility profile can correct the surface's admission;
+2. generic admission classifies every unmatched window;
+3. ignored/transient or temporarily unsafe windows are untouched;
+4. a user App Rule that excludes layout remains authoritative for admitted windows;
+5. explicit per-window floating state controls otherwise eligible normal windows;
+6. high-confidence dialog classification automatically floats a dialog;
+7. remaining windows participate in the workspace's Freeform, Tiled or Accordion behavior.
 
 Keep-on-all-workspaces rules affect visibility but do not grant a window permission to enter layout
 or focus scopes that it otherwise fails.
+
+Debug admission evidence is deliberately richer than the active classifier. The cached snapshot
+distinguishes authoritative, unsupported, and unavailable modal, focused, main-window, window-control,
+position-settable, and size-settable observations so representative real-app fixtures can justify a
+later rule change. The regular engine poll retains cached support evidence rather than performing
+these extra queries every 0.75 seconds. The sole exception is a surface whose bundle and ordinary
+role/subrole/layer/control evidence already match a compatibility profile that explicitly requires
+support-only evidence; only that candidate is enriched before classification. User-triggered Refresh
+performs read-only capability queries for already tracked windows, while ignored or unsupported
+surfaces capture the same evidence once before they are discarded. The snapshot contains no window
+titles or content-bearing metadata and does not itself change admission, membership, layout, focus,
+persistence, or recovery behaviour.
 
 The Add Application Rule picker reads existing engine membership without refreshing or mutating
 windows. Open apps are presented separately from other installed apps. A new rule inherits a live

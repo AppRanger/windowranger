@@ -100,8 +100,15 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
     let isMinimized: Bool
     let isFullscreen: Bool
     let fullscreenObservation: AXBooleanAttributeObservation
+    let modalObservation: AXBooleanAttributeObservation
+    let focusedObservation: AXBooleanAttributeObservation
+    let mainObservation: AXBooleanAttributeObservation
     let fullscreenButton: AXAttributePresence
+    let minimizeButton: AXAttributePresence
     let closeButton: AXAttributePresence
+    let zoomButton: AXAttributePresence
+    let positionSettable: AXBooleanAttributeObservation
+    let sizeSettable: AXBooleanAttributeObservation
 
     init(
         bundleIdentifier: String?,
@@ -111,8 +118,15 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
         isMinimized: Bool,
         isFullscreen: Bool = false,
         fullscreenObservation: AXBooleanAttributeObservation? = nil,
+        modalObservation: AXBooleanAttributeObservation = .unsupported,
+        focusedObservation: AXBooleanAttributeObservation = .unsupported,
+        mainObservation: AXBooleanAttributeObservation = .unsupported,
         fullscreenButton: AXAttributePresence = .unavailable,
-        closeButton: AXAttributePresence = .unavailable
+        minimizeButton: AXAttributePresence = .unavailable,
+        closeButton: AXAttributePresence = .unavailable,
+        zoomButton: AXAttributePresence = .unavailable,
+        positionSettable: AXBooleanAttributeObservation = .unsupported,
+        sizeSettable: AXBooleanAttributeObservation = .unsupported
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.role = role
@@ -122,14 +136,57 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
         self.isFullscreen = isFullscreen
         self.fullscreenObservation = fullscreenObservation
             ?? (isFullscreen ? .trueValue : .falseValue)
+        self.modalObservation = modalObservation
+        self.focusedObservation = focusedObservation
+        self.mainObservation = mainObservation
         self.fullscreenButton = fullscreenButton
+        self.minimizeButton = minimizeButton
         self.closeButton = closeButton
+        self.zoomButton = zoomButton
+        self.positionSettable = positionSettable
+        self.sizeSettable = sizeSettable
+    }
+
+    /// A broad discovery pass refreshes classifier inputs but must not add support-only AX reads to
+    /// the 0.75-second engine poll. Retain the last on-demand evidence until it is explicitly
+    /// refreshed or the window's admission state changes.
+    func retainingSupportEvidence(from previous: WindowAdmissionMetadata?) -> WindowAdmissionMetadata {
+        guard let previous else { return self }
+        return WindowAdmissionMetadata(
+            bundleIdentifier: bundleIdentifier,
+            role: role,
+            subrole: subrole,
+            windowLayer: windowLayer,
+            isMinimized: isMinimized,
+            isFullscreen: isFullscreen,
+            fullscreenObservation: fullscreenObservation,
+            modalObservation: previous.modalObservation,
+            focusedObservation: previous.focusedObservation,
+            mainObservation: previous.mainObservation,
+            fullscreenButton: fullscreenButton,
+            minimizeButton: previous.minimizeButton,
+            closeButton: closeButton,
+            zoomButton: previous.zoomButton,
+            positionSettable: previous.positionSettable,
+            sizeSettable: previous.sizeSettable
+        )
     }
 }
 
 struct WindowAdmissionDecision: Equatable, Sendable {
     let disposition: WindowAdmissionDisposition
     let reason: WindowAdmissionReason
+    let compatibilityProfileIdentifier: String?
+
+    init(
+        disposition: WindowAdmissionDisposition,
+        reason: WindowAdmissionReason,
+        compatibilityProfileIdentifier: String? = nil
+    ) {
+        self.disposition = disposition
+        self.reason = reason
+        self.compatibilityProfileIdentifier = compatibilityProfileIdentifier
+    }
 
     var automaticallyFloats: Bool { disposition == .managedDialog }
 
@@ -141,19 +198,179 @@ struct WindowAdmissionDecision: Equatable, Sendable {
     }
 }
 
+enum WindowCompatibilityLayerConstraint: Equatable, Sendable {
+    case exact(Int)
+    case nonNormal
+
+    func matches(_ layer: Int?) -> Bool {
+        guard let layer else { return false }
+        switch self {
+        case let .exact(expected):
+            return layer == expected
+        case .nonNormal:
+            return layer != 0
+        }
+    }
+}
+
+/// A built-in correction for a verified Accessibility shape in a specific application. Profiles
+/// describe compatibility facts, not user policy: workspace assignment and layout preferences stay
+/// in App Rules. Every matcher must remain narrow enough to lock with a privacy-safe fixture.
+struct WindowCompatibilityProfile: Equatable, Sendable {
+    let identifier: String
+    let bundleIdentifiers: Set<String>
+    let role: String?
+    let subrole: String?
+    let layer: WindowCompatibilityLayerConstraint?
+    let modalObservation: AXBooleanAttributeObservation?
+    let focusedObservation: AXBooleanAttributeObservation?
+    let mainObservation: AXBooleanAttributeObservation?
+    let fullscreenButton: AXAttributePresence?
+    let minimizeButton: AXAttributePresence?
+    let closeButton: AXAttributePresence?
+    let zoomButton: AXAttributePresence?
+    let positionSettable: AXBooleanAttributeObservation?
+    let sizeSettable: AXBooleanAttributeObservation?
+    let disposition: WindowAdmissionDisposition
+    let reason: WindowAdmissionReason
+
+    init(
+        identifier: String,
+        bundleIdentifiers: Set<String>,
+        role: String? = nil,
+        subrole: String? = nil,
+        layer: WindowCompatibilityLayerConstraint? = nil,
+        modalObservation: AXBooleanAttributeObservation? = nil,
+        focusedObservation: AXBooleanAttributeObservation? = nil,
+        mainObservation: AXBooleanAttributeObservation? = nil,
+        fullscreenButton: AXAttributePresence? = nil,
+        minimizeButton: AXAttributePresence? = nil,
+        closeButton: AXAttributePresence? = nil,
+        zoomButton: AXAttributePresence? = nil,
+        positionSettable: AXBooleanAttributeObservation? = nil,
+        sizeSettable: AXBooleanAttributeObservation? = nil,
+        disposition: WindowAdmissionDisposition,
+        reason: WindowAdmissionReason
+    ) {
+        self.identifier = identifier
+        self.bundleIdentifiers = Set(bundleIdentifiers.map { $0.lowercased() })
+        self.role = role
+        self.subrole = subrole
+        self.layer = layer
+        self.modalObservation = modalObservation
+        self.focusedObservation = focusedObservation
+        self.mainObservation = mainObservation
+        self.fullscreenButton = fullscreenButton
+        self.minimizeButton = minimizeButton
+        self.closeButton = closeButton
+        self.zoomButton = zoomButton
+        self.positionSettable = positionSettable
+        self.sizeSettable = sizeSettable
+        self.disposition = disposition
+        self.reason = reason
+    }
+
+    func matches(_ metadata: WindowAdmissionMetadata) -> Bool {
+        guard let bundleIdentifier = metadata.bundleIdentifier?.lowercased(),
+              bundleIdentifiers.contains(bundleIdentifier),
+              role.map({ $0 == metadata.role }) ?? true,
+              subrole.map({ $0 == metadata.subrole }) ?? true,
+              layer.map({ $0.matches(metadata.windowLayer) }) ?? true,
+              modalObservation.map({ $0 == metadata.modalObservation }) ?? true,
+              focusedObservation.map({ $0 == metadata.focusedObservation }) ?? true,
+              mainObservation.map({ $0 == metadata.mainObservation }) ?? true,
+              fullscreenButton.map({ $0 == metadata.fullscreenButton }) ?? true,
+              minimizeButton.map({ $0 == metadata.minimizeButton }) ?? true,
+              closeButton.map({ $0 == metadata.closeButton }) ?? true,
+              zoomButton.map({ $0 == metadata.zoomButton }) ?? true,
+              positionSettable.map({ $0 == metadata.positionSettable }) ?? true,
+              sizeSettable.map({ $0 == metadata.sizeSettable }) ?? true
+        else { return false }
+        return true
+    }
+
+    var requiresSupportMetadata: Bool {
+        modalObservation != nil ||
+            focusedObservation != nil ||
+            mainObservation != nil ||
+            minimizeButton != nil ||
+            zoomButton != nil ||
+            positionSettable != nil ||
+            sizeSettable != nil
+    }
+
+    /// Checks only evidence already collected by the ordinary discovery pass. Support-only AX
+    /// attributes are fetched only after this candidate gate matches.
+    func matchesCoreEvidence(_ metadata: WindowAdmissionMetadata) -> Bool {
+        guard let bundleIdentifier = metadata.bundleIdentifier?.lowercased(),
+              bundleIdentifiers.contains(bundleIdentifier),
+              role.map({ $0 == metadata.role }) ?? true,
+              subrole.map({ $0 == metadata.subrole }) ?? true,
+              layer.map({ $0.matches(metadata.windowLayer) }) ?? true,
+              fullscreenButton.map({ $0 == metadata.fullscreenButton }) ?? true,
+              closeButton.map({ $0 == metadata.closeButton }) ?? true
+        else { return false }
+        return true
+    }
+
+    func decision() -> WindowAdmissionDecision {
+        WindowAdmissionDecision(
+            disposition: disposition,
+            reason: reason,
+            compatibilityProfileIdentifier: identifier
+        )
+    }
+}
+
 enum AccessibilityWindow {
     private static let enhancedUserInterfaceAttribute = "AXEnhancedUserInterface" as CFString
     private static let fullScreenAttribute = "AXFullScreen" as CFString
 
-    /// Window levels are not globally reliable enough to reject for every application. This
-    /// cautious allowlist grows only when an application's AX/WindowServer behaviour is verified.
-    static let bundleIdentifiersWithVerifiedTransientNonNormalLayers: Set<String> = [
-        "com.openai.codex",
+    /// Bundled compatibility facts grow only from a reproducible report and privacy-safe fixture.
+    /// Keep matches surface-specific; never use a profile as a hidden whole-app layout preference.
+    static let builtInCompatibilityProfiles: [WindowCompatibilityProfile] = [
+        WindowCompatibilityProfile(
+            identifier: "codex-transient-non-normal-layer-v1",
+            bundleIdentifiers: ["com.openai.codex"],
+            layer: .nonNormal,
+            disposition: .ignoredTransientPopup,
+            reason: .verifiedBundleNonNormalLayer
+        ),
     ]
 
-    static func hasVerifiedTransientNonNormalLayers(_ bundleIdentifier: String?) -> Bool {
-        bundleIdentifier.map { bundleIdentifiersWithVerifiedTransientNonNormalLayers.contains($0.lowercased()) }
-            ?? false
+    static func matchingCompatibilityProfile(
+        for metadata: WindowAdmissionMetadata
+    ) -> WindowCompatibilityProfile? {
+        uniqueMatchingCompatibilityProfile(
+            for: metadata,
+            in: builtInCompatibilityProfiles
+        )
+    }
+
+    /// Overlapping corrections fail closed to the generic classifier instead of making source
+    /// order an invisible precedence rule.
+    static func uniqueMatchingCompatibilityProfile(
+        for metadata: WindowAdmissionMetadata,
+        in profiles: [WindowCompatibilityProfile]
+    ) -> WindowCompatibilityProfile? {
+        let matches = profiles.filter { $0.matches(metadata) }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    static func mayNeedDirectLayerResolutionForCompatibility(_ bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier = bundleIdentifier?.lowercased() else { return false }
+        return builtInCompatibilityProfiles.contains {
+            $0.bundleIdentifiers.contains(bundleIdentifier) && $0.layer != nil
+        }
+    }
+
+    static func shouldCollectSupportMetadataForCompatibility(
+        _ metadata: WindowAdmissionMetadata,
+        profiles: [WindowCompatibilityProfile]? = nil
+    ) -> Bool {
+        (profiles ?? builtInCompatibilityProfiles).contains {
+            $0.requiresSupportMetadata && $0.matchesCoreEvidence(metadata)
+        }
     }
 
     static func requestPermission(
@@ -217,6 +434,23 @@ enum AccessibilityWindow {
 
     static func fullscreenObservation(of element: AXUIElement) -> AXBooleanAttributeObservation {
         booleanAttributeObservation(fullScreenAttribute, of: element)
+    }
+
+    /// Preserves unavailable and unsupported Accessibility results so future admission changes can
+    /// be based on affirmative capability evidence rather than treating every failed query as false.
+    static func attributeSettableObservation(
+        _ attribute: CFString,
+        of element: AXUIElement
+    ) -> AXBooleanAttributeObservation {
+        var settable = DarwinBoolean(false)
+        switch AXUIElementIsAttributeSettable(element, attribute, &settable) {
+        case .success:
+            return settable.boolValue ? .trueValue : .falseValue
+        case .noValue, .attributeUnsupported:
+            return .unsupported
+        default:
+            return .unavailable
+        }
     }
 
     static func isAttributeSettable(_ attribute: CFString, of element: AXUIElement) -> Bool {
@@ -369,14 +603,35 @@ enum AccessibilityWindow {
         )
     }
 
+    /// Collects evidence used to build real-app regression fixtures. These additional AX queries are
+    /// intentionally user-triggered for managed windows rather than part of the normal engine poll.
+    static func admissionSupportMetadata(
+        of element: AXUIElement,
+        coreMetadata: WindowAdmissionMetadata
+    ) -> WindowAdmissionMetadata {
+        WindowAdmissionMetadata(
+            bundleIdentifier: coreMetadata.bundleIdentifier,
+            role: coreMetadata.role,
+            subrole: coreMetadata.subrole,
+            windowLayer: coreMetadata.windowLayer,
+            isMinimized: coreMetadata.isMinimized,
+            isFullscreen: coreMetadata.isFullscreen,
+            fullscreenObservation: coreMetadata.fullscreenObservation,
+            modalObservation: booleanAttributeObservation(kAXModalAttribute as CFString, of: element),
+            focusedObservation: booleanAttributeObservation(kAXFocusedAttribute as CFString, of: element),
+            mainObservation: booleanAttributeObservation(kAXMainAttribute as CFString, of: element),
+            fullscreenButton: coreMetadata.fullscreenButton,
+            minimizeButton: attributePresence(kAXMinimizeButtonAttribute as CFString, of: element),
+            closeButton: coreMetadata.closeButton,
+            zoomButton: attributePresence(kAXZoomButtonAttribute as CFString, of: element),
+            positionSettable: attributeSettableObservation(kAXPositionAttribute as CFString, of: element),
+            sizeSettable: attributeSettableObservation(kAXSizeAttribute as CFString, of: element)
+        )
+    }
+
     static func admissionDecision(for metadata: WindowAdmissionMetadata) -> WindowAdmissionDecision {
-        if let layer = metadata.windowLayer,
-           layer != 0,
-           hasVerifiedTransientNonNormalLayers(metadata.bundleIdentifier) {
-            return WindowAdmissionDecision(
-                disposition: .ignoredTransientPopup,
-                reason: .verifiedBundleNonNormalLayer
-            )
+        if let profile = matchingCompatibilityProfile(for: metadata) {
+            return profile.decision()
         }
 
         guard metadata.role == kAXWindowRole as String || metadata.role == kAXSheetRole as String else {
