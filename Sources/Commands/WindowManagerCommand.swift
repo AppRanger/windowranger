@@ -10,6 +10,7 @@ enum WindowManagerCommand: Hashable, Sendable {
     case setLayout(WorkspaceLayout)
     case selectLayoutFromShortcut(WorkspaceLayout)
     case toggleFloating
+    case toggleDropDownApp
     case previousWorkspace
     case resetCurrentWorkspace
     case resetAllWindows
@@ -46,6 +47,8 @@ enum WindowManagerCommand: Hashable, Sendable {
             ["action": "select-layout-shortcut", "layout": layout.rawValue]
         case .toggleFloating:
             ["action": "toggle-floating"]
+        case .toggleDropDownApp:
+            ["action": "toggle-drop-down-app"]
         case .previousWorkspace:
             ["action": "previous-workspace"]
         case .resetCurrentWorkspace:
@@ -148,6 +151,8 @@ final class WindowManagerCommandDispatcher {
                     correlationID: correlationID
                 )
             case .toggleFloating: engine?.toggleFocusedWindowFloating()
+            case .toggleDropDownApp:
+                engine?.toggleDropDownApp(correlationID: correlationID)
             case .previousWorkspace:
                 engine?.switchToPreviousWorkspace(correlationID: correlationID)
             case .resetCurrentWorkspace: engine?.resetCurrentWorkspace(correlationID: correlationID)
