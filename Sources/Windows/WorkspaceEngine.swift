@@ -6548,21 +6548,25 @@ final class WorkspaceEngine {
                     fullscreenObservation: fullscreenObservation,
                     effectiveFullscreen: fullscreenResolution.isFullscreen
                 )
+                let retainedAdmissionMetadata = coreAdmissionMetadata.retainingSupportEvidence(
+                    from: admissionMetadataByWindow[key]
+                )
                 let collectsCompatibilitySupportMetadata = AccessibilityWindow
                     .shouldCollectSupportMetadataForCompatibility(coreAdmissionMetadata)
-                let admissionMetadata = collectsCompatibilitySupportMetadata
+                let collectsFixedSizeSupportMetadata = AccessibilityWindow
+                    .shouldCollectFixedSizeStandardWindowEvidence(coreAdmissionMetadata) &&
+                    !AccessibilityWindow.hasAuthoritativeMoveResizeEvidence(retainedAdmissionMetadata)
+                let collectsSupportMetadata = collectsCompatibilitySupportMetadata ||
+                    collectsFixedSizeSupportMetadata
+                let admissionMetadata = collectsSupportMetadata
                     ? AccessibilityWindow.admissionSupportMetadata(
                         of: element,
                         coreMetadata: coreAdmissionMetadata
                     )
-                    : coreAdmissionMetadata
+                    : retainedAdmissionMetadata
                 let admissionDecision = AccessibilityWindow.admissionDecision(for: admissionMetadata)
                 let previousAdmissionDecision = admissionDecisionByWindow[key]
-                var recordedAdmissionMetadata = collectsCompatibilitySupportMetadata
-                    ? admissionMetadata
-                    : admissionMetadata.retainingSupportEvidence(
-                        from: admissionMetadataByWindow[key]
-                    )
+                var recordedAdmissionMetadata = admissionMetadata
                 if previousAdmissionDecision != admissionDecision,
                    !admissionDecision.disposition.admitsNewWindow,
                    admissionDecision.reason != .minimized,
