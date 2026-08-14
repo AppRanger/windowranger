@@ -807,6 +807,34 @@ final class MenuBarPresentationTests: XCTestCase {
         )
     }
 
+    func testApplicationShelfDismissesOnlyForPointerDownOutsideAnOpenShelf() {
+        let frame = CGRect(x: 100, y: 500, width: 240, height: 180)
+
+        XCTAssertFalse(MenuBarApplicationShelfDismissalPolicy.shouldDismissForPointerDown(
+            pointer: CGPoint(x: 180, y: 550),
+            presentedFrame: frame,
+            hasPendingPresentation: true
+        ))
+        XCTAssertTrue(MenuBarApplicationShelfDismissalPolicy.shouldDismissForPointerDown(
+            pointer: CGPoint(x: 50, y: 550),
+            presentedFrame: frame,
+            hasPendingPresentation: true
+        ))
+        XCTAssertFalse(MenuBarApplicationShelfDismissalPolicy.shouldDismissForPointerDown(
+            pointer: CGPoint(x: 50, y: 550),
+            presentedFrame: nil,
+            hasPendingPresentation: false
+        ))
+    }
+
+    func testPointerDownCancelsAPendingApplicationShelfBeforeItOpens() {
+        XCTAssertTrue(MenuBarApplicationShelfDismissalPolicy.shouldDismissForPointerDown(
+            pointer: CGPoint(x: 50, y: 550),
+            presentedFrame: nil,
+            hasPendingPresentation: true
+        ))
+    }
+
     @MainActor
     func testApplicationShelfUsesNativeGlassAndInstallsContent() throws {
         let frame = CGRect(x: 0, y: 0, width: 240, height: 100)

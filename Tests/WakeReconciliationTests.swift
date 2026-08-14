@@ -168,6 +168,101 @@ final class WakeReconciliationTests: XCTestCase {
         XCTAssertFalse(state.complete(generation: stale.generation))
     }
 
+    func testScreenSleepSuspendsLifecycleUntilASelectedWakeSignal() {
+        var state = WakeReconciliationState()
+
+        _ = state.prepareForSleep()
+        XCTAssertTrue(state.isSleeping)
+        XCTAssertFalse(state.isPending)
+
+        let wake = state.request(.screensWake)
+        XCTAssertFalse(state.isSleeping)
+        XCTAssertTrue(wake.shouldSchedule)
+        XCTAssertTrue(state.isPending)
+    }
+
+    func testDisplayWakeWaitsForSessionActivationBeforeRecovery() {
+        var state = ScreenSessionLifecycleState()
+        state.suspend(.screensSleep)
+        state.suspend(.sessionResignedActive)
+
+        XCTAssertFalse(state.receive(.screensWake))
+        XCTAssertEqual(state.suspensionSources, [.sessionResignedActive])
+        XCTAssertTrue(state.receive(.sessionBecameActive))
+        XCTAssertFalse(state.isSuspended)
+    }
+
+    func testSessionActivationWaitsForDisplayWakeWhenBothWereSuspended() {
+        var state = ScreenSessionLifecycleState()
+        state.suspend(.screensSleep)
+        state.suspend(.sessionResignedActive)
+
+        XCTAssertFalse(state.receive(.sessionBecameActive))
+        XCTAssertEqual(state.suspensionSources, [.screensSleep])
+        XCTAssertTrue(state.receive(.screensWake))
+    }
+
+    func testFirstGlobalEmptySnapshotDefersRatherThanEvictingEveryTrackedWindow() {
+        XCTAssertTrue(WindowEnumerationLifecycle.shouldDeferGlobalEmptySnapshot(
+            trackedWindowCount: 13,
+            requiredProcessIdentifiers: [10, 11, 12],
+            successfullyEnumeratedProcessIdentifiers: [10, 11, 12],
+            enumeratedWindowCount: 0,
+            isLifecycleTransitionActive: false,
+            consecutiveGlobalEmptySnapshots: 0
+        ))
+    }
+
+    func testGlobalEmptySnapshotRemainsDeferredThroughoutWakeReconciliation() {
+        XCTAssertTrue(WindowEnumerationLifecycle.shouldDeferGlobalEmptySnapshot(
+            trackedWindowCount: 13,
+            requiredProcessIdentifiers: [10, 11, 12],
+            successfullyEnumeratedProcessIdentifiers: [10, 11, 12],
+            enumeratedWindowCount: 0,
+            isLifecycleTransitionActive: true,
+            consecutiveGlobalEmptySnapshots: 3
+        ))
+    }
+
+    func testConfirmedGlobalEmptySnapshotIsAuthoritativeWhileFullyActive() {
+        XCTAssertFalse(WindowEnumerationLifecycle.shouldDeferGlobalEmptySnapshot(
+            trackedWindowCount: 2,
+            requiredProcessIdentifiers: [10, 11],
+            successfullyEnumeratedProcessIdentifiers: [10, 11],
+            enumeratedWindowCount: 0,
+            isLifecycleTransitionActive: false,
+            consecutiveGlobalEmptySnapshots: 1
+        ))
+
+        let first = WindowKey(processIdentifier: 10, windowIdentifier: 100)
+        let second = WindowKey(processIdentifier: 11, windowIdentifier: 101)
+        XCTAssertEqual(WindowEnumerationLifecycle.removedTrackedWindowKeys(
+            trackedWindowKeys: [first, second],
+            runningProcessIdentifiers: [10, 11],
+            successfullyEnumeratedProcessIdentifiers: [10, 11],
+            enumeratedWindowKeys: []
+        ), [first, second])
+    }
+
+    func testPartialOrFailedEnumerationDoesNotTriggerGlobalEmptyDeferral() {
+        XCTAssertFalse(WindowEnumerationLifecycle.shouldDeferGlobalEmptySnapshot(
+            trackedWindowCount: 2,
+            requiredProcessIdentifiers: [10, 11],
+            successfullyEnumeratedProcessIdentifiers: [10],
+            enumeratedWindowCount: 0,
+            isLifecycleTransitionActive: false,
+            consecutiveGlobalEmptySnapshots: 0
+        ))
+        XCTAssertFalse(WindowEnumerationLifecycle.shouldDeferGlobalEmptySnapshot(
+            trackedWindowCount: 2,
+            requiredProcessIdentifiers: [10, 11],
+            successfullyEnumeratedProcessIdentifiers: [10, 11],
+            enumeratedWindowCount: 1,
+            isLifecycleTransitionActive: true,
+            consecutiveGlobalEmptySnapshots: 0
+        ))
+    }
+
     func testDelayedAXEnumerationRetriesThenCompletes() {
         XCTAssertEqual(
             decision(requiredProcesses: [42], enumeratedProcesses: []),

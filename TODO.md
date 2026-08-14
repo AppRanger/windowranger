@@ -20,6 +20,52 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-056 — Keep Accessibility permission status current in Settings
+
+- **Type:** Settings state bug
+- **Priority:** P2
+- **Status:** Live validation
+- **User-observed:** General Settings can continue to show Accessibility as Required after access
+  has already been granted directly in macOS System Settings rather than through WindowRanger's
+  Grant Access button.
+- **Expected:** The status reflects the running app identity's current Accessibility trust whenever
+  General Settings appears or WindowRanger becomes active. While the pane is visible and access is
+  still missing, it performs a lightweight bounded-frequency trust check so an external grant is
+  reflected without closing or reopening Settings. It must not repeat the system prompt.
+- **Acceptance:** An injected monitor test proves false-to-true external grants and later revocation
+  are reflected without requesting permission. Focused Settings tests, the complete non-hosted
+  suite, and an unsigned universal app build pass; signed live validation remains required.
+- **Automated evidence:** All 21 focused Utility Settings tests and all 577 non-hosted tests pass;
+  test isolation and the unsigned universal Debug app build also pass. With explicit approval, the
+  signed universal Debug candidate was installed, its signature/running path were verified, and its
+  startup Accessibility geometry write succeeded. Live Settings status confirmation remains.
+
+### WR-055 — Preserve workspace and Quick App ownership across screen lock
+
+- **Type:** Lifecycle recovery bug
+- **Priority:** P1
+- **Status:** Live validation
+- **Diagnostic-backed:** On 2026-08-14 the Mac remained awake while both displays turned off from
+  20:31:04 to 20:33:44. During the display-off transition, Accessibility returned successful empty
+  window lists for every tracked application. WindowRanger treated those snapshots as authoritative,
+  evicted 13 tracked windows, and cleared the hidden Ghostty Quick App session as a display-topology
+  change. Wake reconciliation then rediscovered Safari, Ghostty, and Codex as ordinary members of
+  active workspace 2 and reported a zero-mismatch layout after tiling all three.
+- **Expected:** Screen lock, session inactivity, and display sleep suspend background discovery and
+  invalidate stale work before empty Accessibility snapshots can erase workspace membership. A
+  coordinated wake must retain tracked windows across non-authoritative global-empty snapshots,
+  preserve one exact Quick App session, and restore its presented or parked geometry before ordinary
+  workspace layout. A genuine, repeated global-empty snapshot while fully active may still remove
+  windows normally.
+- **Acceptance:** Pure lifecycle tests cover session suspension, first-empty and wake-time snapshot
+  deferral, later authoritative removal while active, and Quick App retention across display sleep
+  and wake topology changes. The focused lifecycle/Quick App tests and complete non-hosted suite
+  pass. Signed two-display lock/wake validation remains required before Done.
+- **Automated evidence:** Test isolation, all 577 non-hosted tests, Release static analysis, the
+  unsigned universal Release build, and both Stable/Beta DMG smoke packages pass. With explicit
+  approval, signed universal Debug build `1ad56bb3d128-dirty` was installed and its startup recovery
+  verified; the two-display lock/wake result still awaits user confirmation.
+
 ### WR-050 — Add a profile-aware Quick App
 
 - **Type:** Feature
@@ -38,10 +84,11 @@ smallest useful outcome and acceptance boundary.
   change native macOS Spaces, or broaden normal window admission.
 - **Safety boundaries:** The Quick App window remains outside ordinary workspace layout, parking,
   focus cycling, reset, and persistence while presented. Profile changes, app/window termination,
-  display changes, sleep, shutdown, shortcut reconfiguration, and superseding commands must cancel
-  or safely restore a current session. Programmatic activation must not be mistaken for a user focus
-  departure. Tests stay behind injected adapters and never register a real hotkey or move live
-  windows.
+  uncoordinated display changes, system sleep, shutdown, shortcut reconfiguration, and superseding
+  commands must cancel or safely restore a current session. A lock/display-sleep transition instead
+  retains the exact session until coordinated wake recovery. Programmatic activation must not be
+  mistaken for a user focus departure. Tests stay behind injected adapters and never register a real
+  hotkey or move live windows.
 - **Acceptance:** Focused tests cover profile isolation, shortcut collisions, 80-percent default and
   clamping, toggle show/hide, focus-loss hide, exact-window ambiguity, geometry on non-origin and
   multi-display frames, interrupted animation/session generations, and restoration boundaries. The
@@ -916,11 +963,15 @@ second copy of that checklist.
 - **Result:** Full-mode workspace segments now highlight on hover and open a delayed nonactivating
   native-glass app shelf. The shelf handles empty and overflowing workspaces, survives pointer
   transfer in both directions, and delegates workspace switching plus exact managed-app focus to
-  the engine without polling, private APIs, or a global event monitor.
+  the engine without polling or private APIs. It now dismisses immediately when another application
+  activates or a pointer button is pressed outside it; short-lived local/global mouse monitors exist
+  only while presentation is pending or visible and are removed on every dismissal path.
 - **Evidence:** The integrated 512-test suite passes with production-view, geometry, grouping, and
   exact-focus coverage. The macOS 27 Developer ID candidates were live-validated for rollover,
   empty/populated shelf layout, glass styling, scroller policy, pointer return, app selection, and
-  unchanged workspace click routing.
+  unchanged workspace click routing. Follow-up policy tests cover inside, outside, inactive, and
+  pending-presentation pointer dismissal. Local quick verification passes all 577 non-hosted tests,
+  and the unsigned universal Debug app builds; updated live validation remains required.
 
 ### WR-039 — Restore Full menu-bar workspace clicks on macOS 27
 
