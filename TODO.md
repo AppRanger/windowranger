@@ -271,8 +271,13 @@ smallest useful outcome and acceptance boundary.
   state without overwriting or deleting either identity's data; isolated tests pass. A signed
   installed build must still confirm the new provisioning profile, iCloud entitlement, fresh
   Accessibility approval, and launch-at-login behavior before this item can be Done.
-- **Automated verification:** `./scripts/verify-local-ci.sh --quick` passed on 2026-08-13 with 555
-  tests and no failures. Signed installed-app checks remain outstanding.
+- **Automated verification:** `./scripts/verify-local-ci.sh --quick` passed again on 2026-08-14
+  with 555 tests and no failures. Stable Xcode archived build 3 as a universal app and an
+  automatic Developer ID export passed strict code-signing verification with bundle identifier
+  `dev.appranger.WindowRanger`, application identifier
+  `44NAD22AK6.dev.appranger.WindowRanger`, and the preserved
+  `44NAD22AK6.com.windowranger.WindowRanger` iCloud key-value entitlement. Installed-app migration,
+  fresh Accessibility approval, and launch-at-login checks remain outstanding.
 
 ### WR-051 — Strengthen window-admission evidence and fixtures
 
@@ -563,7 +568,7 @@ smallest useful outcome and acceptance boundary.
   it does not establish that the normal Debug log volume or the maintainer's filesystem causes a
   perceptible interaction problem.
 - **Automated evidence:** Test isolation and the complete 446-test suite passed on 10 August 2026.
-- **Private CI evidence:** [PR #7](https://github.com/appranger/windowranger/pull/7) uses WR-020's
+- **Private CI evidence:** [PR #7](https://github.com/AppRanger/windowranger/pull/7) uses WR-020's
   exact-commit local pre-push gate; its hosted pull-request job skips successfully before runner
   allocation while the repository remains private.
 - **Remaining live boundary:** Gracefully quit the installed copy, run the intended signed Debug
@@ -655,7 +660,7 @@ adding engineering tasks.
 - **Status:** Needs decision
 - **Evidence:** User-observed and signing-requirement backed during the first Beta smoke test.
 - **Current behavior:** Xcode Debug and the installed Developer ID app use the same
-  `com.windowranger.WindowRanger` bundle identifier but different designated requirements. macOS can
+  `dev.appranger.WindowRanger` bundle identifier but different designated requirements. macOS can
   therefore treat them as separate Accessibility clients while LaunchServices still sees the same
   bundle identifier, making handoff and permission recovery ambiguous.
 - **Smallest useful outcome:** Decide whether the local Xcode product should use a clearly named
@@ -667,8 +672,8 @@ adding engineering tasks.
   - the required development App ID, provisioning profile, and iCloud capability are configured
     before changing the project;
   - Xcode handoff scripts quit and resume only the intended product;
-  - public Stable/Beta bundle identity, preferences, update continuity, and release provenance do
-    not change;
+  - a future development-only identity does not alter the established public identity, migrated
+    preferences and iCloud continuity, update continuity, or release provenance;
   - migration guidance avoids global TCC or LaunchServices resets and is live-tested on the
     maintainer's Mac.
 
@@ -750,7 +755,7 @@ second copy of that checklist.
 ### WR-037 — Publish WindowRanger 0.1.0 Beta 2
 
 - **Result:** Published
-  [`v0.1.0-beta.2`](https://github.com/appranger/windowranger/releases/tag/v0.1.0-beta.2) as a
+  [`v0.1.0-beta.2`](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.2) as a
   GitHub prerelease on 12 August 2026 after maintainer testing and explicit approval. The protected
   annotated tag points to reviewed release commit `82b2fa381ae4`; the Developer ID-signed,
   notarized, stapled DMG and ZIP plus checksums and provenance manifest were downloaded after
@@ -881,12 +886,12 @@ second copy of that checklist.
 
 ### WR-018 — Publish the first GitHub Beta
 
-- **Result:** Made `appranger/windowranger` public and published `v0.1.0-beta.1` as a GitHub
+- **Result:** Made `AppRanger/windowranger` public and published `v0.1.0-beta.1` as a GitHub
   prerelease on 10 August 2026, preserving the exact signed, notarized artifact tag and all five
   checksum/provenance-verified assets. Enabled private vulnerability reporting, secret scanning and
   push protection; protected `main`, `develop`, and `v*` tags.
 - **Evidence:** The public release is
-  [WindowRanger 0.1.0 Beta 1](https://github.com/appranger/windowranger/releases/tag/v0.1.0-beta.1)
+  [WindowRanger 0.1.0 Beta 1](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.1)
   at artifact commit `04b5750b1fe3b183c1259d132a0a8e985f8b4e0e`. Immediately before publication,
   the downloaded app and DMG passed checksums, provenance, signature, stapling, notarization, and
   Gatekeeper checks; the publication-preparation checkpoint passed all 446 tests.
@@ -915,7 +920,7 @@ second copy of that checklist.
   analysis, unsigned universal Release build, and both DMG creation/verification paths. Hook
   installation/removal and exact-commit execution passed. The topic-branch push created no workflow
   run, while private pull-request run
-  [31363831170](https://github.com/appranger/windowranger/actions/runs/31363831170) completed with
+  [31363831170](https://github.com/AppRanger/windowranger/actions/runs/31363831170) completed with
   the hosted job skipped before runner allocation.
 
 ### WR-004 — Bound synced profile-library input with recovery UX

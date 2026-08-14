@@ -11,7 +11,7 @@ rolling Dev builds from `develop`. Stable and opt-in Beta updates will use Spark
 will remain outside automatic updates.
 
 Download the signed and notarized
-[`v0.1.0-beta.2` GitHub prerelease](https://github.com/appranger/windowranger/releases/tag/v0.1.0-beta.2)
+[`v0.1.0-beta.2` GitHub prerelease](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.2)
 as a DMG, with a notarized ZIP as a fallback. GitHub's automatically generated source archives are
 not an installable macOS app.
 

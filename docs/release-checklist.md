@@ -13,8 +13,9 @@ promotion and versioning. It is a design authority, not evidence that the releas
       first-publication approval.
 - [x] Select `dev.appranger.WindowRanger` as the public bundle identifier.
 - [x] Confirm Developer ID ownership and team `44NAD22AK6`.
-- [ ] Create or refresh the Developer ID provisioning profile for `dev.appranger.WindowRanger`,
-      then verify the exported app's designated requirement and public bundle identifier.
+- [x] Verify automatic Developer ID provisioning for `dev.appranger.WindowRanger`; a stable-Xcode
+      archive/export produced a Developer ID-signed universal app with the expected designated
+      requirement, public bundle identifier, and preserved iCloud key-value entitlement.
 - [x] Finalize the first-Beta app icon, menu-bar identity, versioning and support language.
 
 ## Licensing and repository hygiene
