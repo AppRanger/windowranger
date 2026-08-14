@@ -855,7 +855,10 @@ final class WorkspaceDefinitionTests: XCTestCase {
             subrole: kAXStandardWindowSubrole as String,
             windowLayer: 0,
             isMinimized: false,
-            fullscreenButton: .absent
+            fullscreenButton: .absent,
+            closeButton: .present,
+            positionSettable: .unsupported,
+            sizeSettable: .unsupported
         ))
         let dialogWithFullscreen = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
             bundleIdentifier: "com.example.Editor",

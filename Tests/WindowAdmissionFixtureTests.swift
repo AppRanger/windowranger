@@ -12,7 +12,7 @@ final class WindowAdmissionFixtureTests: XCTestCase {
         }
     }
 
-    func testNewCapabilityEvidenceDoesNotChangeAdmissionBeforeLiveValidation() {
+    func testFixedSizeCapabilityEvidenceDoesNotOverrideDocumentControls() {
         let metadata = fixtureMetadata(
             subrole: kAXStandardWindowSubrole as String,
             modalObservation: .trueValue,
@@ -30,6 +30,30 @@ final class WindowAdmissionFixtureTests: XCTestCase {
             AccessibilityWindow.admissionDecision(for: metadata),
             decision(.managedNormal, .normalWindow)
         )
+    }
+
+    func testFixedSizeEvidenceCollectionRequiresTheNarrowStandardWindowShape() {
+        let updaterCore = fixtureMetadata(
+            bundleIdentifier: "com.openai.codex",
+            subrole: kAXStandardWindowSubrole as String,
+            fullscreenButton: .absent,
+            minimizeButton: .unavailable,
+            zoomButton: .unavailable,
+            positionSettable: .unsupported,
+            sizeSettable: .unsupported
+        )
+
+        XCTAssertTrue(AccessibilityWindow.shouldCollectFixedSizeStandardWindowEvidence(updaterCore))
+        XCTAssertFalse(AccessibilityWindow.hasAuthoritativeMoveResizeEvidence(updaterCore))
+        XCTAssertFalse(AccessibilityWindow.shouldCollectFixedSizeStandardWindowEvidence(
+            fixtureMetadata(subrole: kAXStandardWindowSubrole as String, fullscreenButton: .present)
+        ))
+        XCTAssertFalse(AccessibilityWindow.shouldCollectFixedSizeStandardWindowEvidence(
+            fixtureMetadata(
+                subrole: kAXDialogSubrole as String,
+                fullscreenButton: .absent
+            )
+        ))
     }
 
     func testBroadRefreshUpdatesClassifierInputsButRetainsSupportOnlyEvidence() {
@@ -76,6 +100,54 @@ private let fixtures: [WindowAdmissionFixture] = [
     WindowAdmissionFixture(
         name: "standard document window",
         metadata: fixtureMetadata(subrole: kAXStandardWindowSubrole as String),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "captured ChatGPT document window remains managed",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "com.openai.codex",
+            subrole: kAXStandardWindowSubrole as String,
+            fullscreenButton: .present,
+            closeButton: .present,
+            positionSettable: .trueValue,
+            sizeSettable: .trueValue
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "captured fixed-size ChatGPT Sparkle updater floats",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "com.openai.codex",
+            subrole: kAXStandardWindowSubrole as String,
+            fullscreenButton: .absent,
+            minimizeButton: .absent,
+            closeButton: .present,
+            zoomButton: .absent,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue
+        ),
+        expected: decision(.managedDialog, .fixedSizeStandardWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "fixed-size standard candidate with failed capability reads stays managed",
+        metadata: fixtureMetadata(
+            subrole: kAXStandardWindowSubrole as String,
+            fullscreenButton: .absent,
+            closeButton: .present,
+            positionSettable: .unavailable,
+            sizeSettable: .unavailable
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "immovable fixed-size standard candidate stays managed conservatively",
+        metadata: fixtureMetadata(
+            subrole: kAXStandardWindowSubrole as String,
+            fullscreenButton: .absent,
+            closeButton: .present,
+            positionSettable: .falseValue,
+            sizeSettable: .falseValue
+        ),
         expected: decision(.managedNormal, .normalWindow)
     ),
     WindowAdmissionFixture(

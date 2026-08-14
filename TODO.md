@@ -24,7 +24,7 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Feature
 - **Priority:** P2
-- **Status:** Live validation
+- **Status:** Done
 - **Requested outcome:** Each profile may assign at most one application as a Quake-style Quick App.
   A configurable global shortcut, initially Control-Option-Backtick, presents that app over the
   current work and toggles it away. Moving focus to another application also hides it. The presented
@@ -323,6 +323,17 @@ smallest useful outcome and acceptance boundary.
 - **Requested:** Compare established open-source macOS window managers and make WindowRanger's
   distinction between normal windows, dialogs, modal surfaces, floating panels, toolbars, and
   transient popups more robust.
+- **User-observed:** On 2026-08-14 ChatGPT's Sparkle **Check for Updates** alert was moved to the
+  Tiled workspace edge and inserted into the split instead of remaining a floating alert. The same
+  class of failure has been seen with other Sparkle update alerts and a Ghostty confirmation prompt,
+  although the Ghostty prompt cannot currently be reproduced reliably.
+- **Live evidence:** The signed Debug build classified the ChatGPT document window and updater as
+  layer-0 `AXWindow` / `AXStandardWindow` surfaces. The document window exposed a Full Screen
+  control. The 602 x 178 updater exposed Close but no Full Screen control; it accepted the requested
+  position, rejected the requested size, and was then incorrectly reweighted into the Tiled tree.
+- **Expected:** A standard window proven movable but not resizable, with Close and no Full Screen
+  control, floats automatically without using titles, dimensions, Sparkle-specific strings, or a
+  whole-app exclusion. Missing or failed capability reads remain conservatively managed as normal.
 - **Research result:** AeroSpace's useful pattern is a real-window/dialog/popup classifier backed by
   captured Accessibility fixtures. yabai requires a root window and a narrow role/subrole set while
   recording move/resize capability; Amethyst requires a movable standard window. Preserve
@@ -335,16 +346,19 @@ smallest useful outcome and acceptance boundary.
   floating-window, non-normal-layer, minimized, fullscreen, toolbar-role, and unknown-subrole
   decisions. The prior one-off Codex layer check is now the first versioned built-in compatibility
   profile. Profiles match bundle plus declared surface evidence, report their identifier in Debug
-  Settings, logs, and snapshot JSON, and remain separate from personal App Rules. This checkpoint
-  deliberately does not change admission, layout, parking, focus, persistence, or recovery behaviour.
-- **Automated evidence:** Focused admission, registry matching, false-match, and snapshot verification
-  passes 8 tests. Local quick verification passes all 541 non-hosted tests, including test-isolation
-  validation; it does not build, launch, sign, install, stop, or automate WindowRanger.app.
-- **Remaining validation:** With explicit install approval, use a signed Debug build to refresh and
-  copy admission snapshots for representative normal windows, dialogs, sheets, floating panels,
-  titlebarless windows, and transient popups. Confirm the UI remains readable, the copied JSON has
-  no titles or content-bearing metadata, and refreshing/copying performs no window or focus writes.
-  Only then use those fixtures to propose any classifier behaviour change.
+  Settings, logs, and snapshot JSON, and remain separate from personal App Rules. A narrowly gated
+  standard window with Close present, Full Screen absent, position settable, and size not settable is
+  now admitted as an automatically floating dialog. Capability failures remain normal-window
+  admission, and ordinary document windows do not receive the additional support reads.
+- **Automated evidence:** Focused admission and workspace verification passes 116 tests. Local quick
+  verification passes all 556 non-hosted tests, including test-isolation validation; it does not
+  build, launch, sign, install, stop, or automate WindowRanger.app. Fixtures cover the captured
+  ChatGPT document/updater distinction plus unavailable and immovable conservative fallbacks.
+- **Live validation:** The signed Debug build from this branch kept the ordinary ChatGPT document
+  window managed normally, classified the reopened Sparkle updater through the fixed-size path, and
+  left the updater floating outside the Tiled tree. The user confirmed the result on 2026-08-14.
+- **Follow-up boundary:** The equivalent Ghostty confirmation prompt remains unverified until it can
+  next be reproduced; the Sparkle result is not evidence that every Ghostty prompt is fixed.
 
 ### WR-049 — Refine Command Wheel workspace-action icons
 
