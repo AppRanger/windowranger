@@ -119,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let tiledPlacementUndoManager = UndoManager()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ApplicationIdentityMigration.perform()
         NSApp.setActivationPolicy(.accessory)
         guard settingsStore.workspaces.first != nil else { return }
 

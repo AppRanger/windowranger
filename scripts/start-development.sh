@@ -4,7 +4,7 @@ set -euo pipefail
 
 repository_root="${0:A:h:h}"
 project_file="$repository_root/WindowRanger.xcodeproj"
-bundle_identifier="com.windowranger.WindowRanger"
+bundle_identifier="dev.appranger.WindowRanger"
 mode="${1:-interactive}"
 
 case "$mode" in

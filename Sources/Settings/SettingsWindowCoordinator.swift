@@ -577,7 +577,9 @@ private final class AppKitSettingsWindowSurface: SettingsWindowSurface {
     func prepareAsFloatingUtility() {
         guard let window else { return }
         applyWindowConstraints()
-        window.identifier = NSUserInterfaceItemIdentifier("com.windowranger.WindowRanger.settings")
+        window.identifier = NSUserInterfaceItemIdentifier(
+            "\(ApplicationIdentity.bundleIdentifier).settings"
+        )
         window.level = .floating
         window.collectionBehavior.insert(.moveToActiveSpace)
     }

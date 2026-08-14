@@ -20,7 +20,7 @@ continue reviewing the latest Beta on a best-effort basis. See the
 Do not post suspected vulnerabilities, private diagnostics, or reproduction data in a public issue.
 
 Use WindowRanger's
-[private vulnerability reporting form](https://github.com/windowranger/windowranger/security/advisories/new).
+[private vulnerability reporting form](https://github.com/AppRanger/windowranger/security/advisories/new).
 The report is visible only to repository maintainers and invited collaborators. Share the minimum
 information needed to reproduce the issue, and remove window titles, documents, URLs, user file
 paths and other personal data from logs or screenshots.

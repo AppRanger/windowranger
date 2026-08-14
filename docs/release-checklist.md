@@ -11,10 +11,11 @@ promotion and versioning. It is a design authority, not evidence that the releas
 - [x] Select the product name and complete preliminary clearance: **WindowRanger**.
 - [x] Confirm the copyright line in `LICENSE` with the maintainer as part of the explicit
       first-publication approval.
-- [x] Select `com.windowranger.WindowRanger` as the public bundle identifier; the private development
-      identity intentionally does not migrate.
-- [x] Confirm Developer ID ownership and team `44NAD22AK6`; verify the exported app's Developer ID
-      designated requirement and public bundle identifier.
+- [x] Select `dev.appranger.WindowRanger` as the public bundle identifier.
+- [x] Confirm Developer ID ownership and team `44NAD22AK6`.
+- [x] Verify automatic Developer ID provisioning for `dev.appranger.WindowRanger`; a stable-Xcode
+      archive/export produced a Developer ID-signed universal app with the expected designated
+      requirement, public bundle identifier, and preserved iCloud key-value entitlement.
 - [x] Finalize the first-Beta app icon, menu-bar identity, versioning and support language.
 
 ## Licensing and repository hygiene

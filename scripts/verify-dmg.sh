@@ -83,7 +83,7 @@ elif [[ ! -f "$background_png" ]]; then
 fi
 
 bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")"
-[[ "$bundle_identifier" == "com.windowranger.WindowRanger" ]] || {
+[[ "$bundle_identifier" == "dev.appranger.WindowRanger" ]] || {
     print -u2 "Unexpected bundle identifier in DMG: $bundle_identifier"
     exit 1
 }
