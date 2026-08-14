@@ -63,6 +63,7 @@ enum WindowAdmissionReason: String, Equatable, Sendable {
     case systemDialogSubrole = "system-dialog-subrole"
     case dialogSubroleWithoutFullscreenButton = "dialog-subrole-without-fullscreen-button"
     case floatingWindowWithoutFullscreenButton = "floating-window-without-fullscreen-button"
+    case fixedSizeStandardWindow = "fixed-size-standard-window"
     case ambiguousDialogMetadata = "ambiguous-dialog-metadata"
     case verifiedBundleNonNormalLayer = "verified-bundle-non-normal-layer"
     case unsupportedRole = "unsupported-role"
@@ -373,6 +374,32 @@ enum AccessibilityWindow {
         }
     }
 
+    /// A fixed-size alert can expose itself as an ordinary AXStandardWindow even though it cannot
+    /// participate in a managed layout. Only this narrow core shape receives the extra move/resize
+    /// capability reads needed to distinguish it from a real document window. Missing or failed
+    /// reads remain conservative and do not themselves change admission.
+    static func shouldCollectFixedSizeStandardWindowEvidence(
+        _ metadata: WindowAdmissionMetadata
+    ) -> Bool {
+        metadata.role == kAXWindowRole as String &&
+            metadata.subrole == kAXStandardWindowSubrole as String &&
+            metadata.windowLayer == 0 &&
+            !metadata.isMinimized &&
+            !metadata.isFullscreen &&
+            metadata.fullscreenButton == .absent &&
+            metadata.closeButton == .present
+    }
+
+    static func hasAuthoritativeMoveResizeEvidence(_ metadata: WindowAdmissionMetadata) -> Bool {
+        metadata.positionSettable.value != nil && metadata.sizeSettable.value != nil
+    }
+
+    static func isFixedSizeStandardWindow(_ metadata: WindowAdmissionMetadata) -> Bool {
+        shouldCollectFixedSizeStandardWindowEvidence(metadata) &&
+            metadata.positionSettable == .trueValue &&
+            metadata.sizeSettable == .falseValue
+    }
+
     static func requestPermission(
         isTrusted: () -> Bool = { AXIsProcessTrusted() },
         showSystemPrompt: () -> Bool = {
@@ -648,6 +675,13 @@ enum AccessibilityWindow {
             return WindowAdmissionDecision(disposition: .managedDialog, reason: .sheetRole)
         }
 
+        if metadata.subrole == kAXStandardWindowSubrole as String,
+           isFixedSizeStandardWindow(metadata) {
+            return WindowAdmissionDecision(
+                disposition: .managedDialog,
+                reason: .fixedSizeStandardWindow
+            )
+        }
         if metadata.subrole == nil || metadata.subrole == kAXStandardWindowSubrole as String {
             return WindowAdmissionDecision(disposition: .managedNormal, reason: .normalWindow)
         }
