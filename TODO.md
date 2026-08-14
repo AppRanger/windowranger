@@ -682,6 +682,27 @@ adding engineering tasks.
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
+### WR-053 — Prepare WindowRanger 0.1.0 Beta 3
+
+- **Type:** Beta release preparation
+- **Status:** Candidate preparation approved; publication not yet approved.
+- **Requested:** 2026-08-14 from the latest reviewed `develop` branch after the AppRanger GitHub
+  organisation and application bundle-identity changes.
+- **Scope:** Promote the exact reviewed `develop` tree to `release/0.1.0`, build
+  `0.1.0-beta.3` with monotonically increasing build number `3` using stable Xcode, Developer ID
+  signing, notarization, stapling, and the repository distribution path, then hand the immutable
+  candidate to the maintainer for live testing.
+- **Identity boundary:** The public app is now `dev.appranger.WindowRanger`. Preserve the existing
+  `44NAD22AK6.com.windowranger.WindowRanger` iCloud key-value store and migrate missing Beta 2
+  preferences/recovery state without overwriting either identity. Testing must include the expected
+  one-time Accessibility approval and launch-at-login confirmation caused by the new application
+  identity.
+- **Acceptance boundary:** CI and local release gates pass for the exact promoted commit; the DMG
+  and ZIP agree on version, build, bundle identity, architectures, signature, entitlements,
+  notarization, stapling, checksums, and provenance. Keep the item in Live validation until the
+  maintainer tests that exact artifact. Do not create or push the tag, upload assets, create a GitHub
+  release, or publish anything without a later explicit approval.
+
 ### WR-012 — Clean build and package verification
 
 - **Type:** Release epic
