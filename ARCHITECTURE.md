@@ -85,9 +85,13 @@ Debug admission evidence is deliberately richer than the active classifier. The 
 distinguishes authoritative, unsupported, and unavailable modal, focused, main-window, window-control,
 position-settable, and size-settable observations so representative real-app fixtures can justify a
 later rule change. The regular engine poll retains cached support evidence rather than performing
-these extra queries every 0.75 seconds. The sole exception is a surface whose bundle and ordinary
+these extra queries every 0.75 seconds. The exceptions are a surface whose bundle and ordinary
 role/subrole/layer/control evidence already match a compatibility profile that explicitly requires
-support-only evidence; only that candidate is enriched before classification. User-triggered Refresh
+support-only evidence, and a layer-0 standard window with a Close control but no Full Screen control
+whose move/resize capability evidence is not yet authoritative. Only those candidates are enriched
+before classification. A movable standard candidate that authoritatively cannot resize floats as a
+managed dialog; unavailable or unsupported evidence leaves it conservatively managed as normal.
+User-triggered Refresh
 performs read-only capability queries for already tracked windows, while ignored or unsupported
 surfaces capture the same evidence once before they are discarded. The snapshot contains no window
 titles or content-bearing metadata and does not itself change admission, membership, layout, focus,

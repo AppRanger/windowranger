@@ -24,7 +24,7 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Feature
 - **Priority:** P2
-- **Status:** Live validation
+- **Status:** Done
 - **Requested outcome:** Each profile may assign at most one application as a Quake-style Quick App.
   A configurable global shortcut, initially Control-Option-Backtick, presents that app over the
   current work and toggles it away. Moving focus to another application also hides it. The presented
@@ -259,6 +259,42 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-053 — Prepare WindowRanger 0.1.0 Beta 3
+
+- **Type:** Beta release preparation
+- **Status:** Signed and notarized candidate ready; live validation and publication approval
+  pending.
+- **Requested:** 2026-08-14 from the latest reviewed `develop` branch after the AppRanger GitHub
+  organisation and application bundle-identity changes.
+- **Scope:** Promote the exact reviewed `develop` tree to `release/0.1.0`, build
+  `0.1.0-beta.3` with monotonically increasing build number `3` using stable Xcode, Developer ID
+  signing, notarization, stapling, and the repository distribution path, then hand the immutable
+  candidate to the maintainer for live testing.
+- **Identity boundary:** The public app is now `dev.appranger.WindowRanger`. Preserve the existing
+  `44NAD22AK6.com.windowranger.WindowRanger` iCloud key-value store and migrate missing Beta 2
+  preferences/recovery state without overwriting either identity. Testing must include the expected
+  one-time Accessibility approval and launch-at-login confirmation caused by the new application
+  identity.
+- **Candidate evidence:** The reviewed `develop` tree at `702b53ec8cae` was promoted without tree
+  changes to release commit `bce35ca096e704b13783c0cbc47db3ff96be17b7`. The full
+  [release-branch CI run](https://github.com/AppRanger/windowranger/actions/runs/31778668246) passed
+  555 tests, static analysis, the unsigned universal Release build, both DMG smoke layouts, and
+  artifact upload. The fresh-clone stable-Xcode distribution path produced a universal
+  `dev.appranger.WindowRanger` app with build `3`, Developer ID application identifier
+  `44NAD22AK6.dev.appranger.WindowRanger`, preserved
+  `44NAD22AK6.com.windowranger.WindowRanger` iCloud key-value entitlement, and CDHash
+  `d3d8067c49d38f56b183f7b4d0f9260a9a55b174`. App notarization
+  `0c9c31bf-cfff-48b6-b129-35f52b1fad14` and DMG notarization
+  `305478ae-0f12-4af7-b753-c526be2ce648` were accepted with zero logged issues. Both staples,
+  Gatekeeper assessments, strict signatures, DMG verification, packaged-app equality, SHA-256
+  checksums, and provenance passed independently; the DMG checksum is
+  `941e92d8289b83cb7aac8fc1d3959fb181fe62817e7c86b5c8ffe4166d544ee7` and the ZIP checksum is
+  `7b690e85b877ccec6da594715ca7f768e0d25936d4cae91dc4589dd47cf63c2f`.
+- **Remaining boundary:** Install and test that exact DMG, including Beta 2 settings/recovery
+  migration, fresh Accessibility approval, launch-at-login confirmation, and the relevant live
+  regression. Do not create or push the tag, upload assets, create a GitHub release, or publish
+  anything without a later explicit approval.
+
 ### WR-052 — Move the application identity under AppRanger
 
 - **Status:** Implementation and automated verification complete; live validation pending.
@@ -287,6 +323,17 @@ smallest useful outcome and acceptance boundary.
 - **Requested:** Compare established open-source macOS window managers and make WindowRanger's
   distinction between normal windows, dialogs, modal surfaces, floating panels, toolbars, and
   transient popups more robust.
+- **User-observed:** On 2026-08-14 ChatGPT's Sparkle **Check for Updates** alert was moved to the
+  Tiled workspace edge and inserted into the split instead of remaining a floating alert. The same
+  class of failure has been seen with other Sparkle update alerts and a Ghostty confirmation prompt,
+  although the Ghostty prompt cannot currently be reproduced reliably.
+- **Live evidence:** The signed Debug build classified the ChatGPT document window and updater as
+  layer-0 `AXWindow` / `AXStandardWindow` surfaces. The document window exposed a Full Screen
+  control. The 602 x 178 updater exposed Close but no Full Screen control; it accepted the requested
+  position, rejected the requested size, and was then incorrectly reweighted into the Tiled tree.
+- **Expected:** A standard window proven movable but not resizable, with Close and no Full Screen
+  control, floats automatically without using titles, dimensions, Sparkle-specific strings, or a
+  whole-app exclusion. Missing or failed capability reads remain conservatively managed as normal.
 - **Research result:** AeroSpace's useful pattern is a real-window/dialog/popup classifier backed by
   captured Accessibility fixtures. yabai requires a root window and a narrow role/subrole set while
   recording move/resize capability; Amethyst requires a movable standard window. Preserve
@@ -299,16 +346,19 @@ smallest useful outcome and acceptance boundary.
   floating-window, non-normal-layer, minimized, fullscreen, toolbar-role, and unknown-subrole
   decisions. The prior one-off Codex layer check is now the first versioned built-in compatibility
   profile. Profiles match bundle plus declared surface evidence, report their identifier in Debug
-  Settings, logs, and snapshot JSON, and remain separate from personal App Rules. This checkpoint
-  deliberately does not change admission, layout, parking, focus, persistence, or recovery behaviour.
-- **Automated evidence:** Focused admission, registry matching, false-match, and snapshot verification
-  passes 8 tests. Local quick verification passes all 541 non-hosted tests, including test-isolation
-  validation; it does not build, launch, sign, install, stop, or automate WindowRanger.app.
-- **Remaining validation:** With explicit install approval, use a signed Debug build to refresh and
-  copy admission snapshots for representative normal windows, dialogs, sheets, floating panels,
-  titlebarless windows, and transient popups. Confirm the UI remains readable, the copied JSON has
-  no titles or content-bearing metadata, and refreshing/copying performs no window or focus writes.
-  Only then use those fixtures to propose any classifier behaviour change.
+  Settings, logs, and snapshot JSON, and remain separate from personal App Rules. A narrowly gated
+  standard window with Close present, Full Screen absent, position settable, and size not settable is
+  now admitted as an automatically floating dialog. Capability failures remain normal-window
+  admission, and ordinary document windows do not receive the additional support reads.
+- **Automated evidence:** Focused admission and workspace verification passes 116 tests. Local quick
+  verification passes all 556 non-hosted tests, including test-isolation validation; it does not
+  build, launch, sign, install, stop, or automate WindowRanger.app. Fixtures cover the captured
+  ChatGPT document/updater distinction plus unavailable and immovable conservative fallbacks.
+- **Live validation:** The signed Debug build from this branch kept the ordinary ChatGPT document
+  window managed normally, classified the reopened Sparkle updater through the fixed-size path, and
+  left the updater floating outside the Tiled tree. The user confirmed the result on 2026-08-14.
+- **Follow-up boundary:** The equivalent Ghostty confirmation prompt remains unverified until it can
+  next be reproduced; the Sparkle result is not evidence that every Ghostty prompt is fixed.
 
 ### WR-049 — Refine Command Wheel workspace-action icons
 
@@ -681,27 +731,6 @@ adding engineering tasks.
 
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
-
-### WR-053 — Prepare WindowRanger 0.1.0 Beta 3
-
-- **Type:** Beta release preparation
-- **Status:** Candidate preparation approved; publication not yet approved.
-- **Requested:** 2026-08-14 from the latest reviewed `develop` branch after the AppRanger GitHub
-  organisation and application bundle-identity changes.
-- **Scope:** Promote the exact reviewed `develop` tree to `release/0.1.0`, build
-  `0.1.0-beta.3` with monotonically increasing build number `3` using stable Xcode, Developer ID
-  signing, notarization, stapling, and the repository distribution path, then hand the immutable
-  candidate to the maintainer for live testing.
-- **Identity boundary:** The public app is now `dev.appranger.WindowRanger`. Preserve the existing
-  `44NAD22AK6.com.windowranger.WindowRanger` iCloud key-value store and migrate missing Beta 2
-  preferences/recovery state without overwriting either identity. Testing must include the expected
-  one-time Accessibility approval and launch-at-login confirmation caused by the new application
-  identity.
-- **Acceptance boundary:** CI and local release gates pass for the exact promoted commit; the DMG
-  and ZIP agree on version, build, bundle identity, architectures, signature, entitlements,
-  notarization, stapling, checksums, and provenance. Keep the item in Live validation until the
-  maintainer tests that exact artifact. Do not create or push the tag, upload assets, create a GitHub
-  release, or publish anything without a later explicit approval.
 
 ### WR-012 — Clean build and package verification
 
