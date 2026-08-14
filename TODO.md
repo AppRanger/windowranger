@@ -262,12 +262,11 @@ smallest useful outcome and acceptance boundary.
 ### WR-053 — Prepare WindowRanger 0.1.0 Beta 3
 
 - **Type:** Beta release preparation
-- **Status:** Signed and notarized candidate ready; live validation and publication approval
-  pending.
+- **Status:** Final candidate rebuild and publication approved; build `4` pending.
 - **Requested:** 2026-08-14 from the latest reviewed `develop` branch after the AppRanger GitHub
   organisation and application bundle-identity changes.
 - **Scope:** Promote the exact reviewed `develop` tree to `release/0.1.0`, build
-  `0.1.0-beta.3` with monotonically increasing build number `3` using stable Xcode, Developer ID
+  `0.1.0-beta.3` with monotonically increasing build number `4` using stable Xcode, Developer ID
   signing, notarization, stapling, and the repository distribution path, then hand the immutable
   candidate to the maintainer for live testing.
 - **Identity boundary:** The public app is now `dev.appranger.WindowRanger`. Preserve the existing
@@ -275,8 +274,8 @@ smallest useful outcome and acceptance boundary.
   preferences/recovery state without overwriting either identity. Testing must include the expected
   one-time Accessibility approval and launch-at-login confirmation caused by the new application
   identity.
-- **Candidate evidence:** The reviewed `develop` tree at `702b53ec8cae` was promoted without tree
-  changes to release commit `bce35ca096e704b13783c0cbc47db3ff96be17b7`. The full
+- **Superseded candidate evidence:** The reviewed `develop` tree at `702b53ec8cae` was promoted
+  without tree changes to release commit `bce35ca096e704b13783c0cbc47db3ff96be17b7`. The full
   [release-branch CI run](https://github.com/AppRanger/windowranger/actions/runs/31778668246) passed
   555 tests, static analysis, the unsigned universal Release build, both DMG smoke layouts, and
   artifact upload. The fresh-clone stable-Xcode distribution path produced a universal
@@ -290,10 +289,11 @@ smallest useful outcome and acceptance boundary.
   checksums, and provenance passed independently; the DMG checksum is
   `941e92d8289b83cb7aac8fc1d3959fb181fe62817e7c86b5c8ffe4166d544ee7` and the ZIP checksum is
   `7b690e85b877ccec6da594715ca7f768e0d25936d4cae91dc4589dd47cf63c2f`.
-- **Remaining boundary:** Install and test that exact DMG, including Beta 2 settings/recovery
-  migration, fresh Accessibility approval, launch-at-login confirmation, and the relevant live
-  regression. Do not create or push the tag, upload assets, create a GitHub release, or publish
-  anything without a later explicit approval.
+  This build `3` candidate cannot be published because WR-051 changed the release tree afterward.
+- **Final release boundary:** The user approved Beta 3 publication on 2026-08-14 after validating
+  the signed Debug build for WR-051. Promote reviewed `develop` commit `99157bf6c474`, rebuild and
+  notarize the exact release commit as build `4`, and verify its five immutable assets before
+  tagging or publication. Do not reuse any build `3` artifact or its checksums.
 
 ### WR-052 — Move the application identity under AppRanger
 
