@@ -55,7 +55,10 @@ not an installable macOS app.
   explicit sections and stack dense controls instead of clipping them. Its sidebar footer identifies
   the running version, build, source commit, and Dev configuration when applicable.
 - Two multiple-display modes: unified switching across all displays, or independent active workspaces assigned per display.
-- Workspace-local window focus cycling with `Option-[` and `Option-]`, wrapping without selecting parked windows.
+- Workspace-local window focus cycling with `Option-[` and `Option-]`, wrapping without selecting
+  parked windows. A managed standard window that has not yet been activated after restart remains
+  reachable when it exposes a writable exact-focus route, while overlays and ambiguous read-only
+  surfaces stay excluded.
 - Automatic workspace following when a managed window is focused through the Dock or another macOS route.
 - Per-workspace Freeform, Tiled, and Accordion layouts with migration-safe persistence, automatic or explicit orientation, gaps, outer padding, Accordion overlap, and stable ordering/weights.
 - A configurable two-level contextual command wheel that shows only valid actions for the focused window, active workspace, layout, and interaction display.
@@ -212,6 +215,14 @@ width and 80 percent height; the animation can be disabled. Left and right prese
 same percentage as screen width. Pressing the shortcut again or focusing another app retracts and
 parks it. While pinned,
 that window stays outside normal workspace layout, reset, focus cycling, and frame persistence.
+If a native tab switch replaces the app's exact Accessibility window identity, WindowRanger keeps
+the Quick App session only when the same authoritative refresh finds one newly admitted replacement
+from the same process and no second eligible window for that bundle. It transfers the prior local
+workspace and restore state to that replacement; an ambiguous transition clears the session rather
+than claiming an unrelated window. On startup, one unambiguous matching window is claimed before
+ordinary workspace layout: an on-screen window moves directly to its configured Quick App frame on
+its current display, while an already parked window remains hidden. Multiple matching windows remain
+ordinary managed windows rather than being guessed between.
 Profiles can choose different apps and heights, while the shortcut remains a global preference.
 WindowRanger reports a clear no-op when the app has no available window or multiple ambiguous
 windows rather than launching or guessing.
@@ -418,7 +429,7 @@ ratios rather than rebuilding membership or focus.
 
 Control-Option-F toggles only the focused managed window between Floating and the workspace layout, matching the existing AeroSpace binding. Enabling Floating captures the current frame and leaves the window in its workspace while the remaining windows reflow; disabling it immediately returns the window to Tiled or Accordion. The override is restored only when the exact window ID and bundle identifier still match within the same WindowServer session, and is discarded with other stale window state. An app-level layout-exclusion rule is authoritative: the shortcut makes no contradictory override and the menu-bar icon briefly explains why.
 
-Dialogs use the same managed workspace membership, visibility, focus, display affinity, persistence, and quit recovery as normal windows, but high-confidence dialogs float automatically so they do not distort Tiled or Accordion. High-confidence signals are an Accessibility sheet role, a system-dialog subrole, a layer-0 dialog/floating-window subrole corroborated by reliable window-control metadata, or a layer-0 standard window that has a Close control, no Full Screen control, can move, and authoritatively cannot resize. The last case covers fixed-size update and confirmation alerts that otherwise accept a layout position while rejecting its size. Ambiguous dialog-like windows remain in the layout; a missing or failed Accessibility read is never treated as positive evidence. Verified nonzero-layer Codex transient panels remain ignored entirely.
+Dialogs use the same managed workspace membership, visibility, focus, display affinity, persistence, and quit recovery as normal windows, but high-confidence dialogs float automatically so they do not distort Tiled or Accordion. High-confidence signals are an Accessibility sheet role, a system-dialog subrole, a layer-0 dialog/floating-window subrole corroborated by reliable window-control metadata, or a layer-0 standard window that has a Close control, no Full Screen control, can move, and authoritatively cannot resize. The last case covers fixed-size update and confirmation alerts that otherwise accept a layout position while rejecting its size. A known nonzero-layer Accessibility dialog is left untouched until its live layer metadata settles, preventing transient prompts from entering a split; an unknown layer remains conservatively managed. A rejected size write also stops before position so a fixed-size surface cannot be displaced toward a layout frame it cannot occupy. Other ambiguous dialog-like windows remain in the layout, and a missing or failed Accessibility read is never treated as positive evidence. Verified nonzero-layer Codex transient panels remain ignored entirely.
 
 Layout precedence is explicit and deterministic: an app-level **Do not include in Tiled or Accordion** rule wins first; a per-window Control-Option-F choice wins over automatic behavior; verified dialog floating applies next; an opt-in per-app **Float detected dialogs and secondary windows** rule can also float conservatively ambiguous dialog-like metadata; otherwise a normal window participates in layout. The secondary-window rule never uses titles and never infers from size or non-resizability alone. Pressing Control-Option-F on an automatically floated window forces it into the current layout, and pressing it again makes it explicitly floating. Only the explicit per-window choice persists for the exact window ID within the current WindowServer session. Automatic classification is reevaluated from live metadata and is never copied onto a newly created window ID.
 
