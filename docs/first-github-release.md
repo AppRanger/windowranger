@@ -149,9 +149,35 @@ Any source, build-setting, entitlement, signing, or packaged-content change afte
 a new build number and a newly notarized artifact. Documentation-only release-process improvements
 may follow on `develop`, but they do not rewrite the immutable tag or claim to be inside its binary.
 
+### Streamlined validation for repeat Betas
+
+After the distribution pipeline has already produced and round-trip verified public Betas, a later
+Beta may skip replacing the maintainer's currently installed daily copy with the packaged release
+only when all of these conditions hold:
+
+- the release contains no packaging, signing, entitlement, bundle-identity, migration, updater, or
+  minimum-system change;
+- every changed product path has already been exercised in a signed daily build from the same source
+  tree and the result is recorded in `TODO.md`;
+- the release branch contains only reviewed `develop` changes plus release notes and process records;
+- the credentialed distribution script and public release CI complete without exceptions.
+
+The streamlined path still requires the clean release worktree, stable Xcode, complete isolated
+suite, static analysis, unsigned universal Release build, Developer ID archive/export, entitlement
+and Debug-boundary checks, app and DMG notarization and stapling, Gatekeeper assessment, both DMG
+layout smoke checks, ZIP equivalence, checksums, provenance manifest, immutable tag, and downloaded
+five-asset round-trip verification. Review the release notes and verify the public download before
+updating the website.
+
+This shortcut is repeat-Beta evidence only. It does not complete the clean-user, clean-machine,
+Accessibility migration, upgrade, uninstall, accessibility, privacy, or Stable manual matrices.
+The first Beta, every Stable release, or any change to a distribution boundary must use the exact
+packaged-artifact installation test above. Any unexpected verification result also restores that
+test before publication.
+
 ## Tag and create the draft release
 
-Only after the exact artifact passes:
+Only after the applicable exact-artifact or streamlined repeat-Beta validation passes:
 
 ```sh
 git tag -a v0.1.0-beta.1 -m "WindowRanger 0.1.0 Beta 1"

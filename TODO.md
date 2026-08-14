@@ -280,6 +280,30 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-054 — Publish WindowRanger 0.1.0 Beta 4
+
+- **Type:** Beta release
+- **Priority:** P1
+- **Status:** Release approved; preparation in progress
+- **Requested:** Publish the current reviewed `develop` checkpoint as `v0.1.0-beta.4`, then update
+  the public website. The maintainer explicitly approved publication on 14 August 2026.
+- **Source scope:** `develop` commit `1869d14f30f5054a4bb5b6d0fd7bb528768e8fd7` adds the
+  live-validated transient-dialog placement correction, Quick App native-tab and startup recovery,
+  and post-restart workspace app cycling. Beta 3's public identity and packaging remain unchanged.
+- **Version allocation:** Beta version `0.1.0-beta.4`; monotonically increasing distribution build
+  number `5` follows Beta 3 build `4`.
+- **Process decision:** This repeat Beta may use the documented streamlined validation path. Its
+  changed product behavior has already passed signed daily testing, and it changes no packaging,
+  signing, entitlement, bundle identity, migration, updater, or minimum-system boundary. Skip only
+  the redundant local replacement install; retain the clean release branch, stable-Xcode suite and
+  analysis, universal Release build, Developer ID verification, app/DMG notarization and stapling,
+  Gatekeeper and DMG/ZIP checks, checksums, provenance, immutable tag, five-asset download
+  round-trip, release-note review, public-download verification, and website checks.
+- **Acceptance:** Merge reviewed release notes and process documentation, promote `develop` through
+  `release/0.1.0`, pass release-branch CI, publish an annotated protected tag and GitHub prerelease
+  with five verified assets, update the website through review, and record exact commit, build,
+  signing, notarization, checksum, release, deployment, and live-link evidence here.
+
 ### WR-052 — Move the application identity under AppRanger
 
 - **Status:** Implementation and automated verification complete; live validation pending.
