@@ -166,6 +166,31 @@ final class UtilitySettingsTests: XCTestCase {
         XCTAssertEqual(service.requestedValues, [true])
     }
 
+    func testAccessibilityPermissionMonitorObservesAnExternalGrantAndRevocation() {
+        var isTrusted = false
+        var trustCheckCount = 0
+        let monitor = AccessibilityPermissionMonitor {
+            trustCheckCount += 1
+            return isTrusted
+        }
+
+        XCTAssertFalse(monitor.isGranted)
+        XCTAssertEqual(trustCheckCount, 1)
+
+        isTrusted = true
+        XCTAssertTrue(monitor.refresh())
+        XCTAssertTrue(monitor.isGranted)
+
+        isTrusted = false
+        XCTAssertFalse(monitor.refresh())
+        XCTAssertFalse(monitor.isGranted)
+        XCTAssertEqual(trustCheckCount, 3)
+        XCTAssertGreaterThan(
+            AccessibilityPermissionMonitor.missingPermissionRefreshIntervalNanoseconds,
+            0
+        )
+    }
+
     func testLaunchAtLoginFailureRestoresObservedServiceState() {
         let service = FakeLaunchAtLoginService(status: .notRegistered)
         service.error = TestError()
