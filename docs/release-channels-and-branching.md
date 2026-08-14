@@ -98,6 +98,14 @@ notarised, supported, or safe for ordinary users unless those properties were ac
    regress.
 5. Mark GitHub Beta releases as prereleases when GitHub Releases becomes part of distribution.
 
+A repeat Beta may use the streamlined validation path in
+[First GitHub release](first-github-release.md) when its product changes have already been exercised
+in a signed daily build and it makes no packaging, signing, entitlement, application-identity, or
+minimum-system change. This removes a redundant local replacement install, not any automated build,
+Developer ID, notarization, Gatekeeper, packaging, checksum, provenance, or download-verification
+gate. The first Beta, every Stable release, and any distribution-boundary change still require an
+exact packaged-artifact installation test.
+
 ### Stable
 
 1. Complete every applicable release gate and the signed-app manual regression boundary.

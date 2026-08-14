@@ -664,17 +664,17 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertTrue(unknownDialog.disposition.admitsNewWindow)
     }
 
-    func testNonNormalLayerIsNotRejectedGloballyForUnverifiedApplications() {
+    func testNonNormalLayerStandardWindowIsNotRejectedGloballyForUnverifiedApplications() {
         let decision = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
             bundleIdentifier: "com.example.UnusualWindowLevels",
             role: kAXWindowRole as String,
-            subrole: kAXDialogSubrole as String,
+            subrole: kAXStandardWindowSubrole as String,
             windowLayer: 3,
             isMinimized: false
         ))
 
         XCTAssertEqual(decision.disposition, .managedNormal)
-        XCTAssertEqual(decision.reason, .ambiguousDialogMetadata)
+        XCTAssertEqual(decision.reason, .normalWindow)
         XCTAssertTrue(AccessibilityWindow.mayNeedDirectLayerResolutionForCompatibility("COM.OPENAI.CODEX"))
         XCTAssertFalse(AccessibilityWindow.mayNeedDirectLayerResolutionForCompatibility("com.example.UnusualWindowLevels"))
         XCTAssertNil(decision.compatibilityProfileIdentifier)
@@ -845,6 +845,34 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertEqual(floatingSecondary, WindowAdmissionDecision(
             disposition: .managedDialog,
             reason: .floatingWindowWithoutFullscreenButton
+        ))
+    }
+
+    func testNonNormalLayerDialogDefersUntilItsLayerSettles() {
+        let transient = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 8,
+            isMinimized: false,
+            fullscreenButton: .absent
+        ))
+        let settled = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            fullscreenButton: .absent
+        ))
+
+        XCTAssertEqual(transient, WindowAdmissionDecision(
+            disposition: .temporarilyIneligible,
+            reason: .transientDialogNonNormalLayer
+        ))
+        XCTAssertEqual(settled, WindowAdmissionDecision(
+            disposition: .managedDialog,
+            reason: .dialogSubroleWithoutFullscreenButton
         ))
     }
 
@@ -1829,6 +1857,42 @@ final class WorkspaceDefinitionTests: XCTestCase {
             CGPoint(x: 100, y: 200),
             CGPoint(x: 101, y: 200)
         ))
+    }
+
+    func testFrameWriteStopsBeforePositionWhenInitialSizeIsRejected() {
+        var operations: [String] = []
+
+        let succeeded = AccessibilityWindow.applyFrameWriteSequence(
+            writeSize: {
+                operations.append("size")
+                return false
+            },
+            writePosition: {
+                operations.append("position")
+                return true
+            }
+        )
+
+        XCTAssertFalse(succeeded)
+        XCTAssertEqual(operations, ["size"])
+    }
+
+    func testFrameWriteRetainsSizePositionSizeSequenceWhenSupported() {
+        var operations: [String] = []
+
+        let succeeded = AccessibilityWindow.applyFrameWriteSequence(
+            writeSize: {
+                operations.append("size")
+                return true
+            },
+            writePosition: {
+                operations.append("position")
+                return true
+            }
+        )
+
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(operations, ["size", "position", "size"])
     }
 
     func testTrustedInteractiveLaunchChecksTrustOnceWithoutPrompting() {

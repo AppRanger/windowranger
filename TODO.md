@@ -24,7 +24,7 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Feature
 - **Priority:** P2
-- **Status:** Done
+- **Status:** Live validation
 - **Requested outcome:** Each profile may assign at most one application as a Quake-style Quick App.
   A configurable global shortcut, initially Control-Option-Backtick, presents that app over the
   current work and toggles it away. Moving focus to another application also hides it. The presented
@@ -59,14 +59,35 @@ smallest useful outcome and acceptance boundary.
   guidance for apps that do not resize smoothly, exact-window
   ambiguity feedback, focus-loss hide, focus restoration on shortcut hide, and engine exclusions for
   layout/parking/focus/reset/background persistence. Profile changes, sleep, termination, window
-  disappearance, and newer animation generations clear or restore the session safely.
-- **Automated verification:** Universal Debug app build passed with signing disabled. The complete
-  non-hosted suite passed 546 tests, including profile compatibility and mutual-exclusion migration,
-  App Rules/Quick App conversion, default/clamping, shortcut, four-edge non-origin geometry,
-  retraction, and animation-completion coverage.
-- **Live validation needed:** Install a signed daily build only after explicit approval. Select a
-  one-window app in two profiles, confirm show/toggle/focus-loss behavior and 80-percent geometry on
-  each relevant display, then exercise a profile change and normal quit while the window is shown.
+  disappearance, and newer animation generations clear or restore the session safely. When an
+  authoritative refresh replaces the exact Quick App window during a native tab switch, ownership
+  follows only one newly admitted same-process window for that bundle; ambiguous replacements still
+  clear the session instead of guessing. Startup now claims one unambiguous configured Quick App
+  before initial workspace layout: a meaningfully visible window is presented immediately on its
+  current display, while an already parked window remains hidden. Multiple matching windows remain
+  unclaimed.
+- **Diagnostic-backed bug:** On 2026-08-14, switching tabs in a presented Ghostty Quick App replaced
+  window `1081:94` with `1081:95`. The successful AX snapshot evicted the old identity, cleared the
+  Quick App session, and the normal background layout then tiled the replacement into the active
+  workspace. Chronicle pinned the visible reproduction timing; structured diagnostics established
+  the identity transition and frame write.
+- **Diagnostic-backed startup bug:** On 2026-08-14, restart session
+  `FA37B094-DA96-45DD-842C-3FBCB81CA3E0` admitted Ghostty window `1081:95`, assigned it to active
+  workspace 2, and changed its frame from `12,296;3336x1110` to the workspace's tiled
+  `1683,34;1673x1380` before the first Quick App shortcut restored its presentation. The configured
+  window must instead be claimed before the initial workspace layout.
+- **Automated verification:** Focused Quick App and lifecycle verification passes 132 tests. Local
+  quick verification passes all 565 non-hosted tests, including test-isolation validation and
+  same-process native-tab handoff plus ambiguous, wrong-process, wrong-bundle, pre-existing-window,
+  non-authoritative-removal rejection, startup visible/parked selection, and startup ambiguity
+  rejection. The universal unsigned Debug app build also passes.
+- **Live validation:** The signed daily build was installed with explicit approval and Ghostty native
+  tab replacement, focus-loss hide, and subsequent toggles were confirmed working. In signed
+  universal Debug build `9402d3c594c4-dirty`, a visible Ghostty window was also claimed on restart
+  and went directly to its Quick App presentation instead of first joining and reflowing the current
+  workspace; the user confirmed the result. Broader feature completion still requires exercising a
+  real assigned app across at least two profiles. Hidden/parked startup and ambiguous multiple-window
+  startup remain automated, fail-closed coverage rather than separate live observations.
 
 ### WR-030 — Investigate Battle.net focused-window compatibility
 
@@ -259,41 +280,29 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
-### WR-053 — Prepare WindowRanger 0.1.0 Beta 3
+### WR-054 — Publish WindowRanger 0.1.0 Beta 4
 
-- **Type:** Beta release preparation
-- **Status:** Final candidate rebuild and publication approved; build `4` pending.
-- **Requested:** 2026-08-14 from the latest reviewed `develop` branch after the AppRanger GitHub
-  organisation and application bundle-identity changes.
-- **Scope:** Promote the exact reviewed `develop` tree to `release/0.1.0`, build
-  `0.1.0-beta.3` with monotonically increasing build number `4` using stable Xcode, Developer ID
-  signing, notarization, stapling, and the repository distribution path, then hand the immutable
-  candidate to the maintainer for live testing.
-- **Identity boundary:** The public app is now `dev.appranger.WindowRanger`. Preserve the existing
-  `44NAD22AK6.com.windowranger.WindowRanger` iCloud key-value store and migrate missing Beta 2
-  preferences/recovery state without overwriting either identity. Testing must include the expected
-  one-time Accessibility approval and launch-at-login confirmation caused by the new application
-  identity.
-- **Superseded candidate evidence:** The reviewed `develop` tree at `702b53ec8cae` was promoted
-  without tree changes to release commit `bce35ca096e704b13783c0cbc47db3ff96be17b7`. The full
-  [release-branch CI run](https://github.com/AppRanger/windowranger/actions/runs/31778668246) passed
-  555 tests, static analysis, the unsigned universal Release build, both DMG smoke layouts, and
-  artifact upload. The fresh-clone stable-Xcode distribution path produced a universal
-  `dev.appranger.WindowRanger` app with build `3`, Developer ID application identifier
-  `44NAD22AK6.dev.appranger.WindowRanger`, preserved
-  `44NAD22AK6.com.windowranger.WindowRanger` iCloud key-value entitlement, and CDHash
-  `d3d8067c49d38f56b183f7b4d0f9260a9a55b174`. App notarization
-  `0c9c31bf-cfff-48b6-b129-35f52b1fad14` and DMG notarization
-  `305478ae-0f12-4af7-b753-c526be2ce648` were accepted with zero logged issues. Both staples,
-  Gatekeeper assessments, strict signatures, DMG verification, packaged-app equality, SHA-256
-  checksums, and provenance passed independently; the DMG checksum is
-  `941e92d8289b83cb7aac8fc1d3959fb181fe62817e7c86b5c8ffe4166d544ee7` and the ZIP checksum is
-  `7b690e85b877ccec6da594715ca7f768e0d25936d4cae91dc4589dd47cf63c2f`.
-  This build `3` candidate cannot be published because WR-051 changed the release tree afterward.
-- **Final release boundary:** The user approved Beta 3 publication on 2026-08-14 after validating
-  the signed Debug build for WR-051. Promote reviewed `develop` commit `99157bf6c474`, rebuild and
-  notarize the exact release commit as build `4`, and verify its five immutable assets before
-  tagging or publication. Do not reuse any build `3` artifact or its checksums.
+- **Type:** Beta release
+- **Priority:** P1
+- **Status:** Release approved; preparation in progress
+- **Requested:** Publish the current reviewed `develop` checkpoint as `v0.1.0-beta.4`, then update
+  the public website. The maintainer explicitly approved publication on 14 August 2026.
+- **Source scope:** `develop` commit `1869d14f30f5054a4bb5b6d0fd7bb528768e8fd7` adds the
+  live-validated transient-dialog placement correction, Quick App native-tab and startup recovery,
+  and post-restart workspace app cycling. Beta 3's public identity and packaging remain unchanged.
+- **Version allocation:** Beta version `0.1.0-beta.4`; monotonically increasing distribution build
+  number `5` follows Beta 3 build `4`.
+- **Process decision:** This repeat Beta may use the documented streamlined validation path. Its
+  changed product behavior has already passed signed daily testing, and it changes no packaging,
+  signing, entitlement, bundle identity, migration, updater, or minimum-system boundary. Skip only
+  the redundant local replacement install; retain the clean release branch, stable-Xcode suite and
+  analysis, universal Release build, Developer ID verification, app/DMG notarization and stapling,
+  Gatekeeper and DMG/ZIP checks, checksums, provenance, immutable tag, five-asset download
+  round-trip, release-note review, public-download verification, and website checks.
+- **Acceptance:** Merge reviewed release notes and process documentation, promote `develop` through
+  `release/0.1.0`, pass release-branch CI, publish an annotated protected tag and GitHub prerelease
+  with five verified assets, update the website through review, and record exact commit, build,
+  signing, notarization, checksum, release, deployment, and live-link evidence here.
 
 ### WR-052 — Move the application identity under AppRanger
 
@@ -325,15 +334,22 @@ smallest useful outcome and acceptance boundary.
   transient popups more robust.
 - **User-observed:** On 2026-08-14 ChatGPT's Sparkle **Check for Updates** alert was moved to the
   Tiled workspace edge and inserted into the split instead of remaining a floating alert. The same
-  class of failure has been seen with other Sparkle update alerts and a Ghostty confirmation prompt,
-  although the Ghostty prompt cannot currently be reproduced reliably.
+  class of failure has been seen with other Sparkle update alerts. A later Ghostty confirmation
+  prompt reproduced the issue under the signed Debug build and produced a complete diagnostic trace.
 - **Live evidence:** The signed Debug build classified the ChatGPT document window and updater as
   layer-0 `AXWindow` / `AXStandardWindow` surfaces. The document window exposed a Full Screen
   control. The 602 x 178 updater exposed Close but no Full Screen control; it accepted the requested
   position, rejected the requested size, and was then incorrectly reweighted into the Tiled tree.
+  The Ghostty prompt was an `AXDialog` initially observed at WindowServer layer 8 with unsupported
+  move/resize capability reads. It was admitted as an ambiguous normal window, rejected the requested
+  size but accepted the position, and moved from `(1550, 314; 260 x 252)` to
+  `(1683, 34; 260 x 252)`. Roughly 3.8 seconds later it reported layer 0 and was correctly floated,
+  but its original position had already been lost; its layer then continued to alternate until close.
 - **Expected:** A standard window proven movable but not resizable, with Close and no Full Screen
   control, floats automatically without using titles, dimensions, Sparkle-specific strings, or a
-  whole-app exclusion. Missing or failed capability reads remain conservatively managed as normal.
+  whole-app exclusion. An explicit dialog on a known nonzero transient layer remains untouched until
+  its layer settles. Missing layers or failed capability reads remain conservatively managed as
+  normal, and a rejected resize cannot still move a fixed-size surface.
 - **Research result:** AeroSpace's useful pattern is a real-window/dialog/popup classifier backed by
   captured Accessibility fixtures. yabai requires a root window and a narrow role/subrole set while
   recording move/resize capability; Amethyst requires a movable standard window. Preserve
@@ -349,16 +365,22 @@ smallest useful outcome and acceptance boundary.
   Settings, logs, and snapshot JSON, and remain separate from personal App Rules. A narrowly gated
   standard window with Close present, Full Screen absent, position settable, and size not settable is
   now admitted as an automatically floating dialog. Capability failures remain normal-window
-  admission, and ordinary document windows do not receive the additional support reads.
-- **Automated evidence:** Focused admission and workspace verification passes 116 tests. Local quick
-  verification passes all 556 non-hosted tests, including test-isolation validation; it does not
+  admission, and ordinary document windows do not receive the additional support reads. A known
+  nonzero-layer `AXDialog` is now deferred until its layer settles rather than being admitted to a
+  layout. Frame application stops before position when its initial size write is rejected, preventing
+  fixed-size surfaces from being partially moved after a failed resize.
+- **Automated evidence:** Focused admission and workspace verification passes 119 tests. Local quick
+  verification passes all 559 non-hosted tests, including test-isolation validation; it does not
   build, launch, sign, install, stop, or automate WindowRanger.app. Fixtures cover the captured
   ChatGPT document/updater distinction plus unavailable and immovable conservative fallbacks.
 - **Live validation:** The signed Debug build from this branch kept the ordinary ChatGPT document
   window managed normally, classified the reopened Sparkle updater through the fixed-size path, and
   left the updater floating outside the Tiled tree. The user confirmed the result on 2026-08-14.
-- **Follow-up boundary:** The equivalent Ghostty confirmation prompt remains unverified until it can
-  next be reproduced; the Sparkle result is not evidence that every Ghostty prompt is fixed.
+- **Follow-up live result:** The captured Ghostty confirmation prompt was reproduced against the
+  changed signed app. It remained outside the managed split and retained its intended placement; the
+  user confirmed the result before proceeding to the Quick App follow-ups. Other applications may
+  expose different transient metadata, so the classifier remains fixture-backed and fail-closed
+  rather than inferring from titles, dimensions, or broad application exclusions.
 
 ### WR-049 — Refine Command Wheel workspace-action icons
 
@@ -445,6 +467,25 @@ smallest useful outcome and acceptance boundary.
   no longer performs recovery, an explicit activation still does, and cycling through the affected
   workspace works again. The user confirmed the Command Wheel functionality works well and approved
   merging this checkpoint while keeping only the icon refinement as WIP.
+- **Diagnostic-backed follow-up:** After restarting WindowRanger on 14 August 2026, repeated
+  `cycle-window` commands in workspace 1 found Chrome and Claude visible on the interaction display
+  but ended with `no-candidate`. Claude window `30331:8687` was an admitted, raiseable
+  `AXStandardWindow` with a writable `AXMain` route, but WindowServer reported transient layer `-1`
+  and `AXMain=false` until the user activated it directly; it then reported layer `0`, became main,
+  and the existing exact-focus path could operate it.
+- **Follow-up implemented:** The shared focus-candidate gate accepts a negative-layer standard
+  window only when it is already tracked by the engine, meaningfully visible in the caller's scope,
+  raiseable, and exposes a writable Accessibility focus route. Positive layers, negative-layer
+  dialogs, and negative-layer read-only windows remain excluded; post-activation exact-window
+  verification is unchanged.
+- **Follow-up verification:** The focused diagnostic and workspace suites pass all 160 tests and
+  local quick verification passes all 565 non-hosted tests. With explicit approval, signed universal
+  Debug build `9402d3c594c4-dirty` is installed and running from
+  `/Applications/WindowRanger.app`; its strict signature, embedded revision, two architectures, and
+  running executable path were verified.
+- **Follow-up live result:** After restarting WindowRanger while an inactive app shared the current
+  workspace, cycling in both directions reached it before manual activation and continued through
+  the workspace normally. The user confirmed the correction in the installed signed build.
 
 ### WR-036 — Swipe between workspaces
 
@@ -788,6 +829,30 @@ second copy of that checklist.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-053 — Publish WindowRanger 0.1.0 Beta 3
+
+- **Result:** Published
+  [`v0.1.0-beta.3`](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.3) as a
+  GitHub prerelease on 14 August 2026 after maintainer testing and explicit approval. The annotated
+  tag points to release commit `63e09fb893114109fffda813654e0a92d0bc328b`; its
+  [release-branch CI run](https://github.com/AppRanger/windowranger/actions/runs/31782291211)
+  passed 556 tests, static analysis, the unsigned universal Release build, both DMG smoke layouts,
+  and artifact upload.
+- **Distribution evidence:** Stable Xcode 26.6 produced universal Developer ID build `4` with
+  bundle identifier `dev.appranger.WindowRanger`, Team ID `44NAD22AK6`, and CDHash
+  `34c6f294633331e853c43f4f5afa362760e3ff21`. App notarization
+  `4721cd68-8636-4cd6-aa7e-db1c5629a4c5` and DMG notarization
+  `2a33c480-d724-4057-8523-8c9a3fce03be` were accepted with zero logged issues. The stapled DMG,
+  ZIP, two checksum files, and provenance manifest were uploaded and round-trip verified; the DMG
+  SHA-256 is `c30a56a45d73197ade9a1f07ee60ade38df6049c6271591d9253947f36abf1ba`
+  and the ZIP SHA-256 is
+  `43ada185920908978602ad15a4f4e2416fa762d935d97840ca8882cd086661c9`.
+- **Website evidence:** [Website PR #1](https://github.com/AppRanger/windowranger-site/pull/1)
+  merged as `d0a6e1b8d1c7095b9b57c954504048b9f6bdab74` and was deployed as Cloudflare version
+  `19ee21ce-cd88-4f07-be85-dbe2cb0f7b6c`. Both `windowranger.com` and `www.windowranger.com`
+  serve the Beta 3 link and feature summary; desktop/mobile browser checks found no console errors
+  or horizontal overflow, and the live Command Wheel asset matches the reviewed release render.
 
 ### WR-043 — Use system display groups for Compact and Medium menu-bar styles
 

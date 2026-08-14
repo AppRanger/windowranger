@@ -91,6 +91,12 @@ support-only evidence, and a layer-0 standard window with a Close control but no
 whose move/resize capability evidence is not yet authoritative. Only those candidates are enriched
 before classification. A movable standard candidate that authoritatively cannot resize floats as a
 managed dialog; unavailable or unsupported evidence leaves it conservatively managed as normal.
+An explicit `AXDialog` observed on a known nonzero WindowServer layer is temporarily ineligible for
+admission instead of being placed while its transient layer metadata settles. If the same window
+later reports layer zero with corroborating controls, it enters as an automatically floating dialog;
+an unavailable layer remains conservatively managed. Frame writes also stop before changing
+position when the initial size write is rejected, so a fixed-size surface cannot be displaced toward
+a layout frame it cannot occupy.
 User-triggered Refresh
 performs read-only capability queries for already tracked windows, while ignored or unsupported
 surfaces capture the same evidence once before they are discarded. The snapshot contains no window
@@ -170,7 +176,16 @@ screen edge. Once selected, the window is
 excluded from normal visibility, layout, focus-cycle, reset, manual-geometry reconciliation, and
 background-signature participation. The engine parks it while hidden, preserves its durable restore
 frame, restores it before configuration/profile changes and lifecycle cleanup, and ignores its own
-programmatic activation when deciding whether another app has taken focus.
+programmatic activation when deciding whether another app has taken focus. A successful AX snapshot
+may replace an exact window identity during a native tab switch. The engine rebinds the session only
+when the old key disappeared and exactly one newly tracked, same-process, same-bundle eligible window
+remains. That replacement inherits the old local workspace, restore frame, display placement, and
+layout metadata before background layout runs. Multiple, pre-existing, cross-process, or unrelated
+replacements leave the exact-window safety boundary intact and clear the obsolete session.
+During startup reconciliation, the engine establishes this ownership before initial workspace
+visibility and layout. Exactly one eligible matching window is claimed: its observed pre-layout
+frame determines whether the session begins presented on that display or remains parked and hidden.
+An ambiguous set is left untouched by Quick App startup handling.
 
 ## UI and focus safety
 
@@ -279,7 +294,10 @@ immediate AppKit compatibility fallback only when Accessibility rejects the fron
 An ordinary layer-0 standard window with read-only focus attributes remains a candidate only when it
 reports itself as both its application's focused and main window and supports raising; the same exact
 WindowServer verification must still succeed after activation. Read-only windows without that local
-identity remain excluded.
+identity remain excluded. An already tracked, visible standard window may transiently report a
+negative WindowServer layer before its first post-restart activation. It remains a candidate only
+when it exposes a writable Accessibility focus route and supports raising. Positive-layer surfaces,
+negative-layer dialogs, and negative-layer read-only windows remain excluded.
 Already-active applications remain on the exact-window-only path. Verification normally requires the
 exact Accessibility focused-window identity. When that value is temporarily absent, it accepts the
 target only if the application is active and WindowServer independently reports that exact layer-0

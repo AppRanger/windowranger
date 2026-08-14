@@ -109,6 +109,11 @@ promotion and versioning. It is a design authority, not evidence that the releas
 - [x] Produce tracked release notes, SHA-256 checksums and a commit/toolchain provenance manifest;
       round-trip verify all five GitHub assets.
 - [x] Developer ID-sign, notarize, staple, Gatekeeper-check, and verify the exact Beta app and DMG.
+- [x] Define a streamlined repeat-Beta path that may skip only the redundant replacement install
+      when the same product paths already passed signed daily validation and no distribution
+      boundary changed; retain every automated, signing, notarization, packaging, provenance, and
+      downloaded-asset verification gate. Stable and distribution-boundary changes still require
+      exact packaged-artifact installation testing.
 - [x] Publish `v0.1.0-beta.1` only after explicit maintainer approval, preserving its verified tag
       and five uploaded assets.
 - [x] Publish `v0.1.0-beta.2` only after exact-artifact maintainer testing and explicit approval,
