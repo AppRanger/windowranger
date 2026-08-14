@@ -299,4 +299,168 @@ final class DropDownAppTests: XCTestCase {
             .toggleDropDownApp
         )
     }
+
+    func testQuickAppFollowsOneNewSameProcessNativeTabWindow() throws {
+        let previous = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let replacement = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+
+        let result = DropDownAppWindowHandoffPolicy.replacementWindowKey(
+            sessionWindowKey: previous,
+            sessionBundleIdentifier: "com.mitchellh.ghostty",
+            removedWindowKeys: [previous],
+            newlyTrackedWindowKeys: [replacement],
+            availableWindows: [DropDownAppWindowHandoffCandidate(
+                key: replacement,
+                bundleIdentifier: "com.mitchellh.ghostty"
+            )]
+        )
+
+        XCTAssertEqual(result, replacement)
+    }
+
+    func testQuickAppDoesNotFollowAmbiguousOrUnrelatedReplacementWindows() {
+        let previous = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let replacement = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+        let other = WindowKey(processIdentifier: 42, windowIdentifier: 102)
+        let otherProcess = WindowKey(processIdentifier: 73, windowIdentifier: 200)
+
+        XCTAssertNil(DropDownAppWindowHandoffPolicy.replacementWindowKey(
+            sessionWindowKey: previous,
+            sessionBundleIdentifier: "com.mitchellh.ghostty",
+            removedWindowKeys: [previous],
+            newlyTrackedWindowKeys: [replacement, other],
+            availableWindows: [
+                DropDownAppWindowHandoffCandidate(
+                    key: replacement,
+                    bundleIdentifier: "com.mitchellh.ghostty"
+                ),
+                DropDownAppWindowHandoffCandidate(
+                    key: other,
+                    bundleIdentifier: "com.mitchellh.ghostty"
+                ),
+            ]
+        ))
+        XCTAssertNil(DropDownAppWindowHandoffPolicy.replacementWindowKey(
+            sessionWindowKey: previous,
+            sessionBundleIdentifier: "com.mitchellh.ghostty",
+            removedWindowKeys: [previous],
+            newlyTrackedWindowKeys: [otherProcess],
+            availableWindows: [DropDownAppWindowHandoffCandidate(
+                key: otherProcess,
+                bundleIdentifier: "com.mitchellh.ghostty"
+            )]
+        ))
+        XCTAssertNil(DropDownAppWindowHandoffPolicy.replacementWindowKey(
+            sessionWindowKey: previous,
+            sessionBundleIdentifier: "com.mitchellh.ghostty",
+            removedWindowKeys: [previous],
+            newlyTrackedWindowKeys: [replacement],
+            availableWindows: [DropDownAppWindowHandoffCandidate(
+                key: replacement,
+                bundleIdentifier: "com.example.Other"
+            )]
+        ))
+    }
+
+    func testQuickAppDoesNotFollowPreexistingWindowOrWithoutAuthoritativeRemoval() {
+        let previous = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let candidate = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+        let available = [DropDownAppWindowHandoffCandidate(
+            key: candidate,
+            bundleIdentifier: "com.mitchellh.ghostty"
+        )]
+
+        XCTAssertNil(DropDownAppWindowHandoffPolicy.replacementWindowKey(
+            sessionWindowKey: previous,
+            sessionBundleIdentifier: "com.mitchellh.ghostty",
+            removedWindowKeys: [previous],
+            newlyTrackedWindowKeys: [],
+            availableWindows: available
+        ))
+        XCTAssertNil(DropDownAppWindowHandoffPolicy.replacementWindowKey(
+            sessionWindowKey: previous,
+            sessionBundleIdentifier: "com.mitchellh.ghostty",
+            removedWindowKeys: [],
+            newlyTrackedWindowKeys: [candidate],
+            availableWindows: available
+        ))
+    }
+
+    func testStartupClaimsOneVisibleQuickAppWindowAsPresentedOnItsCurrentDisplay() {
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+
+        let selection = DropDownAppStartupPolicy.selection(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            candidates: [DropDownAppStartupCandidate(
+                key: key,
+                bundleIdentifier: "com.mitchellh.ghostty",
+                isMeaningfullyVisible: true,
+                displayIdentifier: "external"
+            )]
+        )
+
+        XCTAssertEqual(
+            selection,
+            DropDownAppStartupSelection(
+                windowKey: key,
+                isPresented: true,
+                displayIdentifier: "external"
+            )
+        )
+    }
+
+    func testStartupClaimsOneParkedQuickAppWindowAsHidden() {
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+
+        let selection = DropDownAppStartupPolicy.selection(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            candidates: [DropDownAppStartupCandidate(
+                key: key,
+                bundleIdentifier: "com.mitchellh.ghostty",
+                isMeaningfullyVisible: false,
+                displayIdentifier: "external"
+            )]
+        )
+
+        XCTAssertEqual(
+            selection,
+            DropDownAppStartupSelection(
+                windowKey: key,
+                isPresented: false,
+                displayIdentifier: nil
+            )
+        )
+    }
+
+    func testStartupDoesNotClaimAmbiguousOrUnrelatedQuickAppWindows() {
+        let first = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let second = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+
+        XCTAssertNil(DropDownAppStartupPolicy.selection(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            candidates: [
+                DropDownAppStartupCandidate(
+                    key: first,
+                    bundleIdentifier: "com.mitchellh.ghostty",
+                    isMeaningfullyVisible: true,
+                    displayIdentifier: "main"
+                ),
+                DropDownAppStartupCandidate(
+                    key: second,
+                    bundleIdentifier: "com.mitchellh.ghostty",
+                    isMeaningfullyVisible: true,
+                    displayIdentifier: "main"
+                ),
+            ]
+        ))
+        XCTAssertNil(DropDownAppStartupPolicy.selection(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            candidates: [DropDownAppStartupCandidate(
+                key: first,
+                bundleIdentifier: "com.example.Other",
+                isMeaningfullyVisible: true,
+                displayIdentifier: "main"
+            )]
+        ))
+    }
 }

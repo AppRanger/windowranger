@@ -196,14 +196,19 @@ private let fixtures: [WindowAdmissionFixture] = [
         )
     ),
     WindowAdmissionFixture(
-        name: "unverified non-normal dialog remains managed",
+        name: "captured Ghostty non-normal dialog is deferred until its layer settles",
         metadata: fixtureMetadata(
-            bundleIdentifier: "com.example.UnusualWindowLevels",
+            bundleIdentifier: "com.mitchellh.ghostty",
             subrole: kAXDialogSubrole as String,
-            windowLayer: 3,
-            fullscreenButton: .absent
+            windowLayer: 8,
+            fullscreenButton: .absent,
+            minimizeButton: .unavailable,
+            closeButton: .absent,
+            zoomButton: .unavailable,
+            positionSettable: .unsupported,
+            sizeSettable: .unsupported
         ),
-        expected: decision(.managedNormal, .ambiguousDialogMetadata)
+        expected: decision(.temporarilyIneligible, .transientDialogNonNormalLayer)
     ),
     WindowAdmissionFixture(
         name: "dialog with fullscreen control remains in layout",

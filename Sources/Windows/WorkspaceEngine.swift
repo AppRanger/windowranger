@@ -279,6 +279,69 @@ enum WindowEnumerationLifecycle {
     }
 }
 
+struct DropDownAppWindowHandoffCandidate {
+    let key: WindowKey
+    let bundleIdentifier: String?
+}
+
+/// A native tab switch can replace an application's AX window identifier while leaving the same
+/// visible window and process in place. Quick App ownership may follow that replacement only when
+/// the authoritative refresh leaves exactly one eligible window for the configured bundle and that
+/// window is both newly tracked and owned by the same process. Anything ambiguous keeps the normal
+/// exact-window safety boundary.
+enum DropDownAppWindowHandoffPolicy {
+    static func replacementWindowKey(
+        sessionWindowKey: WindowKey,
+        sessionBundleIdentifier: String,
+        removedWindowKeys: Set<WindowKey>,
+        newlyTrackedWindowKeys: Set<WindowKey>,
+        availableWindows: [DropDownAppWindowHandoffCandidate]
+    ) -> WindowKey? {
+        guard removedWindowKeys.contains(sessionWindowKey) else { return nil }
+        let matching = availableWindows.filter { candidate in
+            candidate.bundleIdentifier?.caseInsensitiveCompare(sessionBundleIdentifier) == .orderedSame
+        }
+        guard matching.count == 1, let replacement = matching.first else { return nil }
+        guard replacement.key.processIdentifier == sessionWindowKey.processIdentifier,
+              newlyTrackedWindowKeys.contains(replacement.key)
+        else { return nil }
+        return replacement.key
+    }
+}
+
+struct DropDownAppStartupCandidate {
+    let key: WindowKey
+    let bundleIdentifier: String?
+    let isMeaningfullyVisible: Bool
+    let displayIdentifier: String?
+}
+
+struct DropDownAppStartupSelection: Equatable {
+    let windowKey: WindowKey
+    let isPresented: Bool
+    let displayIdentifier: String?
+}
+
+/// Startup has no exact Quick App session to restore. It may claim a configured application only
+/// when one eligible window is unambiguous; current on-screen visibility decides whether that local
+/// session begins presented or parked.
+enum DropDownAppStartupPolicy {
+    static func selection(
+        bundleIdentifier: String,
+        candidates: [DropDownAppStartupCandidate]
+    ) -> DropDownAppStartupSelection? {
+        let matching = candidates.filter {
+            $0.bundleIdentifier?.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
+        guard matching.count == 1, let candidate = matching.first else { return nil }
+        return DropDownAppStartupSelection(
+            windowKey: candidate.key,
+            isPresented: candidate.isMeaningfullyVisible,
+            displayIdentifier: candidate.isMeaningfullyVisible ? candidate.displayIdentifier : nil
+        )
+    }
+}
+
 enum WindowLayoutOverride: String, Codable, Equatable, Sendable {
     case automatic
     case floating
@@ -882,7 +945,7 @@ final class WorkspaceEngine {
     }
 
     private struct DropDownAppSession {
-        let windowKey: WindowKey
+        var windowKey: WindowKey
         let bundleIdentifier: String
         let direction: DropDownAppDirection
         let isAnimationEnabled: Bool
@@ -6489,6 +6552,7 @@ final class WorkspaceEngine {
         let runningProcessIdentifiers = Set(runningApplications.map(\.processIdentifier))
         let requiredProcessIdentifiers = Set(windows.keys.map(\.processIdentifier))
             .intersection(runningProcessIdentifiers)
+        let trackedWindowKeysBeforeEnumeration = Set(windows.keys)
         let visibleWindowLayers = AccessibilityWindow.visibleWindowLayers()
         var successfullyEnumeratedProcesses = Set<pid_t>()
         var enumeratedWindowKeys = Set<WindowKey>()
@@ -6766,7 +6830,15 @@ final class WorkspaceEngine {
         )
         let removedTrackedWindows = windows.filter { removedTrackedWindowKeys.contains($0.key) }
         if !removedTrackedWindowKeys.isEmpty {
-            if let dropDownKey = dropDownAppSession?.windowKey,
+            let didRebindDropDownApp = rebindDropDownAppSessionIfNeeded(
+                removedWindowKeys: removedTrackedWindowKeys,
+                newlyTrackedWindowKeys: Set(windows.keys).subtracting(trackedWindowKeysBeforeEnumeration),
+                displays: displays,
+                performAXWrites: performAXWrites,
+                correlationID: correlationID
+            )
+            if !didRebindDropDownApp,
+               let dropDownKey = dropDownAppSession?.windowKey,
                removedTrackedWindowKeys.contains(dropDownKey) {
                 dropDownAnimationGeneration &+= 1
                 dropDownAppSession = nil
@@ -6883,6 +6955,15 @@ final class WorkspaceEngine {
         writeEligibleWindowKeys = writeEligibleWindowKeys.intersection(windows.keys)
         deferredWindowKeys = deferredWindowKeys.intersection(windows.keys)
         temporarilyDeferredWindowKeys = deferredWindowKeys
+
+        if isStartup {
+            prepareDropDownAppSessionForStartup(
+                observedFrames: observedFrames,
+                displays: displays,
+                performAXWrites: performAXWrites,
+                correlationID: correlationID
+            )
+        }
 
         let focusedSnapshot = observeFocus ? focusedWindowSnapshot() : nil
         if let focusedSnapshot,
@@ -8519,6 +8600,171 @@ final class WorkspaceEngine {
             event: "session-cleared",
             fields: ["reason": reason]
         )
+    }
+
+    private func prepareDropDownAppSessionForStartup(
+        observedFrames: [WindowKey: WindowFrame],
+        displays: [DisplaySnapshot],
+        performAXWrites: Bool,
+        correlationID: String?
+    ) {
+        guard dropDownAppSession == nil,
+              let configuration = dropDownAppConfiguration,
+              let selection = DropDownAppStartupPolicy.selection(
+                bundleIdentifier: configuration.bundleIdentifier,
+                candidates: windows.compactMap { key, tracked in
+                    guard !temporarilyDeferredWindowKeys.contains(key),
+                          fullscreenSessions[key] == nil
+                    else { return nil }
+                    let observedFrame = observedFrames[key]
+                    return DropDownAppStartupCandidate(
+                        key: key,
+                        bundleIdentifier: tracked.bundleIdentifier,
+                        isMeaningfullyVisible: observedFrame.map {
+                            Self.isMeaningfullyVisible($0, displays: displays)
+                        } == true,
+                        displayIdentifier: observedFrame.flatMap {
+                            Self.displayPlacement(for: $0, displays: displays)?.displayIdentifier
+                        }
+                    )
+                }
+              ),
+              let target = windows[selection.windowKey]
+        else { return }
+
+        let display = selection.displayIdentifier.flatMap { identifier in
+            displays.first { $0.identifier == identifier }
+        } ?? (selection.isPresented ? dropDownTargetDisplay(displays: displays) : nil)
+        dropDownAnimationGeneration &+= 1
+        dropDownAppSession = DropDownAppSession(
+            windowKey: target.key,
+            bundleIdentifier: configuration.bundleIdentifier,
+            direction: configuration.direction,
+            isAnimationEnabled: configuration.isAnimationEnabled,
+            isPresented: selection.isPresented,
+            displayIdentifier: display?.identifier,
+            previousFocusKey: nil
+        )
+
+        var geometryWriteSucceeded: Bool?
+        if performAXWrites {
+            if selection.isPresented, let display {
+                let presented = DropDownAppGeometry.presentedFrame(
+                    in: display.usableBounds,
+                    sizeFraction: configuration.heightFraction,
+                    direction: configuration.direction
+                )
+                geometryWriteSucceeded = AccessibilityWindow.setFrame(presented, of: target.element)
+            } else {
+                geometryWriteSucceeded = AccessibilityWindow.setPositionIfNeeded(
+                    parkingPosition(displays: displays),
+                    of: target.element
+                )
+            }
+        }
+
+        diagnostics.log(
+            category: "drop-down-app",
+            event: "startup-session-prepared",
+            correlation: correlationID,
+            fields: [
+                "window": Self.diagnosticWindowKey(target.key),
+                "bundle": configuration.bundleIdentifier,
+                "presented": String(selection.isPresented),
+                "display": display?.identifier ?? "none",
+                "geometry-write": geometryWriteSucceeded.map(String.init) ?? "not-requested",
+            ]
+        )
+    }
+
+    @discardableResult
+    private func rebindDropDownAppSessionIfNeeded(
+        removedWindowKeys: Set<WindowKey>,
+        newlyTrackedWindowKeys: Set<WindowKey>,
+        displays: [DisplaySnapshot],
+        performAXWrites: Bool,
+        correlationID: String?
+    ) -> Bool {
+        guard var session = dropDownAppSession,
+              let previous = windows[session.windowKey],
+              let replacementKey = DropDownAppWindowHandoffPolicy.replacementWindowKey(
+                sessionWindowKey: session.windowKey,
+                sessionBundleIdentifier: session.bundleIdentifier,
+                removedWindowKeys: removedWindowKeys,
+                newlyTrackedWindowKeys: newlyTrackedWindowKeys,
+                availableWindows: windows.compactMap { key, tracked in
+                    guard !removedWindowKeys.contains(key),
+                          !temporarilyDeferredWindowKeys.contains(key),
+                          fullscreenSessions[key] == nil
+                    else { return nil }
+                    return DropDownAppWindowHandoffCandidate(
+                        key: key,
+                        bundleIdentifier: tracked.bundleIdentifier
+                    )
+                }
+              ),
+              var replacement = windows[replacementKey]
+        else { return false }
+
+        // The replacement AX element is new, but its durable local ownership belongs to the same
+        // visible native window. Do not let the currently presented Quick App geometry become its
+        // restore frame or assign the tab to whichever workspace happened to be active.
+        replacement.workspaceID = previous.workspaceID
+        replacement.restoreFrame = previous.restoreFrame
+        replacement.displayPlacement = previous.displayPlacement
+        replacement.layoutOverride = previous.layoutOverride
+        replacement.workspaceRuleOverrideActive = previous.workspaceRuleOverrideActive
+        replacement.layoutOrder = previous.layoutOrder
+        replacement.layoutWeight = previous.layoutWeight
+        windows[replacementKey] = replacement
+
+        let previousKey = session.windowKey
+        session.windowKey = replacementKey
+        dropDownAnimationGeneration &+= 1
+        dropDownAppSession = session
+
+        lastFocusedWindow = lastFocusedWindow.mapValues { $0 == previousKey ? replacementKey : $0 }
+        if lastObservedFocusedWindow == previousKey { lastObservedFocusedWindow = replacementKey }
+        if programmaticFocusTarget == previousKey { programmaticFocusTarget = replacementKey }
+        if recentInteractionFocusTarget == previousKey { recentInteractionFocusTarget = replacementKey }
+
+        var geometryWriteSucceeded: Bool?
+        if performAXWrites {
+            if session.isPresented,
+               let configuration = dropDownAppConfiguration,
+               let display = session.displayIdentifier.flatMap({ identifier in
+                   displays.first { $0.identifier == identifier }
+               }) ?? dropDownTargetDisplay(displays: displays) {
+                let presented = DropDownAppGeometry.presentedFrame(
+                    in: display.usableBounds,
+                    sizeFraction: configuration.heightFraction,
+                    direction: session.direction
+                )
+                geometryWriteSucceeded = AccessibilityWindow.setFrame(
+                    presented,
+                    of: replacement.element
+                )
+            } else if !session.isPresented {
+                geometryWriteSucceeded = AccessibilityWindow.setPositionIfNeeded(
+                    parkingPosition(displays: displays),
+                    of: replacement.element
+                )
+            }
+        }
+
+        diagnostics.log(
+            category: "drop-down-app",
+            event: "native-tab-session-rebound",
+            correlation: correlationID,
+            fields: [
+                "previous-window": Self.diagnosticWindowKey(previousKey),
+                "replacement-window": Self.diagnosticWindowKey(replacementKey),
+                "bundle": session.bundleIdentifier,
+                "presented": String(session.isPresented),
+                "geometry-write": geometryWriteSucceeded.map(String.init) ?? "not-requested",
+            ]
+        )
+        return true
     }
 
     private func dropDownTargetDisplay(displays: [DisplaySnapshot]) -> DisplaySnapshot? {

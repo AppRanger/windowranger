@@ -566,6 +566,57 @@ final class DiagnosticLoggerTests: XCTestCase {
         )
         XCTAssertFalse(AccessibilityWindow.isEligibleFocusCycleCandidate(utilityPanel))
 
+        let inactiveManagedStandardWindow = WindowFocusCapabilities(
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: -1,
+            isMinimized: false,
+            isFocused: false,
+            isMain: false,
+            focusedAttributeSettable: false,
+            mainAttributeSettable: true,
+            applicationFocusedWindowAttributeSettable: false,
+            raiseActionSupported: true
+        )
+        XCTAssertTrue(
+            AccessibilityWindow.isEligibleFocusCycleCandidate(inactiveManagedStandardWindow),
+            "A managed standard window may expose a transient negative layer before first activation"
+        )
+
+        let negativeLayerReadOnlyWindow = WindowFocusCapabilities(
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: -1,
+            isMinimized: false,
+            isFocused: true,
+            isMain: true,
+            focusedAttributeSettable: false,
+            mainAttributeSettable: false,
+            applicationFocusedWindowAttributeSettable: false,
+            raiseActionSupported: true
+        )
+        XCTAssertFalse(
+            AccessibilityWindow.isEligibleFocusCycleCandidate(negativeLayerReadOnlyWindow),
+            "A negative-layer window still needs a writable exact-focus route"
+        )
+
+        let negativeLayerDialog = WindowFocusCapabilities(
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: -1,
+            isMinimized: false,
+            isFocused: false,
+            isMain: false,
+            focusedAttributeSettable: true,
+            mainAttributeSettable: true,
+            applicationFocusedWindowAttributeSettable: true,
+            raiseActionSupported: true
+        )
+        XCTAssertFalse(
+            AccessibilityWindow.isEligibleFocusCycleCandidate(negativeLayerDialog),
+            "The negative-layer exception is limited to standard managed windows"
+        )
+
         let nonFocusable = WindowFocusCapabilities(
             role: kAXWindowRole as String,
             subrole: kAXStandardWindowSubrole as String,

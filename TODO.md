@@ -24,7 +24,7 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Feature
 - **Priority:** P2
-- **Status:** Done
+- **Status:** Live validation
 - **Requested outcome:** Each profile may assign at most one application as a Quake-style Quick App.
   A configurable global shortcut, initially Control-Option-Backtick, presents that app over the
   current work and toggles it away. Moving focus to another application also hides it. The presented
@@ -59,14 +59,35 @@ smallest useful outcome and acceptance boundary.
   guidance for apps that do not resize smoothly, exact-window
   ambiguity feedback, focus-loss hide, focus restoration on shortcut hide, and engine exclusions for
   layout/parking/focus/reset/background persistence. Profile changes, sleep, termination, window
-  disappearance, and newer animation generations clear or restore the session safely.
-- **Automated verification:** Universal Debug app build passed with signing disabled. The complete
-  non-hosted suite passed 546 tests, including profile compatibility and mutual-exclusion migration,
-  App Rules/Quick App conversion, default/clamping, shortcut, four-edge non-origin geometry,
-  retraction, and animation-completion coverage.
-- **Live validation needed:** Install a signed daily build only after explicit approval. Select a
-  one-window app in two profiles, confirm show/toggle/focus-loss behavior and 80-percent geometry on
-  each relevant display, then exercise a profile change and normal quit while the window is shown.
+  disappearance, and newer animation generations clear or restore the session safely. When an
+  authoritative refresh replaces the exact Quick App window during a native tab switch, ownership
+  follows only one newly admitted same-process window for that bundle; ambiguous replacements still
+  clear the session instead of guessing. Startup now claims one unambiguous configured Quick App
+  before initial workspace layout: a meaningfully visible window is presented immediately on its
+  current display, while an already parked window remains hidden. Multiple matching windows remain
+  unclaimed.
+- **Diagnostic-backed bug:** On 2026-08-14, switching tabs in a presented Ghostty Quick App replaced
+  window `1081:94` with `1081:95`. The successful AX snapshot evicted the old identity, cleared the
+  Quick App session, and the normal background layout then tiled the replacement into the active
+  workspace. Chronicle pinned the visible reproduction timing; structured diagnostics established
+  the identity transition and frame write.
+- **Diagnostic-backed startup bug:** On 2026-08-14, restart session
+  `FA37B094-DA96-45DD-842C-3FBCB81CA3E0` admitted Ghostty window `1081:95`, assigned it to active
+  workspace 2, and changed its frame from `12,296;3336x1110` to the workspace's tiled
+  `1683,34;1673x1380` before the first Quick App shortcut restored its presentation. The configured
+  window must instead be claimed before the initial workspace layout.
+- **Automated verification:** Focused Quick App and lifecycle verification passes 132 tests. Local
+  quick verification passes all 565 non-hosted tests, including test-isolation validation and
+  same-process native-tab handoff plus ambiguous, wrong-process, wrong-bundle, pre-existing-window,
+  non-authoritative-removal rejection, startup visible/parked selection, and startup ambiguity
+  rejection. The universal unsigned Debug app build also passes.
+- **Live validation:** The signed daily build was installed with explicit approval and Ghostty native
+  tab replacement, focus-loss hide, and subsequent toggles were confirmed working. In signed
+  universal Debug build `9402d3c594c4-dirty`, a visible Ghostty window was also claimed on restart
+  and went directly to its Quick App presentation instead of first joining and reflowing the current
+  workspace; the user confirmed the result. Broader feature completion still requires exercising a
+  real assigned app across at least two profiles. Hidden/parked startup and ambiguous multiple-window
+  startup remain automated, fail-closed coverage rather than separate live observations.
 
 ### WR-030 — Investigate Battle.net focused-window compatibility
 
@@ -289,15 +310,22 @@ smallest useful outcome and acceptance boundary.
   transient popups more robust.
 - **User-observed:** On 2026-08-14 ChatGPT's Sparkle **Check for Updates** alert was moved to the
   Tiled workspace edge and inserted into the split instead of remaining a floating alert. The same
-  class of failure has been seen with other Sparkle update alerts and a Ghostty confirmation prompt,
-  although the Ghostty prompt cannot currently be reproduced reliably.
+  class of failure has been seen with other Sparkle update alerts. A later Ghostty confirmation
+  prompt reproduced the issue under the signed Debug build and produced a complete diagnostic trace.
 - **Live evidence:** The signed Debug build classified the ChatGPT document window and updater as
   layer-0 `AXWindow` / `AXStandardWindow` surfaces. The document window exposed a Full Screen
   control. The 602 x 178 updater exposed Close but no Full Screen control; it accepted the requested
   position, rejected the requested size, and was then incorrectly reweighted into the Tiled tree.
+  The Ghostty prompt was an `AXDialog` initially observed at WindowServer layer 8 with unsupported
+  move/resize capability reads. It was admitted as an ambiguous normal window, rejected the requested
+  size but accepted the position, and moved from `(1550, 314; 260 x 252)` to
+  `(1683, 34; 260 x 252)`. Roughly 3.8 seconds later it reported layer 0 and was correctly floated,
+  but its original position had already been lost; its layer then continued to alternate until close.
 - **Expected:** A standard window proven movable but not resizable, with Close and no Full Screen
   control, floats automatically without using titles, dimensions, Sparkle-specific strings, or a
-  whole-app exclusion. Missing or failed capability reads remain conservatively managed as normal.
+  whole-app exclusion. An explicit dialog on a known nonzero transient layer remains untouched until
+  its layer settles. Missing layers or failed capability reads remain conservatively managed as
+  normal, and a rejected resize cannot still move a fixed-size surface.
 - **Research result:** AeroSpace's useful pattern is a real-window/dialog/popup classifier backed by
   captured Accessibility fixtures. yabai requires a root window and a narrow role/subrole set while
   recording move/resize capability; Amethyst requires a movable standard window. Preserve
@@ -313,16 +341,22 @@ smallest useful outcome and acceptance boundary.
   Settings, logs, and snapshot JSON, and remain separate from personal App Rules. A narrowly gated
   standard window with Close present, Full Screen absent, position settable, and size not settable is
   now admitted as an automatically floating dialog. Capability failures remain normal-window
-  admission, and ordinary document windows do not receive the additional support reads.
-- **Automated evidence:** Focused admission and workspace verification passes 116 tests. Local quick
-  verification passes all 556 non-hosted tests, including test-isolation validation; it does not
+  admission, and ordinary document windows do not receive the additional support reads. A known
+  nonzero-layer `AXDialog` is now deferred until its layer settles rather than being admitted to a
+  layout. Frame application stops before position when its initial size write is rejected, preventing
+  fixed-size surfaces from being partially moved after a failed resize.
+- **Automated evidence:** Focused admission and workspace verification passes 119 tests. Local quick
+  verification passes all 559 non-hosted tests, including test-isolation validation; it does not
   build, launch, sign, install, stop, or automate WindowRanger.app. Fixtures cover the captured
   ChatGPT document/updater distinction plus unavailable and immovable conservative fallbacks.
 - **Live validation:** The signed Debug build from this branch kept the ordinary ChatGPT document
   window managed normally, classified the reopened Sparkle updater through the fixed-size path, and
   left the updater floating outside the Tiled tree. The user confirmed the result on 2026-08-14.
-- **Follow-up boundary:** The equivalent Ghostty confirmation prompt remains unverified until it can
-  next be reproduced; the Sparkle result is not evidence that every Ghostty prompt is fixed.
+- **Follow-up live result:** The captured Ghostty confirmation prompt was reproduced against the
+  changed signed app. It remained outside the managed split and retained its intended placement; the
+  user confirmed the result before proceeding to the Quick App follow-ups. Other applications may
+  expose different transient metadata, so the classifier remains fixture-backed and fail-closed
+  rather than inferring from titles, dimensions, or broad application exclusions.
 
 ### WR-049 — Refine Command Wheel workspace-action icons
 
@@ -409,6 +443,25 @@ smallest useful outcome and acceptance boundary.
   no longer performs recovery, an explicit activation still does, and cycling through the affected
   workspace works again. The user confirmed the Command Wheel functionality works well and approved
   merging this checkpoint while keeping only the icon refinement as WIP.
+- **Diagnostic-backed follow-up:** After restarting WindowRanger on 14 August 2026, repeated
+  `cycle-window` commands in workspace 1 found Chrome and Claude visible on the interaction display
+  but ended with `no-candidate`. Claude window `30331:8687` was an admitted, raiseable
+  `AXStandardWindow` with a writable `AXMain` route, but WindowServer reported transient layer `-1`
+  and `AXMain=false` until the user activated it directly; it then reported layer `0`, became main,
+  and the existing exact-focus path could operate it.
+- **Follow-up implemented:** The shared focus-candidate gate accepts a negative-layer standard
+  window only when it is already tracked by the engine, meaningfully visible in the caller's scope,
+  raiseable, and exposes a writable Accessibility focus route. Positive layers, negative-layer
+  dialogs, and negative-layer read-only windows remain excluded; post-activation exact-window
+  verification is unchanged.
+- **Follow-up verification:** The focused diagnostic and workspace suites pass all 160 tests and
+  local quick verification passes all 565 non-hosted tests. With explicit approval, signed universal
+  Debug build `9402d3c594c4-dirty` is installed and running from
+  `/Applications/WindowRanger.app`; its strict signature, embedded revision, two architectures, and
+  running executable path were verified.
+- **Follow-up live result:** After restarting WindowRanger while an inactive app shared the current
+  workspace, cycling in both directions reached it before manual activation and continued through
+  the workspace normally. The user confirmed the correction in the installed signed build.
 
 ### WR-036 — Swipe between workspaces
 

@@ -64,6 +64,7 @@ enum WindowAdmissionReason: String, Equatable, Sendable {
     case dialogSubroleWithoutFullscreenButton = "dialog-subrole-without-fullscreen-button"
     case floatingWindowWithoutFullscreenButton = "floating-window-without-fullscreen-button"
     case fixedSizeStandardWindow = "fixed-size-standard-window"
+    case transientDialogNonNormalLayer = "transient-dialog-non-normal-layer"
     case ambiguousDialogMetadata = "ambiguous-dialog-metadata"
     case verifiedBundleNonNormalLayer = "verified-bundle-non-normal-layer"
     case unsupportedRole = "unsupported-role"
@@ -689,6 +690,12 @@ enum AccessibilityWindow {
             return WindowAdmissionDecision(disposition: .managedDialog, reason: .systemDialogSubrole)
         }
         if metadata.subrole == kAXDialogSubrole as String {
+            if let windowLayer = metadata.windowLayer, windowLayer != 0 {
+                return WindowAdmissionDecision(
+                    disposition: .temporarilyIneligible,
+                    reason: .transientDialogNonNormalLayer
+                )
+            }
             guard metadata.windowLayer == 0,
                   metadata.fullscreenButton == .absent
             else {
@@ -744,9 +751,18 @@ enum AccessibilityWindow {
     }
 
     static func isEligibleFocusCycleCandidate(_ capabilities: WindowFocusCapabilities) -> Bool {
+        let hasWritableFocusRoute = capabilities.focusedAttributeSettable ||
+            capabilities.mainAttributeSettable ||
+            capabilities.applicationFocusedWindowAttributeSettable
+        let hasEligibleWindowLayer = capabilities.windowLayer == nil ||
+            capabilities.windowLayer == 0 ||
+            (capabilities.windowLayer.map { $0 < 0 } == true &&
+                capabilities.subrole == kAXStandardWindowSubrole as String &&
+                hasWritableFocusRoute)
+
         guard capabilities.role == kAXWindowRole as String || capabilities.role == kAXSheetRole as String,
               !capabilities.isMinimized,
-              capabilities.windowLayer == nil || capabilities.windowLayer == 0,
+              hasEligibleWindowLayer,
               capabilities.subrole == nil ||
                 capabilities.subrole == kAXStandardWindowSubrole as String ||
                 capabilities.subrole == kAXDialogSubrole as String ||
@@ -755,9 +771,6 @@ enum AccessibilityWindow {
               capabilities.raiseActionSupported
         else { return false }
 
-        let hasWritableFocusRoute = capabilities.focusedAttributeSettable ||
-            capabilities.mainAttributeSettable ||
-            capabilities.applicationFocusedWindowAttributeSettable
         if hasWritableFocusRoute { return true }
 
         // Some ordinary document apps expose their locally selected main window truthfully but
@@ -867,13 +880,34 @@ enum AccessibilityWindow {
               let sizeValue = AXValueCreate(.cgSize, &size)
         else { return false }
 
-        // Size-position-size is the most reliable sequence for apps that clamp one dimension after
-        // the other changes. Normal workspace switches remain position-only; this is used only when
-        // quit recovery or a smaller replacement display requires a safe resize.
-        let firstSizeResult = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue)
-        let positionResult = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, positionValue)
-        let finalSizeResult = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue)
-        return firstSizeResult == .success && positionResult == .success && finalSizeResult == .success
+        return applyFrameWriteSequence(
+            writeSize: {
+                AXUIElementSetAttributeValue(
+                    element,
+                    kAXSizeAttribute as CFString,
+                    sizeValue
+                ) == .success
+            },
+            writePosition: {
+                AXUIElementSetAttributeValue(
+                    element,
+                    kAXPositionAttribute as CFString,
+                    positionValue
+                ) == .success
+            }
+        )
+    }
+
+    /// Size-position-size is the most reliable sequence for apps that clamp one dimension after
+    /// the other changes. A rejected first size write must stop before position so a fixed-size
+    /// dialog cannot be moved to a layout target it was unable to occupy.
+    static func applyFrameWriteSequence(
+        writeSize: () -> Bool,
+        writePosition: () -> Bool
+    ) -> Bool {
+        guard writeSize() else { return false }
+        guard writePosition() else { return false }
+        return writeSize()
     }
 
 }
