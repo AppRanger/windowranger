@@ -3,6 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>com.apple.developer.ubiquity-kvstore-identifier</key>
-    <string>$(TeamIdentifierPrefix)$(CFBundleIdentifier)</string>
+    <!-- Preserve the existing opt-in settings store across the bundle-ID migration. -->
+    <string>$(TeamIdentifierPrefix)com.windowranger.WindowRanger</string>
 </dict>
 </plist>

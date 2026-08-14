@@ -5,7 +5,7 @@ explicitly pre-release and several live, accessibility, privacy, and packaging g
 
 As of 10 August 2026, that exact Beta is Developer ID-signed, notarized, stapled, packaged, tested by
 the maintainer, and published as a
-[GitHub prerelease](https://github.com/windowranger/windowranger/releases/tag/v0.1.0-beta.1). The tag
+[GitHub prerelease](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.1). The tag
 and artifacts remain at commit `04b5750b1fe3b183c1259d132a0a8e985f8b4e0e`.
 
 This runbook uses a local-first release pipeline:
@@ -38,8 +38,9 @@ credentials in the current design.
    The configured team is `44NAD22AK6`; do not release until that ownership is intentional.
 2. Create and install a **Developer ID Application** certificate and its private key. An Apple
    Development certificate is not a distribution identity.
-3. Ensure the WindowRanger App ID and any Developer ID provisioning profile support the required
-   iCloud key-value entitlement.
+3. Ensure the WindowRanger App ID supports the required iCloud key-value entitlement. The release
+   export uses automatic signing with `-allowProvisioningUpdates`, so Xcode creates or refreshes the
+   direct Developer ID provisioning profile instead of relying on a locally named profile.
 4. Store notarization credentials explicitly in the file-based login Keychain under a profile name
    such as `WindowRanger`. Supplying the keychain path avoids `notarytool`'s default Data Protection
    Keychain and makes the release script use the same deterministic store. For Apple ID

@@ -139,6 +139,10 @@ final class SettingsStore: ObservableObject {
         didSet { activeProfileContentDidChange() }
     }
 
+    @Published var dropDownApp: DropDownAppConfiguration? {
+        didSet { activeProfileContentDidChange() }
+    }
+
     @Published var iCloudSyncEnabled: Bool {
         didSet {
             guard !isApplyingRemoteChange else { return }
@@ -312,6 +316,7 @@ final class SettingsStore: ObservableObject {
         workspaces = active.workspaces
         multiDisplayMode = active.displayMode
         appRules = active.appRules
+        dropDownApp = active.dropDownApp
         connectedDisplays = initialDisplays
         workspaceDisplayHomesForEngine = ProfileRoleBindingResolver.resolve(
             profile: active,
@@ -1065,6 +1070,9 @@ final class SettingsStore: ObservableObject {
         defaultWorkspaceID: UUID? = nil
     ) {
         guard !appRules.contains(where: { $0.id == application.id }) else { return }
+        if dropDownApp?.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame {
+            dropDownApp = nil
+        }
         var rule = AppRule(
             bundleIdentifier: application.bundleIdentifier,
             displayName: application.displayName
@@ -1080,6 +1088,76 @@ final class SettingsStore: ObservableObject {
     func removeAppRule(bundleIdentifier: String) {
         appRules.removeAll { $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame }
         setFocusedWindowHighlightCornerRadiusOverride(nil, for: bundleIdentifier, undoManager: nil)
+    }
+
+    func setDropDownApp(_ application: InstalledApplication) {
+        appRules.removeAll {
+            $0.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame
+        }
+        setFocusedWindowHighlightCornerRadiusOverride(
+            nil,
+            for: application.bundleIdentifier,
+            undoManager: nil
+        )
+        dropDownApp = DropDownAppConfiguration(
+            bundleIdentifier: application.bundleIdentifier,
+            displayName: application.displayName,
+            heightFraction: dropDownApp?.heightFraction ?? DropDownAppConfiguration.defaultHeightFraction,
+            isAnimationEnabled: dropDownApp?.isAnimationEnabled ?? true,
+            direction: dropDownApp?.direction ?? .top
+        )
+    }
+
+    func convertAppRuleToQuickApp(bundleIdentifier: String) {
+        guard let rule = appRules.first(where: {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }) else { return }
+        setDropDownApp(InstalledApplication(
+            bundleIdentifier: rule.bundleIdentifier,
+            displayName: rule.displayName,
+            bundleURL: NSWorkspace.shared.urlForApplication(withBundleIdentifier: rule.bundleIdentifier),
+            isRunning: NSRunningApplication.runningApplications(
+                withBundleIdentifier: rule.bundleIdentifier
+            ).contains(where: { !$0.isTerminated })
+        ))
+    }
+
+    func removeDropDownApp() {
+        dropDownApp = nil
+    }
+
+    func convertQuickAppToAppRule() {
+        guard let configuration = dropDownApp else { return }
+        let application = InstalledApplication(
+            bundleIdentifier: configuration.bundleIdentifier,
+            displayName: configuration.displayName,
+            bundleURL: NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: configuration.bundleIdentifier
+            ),
+            isRunning: NSRunningApplication.runningApplications(
+                withBundleIdentifier: configuration.bundleIdentifier
+            ).contains(where: { !$0.isTerminated })
+        )
+        dropDownApp = nil
+        addAppRule(for: application)
+    }
+
+    func setDropDownAppHeightFraction(_ fraction: Double) {
+        guard var configuration = dropDownApp else { return }
+        configuration.heightFraction = DropDownAppConfiguration.clampedHeightFraction(fraction)
+        dropDownApp = configuration
+    }
+
+    func setDropDownAppAnimationEnabled(_ isEnabled: Bool) {
+        guard var configuration = dropDownApp else { return }
+        configuration.isAnimationEnabled = isEnabled
+        dropDownApp = configuration
+    }
+
+    func setDropDownAppDirection(_ direction: DropDownAppDirection) {
+        guard var configuration = dropDownApp else { return }
+        configuration.direction = direction
+        dropDownApp = configuration
     }
 
     func focusedWindowHighlightCornerRadiusOverride(for bundleIdentifier: String) -> Double? {
@@ -1250,6 +1328,7 @@ final class SettingsStore: ObservableObject {
         updated[index].workspaces = workspaces
         updated[index].displayMode = multiDisplayMode
         updated[index].appRules = Self.normalizedAppRules(appRules)
+        updated[index].dropDownApp = dropDownApp?.normalized()
         guard let normalized = updated[index].normalized() else { return }
         updated[index] = normalized
         profiles = updated
@@ -1394,6 +1473,7 @@ final class SettingsStore: ObservableObject {
         workspaces = profile.workspaces
         multiDisplayMode = profile.displayMode
         appRules = profile.appRules
+        dropDownApp = profile.dropDownApp
         refreshResolvedWorkspaceDisplayAssignments()
         isApplyingProfileActivation = false
         persistLocalProfileState()
@@ -1433,6 +1513,7 @@ final class SettingsStore: ObservableObject {
                 displays: connectedDisplays
             ).workspaceDisplayHomes,
             appRules: profile.appRules,
+            dropDownApp: profile.dropDownApp,
             preferredCurrentWorkspaceID: runtime?.currentWorkspaceID,
             preferredActiveWorkspaceIDByDisplay: activeByDisplay,
             selectionReason: selectionReason

@@ -105,6 +105,13 @@ enum SyncedProfileLibraryPolicy {
             guard profile.appRules.allSatisfy({ isValidName($0.displayName) }) else {
                 return .rejected(.nameTooLong(kind: "application rule", maximumCharacters: maximumNameCharacters))
             }
+            if let dropDownApp = profile.dropDownApp,
+               !isValidName(dropDownApp.displayName) {
+                return .rejected(.nameTooLong(
+                    kind: "Quick App",
+                    maximumCharacters: maximumNameCharacters
+                ))
+            }
         }
         guard let normalized = decoded.normalized() else {
             return .rejected(.invalidLibrary)

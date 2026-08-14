@@ -196,11 +196,7 @@ final class DiagnosticLogger {
     }
 
     static var defaultFileURL: URL {
-        let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library")
-        return library
-            .appendingPathComponent("Logs", isDirectory: true)
-            .appendingPathComponent("com.windowranger.WindowRanger", isDirectory: true)
+        ApplicationIdentity.diagnosticDirectoryURL
             .appendingPathComponent("diagnostics.jsonl")
     }
 

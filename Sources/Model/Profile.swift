@@ -43,6 +43,96 @@ struct ProfileDisplayRole: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+enum DropDownAppDirection: String, Codable, CaseIterable, Identifiable, Sendable {
+    case top
+    case bottom
+    case left
+    case right
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .top: "Top"
+        case .bottom: "Bottom"
+        case .left: "Left"
+        case .right: "Right"
+        }
+    }
+
+    var sizeLabel: String {
+        switch self {
+        case .top, .bottom: "Screen height"
+        case .left, .right: "Screen width"
+        }
+    }
+}
+
+struct DropDownAppConfiguration: Codable, Equatable, Sendable {
+    static let defaultHeightFraction = 0.8
+    static let minimumHeightFraction = 0.25
+    static let maximumHeightFraction = 1.0
+
+    var bundleIdentifier: String
+    var displayName: String
+    var heightFraction: Double
+    var isAnimationEnabled: Bool
+    var direction: DropDownAppDirection
+
+    init(
+        bundleIdentifier: String,
+        displayName: String,
+        heightFraction: Double = defaultHeightFraction,
+        isAnimationEnabled: Bool = true,
+        direction: DropDownAppDirection = .top
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.displayName = displayName
+        self.heightFraction = Self.clampedHeightFraction(heightFraction)
+        self.isAnimationEnabled = isAnimationEnabled
+        self.direction = direction
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case bundleIdentifier
+        case displayName
+        case heightFraction
+        case isAnimationEnabled
+        case direction
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            bundleIdentifier: try container.decode(String.self, forKey: .bundleIdentifier),
+            displayName: try container.decode(String.self, forKey: .displayName),
+            heightFraction: try container.decodeIfPresent(Double.self, forKey: .heightFraction)
+                ?? Self.defaultHeightFraction,
+            isAnimationEnabled: try container.decodeIfPresent(Bool.self, forKey: .isAnimationEnabled)
+                ?? true,
+            direction: try container.decodeIfPresent(DropDownAppDirection.self, forKey: .direction)
+                ?? .top
+        )
+    }
+
+    func normalized() -> DropDownAppConfiguration? {
+        let bundleIdentifier = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !bundleIdentifier.isEmpty else { return nil }
+        let displayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return DropDownAppConfiguration(
+            bundleIdentifier: bundleIdentifier,
+            displayName: displayName.isEmpty ? bundleIdentifier : displayName,
+            heightFraction: heightFraction,
+            isAnimationEnabled: isAnimationEnabled,
+            direction: direction
+        )
+    }
+
+    static func clampedHeightFraction(_ value: Double) -> Double {
+        min(maximumHeightFraction, max(minimumHeightFraction, value.isFinite ? value : defaultHeightFraction))
+    }
+}
+
 struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     var name: String
@@ -51,6 +141,7 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
     var displayRoles: [ProfileDisplayRole]
     var workspaceRoleAssignments: [UUID: UUID]
     var appRules: [AppRule]
+    var dropDownApp: DropDownAppConfiguration?
 
     init(
         id: UUID = UUID(),
@@ -59,7 +150,8 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
         displayMode: MultiDisplayMode,
         displayRoles: [ProfileDisplayRole],
         workspaceRoleAssignments: [UUID: UUID],
-        appRules: [AppRule]
+        appRules: [AppRule],
+        dropDownApp: DropDownAppConfiguration? = nil
     ) {
         self.id = id
         self.name = name
@@ -68,6 +160,7 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
         self.displayRoles = displayRoles
         self.workspaceRoleAssignments = workspaceRoleAssignments
         self.appRules = appRules
+        self.dropDownApp = dropDownApp
     }
 
     func cloned(
@@ -117,7 +210,8 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
             displayMode: displayMode,
             displayRoles: clonedRoles,
             workspaceRoleAssignments: clonedAssignments,
-            appRules: clonedRules
+            appRules: clonedRules,
+            dropDownApp: dropDownApp
         )
     }
 
@@ -130,7 +224,10 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
         let assignments = workspaceRoleAssignments.filter {
             workspaceIDs.contains($0.key) && roleIDs.contains($0.value)
         }
-        let rules = Self.uniqueAppRules(appRules).map { rule -> AppRule in
+        let quickAppBundleIdentifier = dropDownApp?.normalized()?.bundleIdentifier.lowercased()
+        let rules = Self.uniqueAppRules(appRules).filter { rule in
+            rule.bundleIdentifier.lowercased() != quickAppBundleIdentifier
+        }.map { rule -> AppRule in
             var normalized = rule
             if let workspaceID = normalized.assignedWorkspaceID,
                !workspaceIDs.contains(workspaceID) {
@@ -148,7 +245,8 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
             displayMode: displayMode,
             displayRoles: roles,
             workspaceRoleAssignments: assignments,
-            appRules: rules
+            appRules: rules,
+            dropDownApp: dropDownApp?.normalized()
         )
     }
 
@@ -435,9 +533,34 @@ struct ProfileEngineConfiguration: Equatable, Sendable {
     let displayMode: MultiDisplayMode
     let workspaceDisplayAssignments: [UUID: String]
     let appRules: [AppRule]
+    let dropDownApp: DropDownAppConfiguration?
     let preferredCurrentWorkspaceID: UUID?
     let preferredActiveWorkspaceIDByDisplay: [String: UUID]
     let selectionReason: ProfileSelectionReason
+
+    init(
+        profileID: UUID,
+        profileName: String,
+        workspaces: [WorkspaceDefinition],
+        displayMode: MultiDisplayMode,
+        workspaceDisplayAssignments: [UUID: String],
+        appRules: [AppRule],
+        dropDownApp: DropDownAppConfiguration? = nil,
+        preferredCurrentWorkspaceID: UUID?,
+        preferredActiveWorkspaceIDByDisplay: [String: UUID],
+        selectionReason: ProfileSelectionReason
+    ) {
+        self.profileID = profileID
+        self.profileName = profileName
+        self.workspaces = workspaces
+        self.displayMode = displayMode
+        self.workspaceDisplayAssignments = workspaceDisplayAssignments
+        self.appRules = appRules
+        self.dropDownApp = dropDownApp
+        self.preferredCurrentWorkspaceID = preferredCurrentWorkspaceID
+        self.preferredActiveWorkspaceIDByDisplay = preferredActiveWorkspaceIDByDisplay
+        self.selectionReason = selectionReason
+    }
 }
 
 struct ProfileActivationRequest: Equatable, Sendable {

@@ -46,6 +46,7 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
     case selectAccordion
     case selectTiled
     case toggleFloating
+    case toggleDropDownApp
     case focusLeft
     case focusDown
     case focusUp
@@ -71,6 +72,7 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
         case .selectAccordion: "Select Accordion"
         case .selectTiled: "Select Tiled"
         case .toggleFloating: "Toggle focused window Floating"
+        case .toggleDropDownApp: "Toggle Quick App"
         case .focusLeft: "Focus left"
         case .focusDown: "Focus down"
         case .focusUp: "Focus up"
@@ -96,6 +98,7 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
         case .selectAccordion: .selectLayoutFromShortcut(.accordion)
         case .selectTiled: .selectLayoutFromShortcut(.tiled)
         case .toggleFloating: .toggleFloating
+        case .toggleDropDownApp: .toggleDropDownApp
         case .focusLeft: .focusDirection(.left)
         case .focusDown: .focusDirection(.down)
         case .focusUp: .focusDirection(.up)
@@ -121,6 +124,7 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
         case .selectAccordion: .init(keyCode: 43, modifiers: UInt32(optionKey))
         case .selectTiled: .init(keyCode: 47, modifiers: UInt32(optionKey))
         case .toggleFloating: .init(keyCode: 3, modifiers: UInt32(controlKey | optionKey))
+        case .toggleDropDownApp: .init(keyCode: 50, modifiers: UInt32(controlKey | optionKey))
         case .focusLeft: .init(keyCode: 4, modifiers: UInt32(optionKey))
         case .focusDown: .init(keyCode: 38, modifiers: UInt32(optionKey))
         case .focusUp: .init(keyCode: 40, modifiers: UInt32(optionKey))
@@ -367,6 +371,30 @@ enum GlobeFnObservedEvent: Equatable, Sendable {
     case systemDefined
 }
 
+/// The active Quartz filter exists only to discard the synthetic native Globe key after an
+/// accepted hold. Every ordinary key and mouse event must pass without consulting app state.
+enum GlobeFnNativeEventFilterPolicy {
+    static func shouldSuppress(
+        keyCode: UInt16,
+        nativeGlobeFilteringEnabled: Bool
+    ) -> Bool {
+        nativeGlobeFilteringEnabled &&
+            keyCode == GlobeFnEventNormalizer.nativeGlobeActionKeyCode
+    }
+}
+
+/// Input-monitor suspension is intentionally broader than native-fullscreen geometry protection.
+/// A borderless declared game still needs an unobstructed keyboard and mouse path even though its
+/// window remains an ordinary non-fullscreen Accessibility object.
+enum ForegroundGameInputProtectionPolicy {
+    static func shouldSuppressOptionalInputMonitors(
+        isDeclaredGameApplicationActive: Bool,
+        hasNativeFullscreenGameSession: Bool
+    ) -> Bool {
+        isDeclaredGameApplicationActive || hasNativeFullscreenGameSession
+    }
+}
+
 enum GlobeFnGestureInputEvent: Equatable, Sendable {
     case functionChanged(isDown: Bool, otherModifiersDown: Bool)
     case competingInput(GlobeFnCompetingInput)
@@ -451,9 +479,6 @@ struct GlobeFnGestureStateMachine: Equatable, Sendable {
     }
 
     static let nativeSuppressionWindow: TimeInterval = 0.5
-    /// Last-resort cleanup when a keyboard disappears without delivering Fn-up.
-    /// Normal release and lifecycle events cancel this much sooner.
-    static let maximumGestureDuration: TimeInterval = 10
 
     private var phase: Phase = .idle
     private(set) var latestGeneration: UInt64 = 0
@@ -586,6 +611,13 @@ struct GlobeFnGestureStateMachine: Equatable, Sendable {
         case .candidate:
             phase = .blockedAwaitingFunctionRelease
             return [.cancelThreshold(reason: "competing-\(input.rawValue)")]
+        case .held where input == .mouseButton || input == .systemDefined:
+            // Once the deliberate hold has opened the wheel, pointer input belongs to the wheel.
+            // Some keyboards also emit a system-defined event beside a click while Fn remains
+            // down, so treating either event as a competing chord makes clickable wedges dismiss
+            // before SwiftUI receives the completed click. They remain disqualifying during the
+            // pre-threshold candidate phase, preserving quick Fn-click and native Globe behavior.
+            return []
         case .held:
             phase = .blockedAwaitingFunctionRelease
             return [

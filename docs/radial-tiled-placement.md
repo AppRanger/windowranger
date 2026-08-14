@@ -198,7 +198,7 @@ The wheel should continue to filter from its captured context:
 | --- | --- |
 | Tiled, focused participating window | Show valid tree-placement choices |
 | Tiled, focused floating window | Offer Return to Layout before tiled placement |
-| Freeform | Placement may later use Loop-style fixed frames; it must not create a tiled tree |
+| Freeform | Use Loop-style halves/quarters for only the focused frame; never create a tiled tree |
 | Accordion | Hide corner placement; retain Accordion-specific promotion and ordering actions |
 | App-rule excluded or ignored window | Hide tiled placement |
 | Automatically floating dialog | Hide tiled placement unless the user explicitly forces it into the layout |

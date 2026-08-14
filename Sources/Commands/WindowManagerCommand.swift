@@ -10,6 +10,7 @@ enum WindowManagerCommand: Hashable, Sendable {
     case setLayout(WorkspaceLayout)
     case selectLayoutFromShortcut(WorkspaceLayout)
     case toggleFloating
+    case toggleDropDownApp
     case previousWorkspace
     case resetCurrentWorkspace
     case resetAllWindows
@@ -22,6 +23,7 @@ enum WindowManagerCommand: Hashable, Sendable {
     case moveCurrentWorkspaceToNextDisplay
     case moveCurrentWorkspaceToDisplay(String)
     case placeTiledWindow(VisualPlacement, validationToken: String)
+    case placeFreeformWindow(VisualPlacement, validationToken: String)
     case selectProfile(UUID)
     case resumeAutomaticProfileSelection
 
@@ -45,6 +47,8 @@ enum WindowManagerCommand: Hashable, Sendable {
             ["action": "select-layout-shortcut", "layout": layout.rawValue]
         case .toggleFloating:
             ["action": "toggle-floating"]
+        case .toggleDropDownApp:
+            ["action": "toggle-drop-down-app"]
         case .previousWorkspace:
             ["action": "previous-workspace"]
         case .resetCurrentWorkspace:
@@ -82,6 +86,12 @@ enum WindowManagerCommand: Hashable, Sendable {
         case let .placeTiledWindow(placement, validationToken):
             [
                 "action": "place-tiled-window",
+                "placement": placement.rawValue,
+                "validation-token": String(validationToken.prefix(16)),
+            ]
+        case let .placeFreeformWindow(placement, validationToken):
+            [
+                "action": "place-freeform-window",
                 "placement": placement.rawValue,
                 "validation-token": String(validationToken.prefix(16)),
             ]
@@ -141,6 +151,8 @@ final class WindowManagerCommandDispatcher {
                     correlationID: correlationID
                 )
             case .toggleFloating: engine?.toggleFocusedWindowFloating()
+            case .toggleDropDownApp:
+                engine?.toggleDropDownApp(correlationID: correlationID)
             case .previousWorkspace:
                 engine?.switchToPreviousWorkspace(correlationID: correlationID)
             case .resetCurrentWorkspace: engine?.resetCurrentWorkspace(correlationID: correlationID)
@@ -178,6 +190,12 @@ final class WindowManagerCommandDispatcher {
                 )
             case let .placeTiledWindow(placement, validationToken):
                 engine?.placeFocusedTiledWindow(
+                    at: placement,
+                    validationToken: validationToken,
+                    correlationID: correlationID
+                )
+            case let .placeFreeformWindow(placement, validationToken):
+                engine?.placeFocusedFreeformWindow(
                     at: placement,
                     validationToken: validationToken,
                     correlationID: correlationID

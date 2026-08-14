@@ -1,7 +1,7 @@
 # Daily use and development on one Mac
 
 WindowRanger's Debug and Release configurations currently share the
-`com.windowranger.WindowRanger` bundle identifier, but they do not have one interchangeable signed
+`dev.appranger.WindowRanger` bundle identifier, but they do not have one interchangeable signed
 identity. Xcode uses Apple Development while public packages use Developer ID; their designated
 requirements differ, so macOS may maintain separate Accessibility trust decisions. Switching
 between them can require removing a stale entry and granting the exact copy being launched. Only

@@ -6,15 +6,10 @@
     <string>export</string>
     <key>method</key>
     <string>developer-id</string>
-    <key>provisioningProfiles</key>
-    <dict>
-        <key>com.windowranger.WindowRanger</key>
-        <string>WindowRanger Developer ID</string>
-    </dict>
     <key>signingCertificate</key>
     <string>Developer ID Application</string>
     <key>signingStyle</key>
-    <string>manual</string>
+    <string>automatic</string>
     <key>stripSwiftSymbols</key>
     <true/>
     <key>teamID</key>

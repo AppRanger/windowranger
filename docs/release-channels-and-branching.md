@@ -31,7 +31,7 @@ number describes product compatibility; it does not by itself prove that a build
 gates.
 
 All publicly distributed Stable and Beta builds retain the canonical
-`com.windowranger.WindowRanger` bundle identifier and Developer ID application identity. Do not
+`dev.appranger.WindowRanger` bundle identifier and Developer ID application identity. Do not
 create channel-specific public identifiers: doing so would create parallel Accessibility clients
 and make update promotion unreliable. A future development-only Xcode identity is a separate local
 tooling decision; it would not be a public Dev release promise and must be documented in the daily

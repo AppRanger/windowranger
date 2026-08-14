@@ -20,34 +20,53 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
-### WR-042 — Match focused-report history by structured window fields
+### WR-050 — Add a profile-aware Quick App
 
-- **Type:** Diagnostics bug / Beta 2 release blocker
-- **Priority:** P1
-- **Status:** Inbox
-- **Reproduced:** The Beta 2 evidence PR's public CI run included an unrelated action group in a
-  focused-window diagnostic report. The filter searched each serialized JSON record for the raw
-  window token `1:2`; at `2026-08-11T19:01:25Z`, that token occurred inside the unrelated record's
-  timestamp and produced a false match.
-- **Expected:** A focused-window report includes an action group only when one of its structured
-  diagnostic field values refers to the exact window token. Timestamps, session identifiers,
-  categories, correlations, and longer numeric tokens must not make an unrelated action relevant.
-- **Acceptance boundary:** Decode retained diagnostic records, match only field values at exact
-  digit-and-colon token boundaries, cover the timestamp collision and adjacent-token cases, and
-  pass the complete isolated suite in public CI before rebuilding Beta 2.
-
-### WR-028 — Rework the Command Wheel experience
-
-- **Type:** UX audit / potentially major change
-- **Priority:** P1
-- **Status:** Inbox
-- **User-observed:** The current command wheel is functional and looks acceptable, but is not a
-  good experience to use. Treat the next pass as an interaction and information-architecture review,
-  not a cosmetic tidy-up; a major rework remains possible.
-- **Expected:** Opening, understanding, navigating, and committing a contextual command should feel
-  immediate and predictable while preserving truthful context validation and nonactivating behavior.
-- **Next boundary:** Capture the current interaction at both levels with keyboard and pointer, then
-  decide whether the existing radial model is worth refining before implementation.
+- **Type:** Feature
+- **Priority:** P2
+- **Status:** Live validation
+- **Requested outcome:** Each profile may assign at most one application as a Quake-style Quick App.
+  A configurable global shortcut, initially Control-Option-Backtick, presents that app over the
+  current work and toggles it away. Moving focus to another application also hides it. The presented
+  window optionally animates from a configurable screen edge, defaulting to the top, and uses a
+  configurable proportion of the interaction display, defaulting to 80 percent.
+- **Smallest useful scope:** Store one optional bundle identifier and one presentation-size setting
+  in each reusable profile; store the shortcut in the existing global shortcut system. Resolve one
+  unambiguous eligible standard window for the configured app, activate and place it on the current
+  interaction display, and restore its prior frame/visibility state when toggled or when genuine
+  user focus moves elsewhere. Do not launch an absent app, choose among multiple ambiguous windows,
+  change native macOS Spaces, or broaden normal window admission.
+- **Safety boundaries:** The Quick App window remains outside ordinary workspace layout, parking,
+  focus cycling, reset, and persistence while presented. Profile changes, app/window termination,
+  display changes, sleep, shutdown, shortcut reconfiguration, and superseding commands must cancel
+  or safely restore a current session. Programmatic activation must not be mistaken for a user focus
+  departure. Tests stay behind injected adapters and never register a real hotkey or move live
+  windows.
+- **Acceptance:** Focused tests cover profile isolation, shortcut collisions, 80-percent default and
+  clamping, toggle show/hide, focus-loss hide, exact-window ambiguity, geometry on non-origin and
+  multi-display frames, interrupted animation/session generations, and restoration boundaries. The
+  complete non-hosted suite and universal Debug build pass; final behavior remains in Live validation
+  until a signed build is exercised with a real assigned app on at least two profiles.
+- **Implemented:** Profile storage/clone/transfer, a unified Applications settings list where each
+  bundle has either normal App Rules or the one optional Quick App, explicit confirmed conversion
+  between modes, visible list summaries, an intent-led mode selector, shortcut and behavior context,
+  a focused Quick App presentation editor, safer destructive actions, profile context, and a useful
+  empty state. Application removal uses the one consistent delete control in the Applications list.
+  The installed-app picker closes when an app is selected; Quick App provides 25–100
+  percent height/width control and optional animation from the Top, Bottom, Left, or
+  Right with Top enabled by default, global shortcut recording with Control-Option-Backtick default,
+  a top-edge roll-down that remains visible despite macOS offscreen-position clamping, contextual
+  guidance for apps that do not resize smoothly, exact-window
+  ambiguity feedback, focus-loss hide, focus restoration on shortcut hide, and engine exclusions for
+  layout/parking/focus/reset/background persistence. Profile changes, sleep, termination, window
+  disappearance, and newer animation generations clear or restore the session safely.
+- **Automated verification:** Universal Debug app build passed with signing disabled. The complete
+  non-hosted suite passed 546 tests, including profile compatibility and mutual-exclusion migration,
+  App Rules/Quick App conversion, default/clamping, shortcut, four-edge non-origin geometry,
+  retraction, and animation-completion coverage.
+- **Live validation needed:** Install a signed daily build only after explicit approval. Select a
+  one-window app in two profiles, confirm show/toggle/focus-loss behavior and 80-percent geometry on
+  each relevant display, then exercise a profile change and normal quit while the window is shown.
 
 ### WR-030 — Investigate Battle.net focused-window compatibility
 
@@ -68,7 +87,314 @@ smallest useful outcome and acceptance boundary.
 - **Next boundary:** Research and test a Battle.net-specific observation fixture or bounded generic
   fallback; do not implement it until its ambiguity and competition behavior are understood.
 
+## Done — command wheel pass
+
+### WR-047 — Keep Globe/Fn monitoring off the ordinary input path
+
+- **Type:** Input-safety bug
+- **Priority:** P1
+- **Status:** Done
+- **Diagnostic-backed cause:** With Hold Globe/Fn enabled, World of Warcraft kept a stable frame
+  rate but delayed keyboard and mouse-button responses. The active session tap placed every ordinary
+  input event behind WindowRanger's main run loop; Quartz timeouts then caused automatic re-enablement
+  of the same blocking filter. Borderless play did not engage the native-fullscreen guard.
+- **Implemented:** Ordinary input is now observed by a passive tap. A dedicated user-interactive run
+  loop fast-passes ordinary keys and filters only the synthetic Globe event during an accepted hold;
+  interruption stops and fails open. Publicly declared foreground games suspend the optional
+  Globe/Fn and workspace-swipe monitors even when borderless, without broadening geometry safety.
+- **Evidence:** The focused 120-test suite, complete 533-test suite, and universal Debug build pass.
+  The signed Debug daily candidate `f143af57c9a1-dirty` was installed with verified identity,
+  signature, revision, and running path. With Hold Globe/Fn enabled, the user repeated the World of
+  Warcraft test and confirmed the input lag was fixed.
+
+### WR-045 — Focus the pointer window before opening the command wheel
+
+- **Type:** UX / interaction targeting
+- **Priority:** P1
+- **Status:** Done
+- **User-observed:** The command wheel controlled the existing focused window even when the pointer
+  was deliberately over a different window. The requested outcome is for opening the wheel to focus
+  and target the controllable window directly under the pointer. Live validation then found that an
+  already-focused pointer window opened normally, while an unfocused pointer window was raised but
+  the wheel never appeared.
+- **Diagnostic-backed follow-up:** The pointer-focus request successfully activated and confirmed
+  the intended window, but the resulting `NSWorkspace` application-activation notification ran the
+  global Globe/Fn and radial-trigger cancellation path before the delayed context presentation.
+- **Implemented:** Press-to-Toggle and the accepted Hold-to-Show presentation now resolve the actual
+  frontmost WindowServer surface beneath the current pointer. An eligible tracked normal window is
+  sent through the established exact-focus pipeline before a fresh wheel context is captured. The
+  resolver never clicks through a front panel or ineligible window; desktop, WindowRanger/transient
+  UI, untracked or hidden windows, and failed focus safely retain the established focused-window
+  fallback. The exact current application activation generated by that pointer-focus transaction
+  preserves its pending Globe/Fn or shortcut gesture; a different process, expired deadline, or
+  superseded focus generation still cancels. A second toggle or lifecycle cancellation invalidates
+  an in-flight open request.
+- **Automated evidence:** Pure front-to-back tests cover overlapping eligible windows, an ineligible
+  front surface blocking a covered window, nonzero-layer panels, desktop misses, preservation of
+  the current pointer-focus activation, and cancellation for a different process, expired deadline,
+  or superseded generation. The focused diagnostic suite passes 45 tests; local quick verification
+  passes all 525 non-hosted tests, and the unsigned universal Debug app compiles successfully.
+- **Live result:** The signed Debug candidate was exercised against focused and unfocused pointer
+  windows. After the activation-cancellation correction, the intended window comes forward and the
+  wheel opens and controls it normally; the user confirmed the path was working.
+
+### WR-044 — Add Loop-style Freeform window placement
+
+- **Type:** UX / window command
+- **Priority:** P2
+- **Status:** Done
+- **User-observed:** The contextual command wheel omitted Resize / Place while the active workspace
+  was Freeform; the requested outcome is Loop-style visual movement for Freeform windows.
+- **Implemented:** A focused eligible Freeform window now gets the same eight compass-positioned
+  Place targets as the Tiled wheel. Edges resolve to usable-display halves and corners to quarters;
+  hover shows the exact single-window target frame and performs no Accessibility write. Commit
+  revalidates focused window, workspace, display bounds, frame and expiry, changes only that
+  window's frame through the shared dispatcher, confirms the receiving app retained it, then updates
+  saved Freeform geometry/display affinity and registers exact-frame Undo/Redo. It never creates or
+  mutates a Tiled tree. Tiled structural placement and Accordion resize behavior are unchanged.
+- **Automated evidence:** Pure frame tests cover halves, quarters, odd display dimensions and
+  external-display origins; the focused command-wheel and visual suites pass 114 tests with
+  contextual catalogue, preview, command and history coverage, and local quick verification passes all 522
+  non-hosted tests.
+- **Live result:** The signed Debug candidate exposed and executed the Freeform placement ring; the
+  user confirmed the Loop-style movement was working before continuing with focus and visual work.
+
+### WR-028 — Rework the Command Wheel experience
+
+- **Type:** UX and interaction correction
+- **Priority:** P1
+- **Status:** Done
+- **User-observed:** The centre was too small for its title/state content; workspace children showed
+  blank boxes or repeated action symbols; and travelling naturally from an inner group on one side
+  to one of its outer children on the other side could collapse or replace the group when the
+  pointer crossed the centre or another inner wedge. Live testing of the installed Debug candidate
+  also found that an accepted Globe/Fn hold closed the wheel by itself after about ten seconds. A
+  later screenshot showed long generated labels painting across the inner/outer wedge boundaries,
+  and the neutral centre X did not make its cancel meaning clear. Live review of the contained-label
+  candidate then showed uneven optical alignment from mixed icon/text stack heights, disclosure
+  marks pushing group symbols off-centre, and repeated profile glyphs that were not distinguishable.
+  A further live screenshot showed every disclosure chevron pointing right rather than toward its
+  wedge's outer-ring destination. The next installed candidate showed position-derived numeric
+  badges even for letter-keyed workspaces, and direct Previous/Next attempts dismissed on Globe/Fn
+  release without changing workspace. The same screenshot was captured in Freeform, where the
+  contextual catalogue intentionally omitted Resize / Place. After the functional fixes passed live
+  validation, the user selected the action-first icon exploration: framed half/corner occupancy for
+  Place Window, distinct transfer/navigation metaphors, traversal-aware Previous/Next, layered
+  Profiles, scoped reset symbols, and a split-pane Layout Type symbol. Live review of the first icon
+  candidate then found that Layout Type remained generic instead of reflecting the workspace's
+  current layout, and requested an Accordion glyph with a visibly wider central pane. Live testing
+  of that candidate then found that many visible buttons appeared to do nothing when clicked while
+  the wheel was open from a held Globe/Fn gesture.
+- **Screenshot/code-supported cause:** The four supplied states showed the truncation and ambiguous
+  symbols. The production tokens provided only an approximately 71-point centre, providers emitted
+  literal `square` or the same move symbol for every workspace, and the pointer state discarded an
+  open group as soon as another inner wedge won hover after a 110 ms dwell. Privacy-safe Debug
+  diagnostics identified the long-hold dismissal as WindowRanger's own
+  `globe-fn-gesture-safety-timeout`, not an Fn-up or external lifecycle event. Outer labels were
+  centred in a fixed 116-point frame without wedge-local containment, so side labels could paint
+  through the annulus or beyond the wheel; the neutral branch rendered a bare `xmark` with no text.
+  Later privacy-safe diagnostics showed the direct arrows never reached command dispatch: with a
+  submenu latched, crossing onto a direct inner item left it pending, so release resolved no command
+  and dismissed with `trigger-released-without-action`. Privacy-safe diagnostics for the click
+  report showed the wheel dismissing on `globe-fn-competing-systemDefined` before any radial action
+  reached the shared dispatcher.
+- **Implemented:** The panel, rings, and centre now have room for complete selected labels and state.
+  Generated outer actions use meaningful fixed-centre symbols with their full label in the centre;
+  workspace destinations use their configured alphanumeric key, profile destinations use stable
+  numbered symbols, and current layouts retain their layout symbol with a separate checkmark. An
+  open group stays latched across the neutral centre and
+  other inner wedges; reaching its outer ring cancels the crossed-wedge switch, while a deliberate
+  350 ms dwell switches to another group or direct item. Keyboard traversal, click precedence,
+  context validation, and nonactivation are unchanged. An accepted Globe/Fn gesture now has no
+  fixed duration; it remains open until actual release or an explicit competing/lifecycle cancel.
+  Both rings now use fixed optical icon centres and the group disclosure chevron is overlaid rather
+  than changing vertical alignment. Generated outer actions are icon-only, with complete text in the
+  selected centre and accessibility; workspace destinations use their configured alphanumeric key,
+  and profile destinations use stable numbered symbols rather than repeated placeholders. Releasing
+  Hold-to-Show over a pending direct inner command now commits that command while preserving the
+  latched group during pointer travel. Current layouts retain their semantic symbol, existing badge,
+  and reapply detail. The neutral centre shows context without a persistent Cancel label; Escape and
+  centre activation still cancel. Each group chevron now rotates and sits radially outward from its
+  icon, so its direction matches the outer ring it reveals. Layout Type now resolves its inner-ring
+  symbol from the current workspace layout, and Accordion uses a rounded three-pane treatment whose
+  central pane is wider than its side panes. After a deliberate Globe/Fn hold has opened the wheel,
+  mouse-button and companion system-defined events remain available to the wheel instead of
+  cancelling it; the same inputs still disqualify the gesture before the hold threshold, and real
+  key/modifier chords still cancel after opening.
+  Command Wheel Settings now disables Add when every known command family is already saved, and its
+  compact preview renders the production wheel itself with the saved order and representative
+  contextual children instead of maintaining a visually divergent circle/capsule approximation.
+- **Automated evidence:** The focused command-wheel and Settings checkpoint passes 111 tests and
+  post-rebase local quick verification passes all 520 non-hosted tests. Coverage includes the exact
+  group-to-centre-to-other-inner-to-outer travel path, stale dwell rejection, destination symbols,
+  current-layout presentation, an accepted Globe/Fn hold with no scheduled expiry, and seven
+  offscreen production render states. The selected action-first icon pass now has 116 focused tests,
+  including distinct top-level silhouettes and exact compass-ordered occupancy symbols; local quick
+  verification passes all 527 non-hosted tests, and an unsigned universal arm64/x86_64 Debug app
+  build succeeds. A same-state, same-size reference/production comparison found no scoped P0/P1/P2
+  icon mismatch.
+  The focused suite also includes a dedicated Accordion production render and asserts that every
+  Layout Type state inherits its current layout symbol. The click-cancellation correction passes
+  117 focused tests and the complete local quick checkpoint passes all 529 non-hosted tests,
+  including pre-threshold Fn-click rejection, accepted-hold pointer admission, native Globe-event
+  suppression, and ordinary key/modifier cancellation. Catalogue exhaustion has pure coverage, and
+  the Settings preview has a dedicated offscreen production render. The complete local quick
+  checkpoint passes all 531 non-hosted tests after the Settings changes.
+- **Installed evidence:** After a clean rebase onto current `origin/develop` at `e712590430b0`, the
+  signed universal Debug daily candidate for `e712590430b0-dirty` is
+  installed and running from `/Applications/WindowRanger.app`. Its Apple Development signature and
+  Team ID `44NAD22AK6` pass strict deep verification. With explicit maintainer approval, this build
+  includes the icon-only alignment, profile-symbol, neutral-centre, long-hold, and cross-wheel travel
+  refinements, radial disclosure chevrons, Freeform placement/focus corrections, the selected
+  action-first icon pass, the current-layout/Accordion icon correction, and the Globe/Fn click
+  cancellation correction. The latest installed candidate also contains the catalogue Add-state and
+  production-rendered Settings preview corrections. It has CDHash
+  `94fb7dc647e232f20b4391a84f19b44570481da8`;
+  the prior daily copy remains available at the
+  repository-defined non-launchable backup path.
+- **Live result:** Successive signed Debug candidates were tested throughout this pass. The user
+  confirmed pointer focus, Freeform placement, direct and grouped commands, Globe/Fn clicks, the
+  revised icon set, Accordion glyph, disabled exhausted Add menu, and production-rendered Settings
+  preview were working or visibly improved, then explicitly closed the pass for merge.
+
 ## Live validation
+
+### WR-052 — Move the application identity under AppRanger
+
+- **Status:** Implementation and automated verification complete; live validation pending.
+- **Requested:** 2026-08-13.
+- **Smallest useful outcome:** use `dev.appranger.WindowRanger` for the application and test bundle
+  identifiers while preserving existing local preferences, the current WindowServer recovery
+  state, and the existing iCloud key-value store.
+- **Acceptance boundary:** project, signing/export scripts, documentation, and bundle-dependent
+  paths agree on the new identity; an automated migration copies missing preferences and recovery
+  state without overwriting or deleting either identity's data; isolated tests pass. A signed
+  installed build must still confirm the new provisioning profile, iCloud entitlement, fresh
+  Accessibility approval, and launch-at-login behavior before this item can be Done.
+- **Automated verification:** `./scripts/verify-local-ci.sh --quick` passed again on 2026-08-14
+  with 555 tests and no failures. Stable Xcode archived build 3 as a universal app and an
+  automatic Developer ID export passed strict code-signing verification with bundle identifier
+  `dev.appranger.WindowRanger`, application identifier
+  `44NAD22AK6.dev.appranger.WindowRanger`, and the preserved
+  `44NAD22AK6.com.windowranger.WindowRanger` iCloud key-value entitlement. Installed-app migration,
+  fresh Accessibility approval, and launch-at-login checks remain outstanding.
+
+### WR-051 — Strengthen window-admission evidence and fixtures
+
+- **Type:** Safety hardening / compatibility research
+- **Priority:** P1
+- **Status:** Live validation
+- **Requested:** Compare established open-source macOS window managers and make WindowRanger's
+  distinction between normal windows, dialogs, modal surfaces, floating panels, toolbars, and
+  transient popups more robust.
+- **Research result:** AeroSpace's useful pattern is a real-window/dialog/popup classifier backed by
+  captured Accessibility fixtures. yabai requires a root window and a narrow role/subrole set while
+  recording move/resize capability; Amethyst requires a movable standard window. Preserve
+  WindowRanger's central four-way admission boundary, privacy rules, title/size independence, and
+  verified bundle-specific exceptions rather than copying broad app blacklists or heuristic lists.
+- **Implemented:** Admission now records authoritative/unsupported/unavailable modal, focus,
+  main-window, window-control, position-settable, and size-settable observations. Debug Settings
+  presents that evidence and copies deterministic versioned JSON suitable for fixture capture. A
+  table-driven corpus locks current standard, missing-subrole, sheet, system-dialog, dialog,
+  floating-window, non-normal-layer, minimized, fullscreen, toolbar-role, and unknown-subrole
+  decisions. The prior one-off Codex layer check is now the first versioned built-in compatibility
+  profile. Profiles match bundle plus declared surface evidence, report their identifier in Debug
+  Settings, logs, and snapshot JSON, and remain separate from personal App Rules. This checkpoint
+  deliberately does not change admission, layout, parking, focus, persistence, or recovery behaviour.
+- **Automated evidence:** Focused admission, registry matching, false-match, and snapshot verification
+  passes 8 tests. Local quick verification passes all 541 non-hosted tests, including test-isolation
+  validation; it does not build, launch, sign, install, stop, or automate WindowRanger.app.
+- **Remaining validation:** With explicit install approval, use a signed Debug build to refresh and
+  copy admission snapshots for representative normal windows, dialogs, sheets, floating panels,
+  titlebarless windows, and transient popups. Confirm the UI remains readable, the copied JSON has
+  no titles or content-bearing metadata, and refreshing/copying performs no window or focus writes.
+  Only then use those fixtures to propose any classifier behaviour change.
+
+### WR-049 — Refine Command Wheel workspace-action icons
+
+- **Type:** Visual refinement
+- **Priority:** P2
+- **Status:** Inbox
+- **User-observed:** Go to Space, Place Window, Reset Windows in Space, Next Space, Previous Space,
+  and Move to Space still needed clearer and more consistent iconography after the first Command
+  Wheel visual pass. The user selected the first of three generated directions: framed-window
+  transfer and placement symbols, a workspace grid with a navigation target, plain traversal
+  arrows, and a single-window clockwise restore loop.
+- **Implemented:** The six top-level actions now follow that selected grammar using monochrome SF
+  Symbols and small system-symbol compositions that inherit the wheel's existing size, colour,
+  selection, centre, accessibility, and Settings-preview behavior. Move and Place share a window
+  silhouette but differ through transfer-arrow versus focus-frame treatment; Go combines the
+  workspace grid with a small target; Previous/Next are plain opposing arrows; current-space reset
+  encloses one window in a single clockwise loop, while Reset All retains its separate
+  two-arrow silhouette. No wheel geometry, labels, commands, hit regions, or activation behavior
+  changed.
+- **Fidelity revision:** Live inspection showed the initial Option 1 approximation still differed
+  visibly by a few pixels: Reset used the wrong loop geometry and an undersized browser-style
+  window, the navigation arrows were short and heavy, and the framed/target compositions were
+  optically small. The current candidate uses an explicit title-bar window made from native SF
+  Symbols, a correctly oriented clockwise restore loop, longer regular-weight traversal arrows,
+  and measured optical sizing for Move, Place, and Go. Enlarged source-versus-production crops now
+  accompany the full 20-point wheel render; this revision has not been installed.
+- **Product decision:** The current symbols are an intentionally provisional WIP checkpoint. The
+  user wants to review the complete Command Wheel catalogue in Apple's SF Symbols app and prefer
+  unchanged native symbols wherever they communicate the action clearly, combining or authoring a
+  custom symbol only for the remaining gaps. That systematic visual pass is deferred; it does not
+  block the already validated Command Wheel functionality.
+- **Automated evidence:** The revised candidate's visual snapshot suites pass, and local quick
+  verification passes all 535 non-hosted tests. Coverage fixes the six catalogue symbol
+  identities, verifies every layered SF Symbol is available, and renders nine real production wheel
+  states offscreen. A same-input comparison of the 1,254-pixel selected reference normalized beside
+  the 1,240-pixel Retina production render, including equal-scale enlarged crops of each icon. An
+  unsigned universal arm64/x86_64 Debug app build succeeds.
+- **Installed evidence:** With explicit maintainer approval, the signed universal Debug daily build
+  for `3868a49e8dc8-dirty` was installed and verified with CDHash
+  `63998709b7486f80db4487361558c0583cd1fc06`. A separate daily installation from the WR-046
+  worktree then replaced it with `f143af57c9a1-dirty` at 09:25; that running build contains the old
+  icon identifiers. With fresh maintainer approval, the Option 1 build was reinstalled at 09:32 and
+  is again running from `/Applications/WindowRanger.app`; its embedded revision, strict signature,
+  two architectures, process path, and all four composite symbol identifiers were verified. The
+  superseded WR-046 build is now retained at the non-launchable rollback path.
+- **Next boundary:** Inventory every top-level, generated-child, layout, placement, and indicator
+  symbol as Keep, Replace with native SF Symbol, or Custom Symbol required. Then compare the chosen
+  family at live selected/unselected wheel scale and in Settings before completing WR-049.
+
+### WR-048 — Protect global reset and cycle read-only focused windows
+
+- **Type:** Command safety / focus compatibility bug
+- **Priority:** P1
+- **Status:** Done
+- **User-observed:** Windows from several virtual spaces appeared together and Previous/Next window
+  cycling stopped working. The expected behavior is that releasing a held Globe/Fn gesture cannot
+  accidentally run a global recovery command, and every unambiguous managed window in the active
+  workspace remains reachable through cycling.
+- **Diagnostic-backed cause:** At 08:24:28 the held Command Wheel committed **Reset All Windows** on
+  Globe/Fn release, which deliberately brought every managed window onscreen without changing its
+  saved workspace assignment. Later, workspace 1 contained Chrome and NoteRanger, but NoteRanger
+  exposed its ordinary layer-0 standard window as locally focused and main while making all three
+  Accessibility focus attributes read-only. The shared candidate gate therefore excluded it and
+  every cycle command ended with `no-candidate`.
+- **Implemented:** In Hold-to-Show, **Reset All Windows** now requires an explicit click or Return;
+  merely highlighting it and releasing Globe/Fn dismisses the wheel, with centre text and an
+  accessibility hint explaining the confirmation. Press-to-Toggle behavior is unchanged. Focus
+  candidate admission now permits the narrowly identifiable read-only case where a standard,
+  visible, raiseable layer-0 window reports itself as both its application's focused and main
+  window. Ambiguous and state-less read-only windows remain excluded, and the existing exact
+  WindowServer verification remains authoritative after activation.
+- **Automated evidence:** The focused diagnostic and Command Wheel suites pass 166 tests and local
+  quick verification passes all 534 non-hosted tests. Coverage includes protected hold-release,
+  explicit click availability, unchanged toggle behavior, the locally selected main-window fallback,
+  and rejection of an ambiguous read-only window. The unsigned universal arm64/x86_64 Debug app
+  also builds successfully.
+- **Installed evidence:** With explicit maintainer approval, the signed universal Debug daily build
+  for `3868a49e8dc8-dirty` is installed and running from `/Applications/WindowRanger.app`. Its Apple
+  Development signature, Team ID `44NAD22AK6`, bundle identity, embedded revision, two architectures,
+  strict code-signing verification, and running executable path were verified. Its CDHash is
+  `437e2988e393780d909704e7dd59d4029883c116`; the prior daily copy remains at the repository-defined
+  non-launchable rollback path.
+- **Live result:** In the installed signed Debug build, Globe/Fn release over **Reset All Windows**
+  no longer performs recovery, an explicit activation still does, and cycling through the affected
+  workspace works again. The user confirmed the Command Wheel functionality works well and approved
+  merging this checkpoint while keeping only the icon refinement as WIP.
 
 ### WR-036 — Swipe between workspaces
 
@@ -242,7 +568,7 @@ smallest useful outcome and acceptance boundary.
   it does not establish that the normal Debug log volume or the maintainer's filesystem causes a
   perceptible interaction problem.
 - **Automated evidence:** Test isolation and the complete 446-test suite passed on 10 August 2026.
-- **Private CI evidence:** [PR #7](https://github.com/windowranger/windowranger/pull/7) uses WR-020's
+- **Private CI evidence:** [PR #7](https://github.com/AppRanger/windowranger/pull/7) uses WR-020's
   exact-commit local pre-push gate; its hosted pull-request job skips successfully before runner
   allocation while the repository remains private.
 - **Remaining live boundary:** Gracefully quit the installed copy, run the intended signed Debug
@@ -334,7 +660,7 @@ adding engineering tasks.
 - **Status:** Needs decision
 - **Evidence:** User-observed and signing-requirement backed during the first Beta smoke test.
 - **Current behavior:** Xcode Debug and the installed Developer ID app use the same
-  `com.windowranger.WindowRanger` bundle identifier but different designated requirements. macOS can
+  `dev.appranger.WindowRanger` bundle identifier but different designated requirements. macOS can
   therefore treat them as separate Accessibility clients while LaunchServices still sees the same
   bundle identifier, making handoff and permission recovery ambiguous.
 - **Smallest useful outcome:** Decide whether the local Xcode product should use a clearly named
@@ -346,8 +672,8 @@ adding engineering tasks.
   - the required development App ID, provisioning profile, and iCloud capability are configured
     before changing the project;
   - Xcode handoff scripts quit and resume only the intended product;
-  - public Stable/Beta bundle identity, preferences, update continuity, and release provenance do
-    not change;
+  - a future development-only identity does not alter the established public identity, migrated
+    preferences and iCloud continuity, update continuity, or release provenance;
   - migration guidance avoids global TCC or LaunchServices resets and is live-tested on the
     maintainer's Mac.
 
@@ -356,69 +682,26 @@ adding engineering tasks.
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
-### WR-037 — Prepare WindowRanger 0.1.0 Beta 2
+### WR-053 — Prepare WindowRanger 0.1.0 Beta 3
 
-- **Type:** Beta release checkpoint
-- **Priority:** P1
-- **Status:** Live validation
-- **Approved scope:** Promote the reviewed `develop` checkpoint through `release/0.1.0`, assign
-  public version `0.1.0-beta.2` and monotonically increasing build number `2`, and create the exact
-  Developer ID-signed, notarized, stapled DMG and ZIP locally for maintainer testing. Do not create
-  or push the release tag, upload assets, create a GitHub release, or publish Beta 2 until the exact
-  artifact passes the applicable manual regression and the maintainer explicitly approves that
-  later publication checkpoint.
-- **Candidate highlights:** Resizable native Settings with compact list/detail navigation; optional
-  focused-window border; improved App Rule creation and alignment; Dock and wake reconciliation;
-  native glass command feedback; optional three- or four-finger workspace swiping; guarded exact
-  focus recovery; and restored macOS 27 Full menu-bar workspace clicks.
-- **Automated evidence:** The final WR-035/WR-036 integration commit passed the isolated local
-  pre-push checkpoint with 478 non-hosted tests and the independent public GitHub CI check before
-  merge. The promoted release commit passed the public release-branch test, analysis, unsigned
-  universal Release build, and Stable/Beta DMG smoke gate. Local stable-Xcode verification then
-  passed 478 tests, static analysis, universal archive, and Developer ID export before exposing a
-  release-script defect: the notarization result parser assigned to zsh's read-only `status`
-  parameter. The partial output is preserved in
-  `.build/releases/0.1.0-beta.2.failed-20260810-2118`; its app notarization submission
-  (`168cd92f-f0b9-4910-9100-2ebbda3fe980`) was accepted, but it is not the exact candidate. After
-  the parser correction was reviewed and promoted, repeated preflight exposed a second shell defect:
-  with `pipefail`
-  enabled, piping the two-line `xcodebuild -version` output through `head` could intermittently exit
-  141 when `head` closed the pipe early. The correction consumes the complete output with `sed` while
-  selecting its first line, preserving strict pipeline failure handling. Both corrections are now
-  merged into `develop` and `release/0.1.0`; their final public push gates passed 478 tests, static
-  analysis, unsigned universal Release builds, Stable/Beta DMG smoke packaging, and artifact upload.
-- **Latest source evidence:** Release commit `a95f970f2547` has the exact same Git tree as the
-  reviewed `develop` checkpoint `eda425e447d3`. Its public release-branch CI run passed 512 tests,
-  static analysis, an unsigned universal Release build, Stable/Beta DMG smoke packaging, and
-  artifact upload. Stable Xcode 26.6 then passed the same 512-test suite, static analysis, universal
-  archive, and Developer ID export locally.
-- **Credential hardening:** The original `WindowRanger` profile disappeared twice after being stored
-  through `notarytool`'s default Data Protection Keychain path. A replacement profile is now stored
-  explicitly in the file-based login Keychain and its history lookup passed both the normal shell
-  environment and a stripped clean environment. The distribution script and release instructions
-  now accept the same explicit keychain path for every history, submit, and log operation. Persistence
-  still needs verification after a reboot before the credential issue is considered closed.
-- **Resumed checkpoint (2026-08-11):** The maintainer resumed preparation of a fresh unpublished
-  Beta 2 candidate from the latest reviewed `develop` tree. Building, signing, notarizing, and
-  stapling the exact local DMG and ZIP is approved; tagging, uploading assets, creating a GitHub
-  release, and publication remain separate approval checkpoints.
-- **Superseded candidate evidence:** A local `0.1.0-beta.2` build 2 candidate was produced from
-  `a95f970f2547` in `.build/releases/0.1.0-beta.2`. The ZIP SHA-256 is
-  `888c70f05c0020e30bcde5380b80f3affd760f91e39db9dee63efbb9512a2e44`; the DMG SHA-256 is
-  `24d3852b79290aad1a0eb07694cc49f62dc10b9aba0bdbba32ae9863345c044d`. Apple accepted the app
-  (`11c88b99-acf6-4019-a260-f64282a149ea`) and DMG
-  (`9628ef87-5753-4ff6-9de1-db019e503592`) notarizations with zero logged issues. Independent
-  checksum, strict codesign, Gatekeeper, stapler, architecture, version, and build checks pass. A
-  subsequent independent CI run exposed WR-042's time-dependent focused-report history filter, so
-  this otherwise valid artifact is superseded and must not be used as the final Beta 2 candidate.
-- **Current boundary:** Rebuild the exact local Beta 2 DMG and ZIP after WR-042 is reviewed and
-  promoted. No tag has been created or pushed, no assets have been uploaded, and no GitHub release
-  exists. Explicit file-based Keychain lookup succeeds, but persistence after reboot remains a
-  separate live-validation boundary rather than a publication claim.
-- **Testing boundary:** Install and test the packaged Beta 2 DMG itself. Exercise the remaining live
-  validation items in this queue, with particular attention to Settings resizing, multi-display
-  workspace routing, focused-window borders, sleep/wake, Dock auto-hide, native glass feedback, and
-  physical three- and four-finger trackpad gestures.
+- **Type:** Beta release preparation
+- **Status:** Candidate preparation approved; publication not yet approved.
+- **Requested:** 2026-08-14 from the latest reviewed `develop` branch after the AppRanger GitHub
+  organisation and application bundle-identity changes.
+- **Scope:** Promote the exact reviewed `develop` tree to `release/0.1.0`, build
+  `0.1.0-beta.3` with monotonically increasing build number `3` using stable Xcode, Developer ID
+  signing, notarization, stapling, and the repository distribution path, then hand the immutable
+  candidate to the maintainer for live testing.
+- **Identity boundary:** The public app is now `dev.appranger.WindowRanger`. Preserve the existing
+  `44NAD22AK6.com.windowranger.WindowRanger` iCloud key-value store and migrate missing Beta 2
+  preferences/recovery state without overwriting either identity. Testing must include the expected
+  one-time Accessibility approval and launch-at-login confirmation caused by the new application
+  identity.
+- **Acceptance boundary:** CI and local release gates pass for the exact promoted commit; the DMG
+  and ZIP agree on version, build, bundle identity, architectures, signature, entitlements,
+  notarization, stapling, checksums, and provenance. Keep the item in Live validation until the
+  maintainer tests that exact artifact. Do not create or push the tag, upload assets, create a GitHub
+  release, or publish anything without a later explicit approval.
 
 ### WR-012 — Clean build and package verification
 
@@ -476,6 +759,39 @@ second copy of that checklist.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-043 — Use system display groups for Compact and Medium menu-bar styles
+
+- **Result:** Compact, Medium, and Full on macOS 27 now use one movable standard status item per
+  logical display without a redundant app glyph. Compact adapts keys and names to the configured
+  display symbol, Medium retains readable workspace chips, Settings embeds the same production
+  views, and only Full exposes workspace switching and hover geometry. macOS 14–26 retain the
+  established single-item compatibility path.
+- **Evidence:** The focused 41-test menu-bar suite and all 517 non-hosted tests pass, the unsigned
+  universal Debug app builds, and the four-symbol visual fixture covers horizontal, portrait,
+  laptop, and combined-display key safe areas. The Apple Development-signed universal candidate was
+  installed with its signature and embedded revision verified; the maintainer live-validated the
+  final macOS 27 Compact layout and confirmed the symbol alignment looks correct.
+
+### WR-037 — Publish WindowRanger 0.1.0 Beta 2
+
+- **Result:** Published
+  [`v0.1.0-beta.2`](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.2) as a
+  GitHub prerelease on 12 August 2026 after maintainer testing and explicit approval. The protected
+  annotated tag points to reviewed release commit `82b2fa381ae4`; the Developer ID-signed,
+  notarized, stapled DMG and ZIP plus checksums and provenance manifest were downloaded after
+  publication and round-trip verified against that immutable source and the recorded SHA-256
+  values. Remaining product live-validation items stay independently tracked.
+
+### WR-042 — Match focused-report history by structured window fields
+
+- **Type:** Diagnostics bug / Beta 2 release blocker
+- **Status:** Done
+- **Result:** Focused-window reports now decode retained diagnostics and match exact window tokens
+  only in structured field values, with digit-and-colon boundaries preventing timestamps, metadata,
+  and adjacent identifiers from admitting unrelated action groups. Focused regression tests and the
+  complete 513-test local, public integration, and release-branch gates pass; the corrected change
+  was reviewed before the final Beta 2 candidate was built.
 
 ### WR-041 — Choose or hide menu-bar display icons
 
@@ -591,12 +907,12 @@ second copy of that checklist.
 
 ### WR-018 — Publish the first GitHub Beta
 
-- **Result:** Made `windowranger/windowranger` public and published `v0.1.0-beta.1` as a GitHub
+- **Result:** Made `AppRanger/windowranger` public and published `v0.1.0-beta.1` as a GitHub
   prerelease on 10 August 2026, preserving the exact signed, notarized artifact tag and all five
   checksum/provenance-verified assets. Enabled private vulnerability reporting, secret scanning and
   push protection; protected `main`, `develop`, and `v*` tags.
 - **Evidence:** The public release is
-  [WindowRanger 0.1.0 Beta 1](https://github.com/windowranger/windowranger/releases/tag/v0.1.0-beta.1)
+  [WindowRanger 0.1.0 Beta 1](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.1)
   at artifact commit `04b5750b1fe3b183c1259d132a0a8e985f8b4e0e`. Immediately before publication,
   the downloaded app and DMG passed checksums, provenance, signature, stapling, notarization, and
   Gatekeeper checks; the publication-preparation checkpoint passed all 446 tests.
@@ -625,7 +941,7 @@ second copy of that checklist.
   analysis, unsigned universal Release build, and both DMG creation/verification paths. Hook
   installation/removal and exact-commit execution passed. The topic-branch push created no workflow
   run, while private pull-request run
-  [31363831170](https://github.com/windowranger/windowranger/actions/runs/31363831170) completed with
+  [31363831170](https://github.com/AppRanger/windowranger/actions/runs/31363831170) completed with
   the hosted job skipped before runner allocation.
 
 ### WR-004 — Bound synced profile-library input with recovery UX
@@ -682,8 +998,9 @@ second copy of that checklist.
 
 ## Scan notes — not queued again
 
-- Menu-bar, Workspace Settings, and contextual radial-menu visual QA have no unresolved P0/P1/P2
-  mismatch in `design-qa.md`.
+- Menu-bar and Workspace Settings visual QA have no unresolved P0/P1/P2 mismatch. The earlier
+  contextual radial-menu pass was superseded by the WR-028 screenshot-backed cleanup; its new
+  offscreen states pass, while signed-app interaction remains under Live validation.
 - Portable profile transfer is described as implemented in the current README and reviewed code;
   its remaining live coverage belongs to WR-001/WR-013.
 - Manual Tiled split resizing and drag-to-swap already have implementation/test evidence; their
