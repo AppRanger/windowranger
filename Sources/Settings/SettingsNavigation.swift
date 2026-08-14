@@ -21,7 +21,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
         case .workspaces: "Workspaces"
         case .displays: "Displays"
         case .layouts: "Layouts"
-        case .appRules: "App Rules"
+        case .appRules: "Applications"
         case .shortcuts: "Shortcuts"
         case .radialMenu: "Command Wheel"
         case .diagnostics: "Diagnostics"

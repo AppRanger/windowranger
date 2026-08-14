@@ -56,6 +56,7 @@ struct RadialFocusedWindowContext: Equatable, Sendable {
 struct RadialWorkspaceOption: Equatable, Sendable, Identifiable {
     let id: UUID
     let name: String
+    let key: String
     let layout: WorkspaceLayout
     let homeDisplayIdentifier: String
 }
@@ -94,6 +95,7 @@ struct RadialCommandContext: Equatable, Sendable {
     var activeProfileID: UUID? = nil
     var isProfileManuallyPinned = false
     var tiledPlacementPreviews: [TiledPlacementPreview] = []
+    var freeformPlacementPreviews: [FreeformPlacementPreview] = []
     /// Global context that lives outside WorkspaceEngine (currently the profile catalogue and
     /// activation state). It is deliberately separate from `validationToken`: tiled placement
     /// commits must continue passing the engine-owned token unchanged.
@@ -302,6 +304,7 @@ struct RadialMenuItem: Equatable, Identifiable, Sendable {
     let id: String
     let definitionID: String
     let label: String
+    let detail: String?
     let systemImage: String
     let command: WindowManagerCommand?
     let alternateCommand: WindowManagerCommand?
@@ -309,6 +312,7 @@ struct RadialMenuItem: Equatable, Identifiable, Sendable {
     let childGeometry: RadialMenuChildGeometry
     let isCurrent: Bool
     let placementPreview: TiledPlacementPreview?
+    let freeformPlacementPreview: FreeformPlacementPreview?
 
     var isGroup: Bool { !children.isEmpty }
     var isSubmenu: Bool { !children.isEmpty }
@@ -326,19 +330,28 @@ struct RadialMenuModel: Equatable, Sendable {
 }
 
 enum RadialCommandCatalogue {
+    enum SymbolName {
+        static let moveToSpace = "windowranger.move-to-space"
+        static let placeWindow = "windowranger.place-window"
+        static let goToSpace = "windowranger.go-to-space"
+        static let resetWindowsInSpace = "windowranger.reset-windows-in-space"
+    }
+
     static let knownItemIDs = Set(RadialTopLevelItemID.allKnown)
     static let allMetadata = RadialTopLevelItemID.allKnown.compactMap(metadata)
+
+    static func availableMetadata(excluding references: [RadialTopLevelItemID]) -> [RadialCommandMetadata] {
+        let existing = Set(references)
+        return allMetadata.filter { !existing.contains($0.reference) }
+    }
 
     /// Representative symbols for the non-interactive Settings preview. Runtime children still
     /// come exclusively from providers and the captured context; this never becomes saved data.
     static func previewChildSystemImages(for reference: RadialTopLevelItemID) -> [String] {
         switch reference {
         case .moveToSpace, .goToSpace: ["1.square", "2.square", "3.square", "4.square"]
-        case .resize: [
-            "arrow.up.left", "arrow.up", "arrow.up.right", "arrow.right",
-            "arrow.down.right", "arrow.down", "arrow.down.left", "arrow.left",
-        ]
-        case .profiles: ["laptopcomputer", "desktopcomputer", "play.circle"]
+        case .resize: VisualPlacement.compassOrder.map(\.systemImage)
+        case .profiles: ["1.circle", "2.circle", "arrow.triangle.2.circlepath"]
         case .layoutType: WorkspaceLayout.allCases.map(\.systemImage)
         default: []
         }
@@ -346,15 +359,23 @@ enum RadialCommandCatalogue {
 
     static func metadata(for reference: RadialTopLevelItemID) -> RadialCommandMetadata? {
         switch reference {
-        case .moveToSpace: .init(reference: reference, title: "Move to Space", systemImage: "arrowshape.turn.up.right")
-        case .resize: .init(reference: reference, title: "Resize", systemImage: "arrow.up.left.and.arrow.down.right")
-        case .goToSpace: .init(reference: reference, title: "Go to Space", systemImage: "square.grid.2x2")
-        case .nextSpace: .init(reference: reference, title: "Next Space", systemImage: "chevron.right")
-        case .previousSpace: .init(reference: reference, title: "Previous Space", systemImage: "chevron.left")
-        case .profiles: .init(reference: reference, title: "Profiles", systemImage: "person.crop.rectangle.stack")
-        case .resetWindowsInSpace: .init(reference: reference, title: "Reset Windows in Space", systemImage: "arrow.counterclockwise")
-        case .resetAllWindows: .init(reference: reference, title: "Reset All Windows", systemImage: "arrow.triangle.2.circlepath")
-        case .layoutType: .init(reference: reference, title: "Layout Type", systemImage: "rectangle.3.group")
+        case .moveToSpace: .init(
+            reference: reference,
+            title: "Move to Space",
+            systemImage: SymbolName.moveToSpace
+        )
+        case .resize: .init(reference: reference, title: "Resize", systemImage: SymbolName.placeWindow)
+        case .goToSpace: .init(reference: reference, title: "Go to Space", systemImage: SymbolName.goToSpace)
+        case .nextSpace: .init(reference: reference, title: "Next Space", systemImage: "arrow.right")
+        case .previousSpace: .init(reference: reference, title: "Previous Space", systemImage: "arrow.left")
+        case .profiles: .init(reference: reference, title: "Profiles", systemImage: "rectangle.stack.badge.person.crop")
+        case .resetWindowsInSpace: .init(
+            reference: reference,
+            title: "Reset Windows in Space",
+            systemImage: SymbolName.resetWindowsInSpace
+        )
+        case .resetAllWindows: .init(reference: reference, title: "Reset All Windows", systemImage: "arrow.trianglehead.2.counterclockwise")
+        case .layoutType: .init(reference: reference, title: "Layout Type", systemImage: "rectangle.split.3x1")
         default: nil
         }
     }
@@ -366,23 +387,27 @@ enum RadialCommandCatalogue {
             _ label: String,
             _ image: String,
             _ command: WindowManagerCommand?,
+            detail: String? = nil,
             alternate: WindowManagerCommand? = nil,
             children: [RadialMenuItem] = [],
             geometry: RadialMenuChildGeometry = .equalCircle,
             current: Bool = false,
-            preview: TiledPlacementPreview? = nil
+            preview: TiledPlacementPreview? = nil,
+            freeformPreview: FreeformPlacementPreview? = nil
         ) -> RadialMenuItem {
             RadialMenuItem(
                 id: id,
                 definitionID: reference.rawValue,
                 label: label,
+                detail: detail,
                 systemImage: image,
                 command: command,
                 alternateCommand: alternate,
                 children: children,
                 childGeometry: geometry,
                 isCurrent: current,
-                placementPreview: preview
+                placementPreview: preview,
+                freeformPlacementPreview: freeformPreview
             )
         }
         let participatesInLayout = context.focusedWindow.map {
@@ -395,13 +420,14 @@ enum RadialCommandCatalogue {
                   let window = context.focusedWindow,
                   !window.keepsOnAllWorkspaces
             else { return nil }
-            let children = context.workspaces.filter { workspace in
-                workspace.id != window.workspaceID && (context.displayMode == .unified ||
-                    workspace.homeDisplayIdentifier == context.displayIdentifier)
-            }.map { workspace in
-                item(
-                    "move-space-\(workspace.id.uuidString)", workspace.name, "arrowshape.turn.up.right",
-                    .moveFocusedWindow(workspace.id),
+            let children = context.workspaces.compactMap { workspace -> RadialMenuItem? in
+                guard workspace.id != window.workspaceID,
+                      context.displayMode == .unified ||
+                        workspace.homeDisplayIdentifier == context.displayIdentifier
+                else { return nil }
+                return item(
+                    "move-space-\(workspace.id.uuidString)", workspace.name,
+                    workspaceSystemImage(for: workspace), .moveFocusedWindow(workspace.id),
                     alternate: .moveFocusedWindowAndFollow(workspace.id)
                 )
             }
@@ -418,6 +444,24 @@ enum RadialCommandCatalogue {
             case .automaticallyFloatingDialog, .automaticallyFloatingSecondary:
                 return item(reference.rawValue, "Include in Layout", "rectangle.grid.2x2", .toggleFloating)
             case .managed, .explicitlyManaged:
+                if context.layout == .none, participatesInLayout {
+                    let children = context.freeformPlacementPreviews.map { preview in
+                        item(
+                            "freeform-place-\(preview.placement.rawValue)", preview.placement.title,
+                            preview.placement.systemImage,
+                            .placeFreeformWindow(
+                                preview.placement,
+                                validationToken: context.validationToken
+                            ),
+                            freeformPreview: preview
+                        )
+                    }
+                    guard !children.isEmpty else { return nil }
+                    return item(
+                        reference.rawValue, "Place Window", metadata.systemImage, nil,
+                        children: children, geometry: .compass
+                    )
+                }
                 if context.layout == .tiled, participatesInLayout {
                     let children = context.tiledPlacementPreviews.map { preview in
                         item(
@@ -429,7 +473,7 @@ enum RadialCommandCatalogue {
                     }
                     guard !children.isEmpty else { return nil }
                     return item(
-                        reference.rawValue, "Place", metadata.systemImage, nil,
+                        reference.rawValue, "Place Window", metadata.systemImage, nil,
                         children: children, geometry: .compass
                     )
                 }
@@ -451,16 +495,17 @@ enum RadialCommandCatalogue {
                 return item(
                     "go-space-\(workspace.id.uuidString)",
                     workspace.name,
-                    "square",
+                    workspaceSystemImage(for: workspace),
                     .switchWorkspace(workspace.id)
                 )
             }
             guard !children.isEmpty else { return nil }
             return item(
                 reference.rawValue,
-                "\(metadata.title) · \(context.workspaceName) active",
+                metadata.title,
                 metadata.systemImage,
                 nil,
+                detail: "\(context.workspaceName) active",
                 children: children
             )
         case .nextSpace:
@@ -472,27 +517,28 @@ enum RadialCommandCatalogue {
         case .profiles:
             guard !context.profiles.isEmpty else { return nil }
             let activeName = context.profiles.first { $0.id == context.activeProfileID }?.name
-            var children = context.profiles.compactMap { profile -> RadialMenuItem? in
+            var children = context.profiles.enumerated().compactMap { position, profile -> RadialMenuItem? in
                 guard profile.id != context.activeProfileID else { return nil }
                 return item(
                     "profile-\(profile.id.uuidString)",
                     profile.name,
-                    "person.crop.rectangle.stack",
+                    profileSystemImage(at: position),
                     .selectProfile(profile.id)
                 )
             }
             if context.isProfileManuallyPinned {
                 children.append(item(
-                    "profile-resume-automatic", "Resume Automatic", "play.circle",
+                    "profile-resume-automatic", "Resume Automatic", "arrow.triangle.2.circlepath",
                     .resumeAutomaticProfileSelection
                 ))
             }
             guard !children.isEmpty else { return nil }
             return item(
                 reference.rawValue,
-                activeName.map { "\(metadata.title) · \($0) active" } ?? metadata.title,
+                metadata.title,
                 metadata.systemImage,
                 nil,
+                detail: activeName.map { "\($0) active" },
                 children: children
             )
         case .resetWindowsInSpace:
@@ -507,16 +553,36 @@ enum RadialCommandCatalogue {
                 let current = layout == context.layout
                 return item(
                     "layout-\(layout.rawValue)",
-                    current ? "Reapply \(layout.title)" : layout.title,
-                    current ? "checkmark.circle.fill" : layout.systemImage,
+                    layout.title,
+                    layout.systemImage,
                     .setLayout(layout),
+                    detail: current ? "Current layout · select to reapply" : nil,
                     current: current
                 )
             }
-            return item(reference.rawValue, metadata.title, metadata.systemImage, .cycleLayout(1), children: children)
+            return item(
+                reference.rawValue,
+                metadata.title,
+                context.layout.systemImage,
+                .cycleLayout(1),
+                children: children
+            )
         default:
             return nil
         }
+    }
+
+    private static func workspaceSystemImage(for workspace: RadialWorkspaceOption) -> String {
+        let key = workspace.key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard key.count == 1,
+              key.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) })
+        else { return "square.grid.2x2" }
+        return "\(key).square"
+    }
+
+    private static func profileSystemImage(at position: Int) -> String {
+        guard (0..<9).contains(position) else { return "rectangle.stack.person.crop" }
+        return "\(position + 1).circle"
     }
 }
 
@@ -571,7 +637,7 @@ extension WorkspaceLayout {
         switch self {
         case .none: "macwindow"
         case .tiled: "rectangle.grid.2x2"
-        case .accordion: "rectangle.stack"
+        case .accordion: "rectangle.split.3x1"
         }
     }
 }
@@ -639,13 +705,13 @@ enum RadialMenuGeometry {
         mutating func reset() { selection = nil }
     }
 
-    static let centerDeadZone: CGFloat = 38
-    static let innerOuterRadius: CGFloat = 100
-    static let outerInnerRadius: CGFloat = 109
-    static let outerRadius: CGFloat = 165
-    static let innerItemRadius: CGFloat = 70
-    static let outerItemRadius: CGFloat = 137
-    static let ringHysteresis: CGFloat = 7
+    static let centerDeadZone: CGFloat = 58
+    static let innerOuterRadius: CGFloat = 132
+    static let outerInnerRadius: CGFloat = 144
+    static let outerRadius: CGFloat = 210
+    static let innerItemRadius: CGFloat = 95
+    static let outerItemRadius: CGFloat = 177
+    static let ringHysteresis: CGFloat = 9
     static let angularHysteresis: CGFloat = 0.075
 
     static func clampedCenter(
@@ -719,9 +785,14 @@ enum RadialMenuGeometry {
             : proposed
     }
 
+    static func itemAngle(index: Int, count: Int) -> CGFloat {
+        guard count > 0 else { return -.pi / 2 }
+        return CGFloat(index) * (.pi * 2 / CGFloat(count)) - .pi / 2
+    }
+
     static func itemCenter(index: Int, count: Int, center: CGPoint, radius: CGFloat) -> CGPoint {
         guard count > 0 else { return center }
-        let angle = CGFloat(index) * (.pi * 2 / CGFloat(count)) - .pi / 2
+        let angle = itemAngle(index: index, count: count)
         return CGPoint(
             x: center.x + cos(angle) * radius,
             y: center.y + sin(angle) * radius

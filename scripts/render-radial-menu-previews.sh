@@ -31,4 +31,4 @@ WINDOWRANGER_RADIAL_SNAPSHOT_DIR="$output_directory" \
     -XCTest WindowRangerTests.RadialMenuVisualSnapshotTests/testOffscreenProductionRadialMenuStates \
     "$test_bundle"
 
-print "Rendered Place, Move to Space, and Profiles previews to: $output_directory"
+print "Rendered neutral and representative two-ring command-wheel previews to: $output_directory"

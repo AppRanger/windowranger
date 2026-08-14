@@ -87,7 +87,7 @@ diagnostic excerpt for any mismatch rather than inferring from an Accessibility 
 - Test-isolation guard: passed; the Test action has no app dependency, host, or macro-expansion target.
 - Complete non-hosted suite: **340 tests passed, 0 failures**. A later path-sanitization-only
   fixture edit also passed all 27 focused diagnostics tests.
-- Canonical Debug: signed Apple Development build, `com.windowranger.WindowRanger`, team `44NAD22AK6`,
+- Canonical Debug: signed Apple Development build, `dev.appranger.WindowRanger`, team `44NAD22AK6`,
   arm64. Canonical Release: same identity/team, universal `x86_64 arm64`.
 - Release binary contains none of the checked Debug-only diagnostics menu/file/admission strings.
 - The pre-existing system process (PID 709) and user Debug process (PID 46862) were unchanged after

@@ -7,7 +7,7 @@ script_name="${0:t}"
 project_file="$repository_root/WindowRanger.xcodeproj"
 export_options="$repository_root/config/ExportOptions-DeveloperID.plist"
 release_team_id="$(/usr/libexec/PlistBuddy -c 'Print :teamID' "$export_options" 2>/dev/null || true)"
-release_bundle_id="com.windowranger.WindowRanger"
+release_bundle_id="dev.appranger.WindowRanger"
 release_root="${WINDOWRANGER_RELEASE_ROOT:-$repository_root/.build/releases}"
 developer_directory="${WINDOWRANGER_DEVELOPER_DIR:-${DEVELOPER_DIR:-$(/usr/bin/xcode-select -p)}}"
 dmg_tool_root="${WINDOWRANGER_DMG_TOOL_ROOT:-$repository_root/.build/dmg-tools}"
@@ -354,7 +354,7 @@ print "Signing the DMG container with Developer ID..."
 /usr/bin/codesign --force \
     --sign "$signing_identity_hash" \
     --timestamp \
-    --identifier "com.windowranger.WindowRanger.dmg" \
+    --identifier "dev.appranger.WindowRanger.dmg" \
     "$final_dmg"
 /usr/bin/codesign --verify --verbose=2 "$final_dmg"
 

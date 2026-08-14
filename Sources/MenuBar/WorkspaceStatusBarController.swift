@@ -1087,7 +1087,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         displayIconConfiguration = initialDisplayIconConfiguration
         highlightColor = initialHighlightColor
         super.init()
-        statusItem.autosaveName = "com.windowranger.WindowRanger.primary-status"
+        statusItem.autosaveName = "\(ApplicationIdentity.bundleIdentifier).primary-status"
         appMenu.autoenablesItems = false
         appMenu.delegate = self
         // An assigned NSStatusItem menu owns every click. The custom host keeps workspace buttons
@@ -1224,6 +1224,9 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         snapshot: MenuBarPresentationSnapshot,
         availableWidth: CGFloat
     ) {
+        if snapshot.mode != .full {
+            dismissApplicationShelf()
+        }
         statusItem.view = nil
         hostView = nil
         contentView?.removeFromSuperview()
@@ -1267,7 +1270,9 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         while displayGroupStatusItems.count < count {
             let slot = displayGroupStatusItems.count
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            item.autosaveName = "com.windowranger.WindowRanger.full-display-group-\(slot)"
+            // Keep the established autosave identity so a user's grouped Full-mode placement also
+            // applies when Compact or Medium reuses these same physical display-group slots.
+            item.autosaveName = "\(ApplicationIdentity.bundleIdentifier).full-display-group-\(slot)"
             displayGroupStatusItems.append(ManagedDisplayGroupStatusItem(
                 statusItem: item,
                 contentView: nil,
@@ -1316,19 +1321,33 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         }
         managed.statusItem.length = max(24, content.intrinsicContentSize.width)
         button.layoutSubtreeIfNeeded()
-        let hoverTracker = managed.hoverTracker ?? MenuBarDisplayGroupHoverTracker {
-            [weak self] target, frame in
-            self?.workspaceHoverChanged(target, anchorFrame: frame)
+        let hoverTracker: MenuBarDisplayGroupHoverTracker?
+        if plan.mode == .full {
+            let tracker = managed.hoverTracker ?? MenuBarDisplayGroupHoverTracker {
+                [weak self] target, frame in
+                self?.workspaceHoverChanged(target, anchorFrame: frame)
+            }
+            tracker.configure(button: button, contentView: content)
+            hoverTracker = tracker
+        } else {
+            managed.hoverTracker?.invalidate()
+            hoverTracker = nil
         }
-        hoverTracker.configure(button: button, contentView: content)
         button.toolTip = plan.group.display.accessibilityLabel
-        let workspaceNames = plan.group.visibleWorkspaces.map(\.name).joined(separator: ", ")
-        button.setAccessibilityLabel(
-            "\(plan.group.display.accessibilityLabel). Workspaces: \(workspaceNames)."
-        )
-        button.setAccessibilityHelp(
-            "A primary pointer click switches the selected workspace. VoiceOver and secondary clicks open the WindowRanger menu."
-        )
+        if plan.mode == .full {
+            let workspaceNames = plan.group.visibleWorkspaces.map(\.name).joined(separator: ", ")
+            button.setAccessibilityLabel(
+                "\(plan.group.display.accessibilityLabel). Workspaces: \(workspaceNames)."
+            )
+            button.setAccessibilityHelp(
+                "A primary pointer click switches the selected workspace. VoiceOver and secondary clicks open the WindowRanger menu."
+            )
+        } else {
+            button.setAccessibilityLabel(
+                "WindowRanger menu. \(plan.group.display.accessibilityLabel)."
+            )
+            button.setAccessibilityHelp("Opens the WindowRanger menu.")
+        }
         displayGroupStatusItems[index].contentView = content
         displayGroupStatusItems[index].hoverTracker = hoverTracker
         displayGroupContentByButton[ObjectIdentifier(button)] = content
@@ -1492,26 +1511,27 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func displayGroupStatusButtonActivated(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent
-        if MenuBarStatusItemActivationPolicy.opensMenu(
+        let content = displayGroupContentByButton[ObjectIdentifier(sender)]
+        let pointerTarget = content.flatMap { content in
+            MenuBarScreenSpaceTargetResolver.target(
+                at: NSEvent.mouseLocation,
+                among: content.screenSpaceTargets()
+            )
+        }
+        switch MenuBarStatusItemActivationPolicy.action(
+            for: content?.mode ?? presentationMode,
             eventType: event?.type,
-            modifierFlags: NSEvent.modifierFlags
+            modifierFlags: NSEvent.modifierFlags,
+            pointerTarget: pointerTarget
         ) {
+        case .openMenu:
             presentMenu(relativeTo: sender)
-            return
+        case let .switchWorkspace(workspaceID, displayIdentifier):
+            handle(.workspace(
+                workspaceID: workspaceID,
+                displayIdentifier: displayIdentifier
+            ), menuAnchor: sender)
         }
-        guard let content = displayGroupContentByButton[ObjectIdentifier(sender)] else {
-            presentMenu(relativeTo: sender)
-            return
-        }
-        let targets = content.screenSpaceTargets()
-        guard let hitTarget = MenuBarScreenSpaceTargetResolver.target(
-            at: NSEvent.mouseLocation,
-            among: targets
-        ) else {
-            presentMenu(relativeTo: sender)
-            return
-        }
-        handle(hitTarget, menuAnchor: sender)
     }
 
     func invalidate() {

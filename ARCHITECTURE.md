@@ -60,16 +60,38 @@ ineligible, or ignored transient/popup. Ignored objects never enter membership, 
 focus cycling or recovery. The verified non-normal-layer Codex pet/panels are excluded here rather
 than patched out later.
 
+Built-in compatibility profiles are versioned, declarative corrections for verified application
+surfaces. A profile matches a normalized bundle identifier plus only the role, subrole, layer,
+modal, control-presence, or move/resize evidence needed to distinguish that surface. It produces an
+ordinary admission disposition and records the matched profile identifier in diagnostics. Profiles
+must be backed by a privacy-safe fixture and must not encode a user's workspace assignment or layout
+preference. The bundled registry is intentionally local to the signed app; there is no remotely
+updated exception list.
+
 Effective layout participation follows this order:
 
-1. ignored/transient or temporarily unsafe windows are untouched;
-2. an app rule that excludes layout remains authoritative;
-3. explicit per-window floating state controls otherwise eligible normal windows;
-4. high-confidence dialog classification automatically floats a dialog;
-5. remaining windows participate in the workspace's Freeform, Tiled or Accordion behavior.
+1. a narrowly matched built-in compatibility profile can correct the surface's admission;
+2. generic admission classifies every unmatched window;
+3. ignored/transient or temporarily unsafe windows are untouched;
+4. a user App Rule that excludes layout remains authoritative for admitted windows;
+5. explicit per-window floating state controls otherwise eligible normal windows;
+6. high-confidence dialog classification automatically floats a dialog;
+7. remaining windows participate in the workspace's Freeform, Tiled or Accordion behavior.
 
 Keep-on-all-workspaces rules affect visibility but do not grant a window permission to enter layout
 or focus scopes that it otherwise fails.
+
+Debug admission evidence is deliberately richer than the active classifier. The cached snapshot
+distinguishes authoritative, unsupported, and unavailable modal, focused, main-window, window-control,
+position-settable, and size-settable observations so representative real-app fixtures can justify a
+later rule change. The regular engine poll retains cached support evidence rather than performing
+these extra queries every 0.75 seconds. The sole exception is a surface whose bundle and ordinary
+role/subrole/layer/control evidence already match a compatibility profile that explicitly requires
+support-only evidence; only that candidate is enriched before classification. User-triggered Refresh
+performs read-only capability queries for already tracked windows, while ignored or unsupported
+surfaces capture the same evidence once before they are discarded. The snapshot contains no window
+titles or content-bearing metadata and does not itself change admission, membership, layout, focus,
+persistence, or recovery behaviour.
 
 The Add Application Rule picker reads existing engine membership without refreshing or mutating
 windows. Open apps are presented separately from other installed apps. A new rule inherits a live
@@ -83,7 +105,9 @@ rule from ambiguous per-window state.
 
 The profile library can sync through iCloud key-value storage. A profile contains workspace
 definitions/order/keys/layout geometry, Unified or Independent display mode, abstract display roles
-and their menu-bar icon styles, workspace-role assignments and typed app rules. Global preferences
+and their menu-bar icon styles, workspace-role assignments, typed app rules, and an optional
+Quick App bundle identifier/display name/presentation. Normalization makes Quick App ownership
+mutually exclusive with an App Rule for the same bundle identifier. Global preferences
 such as menu-bar presentation, general command shortcuts and command-wheel configuration use their
 existing global settings path and are not profile content.
 
@@ -132,20 +156,39 @@ On graceful quit, persistent assignment state is saved before managed windows ar
 visible frames. A debugger Stop or crash cannot run synchronous cleanup; startup reconciliation is
 the recovery boundary for those cases.
 
+The profile-aware Quick App is an engine-owned temporary presentation override. It resolves only
+one unambiguous admitted standard window for the configured bundle and targets the pointer/interaction
+display's usable bounds. Its optional Top, Bottom, Left, or Right movement uses generation-gated
+frame steps so a hide, profile switch, sleep, termination, or newer toggle supersedes delayed
+animation writes. Top expands from a collapsed frame at the usable top edge because macOS clamps
+ordinary app windows positioned above the menu bar; the other directions slide from beyond their
+screen edge. Once selected, the window is
+excluded from normal visibility, layout, focus-cycle, reset, manual-geometry reconciliation, and
+background-signature participation. The engine parks it while hidden, preserves its durable restore
+frame, restores it before configuration/profile changes and lifecycle cleanup, and ignores its own
+programmatic activation when deciding whether another app has taken focus.
+
 ## UI and focus safety
 
 The menu bar never assigns an `NSStatusItem.menu`, because AppKit gives an assigned menu ownership
 of every click. Compact, Medium, and Full on macOS 14–26 use one stable custom interaction view: a
 primary click outside an explicit Full workspace button, any secondary click, or the primary
 accessibility action presents the same `NSMenu`, while an explicit workspace-button primary click
-switches. macOS 27 treats one custom status-item view as
-one interaction target and rewrites nested clicks to that target, so Full uses one standard status
-item per logical display group. Workspace segments are noninteractive visuals; the owning status
-button receives one action and resolves a primary click by comparing the public global pointer X
-with those segments' live screen-space frames. Display, overflow, unresolved, right-, Control-, and
-accessibility actions present the shared menu. The standalone primary item is hidden in this grouped
-mode because every display group is already a safe menu target. Display-group items update in place;
-they are added or removed only when display topology changes. Full workspace segments expose an
+switches. macOS 27 treats one custom status-item view as one interaction target and rewrites nested
+clicks to that target, so every mode uses one standard status item per logical display group.
+Compact adapts to the configured label mode: keys use symbol-specific safe areas inside the
+horizontal, portrait, laptop, and combined-display symbols, while names render as compacted bare
+text beside a smaller symbol, with no status dot or enclosing badge. A
+hidden display icon falls back to bare workspace text. Medium renders its active-workspace chip
+inside that button; every action opens the shared menu. Settings
+embeds these same production display-group content views on macOS 27 rather than maintaining a
+separate visual imitation. Full workspace segments remain noninteractive visuals;
+the owning status button receives one action and resolves a primary click by comparing the public
+global pointer X with those segments' live screen-space frames. Display, overflow, unresolved,
+right-, Control-, and accessibility actions present the shared menu. The standalone primary item is
+hidden in this grouped mode because every display group is already a safe menu target. Display-group
+items are retained across presentation changes and are added or removed only when display topology
+changes. Full workspace segments expose an
 immediate visual hover state. On macOS 14–26 each native workspace button owns its standard tracking
 area; on macOS 27 the standard parent status button owns workspace-shaped tracking regions and
 resolves enter/exit with the same global screen-space geometry as clicks. This compatibility path
@@ -198,6 +241,16 @@ keeps the macOS 27 baseline for later releases until a future design change is v
 overrides are local appearance state rather than synced App Rule actions because the correct
 rendering depends on this Mac and OS. The radial command wheel is nonactivating until a validated
 action is committed.
+
+The optional Globe/Fn wheel trigger keeps observation and filtering on separate safety boundaries.
+A passive session tap observes modifier, keyboard, mouse-button, and system-defined competition and
+can never delay or divert those events. A dedicated user-interactive run loop owns the narrow active
+tap; its callback fast-passes every ordinary key and can discard only the synthetic native Globe
+action while an accepted hold has armed that one suppression. macOS timeout or user-input disablement
+stops the monitor and fails open rather than re-enabling it. Foreground applications identified as
+games through public bundle metadata suspend the Globe/Fn and workspace-swipe monitors even when
+their window is borderless; this does not broaden the native-fullscreen geometry guard.
+
 Settings is an explicit app-owned floating utility: it may activate and focus, but it is excluded
 from third-party discovery, layout and persistence.
 
@@ -208,8 +261,9 @@ three or four fingers to move coherently and horizontally past one threshold, th
 gesture ends so it cannot emit multiple commands. The adapter returns every event unchanged, retains
 no touch history after the gesture, and fails closed if macOS does not expose the generic gesture
 stream. Accepted swipes use `cycleWorkspace`, preserving its ordered wraparound and Independent
-Displays interaction routing. Sleep, inactive login sessions, full-screen games, shortcut recording,
-display changes, and profile transitions cancel or suspend observation.
+Displays interaction routing. Sleep, inactive login sessions, foreground declared games,
+full-screen games, shortcut recording, display changes, and profile transitions cancel or suspend
+observation.
 
 Exact focus operations use bounded activation/focus/raise verification and generation tokens. For an
 inactive target application, the engine prepares the exact window before setting the public
@@ -218,6 +272,10 @@ observed result rather than the setter return: if the app remains inactive, one 
 activation fallback is allowed before at most one exact-window retry. A genuine competing or ignored
 focus aborts the transaction. One-shot focus paths that do not advance through candidates retain the
 immediate AppKit compatibility fallback only when Accessibility rejects the frontmost write.
+An ordinary layer-0 standard window with read-only focus attributes remains a candidate only when it
+reports itself as both its application's focused and main window and supports raising; the same exact
+WindowServer verification must still succeed after activation. Read-only windows without that local
+identity remain excluded.
 Already-active applications remain on the exact-window-only path. Verification normally requires the
 exact Accessibility focused-window identity. When that value is temporarily absent, it accepts the
 target only if the application is active and WindowServer independently reports that exact layer-0

@@ -56,7 +56,7 @@ final class RadialMenuTriggerController {
         apply(effects)
         // Press-to-toggle intentionally keeps no held-key phase in the trigger state machine.
         // Explicit lifecycle/profile/shortcut cancellations must nevertheless dismiss it.
-        if effects.isEmpty, menuController.isPresented {
+        if effects.isEmpty, menuController.hasActivePresentationRequest {
             menuController.dismiss(reason: reason)
         }
     }
@@ -253,12 +253,146 @@ enum GlobeFnEventMonitorInterruption: String, Equatable, Sendable {
 protocol GlobeFnEventMonitoring: AnyObject {
     func start() -> Bool
     func stop()
-    func reenable() -> Bool
+    func setNativeGlobeFilteringEnabled(_ enabled: Bool)
 }
 
-/// One centrally owned public Quartz event tap. It forwards every event except a synthetic native
-/// Globe action that the pure state machine explicitly associates with an accepted hold. It never
-/// requests permission; failure is reported to Settings and can be retried safely.
+/// Thread-safe state read by the dedicated active-filter callback. Ordinary keys fast-path without
+/// taking this lock; only the synthetic native Globe key consults it.
+private final class GlobeFnNativeFilterState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var enabled = false
+
+    func setEnabled(_ enabled: Bool) {
+        lock.lock()
+        self.enabled = enabled
+        lock.unlock()
+    }
+
+    func shouldSuppress(keyCode: UInt16) -> Bool {
+        guard keyCode == GlobeFnEventNormalizer.nativeGlobeActionKeyCode else { return false }
+        lock.lock()
+        let enabled = self.enabled
+        lock.unlock()
+        return GlobeFnNativeEventFilterPolicy.shouldSuppress(
+            keyCode: keyCode,
+            nativeGlobeFilteringEnabled: enabled
+        )
+    }
+}
+
+/// Owns one event-tap source on a dedicated user-interactive run loop. Keeping the active filter
+/// independent of AppKit's main loop means UI, Accessibility, layout, and diagnostic work cannot
+/// hold ordinary input delivery behind the filter.
+private final class GlobeFnActiveTapRunLoopHost: @unchecked Sendable {
+    private let eventTap: CFMachPort
+    private let retainedContext: AnyObject
+    private let lock = NSLock()
+    private var runLoop: CFRunLoop?
+    private var runLoopSource: CFRunLoopSource?
+    private var thread: Thread?
+    private var started = false
+
+    init(eventTap: CFMachPort, retainedContext: AnyObject) {
+        self.eventTap = eventTap
+        self.retainedContext = retainedContext
+    }
+
+    func start() -> Bool {
+        let ready = DispatchSemaphore(value: 0)
+        let thread = Thread { [self] in
+            let currentRunLoop = CFRunLoopGetCurrent()
+            guard let source = CFMachPortCreateRunLoopSource(
+                kCFAllocatorDefault,
+                eventTap,
+                0
+            ) else {
+                ready.signal()
+                return
+            }
+
+            lock.lock()
+            runLoop = currentRunLoop
+            runLoopSource = source
+            lock.unlock()
+
+            CFRunLoopAddSource(currentRunLoop, source, .defaultMode)
+            CGEvent.tapEnable(tap: eventTap, enable: true)
+
+            lock.lock()
+            started = CGEvent.tapIsEnabled(tap: eventTap)
+            let shouldRun = started
+            lock.unlock()
+            ready.signal()
+
+            if shouldRun { CFRunLoopRun() }
+
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+            CFRunLoopRemoveSource(currentRunLoop, source, .defaultMode)
+            CFMachPortInvalidate(eventTap)
+            lock.lock()
+            runLoopSource = nil
+            runLoop = nil
+            self.thread = nil
+            started = false
+            lock.unlock()
+        }
+        thread.name = "WindowRanger Globe/Fn Filter"
+        thread.qualityOfService = .userInteractive
+        lock.lock()
+        self.thread = thread
+        lock.unlock()
+        thread.start()
+
+        guard ready.wait(timeout: .now() + 1) == .success else {
+            stop()
+            return false
+        }
+        lock.lock()
+        let result = started
+        lock.unlock()
+        return result
+    }
+
+    func stop() {
+        lock.lock()
+        let runLoop = self.runLoop
+        let source = runLoopSource
+        lock.unlock()
+        guard let runLoop else {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+            CFMachPortInvalidate(eventTap)
+            return
+        }
+
+        let eventTap = self.eventTap
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue) {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+            if let source {
+                CFRunLoopRemoveSource(runLoop, source, .defaultMode)
+            }
+            CFMachPortInvalidate(eventTap)
+            CFRunLoopStop(runLoop)
+        }
+        CFRunLoopWakeUp(runLoop)
+    }
+}
+
+private final class GlobeFnActiveFilterContext: @unchecked Sendable {
+    let filterState: GlobeFnNativeFilterState
+    let interruptionHandler: @Sendable (GlobeFnEventMonitorInterruption) -> Void
+
+    init(
+        filterState: GlobeFnNativeFilterState,
+        interruptionHandler: @escaping @Sendable (GlobeFnEventMonitorInterruption) -> Void
+    ) {
+        self.filterState = filterState
+        self.interruptionHandler = interruptionHandler
+    }
+}
+
+/// A passive tap observes Fn state and competing input without participating in delivery. A second
+/// active tap sees key events on its own run loop and fast-passes every key except the synthetic
+/// native Globe action while an accepted hold has explicitly armed suppression.
 @MainActor
 final class CGGlobeFnEventMonitor: GlobeFnEventMonitoring {
     typealias EventHandler = @MainActor (GlobeFnObservedEvent) -> Bool
@@ -266,8 +400,10 @@ final class CGGlobeFnEventMonitor: GlobeFnEventMonitoring {
 
     private let eventHandler: EventHandler
     private let interruptionHandler: InterruptionHandler
-    private var eventTap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
+    private let nativeFilterState = GlobeFnNativeFilterState()
+    private var observationTap: CFMachPort?
+    private var observationRunLoopSource: CFRunLoopSource?
+    private var activeTapHost: GlobeFnActiveTapRunLoopHost?
     private static let systemDefinedEventType = CGEventType(rawValue: 14)!
 
     init(
@@ -283,14 +419,10 @@ final class CGGlobeFnEventMonitor: GlobeFnEventMonitoring {
     }
 
     func start() -> Bool {
-        if let eventTap, CFMachPortIsValid(eventTap) {
-            CGEvent.tapEnable(tap: eventTap, enable: true)
-            return CGEvent.tapIsEnabled(tap: eventTap)
-        }
-
+        stop()
         guard AXIsProcessTrusted() else { return false }
 
-        let observedTypes: [CGEventType] = [
+        let passivelyObservedTypes: [CGEventType] = [
             .flagsChanged,
             .keyDown,
             .keyUp,
@@ -299,64 +431,121 @@ final class CGGlobeFnEventMonitor: GlobeFnEventMonitoring {
             .otherMouseDown,
             Self.systemDefinedEventType,
         ]
-        let mask = observedTypes.reduce(CGEventMask(0)) {
+        let observationMask = passivelyObservedTypes.reduce(CGEventMask(0)) {
             $0 | (CGEventMask(1) << $1.rawValue)
         }
-        let callback: CGEventTapCallBack = { _, type, event, userInfo in
+        let observationCallback: CGEventTapCallBack = { _, type, event, userInfo in
             guard let userInfo else { return Unmanaged.passUnretained(event) }
             let monitor = Unmanaged<CGGlobeFnEventMonitor>
                 .fromOpaque(userInfo)
                 .takeUnretainedValue()
-            return MainActor.assumeIsolated {
-                if monitor.process(type: type, event: event) {
-                    return nil
+            MainActor.assumeIsolated {
+                monitor.observe(type: type, event: event)
+            }
+            return Unmanaged.passUnretained(event)
+        }
+        guard let observationTap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .tailAppendEventTap,
+            options: .listenOnly,
+            eventsOfInterest: observationMask,
+            callback: observationCallback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ), let observationSource = CFMachPortCreateRunLoopSource(
+            kCFAllocatorDefault,
+            observationTap,
+            0
+        )
+        else { return false }
+
+        let filterContext = GlobeFnActiveFilterContext(
+            filterState: nativeFilterState,
+            interruptionHandler: { [weak self] interruption in
+                Task { @MainActor [weak self] in
+                    self?.interruptionHandler(interruption)
                 }
+            }
+        )
+        let activeCallback: CGEventTapCallBack = { _, type, event, userInfo in
+            guard let userInfo else { return Unmanaged.passUnretained(event) }
+            let context = Unmanaged<GlobeFnActiveFilterContext>
+                .fromOpaque(userInfo)
+                .takeUnretainedValue()
+            switch type {
+            case .tapDisabledByTimeout:
+                context.interruptionHandler(.timedOut)
+                return Unmanaged.passUnretained(event)
+            case .tapDisabledByUserInput:
+                context.interruptionHandler(.disabledByUserInput)
+                return Unmanaged.passUnretained(event)
+            case .keyDown, .keyUp:
+                let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+                return context.filterState.shouldSuppress(keyCode: keyCode)
+                    ? nil
+                    : Unmanaged.passUnretained(event)
+            default:
                 return Unmanaged.passUnretained(event)
             }
         }
-        guard let eventTap = CGEvent.tapCreate(
+        let keyMask = [CGEventType.keyDown, .keyUp].reduce(CGEventMask(0)) {
+            $0 | (CGEventMask(1) << $1.rawValue)
+        }
+        guard let activeTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: callback,
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ), let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
-        else { return false }
+            eventsOfInterest: keyMask,
+            callback: activeCallback,
+            userInfo: Unmanaged.passUnretained(filterContext).toOpaque()
+        ) else {
+            CFMachPortInvalidate(observationTap)
+            return false
+        }
+        let activeHost = GlobeFnActiveTapRunLoopHost(
+            eventTap: activeTap,
+            retainedContext: filterContext
+        )
+        guard activeHost.start() else {
+            activeHost.stop()
+            CFMachPortInvalidate(observationTap)
+            return false
+        }
 
-        self.eventTap = eventTap
-        runLoopSource = source
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: eventTap, enable: true)
-        return CGEvent.tapIsEnabled(tap: eventTap)
+        self.observationTap = observationTap
+        observationRunLoopSource = observationSource
+        self.activeTapHost = activeHost
+        CFRunLoopAddSource(CFRunLoopGetMain(), observationSource, .commonModes)
+        CGEvent.tapEnable(tap: observationTap, enable: true)
+        let observationEnabled = CGEvent.tapIsEnabled(tap: observationTap)
+        if !observationEnabled { stop() }
+        return observationEnabled
     }
 
     func stop() {
-        if let source = runLoopSource {
+        nativeFilterState.setEnabled(false)
+        if let source = observationRunLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }
-        if let eventTap {
-            CGEvent.tapEnable(tap: eventTap, enable: false)
-            CFMachPortInvalidate(eventTap)
+        if let observationTap {
+            CGEvent.tapEnable(tap: observationTap, enable: false)
+            CFMachPortInvalidate(observationTap)
         }
-        runLoopSource = nil
-        eventTap = nil
+        activeTapHost?.stop()
+        observationRunLoopSource = nil
+        observationTap = nil
+        activeTapHost = nil
     }
 
-    func reenable() -> Bool {
-        guard let eventTap, CFMachPortIsValid(eventTap) else { return false }
-        CGEvent.tapEnable(tap: eventTap, enable: true)
-        return CGEvent.tapIsEnabled(tap: eventTap)
+    func setNativeGlobeFilteringEnabled(_ enabled: Bool) {
+        nativeFilterState.setEnabled(enabled)
     }
 
-    private func process(type: CGEventType, event: CGEvent) -> Bool {
+    private func observe(type: CGEventType, event: CGEvent) {
         switch type {
         case .tapDisabledByTimeout:
-            interruptionHandler(.timedOut)
-            return false
+            Task { @MainActor [weak self] in self?.interruptionHandler(.timedOut) }
         case .tapDisabledByUserInput:
-            interruptionHandler(.disabledByUserInput)
-            return false
+            Task { @MainActor [weak self] in self?.interruptionHandler(.disabledByUserInput) }
         case .flagsChanged:
             let flags = event.flags
             let otherModifiers: CGEventFlags = [
@@ -368,22 +557,22 @@ final class CGGlobeFnEventMonitor: GlobeFnEventMonitoring {
                 .maskHelp,
                 .maskNumericPad,
             ]
-            return eventHandler(.flagsChanged(
+            _ = eventHandler(.flagsChanged(
                 functionDown: flags.contains(.maskSecondaryFn),
                 otherModifiersDown: !flags.intersection(otherModifiers).isEmpty
             ))
         case .keyDown, .keyUp:
-            return eventHandler(.keyChanged(
+            _ = eventHandler(.keyChanged(
                 isDown: type == .keyDown,
                 keyCode: UInt16(event.getIntegerValueField(.keyboardEventKeycode)),
                 isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0
             ))
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
-            return eventHandler(.mouseButtonDown)
+            _ = eventHandler(.mouseButtonDown)
         case let eventType where eventType == Self.systemDefinedEventType:
-            return eventHandler(.systemDefined)
+            _ = eventHandler(.systemDefined)
         default:
-            return false
+            break
         }
     }
 }
@@ -405,7 +594,6 @@ final class GlobeFnHoldActivationController {
     private var state = GlobeFnGestureStateMachine()
     private var normalizer = GlobeFnEventNormalizer()
     private var thresholdTask: GlobeFnScheduledTask?
-    private var safetyTask: GlobeFnScheduledTask?
     private var suppressionTask: GlobeFnScheduledTask?
     private var monitor: GlobeFnEventMonitoring?
     private var desiredEnabled = false
@@ -581,23 +769,42 @@ final class GlobeFnHoldActivationController {
     }
 
     private func monitorInterrupted(_ interruption: GlobeFnEventMonitorInterruption) {
+        guard monitor != nil else { return }
         cancel(reason: interruption.rawValue)
-        let restored = monitor?.reenable() == true
-        if !restored {
-            monitor?.stop()
-            monitor = nil
-            lastObservedFunctionState = nil
-        }
-        runtimeIssueChanged?(restored ? nil : "Globe/Fn monitoring stopped and could not be restored. Toggle the option to retry.")
+        monitor?.stop()
+        monitor = nil
+        lastObservedFunctionState = nil
+        runtimeIssueChanged?(
+            "Globe/Fn monitoring stopped after macOS reported an unresponsive input filter. Toggle the option off and on to retry."
+        )
         diagnostics.log(
             category: "globe-fn-trigger",
-            event: restored ? "monitor-reenabled" : "monitor-reenable-failed",
+            event: "monitor-stopped-fail-open",
             fields: ["reason": interruption.rawValue]
         )
     }
 
     @discardableResult
     private func apply(_ effects: [GlobeFnGestureEffect]) -> Bool {
+        if effects.contains(where: {
+            if case .activateHold = $0 { return true }
+            return false
+        }) {
+            monitor?.setNativeGlobeFilteringEnabled(true)
+        }
+        defer {
+            let explicitlyCancelled = effects.contains(where: {
+                switch $0 {
+                case .cancelHold, .cancelSuppressionExpiry:
+                    return true
+                default:
+                    return false
+                }
+            })
+            if explicitlyCancelled || state.phaseName == "idle" {
+                monitor?.setNativeGlobeFilteringEnabled(false)
+            }
+        }
         var shouldSuppress = false
         for effect in effects {
             switch effect {
@@ -611,28 +818,9 @@ final class GlobeFnHoldActivationController {
                         holdDelay: self.holdDelay
                     ))
                 }
-                safetyTask?.cancel()
-                safetyTask = scheduler.schedule(
-                    after: GlobeFnGestureStateMachine.maximumGestureDuration
-                ) { [weak self] in
-                    guard let self else { return }
-                    self.safetyTask = nil
-                    _ = self.apply(self.state.handle(
-                        .cancel(reason: "gesture-safety-timeout"),
-                        holdDelay: self.holdDelay
-                    ))
-                    self.normalizer.reset()
-                    self.diagnostics.log(
-                        category: "globe-fn-trigger",
-                        event: "gesture-safety-timeout",
-                        fields: [:]
-                    )
-                }
             case let .cancelThreshold(reason):
                 thresholdTask?.cancel()
                 thresholdTask = nil
-                safetyTask?.cancel()
-                safetyTask = nil
                 diagnostics.log(
                     category: "globe-fn-trigger",
                     event: "threshold-cancelled",
@@ -646,16 +834,12 @@ final class GlobeFnHoldActivationController {
                 )
                 radialTrigger.beginRecognizedHold()
             case .releaseHold:
-                safetyTask?.cancel()
-                safetyTask = nil
                 radialTrigger.handle(
                     .released,
                     style: .holdToShow,
                     holdDelay: holdDelay
                 )
             case let .cancelHold(reason):
-                safetyTask?.cancel()
-                safetyTask = nil
                 radialTrigger.cancel(reason: "globe-fn-\(reason)")
             case let .scheduleSuppressionExpiry(generation, delay):
                 suppressionTask?.cancel()
@@ -715,6 +899,7 @@ struct RadialMenuInteractionState: Equatable, Sendable {
     private(set) var selectedInnerIndex: Int?
     private(set) var activeGroupIndex: Int?
     private(set) var selectedOuterIndex: Int?
+    private(set) var pendingInnerIndex: Int?
 
     mutating func selectPointer(
         _ selection: RadialMenuGeometry.Selection?,
@@ -723,11 +908,18 @@ struct RadialMenuInteractionState: Equatable, Sendable {
         switch selection?.ring {
         case .inner:
             guard let index = selection?.index, childCounts.indices.contains(index) else { return [] }
+            if let activeGroupIndex, index != activeGroupIndex {
+                pendingInnerIndex = index
+                selectedInnerIndex = activeGroupIndex
+                selectedOuterIndex = nil
+                return [.scheduleGroupDwell(index)]
+            }
+            pendingInnerIndex = nil
             selectedInnerIndex = index
             selectedOuterIndex = nil
             if childCounts[index] > 0 {
-                guard activeGroupIndex != index else { return [] }
-                activeGroupIndex = nil
+                guard activeGroupIndex != index else { return [.cancelGroupDwell] }
+                pendingInnerIndex = index
                 return [.scheduleGroupDwell(index)]
             }
             activeGroupIndex = nil
@@ -738,12 +930,15 @@ struct RadialMenuInteractionState: Equatable, Sendable {
                   let index = selection?.index,
                   (0..<childCounts[group]).contains(index)
             else { return [] }
+            pendingInnerIndex = nil
+            selectedInnerIndex = group
             selectedOuterIndex = index
-            return []
+            return [.cancelGroupDwell]
         case nil:
+            pendingInnerIndex = nil
             selectedInnerIndex = nil
             selectedOuterIndex = nil
-            return []
+            return [.cancelGroupDwell]
         }
     }
 
@@ -752,22 +947,25 @@ struct RadialMenuInteractionState: Equatable, Sendable {
               childCounts.indices.contains(index),
               childCounts[index] > 0
         else { return [] }
+        pendingInnerIndex = nil
         activeGroupIndex = index
         selectedOuterIndex = nil
         return [.cancelGroupDwell]
     }
 
     mutating func dwellElapsed(for index: Int, childCounts: [Int]) -> [RadialMenuInteractionEffect] {
-        guard selectedInnerIndex == index,
-              childCounts.indices.contains(index),
-              childCounts[index] > 0
+        guard pendingInnerIndex == index,
+              childCounts.indices.contains(index)
         else { return [] }
-        activeGroupIndex = index
+        pendingInnerIndex = nil
+        selectedInnerIndex = index
+        activeGroupIndex = childCounts[index] > 0 ? index : nil
         selectedOuterIndex = nil
         return [.cancelGroupDwell]
     }
 
     mutating func moveSelection(_ offset: Int, childCounts: [Int]) -> [RadialMenuInteractionEffect] {
+        pendingInnerIndex = nil
         if let group = activeGroupIndex,
            childCounts.indices.contains(group),
            selectedOuterIndex != nil,
@@ -793,6 +991,7 @@ struct RadialMenuInteractionState: Equatable, Sendable {
               childCounts.indices.contains(index),
               childCounts[index] > 0
         else { return [] }
+        pendingInnerIndex = nil
         activeGroupIndex = index
         selectedOuterIndex = 0
         return [.cancelGroupDwell]
@@ -800,6 +999,7 @@ struct RadialMenuInteractionState: Equatable, Sendable {
 
     mutating func returnInward() -> [RadialMenuInteractionEffect] {
         guard let activeGroupIndex else { return [] }
+        pendingInnerIndex = nil
         selectedInnerIndex = activeGroupIndex
         selectedOuterIndex = nil
         self.activeGroupIndex = nil
@@ -807,6 +1007,7 @@ struct RadialMenuInteractionState: Equatable, Sendable {
     }
 
     mutating func clear() -> [RadialMenuInteractionEffect] {
+        pendingInnerIndex = nil
         selectedInnerIndex = nil
         activeGroupIndex = nil
         selectedOuterIndex = nil
@@ -820,6 +1021,8 @@ struct RadialMenuInteractionState: Equatable, Sendable {
 
 @MainActor
 final class RadialMenuPresentationModel: ObservableObject {
+    private static let initialGroupDisclosureDelay = 110
+    private static let openGroupSwitchDelay = 350
     let menu: RadialMenuModel
     let activationStyle: RadialMenuActivationStyle
     @Published private var interaction = RadialMenuInteractionState()
@@ -847,6 +1050,7 @@ final class RadialMenuPresentationModel: ObservableObject {
     }
 
     var selectedItem: RadialMenuItem? {
+        guard interaction.pendingInnerIndex == nil else { return nil }
         if let selectedOuterIndex, activeChildren.indices.contains(selectedOuterIndex) {
             return activeChildren[selectedOuterIndex]
         }
@@ -858,6 +1062,14 @@ final class RadialMenuPresentationModel: ObservableObject {
         if selectedOuterIndex != nil { return .outer }
         if selectedInnerIndex != nil { return .inner }
         return nil
+    }
+
+    var selectedItemDetail: String? {
+        guard let selectedItem else { return nil }
+        if requiresExplicitActivation(selectedItem) {
+            return "Click or press Return to confirm"
+        }
+        return selectedItem.detail
     }
 
     func activate(_ item: RadialMenuItem, useAlternate: Bool = false) {
@@ -898,6 +1110,7 @@ final class RadialMenuPresentationModel: ObservableObject {
 
     func pointerMoved(to point: CGPoint, center: CGPoint) {
         if activationStyle == .holdToShow,
+           activeGroupIndex == nil,
            let selectedInnerIndex,
            items.indices.contains(selectedInnerIndex),
            items[selectedInnerIndex].isGroup,
@@ -925,8 +1138,45 @@ final class RadialMenuPresentationModel: ObservableObject {
     }
 
     func highlightedCommandItem() -> RadialMenuItem? {
+        guard let item = highlightedCommandItemBeforeReleaseProtection(),
+              !requiresExplicitActivation(item)
+        else { return nil }
+        return item
+    }
+
+    var highlightedItemRequiresExplicitActivation: Bool {
+        highlightedCommandItemBeforeReleaseProtection().map(requiresExplicitActivation) == true
+    }
+
+    func accessibilityHint(for item: RadialMenuItem) -> String {
+        if requiresExplicitActivation(item) {
+            return "Click or press Return to confirm. Releasing Globe or Fn will not run this command."
+        }
+        if item.isGroup {
+            return item.command == nil
+                ? "Opens generated commands on the outer ring"
+                : "Click performs the primary command; moving outward opens generated commands"
+        }
+        return "Performs this command"
+    }
+
+    private func highlightedCommandItemBeforeReleaseProtection() -> RadialMenuItem? {
+        // A group remains latched while the pointer crosses another inner wedge so users can
+        // travel naturally to any outer child. Releasing on a direct command is unambiguous,
+        // though, and should commit that wedge rather than dismiss as if nothing were selected.
+        if let pendingInnerIndex = interaction.pendingInnerIndex,
+           items.indices.contains(pendingInnerIndex) {
+            let pending = items[pendingInnerIndex]
+            if pending.children.isEmpty, pending.command != nil {
+                return pending
+            }
+        }
         guard let selectedItem, selectedItem.command != nil else { return nil }
         return selectedItem
+    }
+
+    private func requiresExplicitActivation(_ item: RadialMenuItem) -> Bool {
+        activationStyle == .holdToShow && item.command == .resetAllWindows
     }
 
     func openGroupAfterDwell(_ index: Int) {
@@ -935,11 +1185,11 @@ final class RadialMenuPresentationModel: ObservableObject {
         }
     }
 
-    private func scheduleGroupDwell(_ index: Int) {
+    private func scheduleGroupDwell(_ index: Int, delayMilliseconds: Int) {
         dwellWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.openGroupAfterDwell(index) }
         dwellWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(110), execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMilliseconds), execute: work)
     }
 
     private func mutateInteraction(
@@ -958,7 +1208,12 @@ final class RadialMenuPresentationModel: ObservableObject {
         for effect in effects {
             switch effect {
             case let .scheduleGroupDwell(index):
-                scheduleGroupDwell(index)
+                scheduleGroupDwell(
+                    index,
+                    delayMilliseconds: priorGroupIndex == nil
+                        ? Self.initialGroupDisclosureDelay
+                        : Self.openGroupSwitchDelay
+                )
             case .cancelGroupDwell:
                 dwellWorkItem?.cancel()
                 dwellWorkItem = nil
@@ -969,7 +1224,7 @@ final class RadialMenuPresentationModel: ObservableObject {
 
 @MainActor
 final class RadialMenuController: NSObject, NSWindowDelegate {
-    static let panelSize = CGSize(width: 360, height: 360)
+    static let panelSize = CGSize(width: 450, height: 450)
 
     private let engine: WorkspaceEngine
     private let dispatcher: WindowManagerCommandDispatcher
@@ -987,6 +1242,8 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
     private var localKeyboardMonitor: Any?
     private var observers: [NSObjectProtocol] = []
     private var isValidating = false
+    private var toggleRequestGeneration: UInt64 = 0
+    private var pendingToggleRequest: UInt64?
     var onDismissed: ((String) -> Void)?
 
     init(
@@ -1005,14 +1262,23 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
     }
 
     var isPresented: Bool { panel?.isVisible == true }
+    var hasActivePresentationRequest: Bool { isPresented || pendingToggleRequest != nil }
 
     func toggle() {
-        if isPresented {
+        if hasActivePresentationRequest {
             dismiss(reason: "trigger-toggled")
             return
         }
-        engine.radialCommandContext { [weak self] context in
+        toggleRequestGeneration &+= 1
+        let request = toggleRequestGeneration
+        pendingToggleRequest = request
+        engine.radialCommandContext(
+            focusingWindowAt: CGEvent(source: nil)?.location
+        ) { [weak self] context in
             guard let self else { return }
+            defer { self.engine.radialPointerFocusPresentationFinished() }
+            guard self.pendingToggleRequest == request else { return }
+            self.pendingToggleRequest = nil
             self.present(self.contextEnricher(context), activationStyle: .pressToToggle)
         }
     }
@@ -1046,17 +1312,40 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
                 completion(false)
                 return
             }
-            self.present(
-                captured,
-                activationStyle: .holdToShow,
-                correlationID: correlationID,
-                triggerGeneration: triggerGeneration
-            )
-            completion(self.isPresented)
+            let pointerLocation = CGEvent(source: nil)?.location
+            self.engine.radialCommandContext(
+                focusingWindowAt: pointerLocation
+            ) { [weak self] targeted in
+                guard let self else {
+                    completion(false)
+                    return
+                }
+                defer { self.engine.radialPointerFocusPresentationFinished() }
+                guard isStillCurrent() else {
+                    completion(false)
+                    return
+                }
+                let targeted = self.contextEnricher(targeted)
+                guard self.hasRelevantActions(in: targeted) else {
+                    completion(false)
+                    return
+                }
+                self.present(
+                    targeted,
+                    activationStyle: .holdToShow,
+                    correlationID: correlationID,
+                    triggerGeneration: triggerGeneration
+                )
+                completion(self.isPresented)
+            }
         }
     }
 
     func commitHighlightedOrDismiss() {
+        if presentation?.highlightedItemRequiresExplicitActivation == true {
+            dismiss(reason: "trigger-released-requires-explicit-activation")
+            return
+        }
         guard let item = presentation?.highlightedCommandItem() else {
             dismiss(reason: "trigger-released-without-action")
             return
@@ -1079,6 +1368,7 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
     }
 
     func dismiss(reason: String) {
+        pendingToggleRequest = nil
         guard let panel else { return }
         session.dismiss()
         diagnostics.log(
@@ -1511,26 +1801,26 @@ struct RadialMenuView: View {
                         center: center,
                         radius: RadialMenuGeometry.innerItemRadius
                     )
-                    VStack(spacing: 3) {
-                        Image(systemName: item.systemImage)
-                            .font(.system(size: 17, weight: .semibold))
+                    let itemAngle = RadialMenuGeometry.itemAngle(index: index, count: model.items.count)
+                    ZStack {
+                        RadialMenuSymbol(systemImage: item.systemImage, size: 20, weight: .semibold)
+                            .frame(width: 30, height: 30)
                         if item.isGroup {
-                            Image(systemName: "arrowtriangle.right.fill")
-                                .font(.system(size: 5, weight: .bold))
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 7, weight: .bold))
                                 .foregroundStyle(model.selectedInnerIndex == index ? Color.white.opacity(0.9) : Color.secondary)
+                                .rotationEffect(.radians(Double(itemAngle)))
+                                .offset(
+                                    x: cos(itemAngle) * 22,
+                                    y: sin(itemAngle) * 22
+                                )
                         }
                     }
                     .foregroundStyle(model.selectedInnerIndex == index ? Color.white : Color.primary)
-                    .frame(width: 54, height: 54)
+                    .frame(width: 60, height: 60)
                     .allowsHitTesting(false)
                     .accessibilityLabel(item.label)
-                    .accessibilityHint(
-                        item.isGroup
-                            ? (item.command == nil
-                                ? "Opens generated commands on the outer ring"
-                                : "Click performs the primary command; moving outward opens generated commands")
-                            : "Performs this command"
-                    )
+                    .accessibilityHint(model.accessibilityHint(for: item))
                     .position(itemCenter)
                 }
 
@@ -1585,12 +1875,17 @@ struct RadialMenuView: View {
                             center: center,
                             geometry: model.items[groupIndex].childGeometry
                         )
-                        VStack(spacing: 3) {
-                            Image(systemName: child.systemImage)
-                                .font(.system(size: 18, weight: .semibold))
+                        ZStack(alignment: .topTrailing) {
+                            RadialMenuSymbol(systemImage: child.systemImage, size: 23, weight: .semibold)
+                                .frame(width: 34, height: 34)
+                            if child.isCurrent {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .offset(x: 6, y: -4)
+                            }
                         }
                         .foregroundStyle(model.selectedOuterIndex == childIndex ? Color.white : Color.primary)
-                        .frame(width: 82, height: 54)
+                        .frame(width: 44, height: 44)
                         .allowsHitTesting(false)
                         .accessibilityLabel(child.label)
                         .accessibilityHint(child.alternateCommand == nil
@@ -1608,47 +1903,65 @@ struct RadialMenuView: View {
                         lineWidth: contrast == .increased ? 2 : 1
                     ))
                     .frame(
-                        width: RadialMenuGeometry.centerDeadZone * 1.88,
-                        height: RadialMenuGeometry.centerDeadZone * 1.88
+                        width: RadialMenuGeometry.centerDeadZone * 1.9,
+                        height: RadialMenuGeometry.centerDeadZone * 1.9
                     )
 
-                Button {
-                    model.cancel?()
-                } label: {
-                    Group {
-                        if let preview = model.selectedItem?.placementPreview {
-                            TiledPlacementMiniPreview(preview: preview)
-                        } else {
-                            VStack(spacing: 3) {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 17, weight: .medium))
+                Group {
+                    if let preview = model.selectedItem?.freeformPlacementPreview {
+                        FreeformPlacementMiniPreview(preview: preview)
+                    } else if let preview = model.selectedItem?.placementPreview {
+                        TiledPlacementMiniPreview(preview: preview)
+                    } else if let selectedItem = model.selectedItem {
+                        VStack(spacing: 4) {
+                            RadialMenuSymbol(systemImage: selectedItem.systemImage, size: 16, weight: .semibold)
+                                .foregroundStyle(.secondary)
+                            Text(selectedItem.label)
+                                .font(.system(size: 12, weight: .semibold))
+                                .lineLimit(3)
+                                .minimumScaleFactor(0.72)
+                                .multilineTextAlignment(.center)
+                            if let detail = model.selectedItemDetail {
+                                Text(detail)
+                                    .font(.system(size: 8, weight: .medium))
                                     .foregroundStyle(.secondary)
-                                Text(model.selectedItem?.label ?? model.menu.title)
-                                    .font(.system(size: 12, weight: .semibold))
                                     .lineLimit(2)
+                                    .minimumScaleFactor(0.75)
                                     .multilineTextAlignment(.center)
-                                Text(model.selectedItem == nil ? model.menu.subtitle : "")
-                                    .font(.system(size: 9))
+                            }
+                        }
+                    } else {
+                        VStack(spacing: 4) {
+                            Text(model.menu.title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.72)
+                                .multilineTextAlignment(.center)
+                            Text(model.menu.subtitle)
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.7)
+                                .multilineTextAlignment(.center)
+                            if let note = model.menu.stateNote {
+                                Text(note)
+                                    .font(.system(size: 8, weight: .medium))
                                     .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                if model.selectedItem == nil, let note = model.menu.stateNote {
-                                    Text(note)
-                                        .font(.system(size: 8, weight: .medium))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                        .multilineTextAlignment(.center)
-                                }
+                                    .lineLimit(2)
+                                    .minimumScaleFactor(0.7)
+                                    .multilineTextAlignment(.center)
                             }
                         }
                     }
-                    .frame(
-                        width: RadialMenuGeometry.centerDeadZone * 1.75,
-                        height: RadialMenuGeometry.centerDeadZone * 1.75
-                    )
-                    .contentShape(Circle())
                 }
-                .buttonStyle(.plain)
+                .frame(
+                    width: RadialMenuGeometry.centerDeadZone * 1.68,
+                    height: RadialMenuGeometry.centerDeadZone * 1.68
+                )
+                .contentShape(Circle())
+                .onTapGesture { model.cancel?() }
                 .accessibilityLabel("Cancel command wheel")
+                .accessibilityAddTraits(.isButton)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
@@ -1668,6 +1981,185 @@ struct RadialMenuView: View {
         .frame(width: RadialMenuController.panelSize.width, height: RadialMenuController.panelSize.height)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Contextual command wheel")
+    }
+}
+
+/// Keeps the wheel on one monochrome SF Symbols vocabulary. The selected action-first command
+/// glyphs are small compositions of system symbols so their distinct meaning survives at wheel,
+/// centre, and Settings sizes without shipping a second icon asset set.
+struct RadialMenuSymbol: View {
+    let systemImage: String
+    let size: CGFloat
+    let weight: Font.Weight
+
+    @ViewBuilder
+    var body: some View {
+        switch systemImage {
+        case RadialCommandCatalogue.SymbolName.moveToSpace:
+            RadialMoveToSpaceSymbol(size: size, weight: weight)
+        case RadialCommandCatalogue.SymbolName.placeWindow:
+            RadialPlaceWindowSymbol(size: size, weight: weight)
+        case RadialCommandCatalogue.SymbolName.goToSpace:
+            RadialGoToSpaceSymbol(size: size, weight: weight)
+        case RadialCommandCatalogue.SymbolName.resetWindowsInSpace:
+            RadialResetWindowsInSpaceSymbol(size: size, weight: weight)
+        case "arrow.right", "arrow.left":
+            Image(systemName: systemImage)
+                .font(.system(size: size * 1.28, weight: .regular))
+        case WorkspaceLayout.accordion.systemImage:
+            AccordionLayoutSymbol(size: size, weight: weight)
+        default:
+            Image(systemName: systemImage)
+                .font(.system(size: size, weight: weight))
+        }
+    }
+}
+
+/// A framed window plus an outward transfer arrow distinguishes moving the focused window from
+/// navigating the current workspace. Every layer is an SF Symbol and shares the inherited colour.
+private struct RadialMoveToSpaceSymbol: View {
+    let size: CGFloat
+    let weight: Font.Weight
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "viewfinder")
+                .font(.system(size: size * 1.28, weight: weight))
+                .mask(alignment: .top) {
+                    Rectangle()
+                        .frame(height: size * 0.4)
+                }
+                .offset(y: -size * 0.14)
+            Image(systemName: "minus")
+                .font(.system(size: size * 0.48, weight: .bold))
+                .offset(y: -size * 0.43)
+            RadialWindowGlyph(size: size, weight: weight)
+                .offset(x: -size * 0.08, y: size * 0.12)
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: size * 0.52, weight: .semibold))
+                .offset(x: size * 0.4, y: -size * 0.25)
+        }
+        .frame(width: size * 1.28, height: size * 1.18)
+    }
+}
+
+/// The same focused-window frame without a transfer arrow reads as placing or resizing the
+/// current window, rather than moving between workspaces.
+private struct RadialPlaceWindowSymbol: View {
+    let size: CGFloat
+    let weight: Font.Weight
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "viewfinder")
+                .font(.system(size: size * 1.22, weight: weight))
+            Image(systemName: "rectangle")
+                .font(.system(size: size * 0.58, weight: weight))
+        }
+        .frame(width: size * 1.18, height: size * 1.18)
+    }
+}
+
+/// Workspace tiles plus a small navigation target separate Go to Space from Place Window's
+/// single framed window and Move to Space's transfer arrow.
+private struct RadialGoToSpaceSymbol: View {
+    let size: CGFloat
+    let weight: Font.Weight
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "square")
+                .font(.system(size: size * 0.43, weight: .bold))
+                .offset(x: -size * 0.25, y: -size * 0.25)
+            Image(systemName: "square")
+                .font(.system(size: size * 0.43, weight: .bold))
+                .offset(x: size * 0.25, y: -size * 0.25)
+            Image(systemName: "square")
+                .font(.system(size: size * 0.43, weight: .bold))
+                .offset(x: -size * 0.25, y: size * 0.25)
+            Image(systemName: "scope")
+                .font(.system(size: size * 0.68, weight: .bold))
+                .offset(x: size * 0.29, y: size * 0.29)
+        }
+        .frame(width: size * 1.22, height: size * 1.18)
+    }
+}
+
+/// The current-space reset combines a single window with the selected clockwise restore loop;
+/// Reset All retains the separate two-arrow circular symbol from the surrounding catalogue.
+private struct RadialResetWindowsInSpaceSymbol: View {
+    let size: CGFloat
+    let weight: Font.Weight
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: size * 1.48, weight: .regular))
+            RadialWindowGlyph(size: size * 0.7, weight: weight)
+                .offset(x: -size * 0.06, y: size * 0.08)
+        }
+        .frame(width: size * 1.12, height: size * 1.12)
+    }
+}
+
+/// A compact title-bar window assembled from native SF Symbols. Keeping the title bar explicit
+/// avoids the three-dot browser treatment of `macwindow` and matches the selected icon grammar.
+private struct RadialWindowGlyph: View {
+    let size: CGFloat
+    let weight: Font.Weight
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "rectangle")
+                .font(.system(size: size, weight: weight))
+            Image(systemName: "minus")
+                .font(.system(size: size * 0.62, weight: .bold))
+                .offset(y: -size * 0.16)
+        }
+    }
+}
+
+/// Uses the real rounded-window SF Symbol with two square-ended native strokes. The dividers are
+/// positioned independently so the central Accordion pane is genuinely wider, and their butt caps
+/// meet the inside edges cleanly rather than appearing short at wheel size.
+private struct AccordionLayoutSymbol: View {
+    let size: CGFloat
+    let weight: Font.Weight
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "rectangle")
+                .font(.system(size: size, weight: weight))
+            AccordionDivider()
+                .stroke(
+                    style: StrokeStyle(
+                        lineWidth: size * 0.095,
+                        lineCap: .butt
+                    )
+                )
+                .frame(width: size * 0.095, height: size * 0.69)
+                .offset(x: -size * 0.23)
+            AccordionDivider()
+                .stroke(
+                    style: StrokeStyle(
+                        lineWidth: size * 0.095,
+                        lineCap: .butt
+                    )
+                )
+                .frame(width: size * 0.095, height: size * 0.69)
+                .offset(x: size * 0.23)
+        }
+        .frame(width: size * 1.22, height: size)
+    }
+}
+
+private struct AccordionDivider: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let x = rect.midX
+        path.move(to: CGPoint(x: x, y: rect.minY))
+        path.addLine(to: CGPoint(x: x, y: rect.maxY))
+        return path
     }
 }
 
@@ -1712,6 +2204,37 @@ private struct TiledPlacementMiniPreview: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Preview \(preview.placement.title) tiled placement")
+    }
+}
+
+private struct FreeformPlacementMiniPreview: View {
+    let preview: FreeformPlacementPreview
+
+    var body: some View {
+        VStack(spacing: 3) {
+            GeometryReader { proxy in
+                let source = preview.displayBounds
+                let target = CGRect(origin: preview.targetFrame.position, size: preview.targetFrame.size)
+                let x = (target.minX - source.minX) / max(1, source.width) * proxy.size.width
+                let y = (target.minY - source.minY) / max(1, source.height) * proxy.size.height
+                let width = target.width / max(1, source.width) * proxy.size.width
+                let height = target.height / max(1, source.height) * proxy.size.height
+                RoundedRectangle(cornerRadius: 3)
+                    .stroke(Color.primary.opacity(0.35), lineWidth: 1)
+                    .overlay(alignment: .topLeading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color.accentColor)
+                            .overlay(RoundedRectangle(cornerRadius: 2).stroke(.white.opacity(0.55), lineWidth: 0.7))
+                            .frame(width: max(3, width - 2), height: max(3, height - 2))
+                            .offset(x: x + 1, y: y + 1)
+                    }
+            }
+            .frame(width: 54, height: 38)
+            Text(preview.placement.title)
+                .font(.system(size: 8, weight: .semibold))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Preview \(preview.placement.title) Freeform placement")
     }
 }
 

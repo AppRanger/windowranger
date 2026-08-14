@@ -92,9 +92,9 @@ enum MenuBarPresentationMode: String, Codable, CaseIterable, Identifiable, Senda
     var explanation: String {
         switch self {
         case .compact:
-            "Shows the app symbol and a tiny active-workspace signal for every connected display. The entire item opens the app menu."
+            "Shows a tiny active-workspace signal for every connected display. Every item opens the app menu."
         case .medium:
-            "Shows the app symbol and one readable active-workspace chip per connected display. The chips are informational and open the app menu."
+            "Shows one readable active-workspace chip per connected display. The chips are informational and open the app menu."
         case .full:
             "Shows display-grouped workspace actions. Only explicit workspace items switch; the remaining areas open the app menu."
         }
@@ -373,6 +373,100 @@ enum MenuBarWorkspaceLabelFormatter {
     static func key(_ key: String) -> String {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "—" : trimmed.uppercased()
+    }
+}
+
+enum MenuBarCompactDisplayLayout: Equatable, Sendable {
+    case keyInsideIcon
+    case inlineLabel
+}
+
+struct MenuBarCompactDisplayPresentation: Equatable, Sendable {
+    let layout: MenuBarCompactDisplayLayout
+    let systemImage: String?
+    let label: String
+
+    static func resolve(
+        display: MenuBarDisplayItem,
+        workspaceLabelMode: MenuBarWorkspaceLabelMode,
+        displayIconConfiguration: MenuBarDisplayIconConfiguration
+    ) -> MenuBarCompactDisplayPresentation {
+        let systemImage = displayIconConfiguration.systemImage(
+            for: display,
+            automaticSystemImage: display.iconKind == .combined ? "display.2" : "display"
+        )
+        let label: String
+        switch workspaceLabelMode {
+        case .name:
+            label = MenuBarWorkspaceLabelFormatter.compact(
+                display.activeWorkspaceName,
+                maximumCharacters: 5
+            )
+        case .key:
+            label = display.activeWorkspaceLabel(mode: .key)
+        }
+        return MenuBarCompactDisplayPresentation(
+            layout: workspaceLabelMode == .key && systemImage != nil
+                ? .keyInsideIcon
+                : .inlineLabel,
+            systemImage: systemImage,
+            label: label
+        )
+    }
+}
+
+struct MenuBarCompactKeyOverlayMetrics: Equatable, Sendable {
+    let iconPointSize: CGFloat
+    let labelPointSize: CGFloat
+    let labelWidth: CGFloat
+    let labelOffsetX: CGFloat
+    let labelOffsetY: CGFloat
+    let componentWidth: CGFloat
+
+    static func resolve(
+        systemImage: String,
+        labelCharacterCount: Int
+    ) -> MenuBarCompactKeyOverlayMetrics {
+        let isMultiCharacter = labelCharacterCount > 1
+
+        switch systemImage {
+        case "rectangle.portrait":
+            return MenuBarCompactKeyOverlayMetrics(
+                iconPointSize: 16.5,
+                labelPointSize: isMultiCharacter ? 5.25 : 6.25,
+                labelWidth: 6.5,
+                labelOffsetX: 0,
+                labelOffsetY: -0.5,
+                componentWidth: 24
+            )
+        case "laptopcomputer":
+            return MenuBarCompactKeyOverlayMetrics(
+                iconPointSize: 17,
+                labelPointSize: isMultiCharacter ? 5.75 : 7,
+                labelWidth: 8,
+                labelOffsetX: 0,
+                labelOffsetY: -1.25,
+                componentWidth: 24
+            )
+        case "display.2":
+            return MenuBarCompactKeyOverlayMetrics(
+                iconPointSize: 16,
+                labelPointSize: isMultiCharacter ? 5.5 : 6.5,
+                labelWidth: 7.5,
+                labelOffsetX: 4,
+                labelOffsetY: 0.5,
+                componentWidth: 26
+            )
+        default:
+            return MenuBarCompactKeyOverlayMetrics(
+                iconPointSize: 16.5,
+                labelPointSize: isMultiCharacter ? 6 : 7.5,
+                labelWidth: 9,
+                labelOffsetX: 0,
+                labelOffsetY: -1.5,
+                componentWidth: 24
+            )
+        }
     }
 }
 
@@ -779,10 +873,10 @@ enum MenuBarPressurePolicy {
 
 enum MenuBarStatusItemCompositionPolicy {
     static func usesDisplayGroups(
-        for mode: MenuBarPresentationMode,
+        for _: MenuBarPresentationMode,
         operatingSystemVersion: OperatingSystemVersion
     ) -> Bool {
-        mode == .full && operatingSystemVersion.majorVersion >= 27
+        operatingSystemVersion.majorVersion >= 27
     }
 }
 
@@ -796,9 +890,23 @@ enum MenuBarStatusItemActivationPolicy {
             || eventType == .rightMouseDown
             || eventType == .rightMouseUp
     }
+
+    static func action(
+        for mode: MenuBarPresentationMode,
+        eventType: NSEvent.EventType?,
+        modifierFlags: NSEvent.ModifierFlags,
+        pointerTarget: MenuBarHitTarget?
+    ) -> MenuBarInteractionAction {
+        guard !opensMenu(eventType: eventType, modifierFlags: modifierFlags),
+              mode == .full,
+              let pointerTarget
+        else { return .openMenu }
+        return MenuBarInteractionRouter.action(for: pointerTarget)
+    }
 }
 
 struct MenuBarDisplayGroupStatusItem: Equatable, Sendable {
+    let mode: MenuBarPresentationMode
     let group: MenuBarFullStripDisplayGroup
     let labelStyle: MenuBarFullStripLabelStyle
     let overflowCount: Int
@@ -811,7 +919,21 @@ enum MenuBarDisplayGroupStatusItemPlanner {
         availableWidth: CGFloat,
         displayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic
     ) -> [MenuBarDisplayGroupStatusItem] {
-        guard snapshot.mode == .full else { return [] }
+        guard snapshot.mode == .full else {
+            return snapshot.displays.map { display in
+                MenuBarDisplayGroupStatusItem(
+                    mode: snapshot.mode,
+                    group: MenuBarFullStripDisplayGroup(
+                        display: display,
+                        visibleWorkspaces: display.workspaces.filter(\.isActive),
+                        hiddenWorkspaces: []
+                    ),
+                    labelStyle: .full,
+                    overflowCount: 0,
+                    overflowSummary: nil
+                )
+            }
+        }
         let layout = MenuBarPressurePolicy.layout(
             displays: snapshot.displays,
             availableWidth: availableWidth,
@@ -821,6 +943,7 @@ enum MenuBarDisplayGroupStatusItemPlanner {
         return layout.groups.enumerated().map { index, group in
             let carriesOverflow = index == layout.groups.count - 1
             return MenuBarDisplayGroupStatusItem(
+                mode: snapshot.mode,
                 group: group,
                 labelStyle: layout.labelStyle,
                 overflowCount: carriesOverflow ? layout.hiddenWorkspaceCount : 0,
@@ -901,15 +1024,16 @@ enum MenuBarVisualTokens {
     static let separatorHeight: CGFloat = 14
 }
 
-/// Renders one display's Full-mode workspaces inside a single standard status-item button.
-/// Pointer ownership stays with that parent button on macOS 27; this view only supplies visual
-/// segment geometry that the controller resolves against `NSEvent.mouseLocation` when the parent
-/// action fires.
+/// Renders one logical display inside a single standard status-item button. Compact and Medium are
+/// informational; Full additionally supplies visual segment geometry that the controller resolves
+/// against `NSEvent.mouseLocation` when the parent action fires. Pointer ownership stays with that
+/// parent button on macOS 27 in every mode.
 @MainActor
 final class MenuBarDisplayGroupContentView: NSView {
     private var contentSize = CGSize(width: 1, height: MenuBarVisualTokens.componentHeight)
     private var workspaceSegments: [MenuBarWorkspaceSegmentView] = []
     private var hoverState = MenuBarWorkspaceHoverState()
+    private(set) var mode: MenuBarPresentationMode = .full
 
     override var intrinsicContentSize: NSSize { contentSize }
 
@@ -942,9 +1066,20 @@ final class MenuBarDisplayGroupContentView: NSView {
         highlightColor: MenuBarHighlightColor,
         displayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic
     ) {
+        mode = plan.mode
         clearHover()
         subviews.forEach { $0.removeFromSuperview() }
         workspaceSegments.removeAll(keepingCapacity: true)
+
+        if plan.mode != .full {
+            configureInformationalContent(
+                plan: plan,
+                workspaceLabelMode: workspaceLabelMode,
+                highlightColor: highlightColor,
+                displayIconConfiguration: displayIconConfiguration
+            )
+            return
+        }
 
         let stack = NSStackView()
         stack.orientation = .horizontal
@@ -1004,6 +1139,38 @@ final class MenuBarDisplayGroupContentView: NSView {
         stack.layoutSubtreeIfNeeded()
         contentSize = CGSize(
             width: ceil(stack.fittingSize.width + 6),
+            height: MenuBarVisualTokens.componentHeight
+        )
+        frame.size = contentSize
+        invalidateIntrinsicContentSize()
+        setAccessibilityElement(false)
+    }
+
+    private func configureInformationalContent(
+        plan: MenuBarDisplayGroupStatusItem,
+        workspaceLabelMode: MenuBarWorkspaceLabelMode,
+        highlightColor: MenuBarHighlightColor,
+        displayIconConfiguration: MenuBarDisplayIconConfiguration
+    ) {
+        let content = NSHostingView(rootView: MenuBarInformationalDisplayStatusView(
+            mode: plan.mode,
+            display: plan.group.display,
+            workspaceLabelMode: workspaceLabelMode,
+            highlightColor: highlightColor,
+            displayIconConfiguration: displayIconConfiguration
+        ))
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 3),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -3),
+            content.topAnchor.constraint(equalTo: topAnchor),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor),
+            heightAnchor.constraint(equalToConstant: MenuBarVisualTokens.componentHeight),
+        ])
+        content.layoutSubtreeIfNeeded()
+        contentSize = CGSize(
+            width: ceil(content.fittingSize.width + 6),
             height: MenuBarVisualTokens.componentHeight
         )
         frame.size = contentSize
@@ -1216,6 +1383,39 @@ struct MenuBarPrimaryStatusView: View {
     }
 }
 
+private struct MenuBarInformationalDisplayStatusView: View {
+    let mode: MenuBarPresentationMode
+    let display: MenuBarDisplayItem
+    let workspaceLabelMode: MenuBarWorkspaceLabelMode
+    let highlightColor: MenuBarHighlightColor
+    let displayIconConfiguration: MenuBarDisplayIconConfiguration
+
+    var body: some View {
+        Group {
+            switch mode {
+            case .compact:
+                CompactDisplaySignal(
+                    display: display,
+                    workspaceLabelMode: workspaceLabelMode,
+                    highlightColor: highlightColor,
+                    displayIconConfiguration: displayIconConfiguration
+                )
+            case .medium:
+                MediumDisplayChip(
+                    display: display,
+                    workspaceLabelMode: workspaceLabelMode,
+                    highlightColor: highlightColor,
+                    displayIconConfiguration: displayIconConfiguration
+                )
+            case .full:
+                EmptyView()
+            }
+        }
+        .frame(height: MenuBarVisualTokens.componentHeight)
+        .fixedSize(horizontal: true, vertical: true)
+    }
+}
+
 private struct CompactDisplaySignal: View {
     let display: MenuBarDisplayItem
     let workspaceLabelMode: MenuBarWorkspaceLabelMode
@@ -1223,44 +1423,79 @@ private struct CompactDisplaySignal: View {
     let displayIconConfiguration: MenuBarDisplayIconConfiguration
 
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                if let systemImage = displayIconConfiguration.systemImage(
-                    for: display,
-                    automaticSystemImage: display.iconKind == .combined ? "display.2" : "display"
-                ) {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(
-                            display.isInteractionDisplay
-                                ? highlightColor.color
-                                : Color.primary.opacity(0.58)
-                        )
-                }
-                let label = display.activeWorkspaceLabel(mode: workspaceLabelMode, compact: true)
-                Text(label)
-                    .font(.system(
-                        size: label.count > 1 ? 7 : 8.5,
-                        weight: .semibold
-                    ))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.55)
-                    .frame(width: 14)
-                    .offset(y: -1.5)
+        Group {
+            switch presentation.layout {
+            case .keyInsideIcon:
+                keyInsideIcon
+            case .inlineLabel:
+                inlineLabel
             }
-            .frame(
-                width: displayIconConfiguration.style(for: display) == .none ? 16 : 24,
-                height: 14
-            )
-            Circle()
-                .fill(display.isInteractionDisplay ? highlightColor.color : Color.primary.opacity(0.38))
-                .frame(
-                    width: display.isInteractionDisplay ? 3.5 : 3,
-                    height: display.isInteractionDisplay ? 3.5 : 3
-                )
         }
+        .frame(height: MenuBarVisualTokens.componentHeight)
+        .fixedSize(horizontal: true, vertical: false)
+        .foregroundStyle(signalColor)
         .accessibilityHidden(true)
         .help(display.accessibilityLabel)
+    }
+
+    private var keyInsideIcon: some View {
+        ZStack {
+            if let systemImage = presentation.systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: keyOverlayMetrics.iconPointSize, weight: .medium))
+            }
+            Text(presentation.label)
+                .font(.system(size: keyOverlayMetrics.labelPointSize, weight: .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+                .frame(width: keyOverlayMetrics.labelWidth)
+                .offset(
+                    x: keyOverlayMetrics.labelOffsetX,
+                    y: keyOverlayMetrics.labelOffsetY
+                )
+        }
+        .frame(
+            width: keyOverlayMetrics.componentWidth,
+            height: MenuBarVisualTokens.componentHeight
+        )
+    }
+
+    private var inlineLabel: some View {
+        HStack(spacing: 3) {
+            if let systemImage = presentation.systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11.5, weight: .semibold))
+            }
+            Text(presentation.label)
+                .font(.system(
+                    size: 10,
+                    weight: display.isInteractionDisplay ? .semibold : .medium
+                ))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    private var presentation: MenuBarCompactDisplayPresentation {
+        MenuBarCompactDisplayPresentation.resolve(
+            display: display,
+            workspaceLabelMode: workspaceLabelMode,
+            displayIconConfiguration: displayIconConfiguration
+        )
+    }
+
+    private var keyOverlayMetrics: MenuBarCompactKeyOverlayMetrics {
+        MenuBarCompactKeyOverlayMetrics.resolve(
+            systemImage: presentation.systemImage ?? "display",
+            labelCharacterCount: presentation.label.count
+        )
+    }
+
+    private var signalColor: Color {
+        display.isInteractionDisplay
+            ? highlightColor.color
+            : Color.primary.opacity(0.62)
     }
 }
 
@@ -1311,12 +1546,31 @@ struct MenuBarSettingsPreview: View {
     var displayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic
 
     var body: some View {
-        MenuBarStatusContentRepresentable(
-            snapshot: snapshot,
-            availableWidth: MenuBarPressurePolicy.defaultAvailableWidth,
-            highlightColor: highlightColor,
-            displayIconConfiguration: displayIconConfiguration
-        )
+        Group {
+            if MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
+                for: snapshot.mode,
+                operatingSystemVersion: ProcessInfo.processInfo.operatingSystemVersion
+            ) {
+                HStack(spacing: 6) {
+                    ForEach(displayGroupPlans, id: \.group.display.id) { plan in
+                        MenuBarDisplayGroupContentRepresentable(
+                            plan: plan,
+                            workspaceLabelMode: snapshot.workspaceLabelMode,
+                            highlightColor: highlightColor,
+                            displayIconConfiguration: displayIconConfiguration
+                        )
+                        .fixedSize()
+                    }
+                }
+            } else {
+                MenuBarStatusContentRepresentable(
+                    snapshot: snapshot,
+                    availableWidth: MenuBarPressurePolicy.defaultAvailableWidth,
+                    highlightColor: highlightColor,
+                    displayIconConfiguration: displayIconConfiguration
+                )
+            }
+        }
         .fixedSize()
         .foregroundStyle(.white)
         .padding(.horizontal, 10)
@@ -1331,11 +1585,47 @@ struct MenuBarSettingsPreview: View {
         )
         .accessibilityLabel("\(snapshot.mode.title) menu bar preview")
     }
+
+    private var displayGroupPlans: [MenuBarDisplayGroupStatusItem] {
+        MenuBarDisplayGroupStatusItemPlanner.groups(
+            for: snapshot,
+            availableWidth: MenuBarPressurePolicy.defaultAvailableWidth,
+            displayIconConfiguration: displayIconConfiguration
+        )
+    }
+}
+
+/// Settings embeds the exact per-display content used by each standard macOS 27 status item. This
+/// keeps preview composition, display order, icon choices, workspace labels, and pressure behavior
+/// on the production path instead of maintaining a visually similar SwiftUI-only copy.
+struct MenuBarDisplayGroupContentRepresentable: NSViewRepresentable {
+    let plan: MenuBarDisplayGroupStatusItem
+    let workspaceLabelMode: MenuBarWorkspaceLabelMode
+    let highlightColor: MenuBarHighlightColor
+    var displayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic
+
+    func makeNSView(context: Context) -> MenuBarDisplayGroupContentView {
+        MenuBarDisplayGroupContentView(
+            plan: plan,
+            workspaceLabelMode: workspaceLabelMode,
+            highlightColor: highlightColor,
+            displayIconConfiguration: displayIconConfiguration
+        )
+    }
+
+    func updateNSView(_ nsView: MenuBarDisplayGroupContentView, context: Context) {
+        nsView.configure(
+            plan: plan,
+            workspaceLabelMode: workspaceLabelMode,
+            highlightColor: highlightColor,
+            displayIconConfiguration: displayIconConfiguration
+        )
+    }
 }
 
 /// The shared content used by Settings preview and the single-item compatibility path. macOS 27
-/// Full mode renders separate display-group status items instead; the underlying planning and
-/// visual tokens remain common.
+/// renders separate display-group status items instead; the underlying planning and visual tokens
+/// remain common.
 struct MenuBarStatusContentRepresentable: NSViewRepresentable {
     let snapshot: MenuBarPresentationSnapshot
     let availableWidth: CGFloat
