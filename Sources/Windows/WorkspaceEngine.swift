@@ -299,6 +299,146 @@ enum WindowEnumerationLifecycle {
     }
 }
 
+struct PostSleepWindowRecoveryUpdate: Equatable, Sendable {
+    let protectedWindowKeys: Set<WindowKey>
+    let newlyRecoveredWindowKeys: Set<WindowKey>
+    let confirmedMissingWindowKeys: Set<WindowKey>
+    let terminatedWindowKeys: Set<WindowKey>
+    let authoritativeSuccessfullyEnumeratedProcessIdentifiers: Set<pid_t>
+}
+
+/// Keeps a persisted BSP partition intact while only some of its pre-sleep participants are
+/// readable. Reconciling the tree against that partial participant set would otherwise remove the
+/// protected leaves and make the temporary wake ordering permanent.
+enum PostSleepTiledLayoutRecoveryPolicy {
+    static func protectedParticipantKeys(
+        in tree: TiledNode?,
+        protectedWindowKeys: Set<WindowKey>
+    ) -> Set<WindowKey> {
+        guard let tree, !protectedWindowKeys.isEmpty else { return [] }
+        return Set(tree.windowKeys).intersection(protectedWindowKeys)
+    }
+
+    static func shouldDeferPartition(
+        tree: TiledNode?,
+        protectedWindowKeys: Set<WindowKey>
+    ) -> Bool {
+        !protectedParticipantKeys(
+            in: tree,
+            protectedWindowKeys: protectedWindowKeys
+        ).isEmpty
+    }
+}
+
+/// Keeps pre-sleep window ownership fail-closed while Accessibility repopulates one application at
+/// a time. A returning window releases only its exact key; it cannot make another application's
+/// empty snapshot authoritative. Persistently missing keys are released only after the owning
+/// process supplies two matching successful snapshots beyond a conservative wake grace period.
+struct PostSleepWindowRecoveryState: Equatable, Sendable {
+    static let missingWindowGraceInterval: TimeInterval = 15
+    static let requiredStableSnapshotCount = 2
+
+    private(set) var protectedWindowKeys = Set<WindowKey>()
+    private var wakeStartedAt: Date?
+    private var lastWindowKeysByProcess: [pid_t: Set<WindowKey>] = [:]
+    private var stableSnapshotCountByProcess: [pid_t: Int] = [:]
+
+    var isActive: Bool { !protectedWindowKeys.isEmpty }
+
+    mutating func prepareForSleep(protecting windowKeys: Set<WindowKey>) {
+        protectedWindowKeys.formUnion(windowKeys)
+        wakeStartedAt = nil
+        lastWindowKeysByProcess.removeAll()
+        stableSnapshotCountByProcess.removeAll()
+    }
+
+    mutating func beginWake(at date: Date = Date()) {
+        guard isActive, wakeStartedAt == nil else { return }
+        wakeStartedAt = date
+    }
+
+    mutating func observe(
+        runningProcessIdentifiers: Set<pid_t>,
+        successfullyEnumeratedProcessIdentifiers: Set<pid_t>,
+        enumeratedWindowKeys: Set<WindowKey>,
+        at date: Date = Date()
+    ) -> PostSleepWindowRecoveryUpdate {
+        let newlyRecoveredWindowKeys = protectedWindowKeys.intersection(enumeratedWindowKeys)
+        protectedWindowKeys.subtract(newlyRecoveredWindowKeys)
+
+        let terminatedWindowKeys = Set(protectedWindowKeys.filter {
+            !runningProcessIdentifiers.contains($0.processIdentifier)
+        })
+        protectedWindowKeys.subtract(terminatedWindowKeys)
+
+        var confirmedMissingWindowKeys = Set<WindowKey>()
+        let graceElapsed = wakeStartedAt.map {
+            date.timeIntervalSince($0) >= Self.missingWindowGraceInterval
+        } ?? false
+        let protectedProcessIdentifiers = Set(protectedWindowKeys.map(\.processIdentifier))
+
+        for processIdentifier in protectedProcessIdentifiers {
+            guard graceElapsed,
+                  successfullyEnumeratedProcessIdentifiers.contains(processIdentifier)
+            else {
+                lastWindowKeysByProcess.removeValue(forKey: processIdentifier)
+                stableSnapshotCountByProcess.removeValue(forKey: processIdentifier)
+                continue
+            }
+
+            let currentWindowKeys = Set(enumeratedWindowKeys.filter {
+                $0.processIdentifier == processIdentifier
+            })
+            let stableSnapshotCount: Int
+            if lastWindowKeysByProcess[processIdentifier] == currentWindowKeys {
+                stableSnapshotCount = (stableSnapshotCountByProcess[processIdentifier] ?? 0) + 1
+            } else {
+                stableSnapshotCount = 1
+            }
+            lastWindowKeysByProcess[processIdentifier] = currentWindowKeys
+            stableSnapshotCountByProcess[processIdentifier] = stableSnapshotCount
+
+            guard stableSnapshotCount >= Self.requiredStableSnapshotCount else { continue }
+            let missingWindowKeys = Set(protectedWindowKeys.filter {
+                $0.processIdentifier == processIdentifier
+            })
+            confirmedMissingWindowKeys.formUnion(missingWindowKeys)
+            protectedWindowKeys.subtract(missingWindowKeys)
+        }
+
+        let stillProtectedProcessIdentifiers = Set(protectedWindowKeys.map(\.processIdentifier))
+        lastWindowKeysByProcess = lastWindowKeysByProcess.filter {
+            stillProtectedProcessIdentifiers.contains($0.key)
+        }
+        stableSnapshotCountByProcess = stableSnapshotCountByProcess.filter {
+            stillProtectedProcessIdentifiers.contains($0.key)
+        }
+        if protectedWindowKeys.isEmpty {
+            wakeStartedAt = nil
+            lastWindowKeysByProcess.removeAll()
+            stableSnapshotCountByProcess.removeAll()
+        }
+
+        return PostSleepWindowRecoveryUpdate(
+            protectedWindowKeys: protectedWindowKeys,
+            newlyRecoveredWindowKeys: newlyRecoveredWindowKeys,
+            confirmedMissingWindowKeys: confirmedMissingWindowKeys,
+            terminatedWindowKeys: terminatedWindowKeys,
+            authoritativeSuccessfullyEnumeratedProcessIdentifiers:
+                successfullyEnumeratedProcessIdentifiers.subtracting(
+                    Set(protectedWindowKeys.map(\.processIdentifier))
+                )
+        )
+    }
+
+    mutating func clear() {
+        protectedWindowKeys.removeAll()
+        wakeStartedAt = nil
+        lastWindowKeysByProcess.removeAll()
+        stableSnapshotCountByProcess.removeAll()
+    }
+}
+
 struct DropDownAppWindowHandoffCandidate {
     let key: WindowKey
     let bundleIdentifier: String?
@@ -1061,7 +1201,7 @@ final class WorkspaceEngine {
     private var lastWakeCompletionDate = Date.distantPast
     private var lastWakeCompletedTopologySignature: String?
     private var consecutiveGlobalEmptySnapshots = 0
-    private var requiresNonEmptyWindowSnapshotAfterSleep = false
+    private var postSleepWindowRecoveryState = PostSleepWindowRecoveryState()
     private let stateStore: WorkspaceStateStore
     private let diagnostics: DiagnosticLogger
     private var windowServerSessionValidated = true
@@ -1181,7 +1321,7 @@ final class WorkspaceEngine {
     /// synchronous queue hand-off gives persistence a bounded opportunity to finish.
     func prepareForSystemSleep() {
         queue.sync {
-            requiresNonEmptyWindowSnapshotAfterSleep = true
+            postSleepWindowRecoveryState.prepareForSleep(protecting: Set(windows.keys))
             restoreAndClearDropDownAppSession(reason: "system-sleep")
             let focused = interactionFocusedWindowSnapshot()
             let tracked = focused.flatMap { windows[$0.key] }
@@ -1224,7 +1364,7 @@ final class WorkspaceEngine {
     func prepareForScreenSleep(source: ScreenSessionSuspensionSource) {
         queue.sync {
             screenSessionLifecycleState.suspend(source)
-            requiresNonEmptyWindowSnapshotAfterSleep = true
+            postSleepWindowRecoveryState.prepareForSleep(protecting: Set(windows.keys))
             if wakeReconciliationState.isSleeping {
                 diagnostics.log(
                     category: "lifecycle",
@@ -1289,6 +1429,7 @@ final class WorkspaceEngine {
                 )
                 return
             }
+            self.postSleepWindowRecoveryState.beginWake()
             self.activeWorkspaceIDByDisplay = Self.remappedActiveWorkspaceDisplayIdentifiers(
                 self.activeWorkspaceIDByDisplay,
                 previousHomes: self.workspaceDisplayAssignments,
@@ -6643,7 +6784,7 @@ final class WorkspaceEngine {
         focusCycleRejectedUntil.removeAll()
         staleParkedFocusSuppression.removeAll()
         lastAutomaticUnhideAttemptByProcess.removeAll()
-        requiresNonEmptyWindowSnapshotAfterSleep = false
+        postSleepWindowRecoveryState.clear()
         tiledTrees.removeAll()
         lastSolvedTiledFrames.removeAll()
         radialPlacementCommitContext = nil
@@ -6973,18 +7114,53 @@ final class WorkspaceEngine {
             }
         }
 
+        let wasPostSleepWindowRecoveryActive = postSleepWindowRecoveryState.isActive
+        let postSleepRecoveryUpdate = postSleepWindowRecoveryState.observe(
+            runningProcessIdentifiers: runningProcessIdentifiers,
+            successfullyEnumeratedProcessIdentifiers: successfullyEnumeratedProcesses,
+            enumeratedWindowKeys: enumeratedWindowKeys
+        )
+        successfullyEnumeratedProcesses = postSleepRecoveryUpdate
+            .authoritativeSuccessfullyEnumeratedProcessIdentifiers
+        deferredWindowKeys.formUnion(postSleepRecoveryUpdate.protectedWindowKeys)
+        writeEligibleWindowKeys.subtract(postSleepRecoveryUpdate.protectedWindowKeys)
+        if !postSleepRecoveryUpdate.newlyRecoveredWindowKeys.isEmpty ||
+            !postSleepRecoveryUpdate.confirmedMissingWindowKeys.isEmpty ||
+            !postSleepRecoveryUpdate.terminatedWindowKeys.isEmpty {
+            diagnostics.log(
+                category: "window-lifecycle",
+                event: "post-sleep-window-recovery-progress",
+                correlation: correlationID,
+                fields: [
+                    "protected-window-count": String(
+                        postSleepRecoveryUpdate.protectedWindowKeys.count
+                    ),
+                    "protected-process-count": String(Set(
+                        postSleepRecoveryUpdate.protectedWindowKeys.map(\.processIdentifier)
+                    ).count),
+                    "recovered-window-count": String(
+                        postSleepRecoveryUpdate.newlyRecoveredWindowKeys.count
+                    ),
+                    "confirmed-missing-window-count": String(
+                        postSleepRecoveryUpdate.confirmedMissingWindowKeys.count
+                    ),
+                    "terminated-window-count": String(
+                        postSleepRecoveryUpdate.terminatedWindowKeys.count
+                    ),
+                ]
+            )
+        }
+
         let deferredProcessIdentifiers = requiredProcessIdentifiers
             .subtracting(successfullyEnumeratedProcesses)
         for key in windows.keys where deferredProcessIdentifiers.contains(key.processIdentifier) {
             deferredWindowKeys.insert(key)
         }
 
-        if !enumeratedWindowKeys.isEmpty {
-            requiresNonEmptyWindowSnapshotAfterSleep = false
-        }
         let lifecycleTransitionActive = wakeReconciliationState.isSleeping ||
             wakeReconciliationState.isPending ||
-            requiresNonEmptyWindowSnapshotAfterSleep
+            wasPostSleepWindowRecoveryActive ||
+            postSleepWindowRecoveryState.isActive
         let deferredGlobalEmptySnapshot = WindowEnumerationLifecycle
             .shouldDeferGlobalEmptySnapshot(
                 trackedWindowCount: trackedWindowKeysBeforeEnumeration.count,
@@ -7027,6 +7203,16 @@ final class WorkspaceEngine {
                deferredGlobalEmptySnapshot: deferredGlobalEmptySnapshot
            ) {
             restoreAndClearDropDownAppSession(reason: "display-topology-changed")
+        }
+
+        if performAXWrites,
+           let dropDownWindowKey = dropDownAppSession?.windowKey,
+           postSleepRecoveryUpdate.newlyRecoveredWindowKeys.contains(dropDownWindowKey) {
+            reconcileDropDownAppSessionAfterWake(
+                displays: displays,
+                eligibleWindowKeys: writeEligibleWindowKeys,
+                correlationID: correlationID ?? "post-sleep-recovery"
+            )
         }
 
         // A single timed-out AXWindows request must not make us forget parked windows: once lost,
@@ -7196,7 +7382,7 @@ final class WorkspaceEngine {
         }
 
         var manualTiledDragInProgress = false
-        if performAXWrites, !isStartup, !topologyChanged, let focused,
+        if performAXWrites, !isStartup, !topologyChanged, !lifecycleTransitionActive, let focused,
            !isDropDownAppWindow(focused) {
             let moveReconciliation = reconcileManualTiledMove(
                 focusedWindow: focused,
@@ -7218,7 +7404,7 @@ final class WorkspaceEngine {
                     correlationID: correlationID
                 )
             }
-        } else if isStartup || topologyChanged || focused == nil {
+        } else if isStartup || topologyChanged || lifecycleTransitionActive || focused == nil {
             manualTiledDragSession = nil
         }
 
@@ -9189,8 +9375,36 @@ final class WorkspaceEngine {
                         workspaceID: workspaceID,
                         displayIdentifier: display.identifier
                     )
+                    let existingTree = tiledTrees[partition]
+                    let protectedWindowKeys = postSleepWindowRecoveryState.protectedWindowKeys
+                    if PostSleepTiledLayoutRecoveryPolicy.shouldDeferPartition(
+                        tree: existingTree,
+                        protectedWindowKeys: protectedWindowKeys
+                    ) {
+                        let protectedParticipantKeys = PostSleepTiledLayoutRecoveryPolicy
+                            .protectedParticipantKeys(
+                                in: existingTree,
+                                protectedWindowKeys: protectedWindowKeys
+                            )
+                        diagnostics.log(
+                            category: "layout",
+                            event: "display-deferred",
+                            correlation: correlationID,
+                            fields: [
+                                "workspace": Self.shortIdentifier(workspaceID.uuidString),
+                                "display": Self.shortIdentifier(display.identifier),
+                                "layout": layout.rawValue,
+                                "reason": "post-sleep-partial-bsp-tree",
+                                "protected-participant-count": String(
+                                    protectedParticipantKeys.count
+                                ),
+                                "tree-window-count": String(existingTree?.windowKeys.count ?? 0),
+                            ]
+                        )
+                        continue
+                    }
                     if let tree = TiledLayoutEngine.reconciled(
-                        tiledTrees[partition],
+                        existingTree,
                         windowKeys: ordered.map(\.key),
                         weights: ordered.map { CGFloat(Self.validLayoutWeight($0.layoutWeight)) },
                         orientation: configuration.orientation.resolved(for: layoutBounds)
