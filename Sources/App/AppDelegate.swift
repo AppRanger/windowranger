@@ -241,6 +241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.updateForegroundDeclaredGameInputProtection(for: application)
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "application-activated")
                 self.workspaceSwipeController.cancel(reason: "application-activated")
+                self.workspaceStatusBarController?.applicationActivated()
                 self.engine.applicationActivated(
                     processIdentifier: application.processIdentifier
                 ) { [weak self] shouldCancelRadialInteraction in
@@ -277,6 +278,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        workspaceNotifications.publisher(for: NSWorkspace.screensDidSleepNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.hotKeyManager.cancelDirectionalMoveGesture(reason: "screens-did-sleep")
+                self.globeFnHoldActivationController.cancel(reason: "screens-did-sleep")
+                self.workspaceSwipeController.setSuppressed(true, reason: "screen-sleep")
+                self.radialMenuTriggerController.cancel(reason: "screens-did-sleep")
+                self.commandFeedbackPresenter.dismiss(reason: "screens-did-sleep")
+                self.focusedWindowHighlightPresenter.setSuppressed(
+                    true,
+                    reason: "screens-did-sleep"
+                )
+                self.engine.prepareForScreenSleep(source: .screensSleep)
+            }
+            .store(in: &cancellables)
+
         workspaceNotifications.publisher(for: NSWorkspace.screensDidWakeNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
@@ -302,6 +320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     true,
                     reason: "session-resigned-active"
                 )
+                self?.engine.prepareForScreenSleep(source: .sessionResignedActive)
             }
             .store(in: &cancellables)
 
@@ -642,6 +661,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch source {
         case .systemWake, .screensWake:
             workspaceSwipeController.setSuppressed(false, reason: "system-sleep")
+            workspaceSwipeController.setSuppressed(false, reason: "screen-sleep")
         case .sessionBecameActive:
             workspaceSwipeController.setSuppressed(false, reason: "system-sleep")
             workspaceSwipeController.setSuppressed(false, reason: "session-inactive")

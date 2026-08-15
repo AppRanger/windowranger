@@ -10,6 +10,35 @@ enum WakeReconciliationSource: String, CaseIterable, Equatable, Sendable {
     case displayConfigurationChanged = "display-configuration-changed"
 }
 
+enum ScreenSessionSuspensionSource: String, Equatable, Sendable {
+    case screensSleep = "screens-did-sleep"
+    case sessionResignedActive = "session-resigned-active"
+}
+
+struct ScreenSessionLifecycleState: Equatable, Sendable {
+    private(set) var suspensionSources = Set<ScreenSessionSuspensionSource>()
+
+    var isSuspended: Bool { !suspensionSources.isEmpty }
+
+    mutating func suspend(_ source: ScreenSessionSuspensionSource) {
+        suspensionSources.insert(source)
+    }
+
+    /// Display wake can precede login-window dismissal. Resume only after every independently
+    /// observed suspension source has received its matching wake/activation signal.
+    mutating func receive(_ source: WakeReconciliationSource) -> Bool {
+        switch source {
+        case .systemWake, .screensWake:
+            suspensionSources.remove(.screensSleep)
+        case .sessionBecameActive:
+            suspensionSources.remove(.sessionResignedActive)
+        case .displayConfigurationChanged:
+            break
+        }
+        return !isSuspended
+    }
+}
+
 struct WakeReconciliationRequest: Equatable, Sendable {
     let generation: UInt64
     let shouldSchedule: Bool
