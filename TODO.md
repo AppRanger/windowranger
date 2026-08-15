@@ -20,6 +20,55 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-057 — Preserve each window through partial post-login recovery
+
+- **Type:** Lifecycle recovery bug
+- **Priority:** P1
+- **Status:** Live validation
+- **Diagnostic-backed:** On 2026-08-15, the signed WR-055 candidate correctly retained 13 managed
+  windows and its Quick App at display sleep. At 06:45 local time, three wake attempts saw the
+  tracked applications return successful but empty Accessibility window lists and completed safely
+  in degraded mode. Three seconds later, one unrelated window became visible; that single nonempty
+  global snapshot dropped the recovery guard and evicted 11 still-missing windows. When those apps
+  became readable roughly five seconds later, they were rediscovered from the active workspaces;
+  Ghostty was therefore tiled as an ordinary workspace window instead of retained as the Quick App.
+  A later wake in the first WR-057 candidate preserved every window's screen and workspace, but one
+  of three windows in a BSP partition became readable 261 milliseconds before its two peers. The
+  background layout reconciled the saved tree against that one eligible leaf, expanded it to the
+  full display, then appended the other two to the trimmed tree when they returned. All three frame
+  writes succeeded, proving the changed positions came from a destructive partial-tree solve rather
+  than macOS failing to accept the intended geometry.
+- **Expected:** Recovery authority is per pre-sleep window and owning process. An exact returning
+  window releases only itself and cannot make another process's empty or partial snapshot
+  authoritative. A still-running process may confirm a genuinely missing window only with two
+  matching successful snapshots after a 15-second wake grace; a failed read resets confirmation,
+  while process termination remains immediately authoritative. A late-returning Quick App reapplies
+  its retained presented or parked geometry before ordinary layout. A tiled partition containing
+  any still-protected pre-sleep participant receives no tree reconciliation or geometry writes;
+  unrelated complete partitions may recover immediately. Once every participant returns, or a
+  missing participant becomes authoritative, the intact or deliberately pruned BSP tree is solved
+  once. Wake geometry must not be interpreted as a manual tiled move or resize.
+- **Acceptance:** Pure recovery tests cover global-empty wake, one-app-at-a-time return, a different
+  same-process window, stable missing-window confirmation, failed reads, and process termination.
+  Focused lifecycle/Quick App tests and the complete non-hosted suite pass. Repeat a two-display
+  overnight lock/login with the Quick App hidden, an asymmetric BSP tree, and ordinary apps spread
+  across inactive workspaces.
+- **Automated evidence:** All 61 focused lifecycle/Quick App tests and all 586 non-hosted tests pass,
+  including test isolation. Release static analysis, the unsigned universal Release build, and both
+  Stable/Beta DMG smoke packages pass. The installed `bbac9b42ae32-dirty` candidate supplied the
+  partial-BSP diagnostic evidence but does not contain the resulting partition guard. A replacement
+  Apple Development universal Debug candidate builds and strictly verifies with CDHash
+  `980e43044aaa1f19c1964ed8c810a00cd4ad16d1` and bundle identifier
+  `dev.appranger.WindowRanger`; the two-display overnight lock/login check remains.
+- **Installed evidence:** With explicit maintainer approval, the replacement signed universal Debug
+  candidate for `bbac9b42ae32-dirty` is installed and running from
+  `/Applications/WindowRanger.app`. Its Apple Development signature, Team ID `44NAD22AK6`, bundle
+  identity, embedded revision, two architectures, running executable path, and exact CDHash
+  `980e43044aaa1f19c1964ed8c810a00cd4ad16d1` were verified. The prior daily copy remains at the
+  repository-defined non-launchable rollback path. Fresh diagnostics show live Accessibility
+  discovery, a three-window asymmetric BSP solve, and successful frame writes; no lock/wake cycle
+  has yet exercised the new partial-tree guard.
+
 ### WR-056 — Keep Accessibility permission status current in Settings
 
 - **Type:** Settings state bug
