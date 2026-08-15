@@ -20,6 +20,101 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-057 — Preserve each window through partial post-login recovery
+
+- **Type:** Lifecycle recovery bug
+- **Priority:** P1
+- **Status:** Live validation
+- **Diagnostic-backed:** On 2026-08-15, the signed WR-055 candidate correctly retained 13 managed
+  windows and its Quick App at display sleep. At 06:45 local time, three wake attempts saw the
+  tracked applications return successful but empty Accessibility window lists and completed safely
+  in degraded mode. Three seconds later, one unrelated window became visible; that single nonempty
+  global snapshot dropped the recovery guard and evicted 11 still-missing windows. When those apps
+  became readable roughly five seconds later, they were rediscovered from the active workspaces;
+  Ghostty was therefore tiled as an ordinary workspace window instead of retained as the Quick App.
+  A later wake in the first WR-057 candidate preserved every window's screen and workspace, but one
+  of three windows in a BSP partition became readable 261 milliseconds before its two peers. The
+  background layout reconciled the saved tree against that one eligible leaf, expanded it to the
+  full display, then appended the other two to the trimmed tree when they returned. All three frame
+  writes succeeded, proving the changed positions came from a destructive partial-tree solve rather
+  than macOS failing to accept the intended geometry.
+- **Expected:** Recovery authority is per pre-sleep window and owning process. An exact returning
+  window releases only itself and cannot make another process's empty or partial snapshot
+  authoritative. A still-running process may confirm a genuinely missing window only with two
+  matching successful snapshots after a 15-second wake grace; a failed read resets confirmation,
+  while process termination remains immediately authoritative. A late-returning Quick App reapplies
+  its retained presented or parked geometry before ordinary layout. A tiled partition containing
+  any still-protected pre-sleep participant receives no tree reconciliation or geometry writes;
+  unrelated complete partitions may recover immediately. Once every participant returns, or a
+  missing participant becomes authoritative, the intact or deliberately pruned BSP tree is solved
+  once. Wake geometry must not be interpreted as a manual tiled move or resize.
+- **Acceptance:** Pure recovery tests cover global-empty wake, one-app-at-a-time return, a different
+  same-process window, stable missing-window confirmation, failed reads, and process termination.
+  Focused lifecycle/Quick App tests and the complete non-hosted suite pass. Repeat a two-display
+  overnight lock/login with the Quick App hidden, an asymmetric BSP tree, and ordinary apps spread
+  across inactive workspaces.
+- **Automated evidence:** All 61 focused lifecycle/Quick App tests and all 586 non-hosted tests pass,
+  including test isolation. Release static analysis, the unsigned universal Release build, and both
+  Stable/Beta DMG smoke packages pass. The installed `bbac9b42ae32-dirty` candidate supplied the
+  partial-BSP diagnostic evidence but does not contain the resulting partition guard. A replacement
+  Apple Development universal Debug candidate builds and strictly verifies with CDHash
+  `980e43044aaa1f19c1964ed8c810a00cd4ad16d1` and bundle identifier
+  `dev.appranger.WindowRanger`; the two-display overnight lock/login check remains.
+- **Installed evidence:** With explicit maintainer approval, the replacement signed universal Debug
+  candidate for `bbac9b42ae32-dirty` is installed and running from
+  `/Applications/WindowRanger.app`. Its Apple Development signature, Team ID `44NAD22AK6`, bundle
+  identity, embedded revision, two architectures, running executable path, and exact CDHash
+  `980e43044aaa1f19c1964ed8c810a00cd4ad16d1` were verified. The prior daily copy remains at the
+  repository-defined non-launchable rollback path. Fresh diagnostics show live Accessibility
+  discovery, a three-window asymmetric BSP solve, and successful frame writes; no lock/wake cycle
+  has yet exercised the new partial-tree guard.
+
+### WR-056 — Keep Accessibility permission status current in Settings
+
+- **Type:** Settings state bug
+- **Priority:** P2
+- **Status:** Live validation
+- **User-observed:** General Settings can continue to show Accessibility as Required after access
+  has already been granted directly in macOS System Settings rather than through WindowRanger's
+  Grant Access button.
+- **Expected:** The status reflects the running app identity's current Accessibility trust whenever
+  General Settings appears or WindowRanger becomes active. While the pane is visible and access is
+  still missing, it performs a lightweight bounded-frequency trust check so an external grant is
+  reflected without closing or reopening Settings. It must not repeat the system prompt.
+- **Acceptance:** An injected monitor test proves false-to-true external grants and later revocation
+  are reflected without requesting permission. Focused Settings tests, the complete non-hosted
+  suite, and an unsigned universal app build pass; signed live validation remains required.
+- **Automated evidence:** All 21 focused Utility Settings tests and all 577 non-hosted tests pass;
+  test isolation and the unsigned universal Debug app build also pass. With explicit approval, the
+  signed universal Debug candidate was installed, its signature/running path were verified, and its
+  startup Accessibility geometry write succeeded. Live Settings status confirmation remains.
+
+### WR-055 — Preserve workspace and Quick App ownership across screen lock
+
+- **Type:** Lifecycle recovery bug
+- **Priority:** P1
+- **Status:** Live validation
+- **Diagnostic-backed:** On 2026-08-14 the Mac remained awake while both displays turned off from
+  20:31:04 to 20:33:44. During the display-off transition, Accessibility returned successful empty
+  window lists for every tracked application. WindowRanger treated those snapshots as authoritative,
+  evicted 13 tracked windows, and cleared the hidden Ghostty Quick App session as a display-topology
+  change. Wake reconciliation then rediscovered Safari, Ghostty, and Codex as ordinary members of
+  active workspace 2 and reported a zero-mismatch layout after tiling all three.
+- **Expected:** Screen lock, session inactivity, and display sleep suspend background discovery and
+  invalidate stale work before empty Accessibility snapshots can erase workspace membership. A
+  coordinated wake must retain tracked windows across non-authoritative global-empty snapshots,
+  preserve one exact Quick App session, and restore its presented or parked geometry before ordinary
+  workspace layout. A genuine, repeated global-empty snapshot while fully active may still remove
+  windows normally.
+- **Acceptance:** Pure lifecycle tests cover session suspension, first-empty and wake-time snapshot
+  deferral, later authoritative removal while active, and Quick App retention across display sleep
+  and wake topology changes. The focused lifecycle/Quick App tests and complete non-hosted suite
+  pass. Signed two-display lock/wake validation remains required before Done.
+- **Automated evidence:** Test isolation, all 577 non-hosted tests, Release static analysis, the
+  unsigned universal Release build, and both Stable/Beta DMG smoke packages pass. With explicit
+  approval, signed universal Debug build `1ad56bb3d128-dirty` was installed and its startup recovery
+  verified; the two-display lock/wake result still awaits user confirmation.
+
 ### WR-050 — Add a profile-aware Quick App
 
 - **Type:** Feature
@@ -38,10 +133,11 @@ smallest useful outcome and acceptance boundary.
   change native macOS Spaces, or broaden normal window admission.
 - **Safety boundaries:** The Quick App window remains outside ordinary workspace layout, parking,
   focus cycling, reset, and persistence while presented. Profile changes, app/window termination,
-  display changes, sleep, shutdown, shortcut reconfiguration, and superseding commands must cancel
-  or safely restore a current session. Programmatic activation must not be mistaken for a user focus
-  departure. Tests stay behind injected adapters and never register a real hotkey or move live
-  windows.
+  uncoordinated display changes, system sleep, shutdown, shortcut reconfiguration, and superseding
+  commands must cancel or safely restore a current session. A lock/display-sleep transition instead
+  retains the exact session until coordinated wake recovery. Programmatic activation must not be
+  mistaken for a user focus departure. Tests stay behind injected adapters and never register a real
+  hotkey or move live windows.
 - **Acceptance:** Focused tests cover profile isolation, shortcut collisions, 80-percent default and
   clamping, toggle show/hide, focus-loss hide, exact-window ambiguity, geometry on non-origin and
   multi-display frames, interrupted animation/session generations, and restoration boundaries. The
@@ -280,18 +376,20 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
-### WR-054 — Publish WindowRanger 0.1.0 Beta 4
+### WR-058 — Publish WindowRanger 0.1.0 Beta 5
 
 - **Type:** Beta release
 - **Priority:** P1
 - **Status:** Release approved; preparation in progress
-- **Requested:** Publish the current reviewed `develop` checkpoint as `v0.1.0-beta.4`, then update
-  the public website. The maintainer explicitly approved publication on 14 August 2026.
-- **Source scope:** `develop` commit `1869d14f30f5054a4bb5b6d0fd7bb528768e8fd7` adds the
-  live-validated transient-dialog placement correction, Quick App native-tab and startup recovery,
-  and post-restart workspace app cycling. Beta 3's public identity and packaging remain unchanged.
-- **Version allocation:** Beta version `0.1.0-beta.4`; monotonically increasing distribution build
-  number `5` follows Beta 3 build `4`.
+- **Requested:** Publish the current reviewed `develop` checkpoint as `v0.1.0-beta.5`, then update
+  the public website. The maintainer explicitly approved publication on 15 August 2026.
+- **Source scope:** `develop` commit `42485168bfc7e4c0fdb64a62d8d63cde58365a5a` adds coordinated
+  screen-lock/wake recovery, per-window and per-process authority while Accessibility repopulates,
+  preservation of incomplete asymmetric BSP partitions, Quick App wake ownership, menu-bar app
+  shelf dismissal on focus/click-away, and live Accessibility-permission status refresh. Beta 4's
+  public identity and packaging remain unchanged.
+- **Version allocation:** Beta version `0.1.0-beta.5`; monotonically increasing distribution build
+  number `6` follows Beta 4 build `5`.
 - **Process decision:** This repeat Beta may use the documented streamlined validation path. Its
   changed product behavior has already passed signed daily testing, and it changes no packaging,
   signing, entitlement, bundle identity, migration, updater, or minimum-system boundary. Skip only
@@ -299,7 +397,7 @@ smallest useful outcome and acceptance boundary.
   analysis, universal Release build, Developer ID verification, app/DMG notarization and stapling,
   Gatekeeper and DMG/ZIP checks, checksums, provenance, immutable tag, five-asset download
   round-trip, release-note review, public-download verification, and website checks.
-- **Acceptance:** Merge reviewed release notes and process documentation, promote `develop` through
+- **Acceptance:** Merge reviewed release notes and queue scope, promote `develop` through
   `release/0.1.0`, pass release-branch CI, publish an annotated protected tag and GitHub prerelease
   with five verified assets, update the website through review, and record exact commit, build,
   signing, notarization, checksum, release, deployment, and live-link evidence here.
@@ -830,6 +928,40 @@ second copy of that checklist.
 
 ## Done
 
+### WR-054 — Publish WindowRanger 0.1.0 Beta 4
+
+- **Result:** Published
+  [`v0.1.0-beta.4`](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.4) as a
+  GitHub prerelease on 14 August 2026. The protected annotated tag points to release commit
+  `6720e6ee3ad7bbedd989c0dbfc60923f99d8eb4f`, whose tree matches reviewed `develop` commit
+  `6ad179891b65ea8b6620184fdb66daf79dfad477`. The
+  [release-branch CI run](https://github.com/AppRanger/windowranger/actions/runs/31791956933)
+  passed 565 tests, static analysis, the unsigned universal Release build, both DMG smoke layouts,
+  and artifact upload.
+- **Streamlined Beta evidence:** The changed transient-dialog, Quick App, and app-cycling paths had
+  already passed signed live testing before merge and changed no packaging, signing, entitlement,
+  bundle identity, migration, updater, or minimum-system boundary. The approved repeat-Beta path
+  therefore skipped only the redundant local replacement install; all source, toolchain, signing,
+  notarization, packaging, provenance, public-asset, and website gates still ran.
+- **Distribution evidence:** Stable Xcode 26.6 produced universal Developer ID build `5` with
+  bundle identifier `dev.appranger.WindowRanger`, Team ID `44NAD22AK6`, preserved iCloud key-value
+  identifier `44NAD22AK6.com.windowranger.WindowRanger`, and CDHash
+  `1011c48c974953f843366bb4978855b24452d033`. App notarization
+  `2d1f53a2-9593-42c0-8502-74f2ae11ebc6` and DMG notarization
+  `3cf86dac-1b79-446b-97ef-c5a5cddc4fb0` were accepted with zero logged issues. Both staples,
+  Gatekeeper assessments, strict signatures, DMG verification, and packaged-app equality passed.
+  The public DMG, ZIP, two checksum files, and provenance manifest were downloaded and round-trip
+  verified after publication; the DMG SHA-256 is
+  `c9f9db3d332287cd860eba72f5987a1de08197bcf3dc4e7e28034eb7f460c8c1` and the ZIP SHA-256 is
+  `eb186b770d6dbfbb3e47d402eaca6d08155588ace8694f379639459181167a6d`.
+- **Website evidence:** [Website PR #2](https://github.com/AppRanger/windowranger-site/pull/2)
+  merged as `b6fe6106820c6aa705d5187c1f4541b1ffc45f8f` and deployed as Cloudflare version
+  `68ee44ea-8a6a-4841-bd47-654f77f47882`; documentation-only
+  [PR #3](https://github.com/AppRanger/windowranger-site/pull/3) recorded that deployment as
+  `91e9c754d709b3e58b1357f1b19401873e49617b`. Both `windowranger.com` and
+  `www.windowranger.com` show Download Beta 4 and link to the published release. Desktop and mobile
+  browser checks found no horizontal overflow and zero console errors or warnings.
+
 ### WR-053 — Publish WindowRanger 0.1.0 Beta 3
 
 - **Result:** Published
@@ -906,11 +1038,15 @@ second copy of that checklist.
 - **Result:** Full-mode workspace segments now highlight on hover and open a delayed nonactivating
   native-glass app shelf. The shelf handles empty and overflowing workspaces, survives pointer
   transfer in both directions, and delegates workspace switching plus exact managed-app focus to
-  the engine without polling, private APIs, or a global event monitor.
+  the engine without polling or private APIs. It now dismisses immediately when another application
+  activates or a pointer button is pressed outside it; short-lived local/global mouse monitors exist
+  only while presentation is pending or visible and are removed on every dismissal path.
 - **Evidence:** The integrated 512-test suite passes with production-view, geometry, grouping, and
   exact-focus coverage. The macOS 27 Developer ID candidates were live-validated for rollover,
   empty/populated shelf layout, glass styling, scroller policy, pointer return, app selection, and
-  unchanged workspace click routing.
+  unchanged workspace click routing. Follow-up policy tests cover inside, outside, inactive, and
+  pending-presentation pointer dismissal. Local quick verification passes all 577 non-hosted tests,
+  and the unsigned universal Debug app builds; updated live validation remains required.
 
 ### WR-039 — Restore Full menu-bar workspace clicks on macOS 27
 

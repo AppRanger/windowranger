@@ -587,6 +587,18 @@ enum MenuBarApplicationShelfTiming {
     static let hoverRestorationDelay: TimeInterval = 0.08
 }
 
+enum MenuBarApplicationShelfDismissalPolicy {
+    static func shouldDismissForPointerDown(
+        pointer: CGPoint,
+        presentedFrame: CGRect?,
+        hasPendingPresentation: Bool
+    ) -> Bool {
+        guard presentedFrame != nil || hasPendingPresentation else { return false }
+        if let presentedFrame, presentedFrame.contains(pointer) { return false }
+        return true
+    }
+}
+
 @MainActor
 enum MenuBarApplicationShelfSurfaceFactory {
     static let cornerRadius: CGFloat = 12
@@ -839,6 +851,7 @@ private final class MenuBarApplicationShelfController {
     private(set) var workspaceID: UUID?
 
     var isPresented: Bool { panel.isVisible }
+    var presentedFrame: CGRect? { isPresented ? panel.frame : nil }
     var onHoverChanged: ((Bool) -> Void)? {
         didSet { contentView.onHoverChanged = onHoverChanged }
     }
@@ -1056,6 +1069,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private var shelfDwellWorkItem: DispatchWorkItem?
     private var shelfDismissWorkItem: DispatchWorkItem?
     private var shelfHoverRestorationWorkItem: DispatchWorkItem?
+    private var shelfGlobalMouseMonitor: Any?
+    private var shelfLocalMouseMonitor: Any?
     private lazy var applicationShelfController: MenuBarApplicationShelfController = {
         let controller = MenuBarApplicationShelfController()
         controller.onHoverChanged = { [weak self] hovered in
@@ -1147,6 +1162,11 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         } else {
             rebuildSingleStatusItem(snapshot: snapshot, availableWidth: availableWidth)
         }
+    }
+
+    func applicationActivated() {
+        guard !isInvalidated else { return }
+        dismissApplicationShelf()
     }
 
     private func rebuildSingleStatusItem(
@@ -1375,6 +1395,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             cancelPendingShelfPresentation()
             if applicationShelfController.isPresented {
                 scheduleApplicationShelfDismissal()
+            } else {
+                removeApplicationShelfClickAwayMonitors()
             }
             return
         }
@@ -1397,6 +1419,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         pendingShelfAnchorFrame = anchorFrame
         pendingShelfApplications = nil
         shelfDwellElapsed = false
+        installApplicationShelfClickAwayMonitors()
 
         engine.workspaceApplications(for: workspaceID) { [weak self] applications in
             guard let self,
@@ -1505,8 +1528,41 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         shelfHoverRestorationWorkItem = nil
         shelfDismissWorkItem?.cancel()
         shelfDismissWorkItem = nil
+        removeApplicationShelfClickAwayMonitors()
         cancelPendingShelfPresentation()
         applicationShelfController.dismiss()
+    }
+
+    private func installApplicationShelfClickAwayMonitors() {
+        guard shelfGlobalMouseMonitor == nil, shelfLocalMouseMonitor == nil else { return }
+        let events: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        shelfGlobalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) {
+            [weak self] _ in
+            Task { @MainActor in
+                self?.handleApplicationShelfPointerDown(at: NSEvent.mouseLocation)
+            }
+        }
+        shelfLocalMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: events) {
+            [weak self] event in
+            self?.handleApplicationShelfPointerDown(at: NSEvent.mouseLocation)
+            return event
+        }
+    }
+
+    private func handleApplicationShelfPointerDown(at pointer: CGPoint) {
+        guard MenuBarApplicationShelfDismissalPolicy.shouldDismissForPointerDown(
+            pointer: pointer,
+            presentedFrame: applicationShelfController.presentedFrame,
+            hasPendingPresentation: pendingShelfTarget != nil
+        ) else { return }
+        dismissApplicationShelf()
+    }
+
+    private func removeApplicationShelfClickAwayMonitors() {
+        if let shelfGlobalMouseMonitor { NSEvent.removeMonitor(shelfGlobalMouseMonitor) }
+        if let shelfLocalMouseMonitor { NSEvent.removeMonitor(shelfLocalMouseMonitor) }
+        shelfGlobalMouseMonitor = nil
+        shelfLocalMouseMonitor = nil
     }
 
     @objc private func displayGroupStatusButtonActivated(_ sender: NSStatusBarButton) {

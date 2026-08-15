@@ -410,10 +410,32 @@ private struct SettingsCompactDetailHeader: View {
     }
 }
 
+@MainActor
+final class AccessibilityPermissionMonitor: ObservableObject {
+    typealias TrustProvider = () -> Bool
+
+    static let missingPermissionRefreshIntervalNanoseconds: UInt64 = 750_000_000
+
+    @Published private(set) var isGranted: Bool
+    private let trustProvider: TrustProvider
+
+    init(trustProvider: @escaping TrustProvider = { AXIsProcessTrusted() }) {
+        self.trustProvider = trustProvider
+        isGranted = trustProvider()
+    }
+
+    @discardableResult
+    func refresh() -> Bool {
+        let latest = trustProvider()
+        if latest != isGranted { isGranted = latest }
+        return latest
+    }
+}
+
 private struct GeneralSettingsView: View {
     @ObservedObject var store: SettingsStore
     let engine: WorkspaceEngine
-    @State private var accessibilityGranted = AXIsProcessTrusted()
+    @StateObject private var accessibilityPermission = AccessibilityPermissionMonitor()
     @StateObject private var launchAtLogin = LaunchAtLoginController()
 
     var body: some View {
@@ -421,12 +443,12 @@ private struct GeneralSettingsView: View {
             Section("Permissions") {
                 LabeledContent("Accessibility") {
                     HStack {
-                        Text(accessibilityGranted ? "Granted" : "Required")
-                            .foregroundStyle(accessibilityGranted ? .green : .orange)
-                        if !accessibilityGranted {
+                        Text(accessibilityPermission.isGranted ? "Granted" : "Required")
+                            .foregroundStyle(accessibilityPermission.isGranted ? .green : .orange)
+                        if !accessibilityPermission.isGranted {
                             Button("Grant Access") {
                                 _ = AccessibilityWindow.requestPermission()
-                                accessibilityGranted = AXIsProcessTrusted()
+                                accessibilityPermission.refresh()
                             }
                         }
                     }
@@ -640,10 +662,26 @@ private struct GeneralSettingsView: View {
         }
         .formStyle(.grouped)
         .onAppear {
+            accessibilityPermission.refresh()
             launchAtLogin.refresh()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            accessibilityPermission.refresh()
             launchAtLogin.refresh()
+        }
+        .task(id: accessibilityPermission.isGranted) {
+            guard !accessibilityPermission.isGranted else { return }
+            while !Task.isCancelled, !accessibilityPermission.isGranted {
+                do {
+                    try await Task.sleep(
+                        nanoseconds: AccessibilityPermissionMonitor
+                            .missingPermissionRefreshIntervalNanoseconds
+                    )
+                } catch {
+                    return
+                }
+                accessibilityPermission.refresh()
+            }
         }
     }
 

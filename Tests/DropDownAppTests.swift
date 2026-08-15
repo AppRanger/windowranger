@@ -386,6 +386,32 @@ final class DropDownAppTests: XCTestCase {
         ))
     }
 
+    func testQuickAppSessionSurvivesDisplaySleepAndCoordinatedWakeTopologyChanges() {
+        XCTAssertFalse(DropDownAppLifecyclePolicy.shouldClearSessionForTopologyChange(
+            topologyChanged: true,
+            isLifecycleTransitionActive: false,
+            deferredGlobalEmptySnapshot: true
+        ))
+        XCTAssertFalse(DropDownAppLifecyclePolicy.shouldClearSessionForTopologyChange(
+            topologyChanged: true,
+            isLifecycleTransitionActive: true,
+            deferredGlobalEmptySnapshot: false
+        ))
+    }
+
+    func testQuickAppSessionStillClearsForAnUncoordinatedActiveTopologyChange() {
+        XCTAssertTrue(DropDownAppLifecyclePolicy.shouldClearSessionForTopologyChange(
+            topologyChanged: true,
+            isLifecycleTransitionActive: false,
+            deferredGlobalEmptySnapshot: false
+        ))
+        XCTAssertFalse(DropDownAppLifecyclePolicy.shouldClearSessionForTopologyChange(
+            topologyChanged: false,
+            isLifecycleTransitionActive: false,
+            deferredGlobalEmptySnapshot: false
+        ))
+    }
+
     func testStartupClaimsOneVisibleQuickAppWindowAsPresentedOnItsCurrentDisplay() {
         let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
 
