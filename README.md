@@ -210,10 +210,14 @@ copied into a profile.
 
 The profile Quick App is a Quake-style single-window overlay for an already running app. Its
 configurable shortcut defaults to Control-Option-Backtick. The one unambiguous standard window for
-that app animates from a chosen screen edge, defaulting to a roll-down from the top at full usable
-width and 80 percent height; the animation can be disabled. Left and right presentations use the
-same percentage as screen width. Pressing the shortcut again or focusing another app retracts and
-parks it. While pinned,
+that app optionally expands from a chosen screen edge, defaulting to a roll-down from the top at
+full usable width and 80 percent height. Left and right presentations use the same percentage as
+screen width. Every edge animation collapses within the selected display, so a neighbouring monitor
+never becomes an off-screen travel path. With animation disabled, WindowRanger applies the final
+frame directly. Pressing the shortcut again or focusing another app uses macOS Hide for the Quick
+App's application, avoiding the Dock minimize animation; showing it prepares the final or collapsed
+frame before unhiding the application. Because Hide is application-wide, any other windows belonging
+to that app follow the same hidden state. While owned,
 that window stays outside normal workspace layout, reset, focus cycling, and frame persistence.
 If a native tab switch replaces the app's exact Accessibility window identity, WindowRanger keeps
 the Quick App session only when the same authoritative refresh finds one newly admitted replacement
@@ -221,7 +225,10 @@ from the same process and no second eligible window for that bundle. It transfer
 workspace and restore state to that replacement; an ambiguous transition clears the session rather
 than claiming an unrelated window. On startup, one unambiguous matching window is claimed before
 ordinary workspace layout: an on-screen window moves directly to its configured Quick App frame on
-its current display, while an already parked window remains hidden. Multiple matching windows remain
+its current display, while an exact WindowRanger-owned window whose application remains hidden stays
+hidden. The hidden ownership marker is local to the current WindowServer session and is discarded
+rather than applied to a different window identity. Legacy minimized-window markers do not grant
+permission to unhide an application. Multiple matching windows remain
 ordinary managed windows rather than being guessed between.
 Profiles can choose different apps and heights, while the shortcut remains a global preference.
 WindowRanger reports a clear no-op when the app has no available window or multiple ambiguous

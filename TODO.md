@@ -43,7 +43,7 @@ smallest useful outcome and acceptance boundary.
   authoritative. A still-running process may confirm a genuinely missing window only with two
   matching successful snapshots after a 15-second wake grace; a failed read resets confirmation,
   while process termination remains immediately authoritative. A late-returning Quick App reapplies
-  its retained presented or parked geometry before ordinary layout. A tiled partition containing
+  its retained presented or WindowRanger-owned application-hidden state before ordinary layout. A tiled partition containing
   any still-protected pre-sleep participant receives no tree reconciliation or geometry writes;
   unrelated complete partitions may recover immediately. Once every participant returns, or a
   missing participant becomes authoritative, the intact or deliberately pruned BSP tree is solved
@@ -103,7 +103,8 @@ smallest useful outcome and acceptance boundary.
 - **Expected:** Screen lock, session inactivity, and display sleep suspend background discovery and
   invalidate stale work before empty Accessibility snapshots can erase workspace membership. A
   coordinated wake must retain tracked windows across non-authoritative global-empty snapshots,
-  preserve one exact Quick App session, and restore its presented or parked geometry before ordinary
+  preserve one exact Quick App session, and restore its presented or WindowRanger-owned
+  application-hidden state before ordinary
   workspace layout. A genuine, repeated global-empty snapshot while fully active may still remove
   windows normally.
 - **Acceptance:** Pure lifecycle tests cover session suspension, first-empty and wake-time snapshot
@@ -131,8 +132,9 @@ smallest useful outcome and acceptance boundary.
   interaction display, and restore its prior frame/visibility state when toggled or when genuine
   user focus moves elsewhere. Do not launch an absent app, choose among multiple ambiguous windows,
   change native macOS Spaces, or broaden normal window admission.
-- **Safety boundaries:** The Quick App window remains outside ordinary workspace layout, parking,
-  focus cycling, reset, and persistence while presented. Profile changes, app/window termination,
+- **Safety boundaries:** The Quick App window remains outside ordinary workspace layout,
+  inactive-workspace parking, focus cycling, reset, and persistence while presented. Profile changes,
+  app/window termination,
   uncoordinated display changes, system sleep, shutdown, shortcut reconfiguration, and superseding
   commands must cancel or safely restore a current session. A lock/display-sleep transition instead
   retains the exact session until coordinated wake recovery. Programmatic activation must not be
@@ -151,7 +153,7 @@ smallest useful outcome and acceptance boundary.
   The installed-app picker closes when an app is selected; Quick App provides 25–100
   percent height/width control and optional animation from the Top, Bottom, Left, or
   Right with Top enabled by default, global shortcut recording with Control-Option-Backtick default,
-  a top-edge roll-down that remains visible despite macOS offscreen-position clamping, contextual
+  an edge expansion/collapse that remains within the chosen display, contextual
   guidance for apps that do not resize smoothly, exact-window
   ambiguity feedback, focus-loss hide, focus restoration on shortcut hide, and engine exclusions for
   layout/parking/focus/reset/background persistence. Profile changes, sleep, termination, window
@@ -160,8 +162,9 @@ smallest useful outcome and acceptance boundary.
   follows only one newly admitted same-process window for that bundle; ambiguous replacements still
   clear the session instead of guessing. Startup now claims one unambiguous configured Quick App
   before initial workspace layout: a meaningfully visible window is presented immediately on its
-  current display, while an already parked window remains hidden. Multiple matching windows remain
-  unclaimed.
+  current display, while an exact WindowRanger-owned window whose application remains hidden stays
+  hidden. Multiple matching
+  windows remain unclaimed.
 - **Diagnostic-backed bug:** On 2026-08-14, switching tabs in a presented Ghostty Quick App replaced
   window `1081:94` with `1081:95`. The successful AX snapshot evicted the old identity, cleared the
   Quick App session, and the normal background layout then tiled the replacement into the active
@@ -172,17 +175,72 @@ smallest useful outcome and acceptance boundary.
   workspace 2, and changed its frame from `12,296;3336x1110` to the workspace's tiled
   `1683,34;1673x1380` before the first Quick App shortcut restored its presentation. The configured
   window must instead be claimed before the initial workspace layout.
-- **Automated verification:** Focused Quick App and lifecycle verification passes 132 tests. Local
-  quick verification passes all 565 non-hosted tests, including test-isolation validation and
-  same-process native-tab handoff plus ambiguous, wrong-process, wrong-bundle, pre-existing-window,
-  non-authoritative-removal rejection, startup visible/parked selection, and startup ambiguity
-  rejection. The universal unsigned Debug app build also passes.
+- **User-observed hide/layout bug:** On 2026-08-19, Ghostty as the Bottom Quick App on the
+  ultrawide accordion remained visible after hide and appeared to join that layout. Session
+  `0C0397F2-7A28-43B1-BA64-865170E0E380` shows window `3006:9484` correctly excluded from
+  accordion (3→2) while the session exists, then immediately re-entering as a third accordion
+  member when Settings presentation edits emitted `configuration-changed` and cleared the
+  session. A 1x1 off-union park candidate was tried and rejected: Ghostty clamped to a
+  `3586x33` title-bar strip at `254,34`, which was worse than the original park. Same-bundle
+  direction, size, and animation edits now keep the existing session instead of restoring the
+  window into the current workspace layout.
+- **Diagnostic-backed overhaul:** On 2026-08-20, Bottom hide reported a successful position write
+  to `(3839,2638)` while Chronicle still showed Ghostty's title strip, proving that AX request
+  acceptance was not the visibility postcondition. A portrait display to the left overlapped the
+  old Left retraction path, so that path could move the Quick App onto the neighbouring monitor.
+  Top with animation disabled logged `animated=false`, yet show still moved the window directly
+  from its off-screen parked frame to the presented frame, allowing a receiving-app transition to
+  remain visible. The first overhaul model stopped using off-screen parking: animation collapsed
+  within the selected edge, hide minimized the exact owned window, and no-animation frame writes
+  suppressed receiving-app position transitions. Minimize and final-frame results were read back
+  into diagnostics, with a WindowServer-bound identity marker preventing arbitrary minimized-window
+  claims after a crash.
+- **Diagnostic-backed timing fix:** The first installed overhaul candidate showed that Ghostty accepts
+  both minimize and unminimize requests before its Accessibility minimized state changes. Immediate
+  readback therefore produced false hide/show failures even though the requested transition arrived
+  shortly afterwards. Both paths now use the same generation-safe, bounded confirmation wait,
+  restore a safe state on timeout, and log the number of confirmation attempts.
+- **User-observed system-animation gap and implemented follow-up:** The exact-window hidden state was the native macOS Dock
+  minimized state, so macOS still supplies its own minimize/restore animation even when Quick App
+  animation is disabled. That does not meet the expected meaning of **No animation**. Accessibility
+  does not expose a separate animation-free exact-window visibility state. Quick App now uses AppKit
+  Hide/Unhide instead: the exact window remains the sole geometry, identity, and recovery target,
+  while every window belonging to that application follows the application-wide hidden state.
+  WindowRanger persists and restores only application hiding it confirmed and owns; legacy
+  minimized-window markers never grant permission to unhide an application.
+- **Diagnostic-backed Hide/Unhide timing fix:** In installed session
+  `6A673870-B954-41BA-88C4-423D4B450FE7`, Ghostty returned `false` from both AppKit Hide and Unhide
+  even though `isHidden` changed immediately afterwards. WindowRanger interpreted the method return
+  as rejection, so the first shortcut changed background/hidden state but left the toggle
+  incomplete and the second shortcut finished it. A matching live process and bundle now make the
+  request dispatchable; only the bounded observed `isHidden` postcondition decides success.
+- **Automated verification:** Focused DropDownAppTests cover same-bundle presentation edits,
+  in-display collapse geometry for every edge, exact hidden-session recovery boundaries, and
+  backward-compatible persistence, including bounded application Hide/Unhide confirmation and
+  fail-closed handling of legacy minimized-window ownership.
+  All 25 focused tests, test isolation, and all 592 non-hosted tests pass; this safe
+  verification did not build, launch, sign, install, stop, or automate WindowRanger.app.
 - **Live validation:** The signed daily build was installed with explicit approval and Ghostty native
   tab replacement, focus-loss hide, and subsequent toggles were confirmed working. In signed
   universal Debug build `9402d3c594c4-dirty`, a visible Ghostty window was also claimed on restart
   and went directly to its Quick App presentation instead of first joining and reflowing the current
-  workspace; the user confirmed the result. Broader feature completion still requires exercising a
-  real assigned app across at least two profiles. Hidden/parked startup and ambiguous multiple-window
+  workspace; the user confirmed the result. The final exact-window minimize overhaul candidate
+  `4fde4ed99360-dirty` (CDHash `21f1986535ae61f9394e0b3ac78231cd826dae8c`) is installed as a
+  signed universal Debug build and running from `/Applications/WindowRanger.app`. Fresh Ghostty
+  diagnostics confirm Top with animation disabled hides as the exact minimized window, then shows
+  at the exact requested frame with no animation; minimize and unminimize each required one bounded
+  confirmation retry, with no false failure. That candidate was superseded after the user rejected
+  the native Dock animations. The first Hide/Unhide candidate exposed AppKit's misleading `false`
+  return values and was superseded. The corrected candidate `4fde4ed99360-dirty` (CDHash
+  `e183c7b92dbcedb9b32e342a8a542e5f09f10d79`) is installed, strictly verified, and running from
+  `/Applications/WindowRanger.app`; fresh startup diagnostics confirm Ghostty was claimed and placed
+  as a visible Quick App without being hidden. Session `0DD9FF29-1721-4785-AD0A-18CF42D74934`
+  then confirmed focus-loss hiding in one observation attempt with `isHidden == true`. The user
+  confirmed the corrected behavior as perfect; the same session records one-press shortcut hide/show
+  pairs for Bottom, Left, and Right, with animation both enabled and disabled, every transition
+  confirming application visibility in one attempt and every show matching its requested frame.
+  Broader feature completion still requires exercising a
+  real assigned app across at least two profiles. Hidden startup and ambiguous multiple-window
   startup remain automated, fail-closed coverage rather than separate live observations.
 
 ### WR-030 — Investigate Battle.net focused-window compatibility

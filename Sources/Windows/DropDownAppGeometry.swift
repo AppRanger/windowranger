@@ -44,27 +44,24 @@ enum DropDownAppGeometry {
     ) -> WindowFrame {
         switch direction {
         case .top:
-            // macOS clamps ordinary app windows whose top edge is placed above the menu bar.
-            // Collapse at the usable top edge instead so Top still has a visible Quake-style
-            // roll-down animation rather than every offscreen frame being clamped in place.
             return WindowFrame(
                 position: CGPoint(x: presentedFrame.position.x, y: usableBounds.minY),
                 size: CGSize(width: presentedFrame.size.width, height: 1)
             )
         case .bottom:
             return WindowFrame(
-                position: CGPoint(x: presentedFrame.position.x, y: usableBounds.maxY),
-                size: presentedFrame.size
+                position: CGPoint(x: presentedFrame.position.x, y: usableBounds.maxY - 1),
+                size: CGSize(width: presentedFrame.size.width, height: 1)
             )
         case .left:
             return WindowFrame(
-                position: CGPoint(x: usableBounds.minX - presentedFrame.size.width, y: presentedFrame.position.y),
-                size: presentedFrame.size
+                position: CGPoint(x: usableBounds.minX, y: presentedFrame.position.y),
+                size: CGSize(width: 1, height: presentedFrame.size.height)
             )
         case .right:
             return WindowFrame(
-                position: CGPoint(x: usableBounds.maxX, y: presentedFrame.position.y),
-                size: presentedFrame.size
+                position: CGPoint(x: usableBounds.maxX - 1, y: presentedFrame.position.y),
+                size: CGSize(width: 1, height: presentedFrame.size.height)
             )
         }
     }

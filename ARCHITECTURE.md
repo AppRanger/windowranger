@@ -133,8 +133,10 @@ action and never occurs as a side effect of a failed pull.
 The active/manual profile selection, automatic trigger mappings, runtime active-workspace state,
 monitor fingerprints, role-to-physical-monitor bindings, Accessibility state and live window
 session remain local. `WorkspaceStateStore` writes the current WindowServer-bound session beneath
-the user's cache directory using an atomic replacement. A changed WindowServer session invalidates
-exact window IDs rather than guessing.
+the user's cache directory using an atomic replacement. This includes an exact hidden Quick App
+identity only when WindowRanger hid that window's application. A changed WindowServer session
+invalidates exact window IDs and that ownership marker rather than guessing. Legacy minimized-window
+markers decode without granting application-unhide ownership.
 
 Portable profile transfer serializes only reusable profile definitions into a separately versioned
 JSON transport document. Import validates the complete document, remaps every internal identity,
@@ -170,13 +172,19 @@ The profile-aware Quick App is an engine-owned temporary presentation override. 
 one unambiguous admitted standard window for the configured bundle and targets the pointer/interaction
 display's usable bounds. Its optional Top, Bottom, Left, or Right movement uses generation-gated
 frame steps so a hide, profile switch, sleep, termination, or newer toggle supersedes delayed
-animation writes. Top expands from a collapsed frame at the usable top edge because macOS clamps
-ordinary app windows positioned above the menu bar; the other directions slide from beyond their
-screen edge. Once selected, the window is
+animation writes. Every direction expands from or collapses to a one-point frame inside the chosen
+usable edge. No animation path travels through off-screen coordinates, and the receiving
+application's Accessibility position transition is suppressed around direct frame writes. Once
+selected, the window is
 excluded from normal visibility, layout, focus-cycle, reset, manual-geometry reconciliation, and
-background-signature participation. The engine parks it while hidden, preserves its durable restore
-frame, restores it before configuration/profile changes and lifecycle cleanup, and ignores its own
-programmatic activation when deciding whether another app has taken focus. A successful AX snapshot
+background-signature participation. The engine uses AppKit Hide/Unhide for the configured
+application while retaining the exact window as the only geometry and session target. This avoids
+the Dock minimize/restore transition, but intentionally means every window belonging to that
+application follows its hidden state. Hide and Unhide are generation-gated and confirmed before the
+session changes state. The engine preserves the exact target's durable restore frame and unhides only
+application state it owns before configuration/profile changes and lifecycle cleanup. It also
+ignores its own programmatic activation when deciding whether another app has taken focus. A
+successful AX snapshot
 may replace an exact window identity during a native tab switch. The engine rebinds the session only
 when the old key disappeared and exactly one newly tracked, same-process, same-bundle eligible window
 remains. That replacement inherits the old local workspace, restore frame, display placement, and
@@ -184,8 +192,11 @@ layout metadata before background layout runs. Multiple, pre-existing, cross-pro
 replacements leave the exact-window safety boundary intact and clear the obsolete session.
 During startup reconciliation, the engine establishes this ownership before initial workspace
 visibility and layout. Exactly one eligible matching window is claimed: its observed pre-layout
-frame determines whether the session begins presented on that display or remains parked and hidden.
-An ambiguous set is left untouched by Quick App startup handling.
+frame determines whether the session begins presented on that display or is converted from a legacy
+off-screen state to application Hide. Crash-restart recovery may reclaim a hidden application only
+when the WindowServer-bound marker matches the exact process/window identity and bundle and AppKit
+still reports that application hidden. An ambiguous set is left untouched by Quick App startup
+handling.
 
 ## UI and focus safety
 
