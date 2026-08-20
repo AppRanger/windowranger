@@ -626,6 +626,33 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-062 — Publish WindowRanger 0.1.0 Beta 6
+
+- **Type:** Beta release
+- **Priority:** P1
+- **Status:** Release approved; preparation in progress
+- **Requested:** Publish the current reviewed `develop` checkpoint as `v0.1.0-beta.6`, then update
+  the public website. The maintainer explicitly approved publication on 20 August 2026.
+- **Source scope:** Reviewed `develop` commit `012e8dd2fad17073ce5c23dc9668fe21655009d0`
+  contains the accepted Quick App visibility, geometry, focus-border, and launch lifecycle; reliable
+  Settings resurfacing without trapping menu-bar input; and the searchable Command Palette with its
+  position-only Placement Halo and optional Globe/Fn Placement Wheel. Beta 5's public application
+  identity and packaging remain unchanged.
+- **Version allocation:** Beta version `0.1.0-beta.6`; monotonically increasing distribution build
+  number `7` follows Beta 5 build `6`.
+- **Process decision:** This repeat Beta may use the documented streamlined validation path. Its
+  changed product behavior has passed signed daily testing and maintainer acceptance, and it changes
+  no packaging, signing, entitlement, bundle identity, migration, updater, or minimum-system
+  boundary. Skip only the redundant packaged-app replacement install; retain the clean release
+  branch, stable-Xcode suite and analysis, universal Release build, Developer ID verification,
+  app/DMG notarization and stapling, Gatekeeper and DMG/ZIP checks, checksums, provenance, immutable
+  tag, five-asset download round-trip, release-note review, public-download verification, refreshed
+  website media/copy, and responsive live-site checks.
+- **Acceptance:** Merge reviewed release notes and queue scope, promote `develop` through
+  `release/0.1.0`, pass release-branch CI, publish an annotated protected tag and GitHub prerelease
+  with five verified assets, update the website through review, and record exact commit, build,
+  signing, notarization, checksum, release, deployment, and live-link evidence here.
+
 ### WR-052 — Move the application identity under AppRanger
 
 - **Status:** Implementation and automated verification complete; live validation pending.
