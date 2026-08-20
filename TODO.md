@@ -626,33 +626,6 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
-### WR-062 — Publish WindowRanger 0.1.0 Beta 6
-
-- **Type:** Beta release
-- **Priority:** P1
-- **Status:** Release approved; preparation in progress
-- **Requested:** Publish the current reviewed `develop` checkpoint as `v0.1.0-beta.6`, then update
-  the public website. The maintainer explicitly approved publication on 20 August 2026.
-- **Source scope:** Reviewed `develop` commit `012e8dd2fad17073ce5c23dc9668fe21655009d0`
-  contains the accepted Quick App visibility, geometry, focus-border, and launch lifecycle; reliable
-  Settings resurfacing without trapping menu-bar input; and the searchable Command Palette with its
-  position-only Placement Halo and optional Globe/Fn Placement Wheel. Beta 5's public application
-  identity and packaging remain unchanged.
-- **Version allocation:** Beta version `0.1.0-beta.6`; monotonically increasing distribution build
-  number `7` follows Beta 5 build `6`.
-- **Process decision:** This repeat Beta may use the documented streamlined validation path. Its
-  changed product behavior has passed signed daily testing and maintainer acceptance, and it changes
-  no packaging, signing, entitlement, bundle identity, migration, updater, or minimum-system
-  boundary. Skip only the redundant packaged-app replacement install; retain the clean release
-  branch, stable-Xcode suite and analysis, universal Release build, Developer ID verification,
-  app/DMG notarization and stapling, Gatekeeper and DMG/ZIP checks, checksums, provenance, immutable
-  tag, five-asset download round-trip, release-note review, public-download verification, refreshed
-  website media/copy, and responsive live-site checks.
-- **Acceptance:** Merge reviewed release notes and queue scope, promote `develop` through
-  `release/0.1.0`, pass release-branch CI, publish an annotated protected tag and GitHub prerelease
-  with five verified assets, update the website through review, and record exact commit, build,
-  signing, notarization, checksum, release, deployment, and live-link evidence here.
-
 ### WR-052 — Move the application identity under AppRanger
 
 - **Status:** Implementation and automated verification complete; live validation pending.
@@ -1200,6 +1173,42 @@ second copy of that checklist.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-062 — Publish WindowRanger 0.1.0 Beta 6
+
+- **Result:** Published
+  [`v0.1.0-beta.6`](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.6) as a
+  GitHub prerelease on 20 August 2026. The protected annotated tag points to release commit
+  `afd77ac5787d07b2bd1f2f82e169036987e2f3db`, whose tree matches reviewed `develop` commit
+  `9c7fc39969ea36adac706a67efbc9760fa2b7e26`. The
+  [release-branch CI run](https://github.com/AppRanger/windowranger/actions/runs/32419565061)
+  passed 610 tests, static analysis, the unsigned universal Release build, both Stable and Beta DMG
+  smoke layouts, and artifact upload.
+- **Streamlined Beta evidence:** The accepted Quick App visibility, geometry, focus-border, launch,
+  Settings resurfacing, Command Palette, Placement Halo, and Globe/Fn Placement Wheel behavior had
+  already passed signed daily testing and maintainer acceptance. These changes altered no packaging,
+  signing, entitlement, bundle identity, migration, updater, or minimum-system boundary, so the
+  approved repeat-Beta path skipped only the redundant packaged-app replacement install. All source,
+  toolchain, signing, notarization, packaging, provenance, public-asset, and website gates still ran.
+- **Distribution evidence:** Stable Xcode 26.6 produced universal Developer ID build `7` with bundle
+  identifier `dev.appranger.WindowRanger`, Team ID `44NAD22AK6`, and CDHash
+  `7d6cbac0a4cb7b531b50caedc138d37da15ed87a`. App notarization
+  `f10e472d-ec1e-423e-8b1e-cd643b0d7f5f` and DMG notarization
+  `cdd92e28-18b6-4f07-a527-c494a4123c76` were accepted with zero logged issues. Both staples,
+  Gatekeeper assessments, strict signatures, DMG verification, and packaged-app equality passed.
+  The public DMG, ZIP, two checksum files, and provenance manifest were downloaded and round-trip
+  verified before and after publication; the DMG SHA-256 is
+  `5ef7030a010d0b14f6b06c4166ebd0cdbd860f660f08f34b1deb0378ea58c5c4` and the ZIP SHA-256 is
+  `58be664a5e88ef743daa4e0f20303f460b73686805fb57ea6f02ffd810954aa1`.
+- **Website evidence:** [Website PR #6](https://github.com/AppRanger/windowranger-site/pull/6)
+  merged as `8f713b0680436b386df1686537aec59360c03c7f` and deployed as Cloudflare version
+  `dc96c0c5-9a51-4ea2-9524-ba8ef758123c`; documentation-only
+  [PR #7](https://github.com/AppRanger/windowranger-site/pull/7) recorded that deployment as
+  `7265dfac946fcbddf6aaa6c8858c343de9a7bfe6`. Both `windowranger.com` and
+  `www.windowranger.com` show Download Beta 6 and link to the published release. The old Command
+  Wheel visual and copy were replaced by a released-source Command Palette with Placement Halo
+  render. Desktop and mobile browser checks found no horizontal overflow and zero console errors or
+  warnings; the public 1496-by-1128 tour asset loaded successfully.
 
 ### WR-058 — Publish WindowRanger 0.1.0 Beta 5
 
