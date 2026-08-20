@@ -208,7 +208,7 @@ is either a Quick App or has normal App Rules within one profile, never both. Ex
 open-window IDs, workspace membership, frames, and focus remain local session state and are not
 copied into a profile.
 
-The profile Quick App is a Quake-style single-window overlay for an already running app. Its
+The profile Quick App is a Quake-style single-window overlay for a configured app. Its
 configurable shortcut defaults to Control-Option-Backtick. The one unambiguous standard window for
 that app optionally expands from a chosen screen edge, defaulting to a roll-down from the top at
 full usable width and 80 percent height. Left and right presentations use the same percentage as
@@ -232,9 +232,13 @@ hidden. The hidden ownership marker is local to the current WindowServer session
 rather than applied to a different window identity. Legacy minimized-window markers do not grant
 permission to unhide an application. Multiple matching windows remain
 ordinary managed windows rather than being guessed between.
+If the configured app has no available window, pressing the Quick App shortcut opens and activates
+it so apps that create a window only when foregrounded receive their normal reopen request.
+WindowRanger waits briefly for one eligible window, then claims and presents that window before
+ordinary layout can move it. A missing installation, launch failure, timeout, or
+multiple eligible windows produces clear feedback instead of guessing or retrying indefinitely.
 Profiles can choose different apps and heights, while the shortcut remains a global preference.
-WindowRanger reports a clear no-op when the app has no available window or multiple ambiguous
-windows rather than launching or guessing.
+WindowRanger still reports a clear no-op for multiple ambiguous windows rather than guessing.
 
 Profile definitions are stored as one versioned value and sync atomically through iCloud when sync is
 enabled. New installations start local-only until **Sync settings with iCloud** is explicitly enabled.

@@ -195,6 +195,14 @@ four-point screen-edge clearance before applying the configured size fraction. S
 native-tab replacement, hide-failure restoration, and ordinary presentation all use those same
 bounds. Toggling the border while Quick App is presented supersedes any animation and reapplies the
 final frame without changing focus or session ownership.
+When a shortcut finds no eligible configured-app window, the engine asks Launch Services to open
+and activate that application so its normal reopen handling can create a window, then starts one
+generation-bound watchdog. Window discovery during that watchdog performs no Accessibility writes,
+so the first unambiguous eligible
+window can become the exact Quick App session before ordinary workspace layout moves it. The
+watchdog checks eight times after a short launch delay, then fails with explicit feedback; a profile
+change, shutdown, newer launch generation, missing installation, launch error, timeout, or multiple
+eligible windows never grants permission to guess a target.
 During startup reconciliation, the engine establishes this ownership before initial workspace
 visibility and layout. Exactly one eligible matching window is claimed: its observed pre-layout
 frame determines whether the session begins presented on that display or is converted from a legacy

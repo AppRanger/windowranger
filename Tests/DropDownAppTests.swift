@@ -692,6 +692,45 @@ final class DropDownAppTests: XCTestCase {
         ))
     }
 
+    func testLaunchWindowWatchdogResolvesRetriesAndStopsAtItsBound() {
+        XCTAssertTrue(
+            DropDownAppLaunchWatchdogPolicy.activatesApplication,
+            "A normal activation is required to make windowless apps handle reopen and create a window."
+        )
+        XCTAssertEqual(
+            DropDownAppLaunchWatchdogPolicy.disposition(
+                availableWindowCount: 1,
+                remainingAttempts: 8
+            ),
+            .resolveToggle
+        )
+        XCTAssertEqual(
+            DropDownAppLaunchWatchdogPolicy.disposition(
+                availableWindowCount: 2,
+                remainingAttempts: 8
+            ),
+            .resolveToggle,
+            "The ordinary toggle path must report ambiguity rather than letting the watchdog guess."
+        )
+        XCTAssertEqual(
+            DropDownAppLaunchWatchdogPolicy.disposition(
+                availableWindowCount: 0,
+                remainingAttempts: 8
+            ),
+            .retry(remainingAttempts: 7)
+        )
+        XCTAssertEqual(
+            DropDownAppLaunchWatchdogPolicy.disposition(
+                availableWindowCount: 0,
+                remainingAttempts: 1
+            ),
+            .exhausted
+        )
+        XCTAssertEqual(DropDownAppLaunchWatchdogPolicy.maximumAttempts, 8)
+        XCTAssertEqual(DropDownAppLaunchWatchdogPolicy.initialDelay, 0.2)
+        XCTAssertEqual(DropDownAppLaunchWatchdogPolicy.retryDelay, 0.15)
+    }
+
     func testWorkspaceStateRoundTripsTheWindowServerBoundHiddenQuickAppOwnership() throws {
         let workspaceID = UUID()
         let persisted = PersistedWorkspaceState(

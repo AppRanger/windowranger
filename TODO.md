@@ -130,7 +130,8 @@ smallest useful outcome and acceptance boundary.
   in each reusable profile; store the shortcut in the existing global shortcut system. Resolve one
   unambiguous eligible standard window for the configured app, activate and place it on the current
   interaction display, and restore its prior frame/visibility state when toggled or when genuine
-  user focus moves elsewhere. Do not launch an absent app, choose among multiple ambiguous windows,
+  user focus moves elsewhere. If no usable window exists, open the configured application and wait
+  a short bounded interval for one eligible window. Do not choose among multiple ambiguous windows,
   change native macOS Spaces, or broaden normal window admission.
 - **Safety boundaries:** The Quick App window remains outside ordinary workspace layout,
   inactive-workspace parking, focus cycling, reset, and persistence while presented. Profile changes,
@@ -221,13 +222,25 @@ smallest useful outcome and acceptance boundary.
   animation, startup, wake recovery, native-tab replacement, and hide-failure restoration; changing
   the border setting while Quick App is visible immediately reapplies its final frame without
   changing focus or session ownership.
+- **Approved launch-on-shortcut follow-up:** On 2026-08-20, the maintainer changed the original
+  no-launch boundary: pressing the shortcut with no usable configured-app window must launch the app
+  and then present its first unambiguous eligible window. Launch Services is now asked to open and
+  activate the app so applications whose normal reopen handling is foreground-dependent create a
+  window. A generation-bound watchdog performs read-only discovery after
+  200 ms and retries at most eight times at 150 ms intervals, allowing the exact window to be claimed
+  before ordinary layout writes. Missing installations, launch errors, timeouts, profile changes,
+  sleep, shutdown, and multiple eligible windows fail safely with explicit feedback.
 - **Automated verification:** Focused DropDownAppTests cover same-bundle presentation edits,
   in-display collapse geometry for every edge, exact hidden-session recovery boundaries, and
   backward-compatible persistence, including bounded application Hide/Unhide confirmation and
   fail-closed handling of legacy minimized-window ownership. Border-aware presentation coverage
   proves that the four-point clearance applies only while the focus border is enabled and that the
   configured size fraction is calculated inside those safe bounds.
-  All 26 focused tests, test isolation, and all 593 non-hosted tests pass; this safe
+  Launch-watchdog policy coverage proves successful discovery and ambiguity return to the ordinary
+  exact-window toggle path, missing windows retry with a decreasing budget, and the final attempt
+  stops rather than polling forever. The launch contract also proves normal activation remains
+  enabled so a windowless application receives its reopen behavior.
+  All 27 focused tests, test isolation, and all 594 non-hosted tests pass; this safe
   verification did not build, launch, sign, install, stop, or automate WindowRanger.app.
 - **Live validation:** The signed daily build was installed with explicit approval and Ghostty native
   tab replacement, focus-loss hide, and subsequent toggles were confirmed working. In signed
@@ -255,6 +268,22 @@ smallest useful outcome and acceptance boundary.
   geometry write. The same session records the expected inset Top frame at `4,34;3832x1266`,
   matching requested frames through repeated one-press hide/show pairs, and the user confirmed the
   result looks great. A live enable/disable resize was not separately observed.
+  With explicit approval, the launch-on-shortcut follow-up is now installed in signed universal
+  Debug build `73dcb53aa9ba-dirty` (CDHash
+  `3ca219b97fe4ec11c89f25ae912312c2c1f0eb53`) and running from
+  `/Applications/WindowRanger.app`. Its embedded revision, Apple Development signature, Team ID
+  `44NAD22AK6`, bundle identity, two architectures, and running executable path were verified.
+  Fresh startup session `493B3485-260E-4644-A52D-227F2D42F6F2` confirms the two-display topology,
+  live Accessibility discovery, and a clean engine start. Launching and presenting Ghostty from a
+  fully quit state then exposed the non-activating launch gap: correlations `action-e28a3612` and
+  `action-fe25bdd8` each show Launch Services accepting the request and the watchdog exhausting with
+  no eligible window, while the Ghostty process started at the first request. The launch request now
+  permits normal activation so Ghostty receives the reopen behavior that creates its first window;
+  the replacement signed universal Debug build remains `73dcb53aa9ba-dirty`, now with CDHash
+  `0e101cfc47629c4bcbea036923d42f4fdac265a9`. Its signature, Team ID, bundle identity, two
+  architectures, embedded revision, and running Applications path were verified. Fresh startup
+  session `7005F9C3-9032-483F-9147-D67488B6925E` confirms a clean two-display engine start; the
+  repeat fully-quit shortcut test remains required.
   Broader feature completion still requires exercising a
   real assigned app across at least two profiles. Hidden startup and ambiguous multiple-window
   startup remain automated, fail-closed coverage rather than separate live observations.

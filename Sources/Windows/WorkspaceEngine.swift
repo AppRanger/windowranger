@@ -611,6 +611,28 @@ enum DropDownAppVisibilityRequestPolicy {
     }
 }
 
+enum DropDownAppLaunchWatchdogDisposition: Equatable {
+    case resolveToggle
+    case retry(remainingAttempts: Int)
+    case exhausted
+}
+
+enum DropDownAppLaunchWatchdogPolicy {
+    static let activatesApplication = true
+    static let initialDelay: TimeInterval = 0.2
+    static let retryDelay: TimeInterval = 0.15
+    static let maximumAttempts = 8
+
+    static func disposition(
+        availableWindowCount: Int,
+        remainingAttempts: Int
+    ) -> DropDownAppLaunchWatchdogDisposition {
+        if availableWindowCount > 0 { return .resolveToggle }
+        guard remainingAttempts > 1 else { return .exhausted }
+        return .retry(remainingAttempts: remainingAttempts - 1)
+    }
+}
+
 enum WindowLayoutOverride: String, Codable, Equatable, Sendable {
     case automatic
     case floating
@@ -1227,6 +1249,12 @@ final class WorkspaceEngine {
         var previousFocusKey: WindowKey?
     }
 
+    private struct PendingDropDownAppLaunch {
+        let bundleIdentifier: String
+        let displayName: String
+        let generation: UInt64
+    }
+
     private enum ManualTiledMoveReconciliation: Equatable {
         case none
         case dragInProgress
@@ -1250,6 +1278,8 @@ final class WorkspaceEngine {
     private var dropDownAppConfiguration: DropDownAppConfiguration?
     private var dropDownAppSession: DropDownAppSession?
     private var dropDownAnimationGeneration: UInt64 = 0
+    private var dropDownLaunchGeneration: UInt64 = 0
+    private var pendingDropDownAppLaunch: PendingDropDownAppLaunch?
     private var focusFollowsMovedWindow: Bool
     private var automaticallyUnhideApplications: Bool
     private var focusedWindowHighlightEnabled: Bool
@@ -1454,6 +1484,7 @@ final class WorkspaceEngine {
             wakeReconciliationWorkItem = nil
             directionalMoveGestureContext = nil
             manualTiledDragSession = nil
+            cancelPendingDropDownAppLaunch()
             invalidateFocusWorkForLifecycle()
             persistState(preservingPendingRestores: true, waitForCompletion: true)
             diagnostics.log(
@@ -1620,6 +1651,7 @@ final class WorkspaceEngine {
             directionalMoveGestureContext = nil
             manualTiledDragSession = nil
             dropDownAnimationGeneration &+= 1
+            cancelPendingDropDownAppLaunch()
             restoreAndClearDropDownAppSession(reason: "application-stop")
             // Preserve workspace membership and original frames before the safety escape hatch
             // places every managed window on the main display.
@@ -1633,6 +1665,7 @@ final class WorkspaceEngine {
             guard let self else { return }
             let normalized = configuration?.normalized()
             guard normalized != self.dropDownAppConfiguration else { return }
+            self.cancelPendingDropDownAppLaunch()
             let previous = self.dropDownAppConfiguration
             if DropDownAppConfigurationUpdatePolicy.shouldPreserveSession(
                 previous: previous,
@@ -1682,60 +1715,266 @@ final class WorkspaceEngine {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self else { return }
-            guard let configuration = self.dropDownAppConfiguration else {
+            if let pending = self.pendingDropDownAppLaunch,
+               pending.bundleIdentifier.caseInsensitiveCompare(
+                   self.dropDownAppConfiguration?.bundleIdentifier ?? ""
+               ) == .orderedSame {
                 self.emitCommandFeedback(
-                    "Choose a Quick App in Applications first.",
+                    "Launching \(pending.displayName).",
                     correlationID: correlationID
                 )
                 return
             }
-            self.refreshWindows(correlationID: correlationID)
-            if self.dropDownAppSession?.isPresented == true {
-                self.hideDropDownApp(
-                    restorePreviousFocus: true,
-                    reason: "shortcut-toggle",
-                    correlationID: correlationID
-                )
-                return
-            }
-
-            let matching = self.windows.values.filter {
-                $0.bundleIdentifier?.caseInsensitiveCompare(configuration.bundleIdentifier) == .orderedSame &&
-                    !self.temporarilyDeferredWindowKeys.contains($0.key) &&
-                    self.fullscreenSessions[$0.key] == nil
-            }
-            let target: TrackedWindow
-            if let session = self.dropDownAppSession,
-               let existing = self.windows[session.windowKey],
-               session.isApplicationHiddenByWindowRanger ||
-                matching.contains(where: { $0.key == existing.key }) {
-                target = existing
-            } else {
-                guard matching.count == 1, let only = matching.first else {
-                    let message = matching.isEmpty
-                        ? "(configuration.displayName) is not running with an available window."
-                        : "(configuration.displayName) has more than one available window. Close the extras before using it as the Quick App."
-                    self.emitCommandFeedback(message, correlationID: correlationID)
-                    return
-                }
-                target = only
-                self.dropDownAppSession = DropDownAppSession(
-                    windowKey: only.key,
-                    bundleIdentifier: configuration.bundleIdentifier,
-                    direction: configuration.direction,
-                    isAnimationEnabled: configuration.isAnimationEnabled,
-                    isPresented: false,
-                    isApplicationHiddenByWindowRanger: false,
-                    displayIdentifier: nil,
-                    previousFocusKey: nil
-                )
-            }
-            self.showDropDownApp(
-                target,
-                configuration: configuration,
-                correlationID: correlationID
+            self.toggleDropDownAppInternal(
+                correlationID: correlationID,
+                allowsLaunchAttempt: true,
+                refreshBeforeResolving: true
             )
         }
+    }
+
+    private func toggleDropDownAppInternal(
+        correlationID: String,
+        allowsLaunchAttempt: Bool,
+        refreshBeforeResolving: Bool
+    ) {
+        guard let configuration = dropDownAppConfiguration else {
+            emitCommandFeedback(
+                "Choose a Quick App in Applications first.",
+                correlationID: correlationID
+            )
+            return
+        }
+        if refreshBeforeResolving {
+            refreshWindows(correlationID: correlationID)
+        }
+        if dropDownAppSession?.isPresented == true {
+            hideDropDownApp(
+                restorePreviousFocus: true,
+                reason: "shortcut-toggle",
+                correlationID: correlationID
+            )
+            return
+        }
+
+        let matching = availableDropDownAppWindows(for: configuration)
+        let target: TrackedWindow
+        if let session = dropDownAppSession,
+           let existing = windows[session.windowKey],
+           session.isApplicationHiddenByWindowRanger ||
+            matching.contains(where: { $0.key == existing.key }) {
+            target = existing
+        } else {
+            if matching.isEmpty {
+                if allowsLaunchAttempt {
+                    launchQuickAppIfNeededForToggle(
+                        configuration: configuration,
+                        correlationID: correlationID
+                    )
+                } else {
+                    emitCommandFeedback(
+                        "Could not find a usable \(configuration.displayName) window yet.",
+                        correlationID: correlationID
+                    )
+                }
+                return
+            }
+            guard matching.count == 1, let only = matching.first else {
+                emitCommandFeedback(
+                    "\(configuration.displayName) has more than one available window. Close the extras before using it as the Quick App.",
+                    correlationID: correlationID
+                )
+                return
+            }
+            target = only
+            dropDownAppSession = DropDownAppSession(
+                windowKey: only.key,
+                bundleIdentifier: configuration.bundleIdentifier,
+                direction: configuration.direction,
+                isAnimationEnabled: configuration.isAnimationEnabled,
+                isPresented: false,
+                isApplicationHiddenByWindowRanger: false,
+                displayIdentifier: nil,
+                previousFocusKey: nil
+            )
+        }
+        showDropDownApp(
+            target,
+            configuration: configuration,
+            correlationID: correlationID
+        )
+    }
+
+    private func availableDropDownAppWindows(
+        for configuration: DropDownAppConfiguration
+    ) -> [TrackedWindow] {
+        windows.values.filter {
+            $0.bundleIdentifier?.caseInsensitiveCompare(configuration.bundleIdentifier) == .orderedSame &&
+                !temporarilyDeferredWindowKeys.contains($0.key) &&
+                fullscreenSessions[$0.key] == nil
+        }
+    }
+
+    private func launchQuickAppIfNeededForToggle(
+        configuration: DropDownAppConfiguration,
+        correlationID: String
+    ) {
+        guard let applicationURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: configuration.bundleIdentifier
+        ) else {
+            emitCommandFeedback(
+                "\(configuration.displayName) is not installed and cannot be launched.",
+                correlationID: correlationID
+            )
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "launch-missing-application",
+                correlation: correlationID,
+                fields: ["bundle": configuration.bundleIdentifier]
+            )
+            return
+        }
+
+        dropDownLaunchGeneration &+= 1
+        let generation = dropDownLaunchGeneration
+        pendingDropDownAppLaunch = PendingDropDownAppLaunch(
+            bundleIdentifier: configuration.bundleIdentifier,
+            displayName: configuration.displayName,
+            generation: generation
+        )
+        emitCommandFeedback(
+            "Launching \(configuration.displayName).",
+            correlationID: correlationID
+        )
+        diagnostics.log(
+            category: "drop-down-app",
+            event: "launch-requested",
+            correlation: correlationID,
+            fields: [
+                "bundle": configuration.bundleIdentifier,
+                "activates-application": String(DropDownAppLaunchWatchdogPolicy.activatesApplication),
+            ]
+        )
+
+        let launchConfiguration = NSWorkspace.OpenConfiguration()
+        launchConfiguration.activates = DropDownAppLaunchWatchdogPolicy.activatesApplication
+        NSWorkspace.shared.openApplication(
+            at: applicationURL,
+            configuration: launchConfiguration
+        ) { [weak self] _, error in
+            self?.queue.async { [weak self] in
+                guard let self else { return }
+                guard self.pendingDropDownAppLaunch?.generation == generation else { return }
+                if let error {
+                    self.pendingDropDownAppLaunch = nil
+                    let safeError = error as NSError
+                    self.diagnostics.log(
+                        category: "drop-down-app",
+                        event: "launch-failed",
+                        correlation: correlationID,
+                        fields: [
+                            "bundle": configuration.bundleIdentifier,
+                            "error-domain": safeError.domain,
+                            "error-code": String(safeError.code),
+                        ]
+                    )
+                    self.emitCommandFeedback(
+                        "Could not launch \(configuration.displayName).",
+                        correlationID: correlationID
+                    )
+                    return
+                }
+
+                self.diagnostics.log(
+                    category: "drop-down-app",
+                    event: "launch-request-accepted",
+                    correlation: correlationID,
+                    fields: ["bundle": configuration.bundleIdentifier]
+                )
+                self.queue.asyncAfter(
+                    deadline: .now() + DropDownAppLaunchWatchdogPolicy.initialDelay
+                ) { [weak self] in
+                    self?.awaitLaunchedQuickAppWindow(
+                        configuration: configuration,
+                        correlationID: correlationID,
+                        generation: generation,
+                        remainingAttempts: DropDownAppLaunchWatchdogPolicy.maximumAttempts
+                    )
+                }
+            }
+        }
+    }
+
+    private func awaitLaunchedQuickAppWindow(
+        configuration: DropDownAppConfiguration,
+        correlationID: String,
+        generation: UInt64,
+        remainingAttempts: Int
+    ) {
+        guard pendingDropDownAppLaunch?.generation == generation,
+              dropDownAppConfiguration?.bundleIdentifier.caseInsensitiveCompare(
+                  configuration.bundleIdentifier
+              ) == .orderedSame
+        else { return }
+
+        refreshWindows(
+            correlationID: correlationID,
+            performAXWrites: false,
+            observeFocus: false
+        )
+        let matching = availableDropDownAppWindows(for: configuration)
+        switch DropDownAppLaunchWatchdogPolicy.disposition(
+            availableWindowCount: matching.count,
+            remainingAttempts: remainingAttempts
+        ) {
+        case .resolveToggle:
+            pendingDropDownAppLaunch = nil
+            toggleDropDownAppInternal(
+                correlationID: correlationID,
+                allowsLaunchAttempt: false,
+                refreshBeforeResolving: false
+            )
+        case let .retry(nextRemainingAttempts):
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "launch-window-watchdog-retry",
+                correlation: correlationID,
+                fields: [
+                    "bundle": configuration.bundleIdentifier,
+                    "remaining-attempts": String(nextRemainingAttempts),
+                ]
+            )
+            queue.asyncAfter(
+                deadline: .now() + DropDownAppLaunchWatchdogPolicy.retryDelay
+            ) { [weak self] in
+                self?.awaitLaunchedQuickAppWindow(
+                    configuration: configuration,
+                    correlationID: correlationID,
+                    generation: generation,
+                    remainingAttempts: nextRemainingAttempts
+                )
+            }
+        case .exhausted:
+            pendingDropDownAppLaunch = nil
+            emitCommandFeedback(
+                "Could not find a usable \(configuration.displayName) window yet.",
+                correlationID: correlationID
+            )
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "launch-window-watchdog-exhausted",
+                correlation: correlationID,
+                fields: [
+                    "bundle": configuration.bundleIdentifier,
+                    "remaining-attempts": "0",
+                ]
+            )
+        }
+    }
+
+    private func cancelPendingDropDownAppLaunch() {
+        dropDownLaunchGeneration &+= 1
+        pendingDropDownAppLaunch = nil
     }
 
     func updateWorkspaces(_ definitions: [WorkspaceDefinition]) {
