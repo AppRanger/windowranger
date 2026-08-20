@@ -75,6 +75,42 @@ final class RadialMenuVisualSnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testOffscreenCommandPalettePlacementHalo() throws {
+        let context = representativeContexts().freeform
+        XCTAssertEqual(CommandPaletteIndex.spatialPlacementActions(in: context).count, 8)
+        guard let outputPath = ProcessInfo.processInfo.environment[
+            "WINDOWRANGER_RADIAL_SNAPSHOT_DIR"
+        ], !outputPath.isEmpty else {
+            return
+        }
+        let outputDirectory = URL(fileURLWithPath: outputPath, isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        let size = CommandPaletteController.expandedPanelSize
+        let view = ZStack {
+            Color(nsColor: .windowBackgroundColor)
+            CommandPaletteView(
+                context: context,
+                hotKeyConfiguration: HotKeyConfiguration(),
+                initiallyShowsPlacementHalo: true,
+                initialPlacementHaloSelection: .right,
+                initiallyKeyboardFocusesPlacementHalo: true,
+                focusesSearchOnAppear: false,
+                choose: { _ in },
+                placementHaloPresentationChanged: { _ in },
+                dismiss: {}
+            )
+        }
+        .frame(width: size.width, height: size.height)
+        .environment(\.colorScheme, .light)
+        let data = try renderHostedRetinaPNG(view, size: size)
+        try data.write(
+            to: outputDirectory.appendingPathComponent("windowranger-command-palette-placement-halo.png"),
+            options: .atomic
+        )
+        XCTAssertGreaterThan(data.count, 10_000)
+    }
+
+    @MainActor
     private func presentation(
         context: RadialCommandContext,
         selected itemID: RadialTopLevelItemID,
@@ -241,6 +277,33 @@ final class RadialMenuVisualSnapshotTests: XCTestCase {
         renderer.scale = 2
         guard let image = renderer.cgImage else { throw SnapshotError.couldNotAllocateBitmap }
         let bitmap = NSBitmapImageRep(cgImage: image)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else {
+            throw SnapshotError.couldNotEncodePNG
+        }
+        return data
+    }
+
+    @MainActor
+    private func renderHostedRetinaPNG<V: View>(_ view: V, size: CGSize) throws -> Data {
+        let hostingView = NSHostingView(rootView: view)
+        hostingView.frame = CGRect(origin: .zero, size: size)
+        hostingView.layoutSubtreeIfNeeded()
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(size.width * 2),
+            pixelsHigh: Int(size.height * 2),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            throw SnapshotError.couldNotAllocateBitmap
+        }
+        bitmap.size = size
+        hostingView.cacheDisplay(in: hostingView.bounds, to: bitmap)
         guard let data = bitmap.representation(using: .png, properties: [:]) else {
             throw SnapshotError.couldNotEncodePNG
         }

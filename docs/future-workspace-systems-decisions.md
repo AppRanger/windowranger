@@ -9,6 +9,11 @@ current product boundaries: profiles are reusable configuration rather than wind
 Unified and Independent Displays remain the only built display modes; and layouts remain Freeform,
 Tiled, and Accordion.
 
+The related [Omarchy-inspired research](omarchy-inspired-ideas.md) is reconciled through the same
+canonical queue rather than forming a second roadmap. Temporary window groups plus reversible desk
+restore map to the named-arrangements decision; workspace personalities map to the existing layout
+and preset decision. Searchable commands and the Quick App Shelf have their own queue entries.
+
 ## Shared platform evidence
 
 - AppKit exposes the current `NSScreen.screens` topology and posts a screen-parameters notification
@@ -51,7 +56,7 @@ to copy. ([BetterStage monitor management](https://betterstage.app/docs/monitor-
 
 Settings would need a topology/role editor that makes participation explicit before enabling the
 mode. Menu-bar Compact/Medium/Full presentations must show which displays are pinned without making
-informational chips switch workspaces. Workspace switch/move, profile transitions, command-wheel
+informational chips switch workspaces. Workspace switch/move, profile transitions, Command Palette
 destinations, and Settings routing need a single definition of the staged interaction scope.
 
 ### Failure and recovery
@@ -86,6 +91,8 @@ An arrangement would capture a recoverable **desired desk state** for the apps/w
 whereas a profile defines how WindowRanger behaves over time. Examples are “Writing session”,
 “Customer call”, or “Presentation”. Applying one could place eligible current windows into chosen
 workspaces/displays/layout slots. It must not turn transient AX/WindowServer IDs into durable data.
+An Omarchy-inspired temporary window group is the session-only first stage of this same identity
+model, not a separate persistence system. A reusable group recipe is an arrangement.
 
 ### Model and persistence implications
 
@@ -104,7 +111,7 @@ and deletion/migration rules are explicit.
 Creation needs a preview of what reusable information will be saved. Apply should show a diff-like
 summary, offer merge versus replace only if both semantics are deliberately specified, validate all
 targets first, then run one generation-tokened transition with a bounded rollback/Undo record. The
-command wheel could list arrangements later, but not before Settings makes scope and consequences
+Command Palette could list arrangements later, but not before Settings makes scope and consequences
 clear.
 
 ### Failure and recovery
@@ -211,6 +218,10 @@ participant rules, and a deterministic policy for too few/many windows. It canno
 identities. It remains undecided whether presets are global, profile-owned, or copied into a
 workspace on selection. Migrating an existing flat Tiled workspace must preserve its current visual
 arrangement until a preset or direct action is deliberately applied.
+
+Omarchy-inspired “workspace personalities” must also resolve through this existing layout model.
+Grid and Columns are candidate Tiled presets; Focus, Presentation, and Transient require separately
+defined behavior and lifecycle policy, not a parallel workspace-mode enum.
 
 Current direct manipulation changes the WindowServer-session layout tree/order/weights. Durable
 cross-session tree persistence would require stable semantic slots rather than window IDs and

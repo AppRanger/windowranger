@@ -84,7 +84,7 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
         case .resizeSmaller: "Smart resize smaller"
         case .resizeLarger: "Smart resize larger"
         case .moveWorkspaceToNextDisplay: "Move workspace to next display"
-        case .commandWheel: "Contextual command wheel"
+        case .commandWheel: "Command palette"
         }
     }
 

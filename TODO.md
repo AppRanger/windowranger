@@ -96,6 +96,75 @@ smallest useful outcome and acceptance boundary.
   shortcut responsiveness, then accepted the installed retained-window candidate after checking
   that an already-open Settings window returns to the front.
 
+### WR-060 — Searchable command surface
+
+- **Type:** Feature
+- **Priority:** P2
+- **Status:** Done
+- **Source:** `docs/omarchy-inspired-ideas.md`
+- **Requested outcome:** Replace the broad Command Wheel with a standard keyboard-first Command
+  Palette on its existing configurable global shortcut. Keep an icon-only control beside search
+  that expands Loop-style window positions around itself without closing the palette, and retain
+  the optional Globe/Fn hold as a direct path to those same position choices.
+- **Acceptance:** The palette shows only valid current window, workspace, layout, profile, and
+  application commands; searches titles and useful synonyms; displays known shortcuts; supports
+  arrow selection, Return, Escape, mouse selection, and shortcut-toggle dismissal; and never loses
+  or retargets the external window merely because its search field became key. A command restores
+  the prior application and revalidates the captured session before dispatch. The Placement Halo
+  and Globe/Fn wheel expose only truthful Freeform or Tiled positions in stable compass order;
+  the halo control is omitted when none exist. With an empty query, Right Arrow enters the halo,
+  arrows traverse its available positions, Return commits, and Escape restores palette search.
+  Layout, Accordion resize, and all other actions remain searchable. Existing shortcut
+  persistence and legacy wheel preferences remain migration-safe. Focused tests, the complete
+  non-hosted suite, an unsigned app build, and signed live use with real windows are required.
+- **Implemented:** Added a searchable key panel backed by the established contextual catalogue,
+  configurable shortcut registry, and shared typed dispatcher. The existing Control-Option-Space
+  default now toggles the palette. It captures the external focus/workspace/display/profile token
+  before activation, restores the previous application before selection, and rejects stale actions.
+  The old renderer is retained as a one-level, position-only Placement Wheel for optional Globe/Fn
+  hold. The search-field control is now an icon-only Placement Halo anchored around that control;
+  opening or collapsing it keeps the key palette and its query alive. Settings describes this
+  hybrid and no longer exposes the obsolete broad-wheel activation style or catalogue editor;
+  legacy values remain decodable.
+- **Automated evidence:** Test isolation, six focused Command Palette tests, the owned-focus-anchor
+  regression, the production Placement Halo offscreen render, and all 610 non-hosted tests pass.
+  Coverage includes contextual/global command composition, stable grouped search order,
+  unavailable-target filtering, shortcuts, profiles, layouts, position-only stable compass order,
+  and direct Globe/Fn wheel resolution. The final unsigned Debug app build also succeeds. Visual QA
+  against the selected option 1 reference has no unresolved P0/P1/P2 mismatch.
+- **Installed evidence:** With explicit maintainer approval, signed universal Debug candidate
+  `9ae89932e6bb-dirty`, including the selected inline position-only Placement Halo, is installed and
+  running from `/Applications/WindowRanger.app` as process `58323`.
+  Its strict code signature, Apple Development authority, Team ID `44NAD22AK6`, bundle
+  identifier, embedded revision, `arm64` and `x86_64` architectures, running executable path, and
+  CDHash `ed85175e9b39c1273981f6c1c830a282f37d151f` were verified. Fresh diagnostic session
+  `CE3837A6-FAEB-42C5-A5AC-5447AD645237` started normally. The previous daily build remains at the
+  repository-defined non-launchable rollback path.
+- **Live defect found:** The first installed palette correctly captured managed window
+  `22127:19779`, but its own key-panel activation was then consumed as an external focus change.
+  Diagnostics showed the palette open with `focused-managed-window`, WindowRanger window
+  `69767:20689` replace the interaction anchor 49 milliseconds later, and the palette dismiss as
+  `context-changed`; subsequent opens consequently had no focused window and the Spatial Wheel had
+  no relevant actions. Preserve the external managed anchor while any WindowRanger-owned or ignored
+  utility surface has focus. A focused policy regression test covers owned, ignored, external, and
+  absent focus observations.
+- **Second live defect found:** The owned-focus correction kept the palette stable, but the active
+  tiled workspace had one layout participant. Tiled placement therefore truthfully produced no
+  previews, leaving the icon-only wheel button disabled with no diagnostic event. A labelled button
+  and always-valid Layout Type fallback made the control discoverable but felt unnatural in live
+  use. The selected correction is an icon-only, inline Placement Halo with no layout or resize
+  fallback; when a window has no truthful position, those commands remain available through search.
+- **Third live defect found:** The first installed halo made AppKit calculate its normal window
+  shadow around the enlarged transparent panel, producing a strange black outline. The unavailable
+  control also remained visible but disabled, and the halo had no palette-keyboard path. The current
+  candidate disables the panel shadow only while expanded, omits the control when no placements
+  exist, and adds Right Arrow entry, circular arrow navigation, Return commit, and Escape back to
+  search.
+- **Live evidence:** On 20 August 2026, the maintainer accepted the signed installed palette and
+  inline Placement Halo after the external-focus correction, icon-only redesign, conditional
+  availability, shadow correction, and full keyboard navigation were installed together. The
+  accepted flow keeps the palette open while the halo expands and returns Escape focus to search.
+
 ## Inbox
 
 ### WR-057 — Preserve each window through partial post-login recovery
@@ -963,7 +1032,8 @@ smallest useful outcome and acceptance boundary.
 ## Needs product decision — research only
 
 Nothing in this section is approved for implementation. Resolve the listed product boundary before
-adding engineering tasks.
+adding engineering tasks. `TODO.md` remains the feature index: detailed research may live in linked
+design notes, but every active candidate must map back to a work item here or be labelled deferred.
 
 ### WR-007 — Pinned-display mode
 
@@ -977,9 +1047,12 @@ adding engineering tasks.
 
 - **Type:** Feature research
 - **Status:** Needs decision
-- **Source:** `docs/future-workspace-systems-decisions.md`
+- **Sources:** `docs/future-workspace-systems-decisions.md` and
+  `docs/omarchy-inspired-ideas.md`
 - **Decision:** Launch behavior, same-app window matching, ownership/sync, captured data, unmatched
-  windows, and merge versus replace semantics.
+  windows, and merge versus replace semantics. Treat temporary window groups as the first
+  session-only stage of this model; restoration preview, unmatched-window reporting, and bounded
+  Undo are safety requirements rather than separate feature systems.
 
 ### WR-009 — Optional workspace/stage overview
 
@@ -993,9 +1066,27 @@ adding engineering tasks.
 
 - **Type:** Feature research
 - **Status:** Needs decision
-- **Source:** `docs/future-workspace-systems-decisions.md`
+- **Sources:** `docs/future-workspace-systems-decisions.md` and
+  `docs/omarchy-inspired-ideas.md`
 - **Decision:** Global/profile/workspace ownership, initial presets and participant policy,
   Tiled-only versus Freeform, and what topology can persist without guessing window identity.
+  Resolve Omarchy-inspired workspace personalities through the existing per-workspace layout model:
+  Grid/Columns are candidate Tiled presets, while Focus, Presentation, and Transient need explicit
+  behavior and lifecycle boundaries rather than a parallel workspace-mode system.
+
+### WR-061 — Quick App Shelf
+
+- **Type:** Feature research
+- **Status:** Needs decision
+- **Source:** `docs/omarchy-inspired-ideas.md`
+- **Current foundation:** `WR-050` supplies one profile-aware Quick App with exact-window ownership,
+  launch, focus, placement, hiding, recovery, and ambiguity handling. The existing menu-bar workspace
+  application shelf is a separate workspace preview and not this feature.
+- **Smallest useful outcome:** A small explicit set of summonable Quick App windows, with the existing
+  shortcut opening the most recently used entry and a discoverable selector/cycle path.
+- **Decision:** Shelf size and profile ownership, exact window versus application fallback, MRU and
+  cycling behavior, add/remove interaction, launch policy, and how restart, tab replacement,
+  ambiguity, sleep, display changes, and focus-border clearance extend from the single Quick App.
 
 ### WR-019 — Separate the local Xcode development identity
 

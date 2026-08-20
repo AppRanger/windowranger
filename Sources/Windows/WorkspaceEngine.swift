@@ -8546,6 +8546,16 @@ final class WorkspaceEngine {
         focusedWindow.map(ignoredWindowKeys.contains) == true
     }
 
+    static func shouldPreserveInteractionFocusAnchor(
+        focusedWindow: WindowKey?,
+        ownProcessIdentifier: pid_t,
+        ignoredWindowKeys: Set<WindowKey>
+    ) -> Bool {
+        guard let focusedWindow else { return false }
+        return focusedWindow.processIdentifier == ownProcessIdentifier ||
+            ignoredWindowKeys.contains(focusedWindow)
+    }
+
     static func exactWindowFocusPlan(applicationIsActive: Bool) -> [ExactWindowFocusStep] {
         applicationIsActive
             ? [.markWindowMain, .focusWindowElement, .focusApplicationWindow, .raiseWindow]
@@ -8714,12 +8724,14 @@ final class WorkspaceEngine {
         if let focusedWindow, !staleParkedFocusSuppression.isEmpty {
             staleParkedFocusSuppression = staleParkedFocusSuppression.filter { $0.key == focusedWindow }
         }
-        if Self.shouldIgnoreFocusObservation(
+        if Self.shouldPreserveInteractionFocusAnchor(
             focusedWindow: focusedWindow,
+            ownProcessIdentifier: ownProcessIdentifier,
             ignoredWindowKeys: ignoredWindowKeys
         ) {
-            // Admission already emitted one privacy-safe record. Do not consume or repeatedly log
-            // focus on an ignored popup, and do not clear the last managed interaction anchor.
+            // WindowRanger's own palette/settings surfaces and ignored popups must not consume the
+            // external managed anchor. The palette deliberately becomes key while it is open; the
+            // captured command target still needs to validate against that preserved anchor.
             return
         }
         if isStartup {
@@ -9142,7 +9154,7 @@ final class WorkspaceEngine {
         processIdentifier != ownProcessIdentifier
     }
 
-    /// Application activation normally cancels an in-flight command-wheel gesture. The one safe
+    /// Application activation normally cancels an in-flight Placement Wheel gesture. The one safe
     /// exception is the activation WindowRanger itself just requested to target the pointer window
     /// for that same gesture. The target, deadline, and focus generation must all still agree; any
     /// external or stale activation continues to cancel immediately.

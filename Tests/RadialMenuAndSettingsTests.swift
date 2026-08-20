@@ -2753,25 +2753,20 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
-    func testSettingsSearchRoutesHoldAndTwoRingEditorToCommandWheel() {
+    func testSettingsSearchRoutesGlobeHoldAndPlacementToCommandPalette() {
         XCTAssertEqual(
-            SettingsCatalog.search("hold trigger timeout", includeDebug: false).first?.id,
-            "radial-activation"
+            SettingsCatalog.search("Globe function hold", includeDebug: false).first?.id,
+            "radial-globe-fn"
         )
         XCTAssertEqual(
-            SettingsCatalog.search("outer ring customize", includeDebug: false).first?.id,
-            "radial-editor"
+            SettingsCatalog.search("pointer position snap", includeDebug: false).first?.id,
+            "radial-item-resize"
         )
     }
 
-    func testSettingsSearchIndexesEveryBuiltInWheelItem() {
-        for metadata in RadialCommandCatalogue.allMetadata {
-            let matches = SettingsCatalog.search(metadata.title, includeDebug: false)
-            XCTAssertTrue(
-                matches.contains { $0.category == .radialMenu },
-                "Expected Settings search to route \(metadata.title) to Command Wheel"
-            )
-        }
+    func testSettingsNoLongerExposesTheLegacyWheelCatalogueEditor() {
+        XCTAssertTrue(SettingsCatalog.search("outer ring customize", includeDebug: false).isEmpty)
+        XCTAssertEqual(SettingsCategory.radialMenu.title, "Command Palette")
     }
 
     @MainActor

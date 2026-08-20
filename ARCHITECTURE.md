@@ -17,7 +17,7 @@ parking them at a recoverable screen edge.
 | Window engine | `Sources/Windows` | AX discovery, admission, membership, parking/restoration, focus, layout application and wake reconciliation. |
 | Reusable models | `Sources/Model` | Workspaces, layouts, profiles, display identity, app rules, window manipulation and radial-menu preferences. |
 | Settings | `Sources/Settings` | Profile/iCloud-backed configuration, machine-local state, searchable native UI and app-owned Settings-window routing. |
-| Menu bar and command wheel | `Sources/MenuBar`, `Sources/RadialMenu` | Context presentation and dispatch through the same typed command layer used by hotkeys. |
+| Command surfaces | `Sources/CommandPalette`, `Sources/MenuBar`, `Sources/RadialMenu` | Searchable and contextual presentation through the same typed command layer used by hotkeys. |
 | Diagnostics | `Sources/Diagnostics` | Structured privacy-filtered Debug traces with bounded rotation and no-op/test sinks. |
 
 The non-hosted `WindowRangerTests` target compiles shared sources directly and excludes
@@ -32,7 +32,7 @@ installing production hotkeys, asking for Accessibility permission or moving liv
    `ProfileLocalState`, then resolves abstract display roles against connected local displays.
 3. `WorkspaceEngine.start()` checks Accessibility trust, enumerates applications/windows and sends
    each candidate through the central admission classifier before it can enter any other subsystem.
-4. Hotkeys, the optional local workspace-swipe monitor, the menu bar and the command wheel emit
+4. Hotkeys, the optional local workspace-swipe monitor, the menu bar, the Command Palette and the Placement Wheel emit
    `WindowManagerCommand` values through one dispatcher. The engine validates current context again
    before applying a mutation.
 5. Engine state changes update the menu bar, Settings utility visibility and the persisted local
@@ -118,7 +118,7 @@ definitions/order/keys/layout geometry, Unified or Independent display mode, abs
 and their menu-bar icon styles, workspace-role assignments, typed app rules, and an optional
 Quick App bundle identifier/display name/presentation. Normalization makes Quick App ownership
 mutually exclusive with an App Rule for the same bundle identifier. Global preferences
-such as menu-bar presentation, general command shortcuts and command-wheel configuration use their
+such as menu-bar presentation, general command shortcuts and Command Palette configuration use their
 existing global settings path and are not profile content.
 
 `SyncedProfileLibraryPolicy` validates the atomic encoded byte size before decoding, then validates
@@ -282,8 +282,13 @@ optional normalized bundle-identifier override wins. AppKit, Accessibility, and 
 publish another app's rendered corner radius, so the generation table uses verified values only and
 keeps the macOS 27 baseline for later releases until a future design change is verified. Per-app
 overrides are local appearance state rather than synced App Rule actions because the correct
-rendering depends on this Mac and OS. The radial command wheel is nonactivating until a validated
-action is committed.
+rendering depends on this Mac and OS. The Command Palette captures its external target before
+becoming key, restores the previous application before dispatch, and rejects a selection if that
+window/workspace/display/profile token changed while the user typed. Its inline Placement Halo
+stays in the key palette and exposes only validated position previews. The control is omitted when
+that provider is empty. Right Arrow enters a palette-owned keyboard mode whose arrows traverse only
+those generated positions; Escape collapses the halo and restores search handling. The optional
+Globe/Fn path uses the same position-only provider in a nonactivating Placement Wheel.
 
 The optional Globe/Fn wheel trigger keeps observation and filtering on separate safety boundaries.
 A passive session tap observes modifier, keyboard, mouse-button, and system-defined competition and
