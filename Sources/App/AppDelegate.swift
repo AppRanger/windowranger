@@ -40,23 +40,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         engine: engine,
         dispatcher: commandDispatcher,
         diagnostics: diagnostics,
-        definitionProvider: { [weak self] in
-            self?.settingsStore.radialWheelDefinition ?? .builtInDefault
-        },
+        definitionProvider: { .spatial },
         contextEnricher: { [weak self] context in
-            guard let self else { return context }
-            var enriched = context
-            enriched.profiles = self.settingsStore.profiles.map {
-                RadialProfileOption(id: $0.id, name: $0.name)
+            self?.enrichedCommandContext(context) ?? context
+        }
+    )
+    private lazy var commandPaletteController = CommandPaletteController(
+        engine: engine,
+        dispatcher: commandDispatcher,
+        diagnostics: diagnostics,
+        contextEnricher: { [weak self] context in
+            self?.enrichedCommandContext(context) ?? context
+        },
+        hotKeyConfigurationProvider: { [weak self] in
+            self?.settingsStore.hotKeyConfiguration ?? HotKeyConfiguration()
+        },
+        openSettings: { [weak self] in
+            guard let self else { return }
+            self.settingsCommandRequestRouter.prepare(.applicationMenuDefault)
+            if !SettingsMenuCommandDispatcher.performSettingsCommand(in: NSApp.mainMenu) {
+                self.settingsCommandRequestRouter.cancelPendingRequest()
             }
-            enriched.activeProfileID = self.settingsStore.activeProfileID
-            enriched.isProfileManuallyPinned = self.settingsStore.manualPinnedProfileID != nil
-            enriched.externalValidationToken = [
-                "active=\(self.settingsStore.activeProfileID.uuidString)",
-                "pinned=\(self.settingsStore.manualPinnedProfileID?.uuidString ?? "none")",
-                self.settingsStore.profiles.map { "\($0.id.uuidString)=\($0.name)" }.joined(separator: ","),
-            ].joined(separator: "|")
-            return enriched
         }
     )
     private lazy var radialMenuTriggerController = RadialMenuTriggerController(
@@ -93,12 +97,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             diagnostics: diagnostics,
             radialMenuTrigger: { [weak self] event in
                 guard let self else { return }
-                self.globeFnHoldActivationController.ordinaryShortcutWillBegin()
-                self.radialMenuTriggerController.handle(
-                    event,
-                    style: self.settingsStore.radialMenuActivationStyle,
-                    holdDelay: self.settingsStore.radialMenuHoldDelay
-                )
+                switch event {
+                case .pressed:
+                    self.globeFnHoldActivationController.ordinaryShortcutWillBegin()
+                    self.radialMenuTriggerController.cancel(reason: "palette-shortcut")
+                    self.radialMenuController.dismiss(reason: "palette-shortcut")
+                    self.commandPaletteController.toggle()
+                case .released:
+                    break
+                case .escape:
+                    self.commandPaletteController.dismiss(
+                        reason: "escape",
+                        restorePreviousApplication: true
+                    )
+                }
             }
         )
         manager.directionalMoveGestureRuntimeIssueChanged = { [weak self] issue in
@@ -135,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.workspaceStatusBarController?.rebuild()
             self.settingsWindowCoordinator.workspaceStateDidChange(state)
             self.radialMenuController.contextDidPossiblyChange()
+            self.commandPaletteController.contextDidPossiblyChange()
             self.settingsStore.recordActiveWorkspaceState(state)
             self.focusedWindowHighlightPresenter.updateWorkspaceContexts(
                 state.focusedWindowHighlightWorkspaceContexts
@@ -185,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "fullscreen-game-session")
                 self.globeFnHoldActivationController.cancel(reason: "fullscreen-game-session")
                 self.radialMenuTriggerController.cancel(reason: "fullscreen-game-session")
+                self.commandPaletteController.dismiss(reason: "fullscreen-game-session")
                 self.commandFeedbackPresenter.dismiss(reason: "fullscreen-game-session")
             }
             self.registerHotKeys()
@@ -262,6 +276,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.globeFnHoldActivationController.cancel(reason: "system-will-sleep")
                 self.workspaceSwipeController.setSuppressed(true, reason: "system-sleep")
                 self.radialMenuTriggerController.cancel(reason: "system-will-sleep")
+                self.commandPaletteController.dismiss(reason: "system-will-sleep")
                 self.commandFeedbackPresenter.dismiss(reason: "system-will-sleep")
                 self.focusedWindowHighlightPresenter.setSuppressed(
                     true,
@@ -286,6 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.globeFnHoldActivationController.cancel(reason: "screens-did-sleep")
                 self.workspaceSwipeController.setSuppressed(true, reason: "screen-sleep")
                 self.radialMenuTriggerController.cancel(reason: "screens-did-sleep")
+                self.commandPaletteController.dismiss(reason: "screens-did-sleep")
                 self.commandFeedbackPresenter.dismiss(reason: "screens-did-sleep")
                 self.focusedWindowHighlightPresenter.setSuppressed(
                     true,
@@ -316,6 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.globeFnHoldActivationController.cancel(reason: "session-resigned-active")
                 self?.workspaceSwipeController.setSuppressed(true, reason: "session-inactive")
                 self?.radialMenuTriggerController.cancel(reason: "session-resigned-active")
+                self?.commandPaletteController.dismiss(reason: "session-resigned-active")
                 self?.focusedWindowHighlightPresenter.setSuppressed(
                     true,
                     reason: "session-resigned-active"
@@ -332,6 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.commandFeedbackPresenter.screenParametersDidChange()
                 self?.focusedWindowHighlightPresenter.screenParametersDidChange()
                 self?.settingsWindowCoordinator.screenParametersDidChange()
+                self?.commandPaletteController.dismiss(reason: "display-configuration-changed")
                 self?.reconcileAfterWake(source: .displayConfigurationChanged)
             }
             .store(in: &cancellables)
@@ -392,6 +410,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if !enabled {
                 self.globeFnHoldActivationController.cancel(reason: "wheel-disabled")
                 self.radialMenuTriggerController.cancel(reason: "wheel-disabled")
+                self.commandPaletteController.dismiss(reason: "palette-disabled")
             }
             self.registerHotKeys()
             self.updateGlobeFnHoldActivation(radialMenuEnabled: enabled)
@@ -566,6 +585,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.globeFnHoldActivationController.cancel(reason: "shortcut-configuration-changed")
                 self.radialMenuTriggerController.cancel(reason: "shortcut-configuration-changed")
+                self.commandPaletteController.dismiss(reason: "shortcut-configuration-changed")
                 self.registerHotKeys()
             }
             .store(in: &cancellables)
@@ -580,6 +600,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.globeFnHoldActivationController.cancel(reason: "profile-transition")
                 self.workspaceSwipeController.cancel(reason: "profile-transition")
                 self.radialMenuTriggerController.cancel(reason: "profile-transition")
+                self.commandPaletteController.dismiss(reason: "profile-transition")
                 self.commandFeedbackPresenter.dismiss(reason: "profile-transition")
                 self.engine.transitionToProfile(request)
                 self.registerHotKeys()
@@ -619,6 +640,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         globeFnHoldActivationController.shutdown()
         workspaceSwipeController.shutdown()
         radialMenuTriggerController.cancel(reason: "application-terminating")
+        commandPaletteController.shutdown()
         commandFeedbackPresenter.shutdown()
         focusedWindowHighlightPresenter.shutdown()
         settingsWindowCoordinator.shutdown()
@@ -638,6 +660,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsStore.setHotKeyRuntimeIssues(report.runtimeIssues)
     }
 
+    private func enrichedCommandContext(
+        _ context: RadialCommandContext
+    ) -> RadialCommandContext {
+        var enriched = context
+        enriched.profiles = settingsStore.profiles.map {
+            RadialProfileOption(id: $0.id, name: $0.name)
+        }
+        enriched.activeProfileID = settingsStore.activeProfileID
+        enriched.isProfileManuallyPinned = settingsStore.manualPinnedProfileID != nil
+        enriched.externalValidationToken = [
+            "active=\(settingsStore.activeProfileID.uuidString)",
+            "pinned=\(settingsStore.manualPinnedProfileID?.uuidString ?? "none")",
+            settingsStore.profiles.map { "\($0.id.uuidString)=\($0.name)" }.joined(separator: ","),
+        ].joined(separator: "|")
+        return enriched
+    }
+
     func shortcutRecordingStateDidChange(_ isRecording: Bool) {
         guard isShortcutRecording != isRecording else { return }
         isShortcutRecording = isRecording
@@ -646,6 +685,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             globeFnHoldActivationController.cancel(reason: "shortcut-recording-began")
             workspaceSwipeController.setSuppressed(true, reason: "shortcut-recording")
             radialMenuTriggerController.cancel(reason: "shortcut-recording-began")
+            commandPaletteController.dismiss(reason: "shortcut-recording-began")
             hotKeyManager.suspendRegistration()
             settingsStore.setHotKeyRuntimeIssues([])
         } else {
@@ -669,6 +709,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             workspaceSwipeController.cancel(reason: source.rawValue)
         }
         radialMenuTriggerController.cancel(reason: source.rawValue)
+        commandPaletteController.dismiss(reason: source.rawValue)
         commandFeedbackPresenter.dismiss(reason: source.rawValue)
         focusedWindowHighlightPresenter.setSuppressed(
             fullscreenGameSession != nil,
@@ -746,6 +787,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if isDeclaredGame {
             globeFnHoldActivationController.cancel(reason: reason)
             radialMenuTriggerController.cancel(reason: reason)
+            commandPaletteController.dismiss(reason: reason)
             commandFeedbackPresenter.dismiss(reason: reason)
         }
         updateGlobeFnHoldActivation()

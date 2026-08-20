@@ -70,8 +70,6 @@ No scoped P0, P1, or P2 mismatch remains.
 
 final result: passed
 
----
-
 # Command Wheel Option 1 Icon Refinement QA
 
 ## Evidence
@@ -320,3 +318,55 @@ automated result: passed; icon fidelity result: passed; signed-app interaction r
   Replacing them with the production renderer resolves it in the combined post-fix evidence above.
 
 final result: passed
+
+---
+
+# Command Palette Placement Halo Design QA
+
+## Scope and references
+
+- Selected option 1 reference:
+  `/Users/chris/.codex/generated_images/01a01e25-3f66-7ef1-b715-6d393aedeeaf/exec-924321bf-99cc-43ef-a917-baf9cea7ec7a.png`
+- Offscreen production render:
+  `.build/command-palette-placement-halo/windowranger-command-palette-placement-halo.png`
+- Same-state, same-viewport side-by-side comparison input:
+  `.build/command-palette-placement-halo/option-1-reference-production-comparison.png`
+- The production fixture uses the real `CommandPaletteView`, contextual Freeform placement
+  provider, native material, SF Symbols, stable eight-position compass order, and a selected Right
+  Half state at Retina scale.
+
+## Comparison findings
+
+- **Interaction model:** the original icon-only control becomes the centre of the halo. Expanding
+  it preserves the palette, search query, results, selection, and key focus; Escape collapses the
+  halo before dismissing the palette.
+- **Scope:** the halo contains only truthful Freeform or Tiled positions. Layout choice, Accordion
+  resize, floating, workspace, profile, and application commands remain in search. The Globe/Fn
+  wheel resolves the identical position provider as one direct ring.
+- **Hierarchy and geometry:** the 140-point segmented ring keeps eight Loop-style directions in
+  their expected compass positions. It overlaps the palette edge deliberately, while transparent
+  panel overflow prevents clipping and keeps the 620 x 480 palette surface stationary.
+- **Feedback:** hover uses the normal accent, the complete placement name appears just to the right
+  of the ring, and the centre returns to the same placement symbol so collapse is discoverable.
+- **Native adaptation:** production uses system materials, controls, typography, and SF Symbols
+  rather than copying the mock's custom line art, wallpaper, or presentation-only glow. Light,
+  dark, Increased Contrast, Reduced Motion, help, and accessibility labels remain supported.
+- **Intentional difference (P3):** the reference shows a shorter curated result list and a blue
+  focus ring. The production snapshot uses its full truthful contextual results and an inactive
+  offscreen search field; the signed key panel supplies the native focus treatment at runtime.
+- **Remaining boundary:** the offscreen render has no unresolved P0/P1/P2 visual mismatch. Pointer
+  feel, key-focus retention, panel shadow, real-screen edge behavior, and committed window movement
+  still require the signed installed app.
+
+## Installed follow-up correction
+
+- The first signed live render exposed an AppKit shadow artefact that offscreen SwiftUI rendering
+  could not show: the enlarged transparent panel received a black outline around the halo. The
+  panel now disables its window-level shadow only while expanded; the halo keeps its own bounded
+  material shadow.
+- The unavailable position control is now omitted instead of disabled.
+- Keyboard interaction now has an explicit submode: Right Arrow enters from an empty search, arrows
+  traverse generated placements, Return commits, and Escape collapses the halo and restores search.
+- These corrections are implemented and automated; the updated signed live render remains pending.
+
+visual result: passed; signed-app interaction result: pending

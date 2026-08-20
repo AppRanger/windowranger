@@ -905,6 +905,35 @@ enum MenuBarStatusItemActivationPolicy {
     }
 }
 
+/// Detached status menus must not begin their own tracking loop from inside the status button's
+/// mouse-down action. Waiting for mouse-up lets AppKit finish the button interaction first.
+enum MenuBarStatusItemControlEventPolicy {
+    static let actionEvents: NSEvent.EventTypeMask = [.leftMouseUp, .rightMouseUp]
+}
+
+struct MenuBarMenuPresentationRequestGate {
+    private(set) var isPending = false
+
+    mutating func request() -> Bool {
+        guard !isPending else { return false }
+        isPending = true
+        return true
+    }
+
+    mutating func consume() -> Bool {
+        guard isPending else { return false }
+        isPending = false
+        return true
+    }
+
+    @discardableResult
+    mutating func cancel() -> Bool {
+        let wasPending = isPending
+        isPending = false
+        return wasPending
+    }
+}
+
 struct MenuBarDisplayGroupStatusItem: Equatable, Sendable {
     let mode: MenuBarPresentationMode
     let group: MenuBarFullStripDisplayGroup
