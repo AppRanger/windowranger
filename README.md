@@ -11,7 +11,7 @@ rolling Dev builds from `develop`. Stable and opt-in Beta updates will use Spark
 will remain outside automatic updates.
 
 Download the signed and notarized
-[`v0.1.0-beta.2` GitHub prerelease](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.2)
+[`v0.1.0-beta.6` GitHub prerelease](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.6)
 as a DMG, with a notarized ZIP as a fallback. GitHub's automatically generated source archives are
 not an installable macOS app.
 
@@ -26,6 +26,10 @@ not an installable macOS app.
 - [Release channels and branching](docs/release-channels-and-branching.md)
 - [First GitHub release runbook](docs/first-github-release.md)
 - [Release notes template](docs/release-notes-template.md)
+- [WindowRanger 0.1.0 Beta 6 release notes](docs/releases/v0.1.0-beta.6.md)
+- [WindowRanger 0.1.0 Beta 5 release notes](docs/releases/v0.1.0-beta.5.md)
+- [WindowRanger 0.1.0 Beta 4 release notes](docs/releases/v0.1.0-beta.4.md)
+- [WindowRanger 0.1.0 Beta 3 release notes](docs/releases/v0.1.0-beta.3.md)
 - [WindowRanger 0.1.0 Beta 2 release notes](docs/releases/v0.1.0-beta.2.md)
 - [WindowRanger 0.1.0 Beta 1 release notes](docs/releases/v0.1.0-beta.1.md)
 - [Daily use and local development](docs/daily-development-workflow.md)
