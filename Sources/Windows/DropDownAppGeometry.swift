@@ -5,6 +5,16 @@ enum DropDownAppGeometry {
     static let animationStepCount = 8
     static let animationDuration: TimeInterval = 0.18
 
+    static func presentationBounds(
+        in usableBounds: CGRect,
+        focusedWindowHighlightEnabled: Bool
+    ) -> CGRect {
+        FocusedWindowHighlightPolicy.reservingScreenEdgeClearance(
+            in: usableBounds,
+            enabled: focusedWindowHighlightEnabled
+        )
+    }
+
     static func presentedFrame(
         in usableBounds: CGRect,
         sizeFraction: Double,

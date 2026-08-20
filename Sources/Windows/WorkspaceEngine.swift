@@ -2186,7 +2186,9 @@ final class WorkspaceEngine {
             guard let self, self.focusedWindowHighlightEnabled != enabled else { return }
             self.focusedWindowHighlightEnabled = enabled
             self.lastBackgroundLayoutSignature = nil
-            self.applyVisibility(displays: Self.activeDisplays())
+            let displays = Self.activeDisplays()
+            self.reapplyPresentedDropDownAppFrameForFocusBorder(displays: displays)
+            self.applyVisibility(displays: displays)
             self.persistState(preservingPendingRestores: true)
             self.emitState()
         }
@@ -6882,7 +6884,7 @@ final class WorkspaceEngine {
             dropDownAppSession = session
             geometryWriteSucceeded = setDropDownAppFrame(
                 DropDownAppGeometry.presentedFrame(
-                    in: display.usableBounds,
+                    in: dropDownAppPresentationBounds(for: display),
                     sizeFraction: configuration.heightFraction,
                     direction: session.direction
                 ),
@@ -9021,14 +9023,15 @@ final class WorkspaceEngine {
         }
         let focusedKey = interactionFocusedWindowSnapshot()?.key
         let previousFocus = focusedKey == target.key ? nil : focusedKey
+        let presentationBounds = dropDownAppPresentationBounds(for: display)
         let presented = DropDownAppGeometry.presentedFrame(
-            in: display.usableBounds,
+            in: presentationBounds,
             sizeFraction: configuration.heightFraction,
             direction: configuration.direction
         )
         let retracted = DropDownAppGeometry.retractedFrame(
             for: presented,
-            in: display.usableBounds,
+            in: presentationBounds,
             direction: configuration.direction
         )
         dropDownAnimationGeneration &+= 1
@@ -9481,10 +9484,10 @@ final class WorkspaceEngine {
             if let configuration = dropDownAppConfiguration,
                let display = session.displayIdentifier.flatMap({ identifier in
                    Self.activeDisplays().first { $0.identifier == identifier }
-               }) ?? dropDownTargetDisplay(displays: Self.activeDisplays()) {
+                }) ?? dropDownTargetDisplay(displays: Self.activeDisplays()) {
                 _ = setDropDownAppFrame(
                     DropDownAppGeometry.presentedFrame(
-                        in: display.usableBounds,
+                        in: dropDownAppPresentationBounds(for: display),
                         sizeFraction: configuration.heightFraction,
                         direction: session.direction
                     ),
@@ -9695,7 +9698,7 @@ final class WorkspaceEngine {
         if performAXWrites {
             if selection.isPresented, let display {
                 let presented = DropDownAppGeometry.presentedFrame(
-                    in: display.usableBounds,
+                    in: dropDownAppPresentationBounds(for: display),
                     sizeFraction: configuration.heightFraction,
                     direction: configuration.direction
                 )
@@ -9795,7 +9798,7 @@ final class WorkspaceEngine {
                    displays.first { $0.identifier == identifier }
                }) ?? dropDownTargetDisplay(displays: displays) {
                 let presented = DropDownAppGeometry.presentedFrame(
-                    in: display.usableBounds,
+                    in: dropDownAppPresentationBounds(for: display),
                     sizeFraction: configuration.heightFraction,
                     direction: session.direction
                 )
@@ -9844,6 +9847,46 @@ final class WorkspaceEngine {
         return displays.first(where: { $0.identifier == interactionDisplayIdentifier })
             ?? displays.first(where: \.isMain)
             ?? displays.first
+    }
+
+    private func dropDownAppPresentationBounds(for display: DisplaySnapshot) -> CGRect {
+        DropDownAppGeometry.presentationBounds(
+            in: display.usableBounds,
+            focusedWindowHighlightEnabled: focusedWindowHighlightEnabled
+        )
+    }
+
+    private func reapplyPresentedDropDownAppFrameForFocusBorder(
+        displays: [DisplaySnapshot]
+    ) {
+        guard var session = dropDownAppSession,
+              session.isPresented,
+              let configuration = dropDownAppConfiguration,
+              let target = windows[session.windowKey],
+              let display = session.displayIdentifier.flatMap({ identifier in
+                  displays.first { $0.identifier == identifier }
+              }) ?? dropDownTargetDisplay(displays: displays)
+        else { return }
+
+        dropDownAnimationGeneration &+= 1
+        session.displayIdentifier = display.identifier
+        dropDownAppSession = session
+        let requestedFrame = DropDownAppGeometry.presentedFrame(
+            in: dropDownAppPresentationBounds(for: display),
+            sizeFraction: configuration.heightFraction,
+            direction: session.direction
+        )
+        let writeSucceeded = setDropDownAppFrame(requestedFrame, target: target)
+        diagnostics.log(
+            category: "drop-down-app",
+            event: "focus-border-geometry-updated",
+            fields: [
+                "window": Self.diagnosticWindowKey(target.key),
+                "focus-border-enabled": String(focusedWindowHighlightEnabled),
+                "requested-frame": Self.diagnosticFrame(requestedFrame),
+                "geometry-write": String(writeSucceeded),
+            ]
+        )
     }
 
     private func isDropDownAppWindow(_ key: WindowKey) -> Bool {

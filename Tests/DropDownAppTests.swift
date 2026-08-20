@@ -84,6 +84,36 @@ final class DropDownAppTests: XCTestCase {
         )
     }
 
+    func testPresentationBoundsReserveFocusBorderClearanceOnlyWhenEnabled() {
+        let usableBounds = CGRect(x: -1_200, y: 30, width: 1_200, height: 1_920)
+
+        XCTAssertEqual(
+            DropDownAppGeometry.presentationBounds(
+                in: usableBounds,
+                focusedWindowHighlightEnabled: false
+            ),
+            usableBounds
+        )
+        XCTAssertEqual(
+            DropDownAppGeometry.presentationBounds(
+                in: usableBounds,
+                focusedWindowHighlightEnabled: true
+            ),
+            CGRect(x: -1_196, y: 34, width: 1_192, height: 1_912)
+        )
+
+        let right = DropDownAppGeometry.presentedFrame(
+            in: DropDownAppGeometry.presentationBounds(
+                in: usableBounds,
+                focusedWindowHighlightEnabled: true
+            ),
+            sizeFraction: 0.8,
+            direction: .right
+        )
+        XCTAssertEqual(right.position, CGPoint(x: -957.6, y: 34))
+        XCTAssertEqual(right.size, CGSize(width: 953.6, height: 1_912))
+    }
+
     func testAnimationFinishesExactlyAtDestination() {
         let start = WindowFrame(
             position: CGPoint(x: 0, y: -800),

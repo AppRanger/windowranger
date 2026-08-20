@@ -190,6 +190,11 @@ when the old key disappeared and exactly one newly tracked, same-process, same-b
 remains. That replacement inherits the old local workspace, restore frame, display placement, and
 layout metadata before background layout runs. Multiple, pre-existing, cross-process, or unrelated
 replacements leave the exact-window safety boundary intact and clear the obsolete session.
+When the local focused-window border is enabled, Quick App presentation bounds reuse the border's
+four-point screen-edge clearance before applying the configured size fraction. Startup, wake,
+native-tab replacement, hide-failure restoration, and ordinary presentation all use those same
+bounds. Toggling the border while Quick App is presented supersedes any animation and reapplies the
+final frame without changing focus or session ownership.
 During startup reconciliation, the engine establishes this ownership before initial workspace
 visibility and layout. Exactly one eligible matching window is claimed: its observed pre-layout
 frame determines whether the session begins presented on that display or is converted from a legacy

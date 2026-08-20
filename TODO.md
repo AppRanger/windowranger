@@ -214,11 +214,20 @@ smallest useful outcome and acceptance boundary.
   as rejection, so the first shortcut changed background/hidden state but left the toggle
   incomplete and the second shortcut finished it. A matching live process and bundle now make the
   request dispatchable; only the bounded observed `isHidden` postcondition decides success.
+- **User-observed focus-border sizing gap:** After the Hide/Unhide overhaul was accepted, the
+  presented Quick App still used the complete display usable bounds while the optional focus border
+  extended beyond that frame. Quick App presentation now reuses the focus border's established
+  four-point screen-edge clearance when the border is enabled. The same safe bounds cover show,
+  animation, startup, wake recovery, native-tab replacement, and hide-failure restoration; changing
+  the border setting while Quick App is visible immediately reapplies its final frame without
+  changing focus or session ownership.
 - **Automated verification:** Focused DropDownAppTests cover same-bundle presentation edits,
   in-display collapse geometry for every edge, exact hidden-session recovery boundaries, and
   backward-compatible persistence, including bounded application Hide/Unhide confirmation and
-  fail-closed handling of legacy minimized-window ownership.
-  All 25 focused tests, test isolation, and all 592 non-hosted tests pass; this safe
+  fail-closed handling of legacy minimized-window ownership. Border-aware presentation coverage
+  proves that the four-point clearance applies only while the focus border is enabled and that the
+  configured size fraction is calculated inside those safe bounds.
+  All 26 focused tests, test isolation, and all 593 non-hosted tests pass; this safe
   verification did not build, launch, sign, install, stop, or automate WindowRanger.app.
 - **Live validation:** The signed daily build was installed with explicit approval and Ghostty native
   tab replacement, focus-loss hide, and subsequent toggles were confirmed working. In signed
@@ -239,6 +248,13 @@ smallest useful outcome and acceptance boundary.
   confirmed the corrected behavior as perfect; the same session records one-press shortcut hide/show
   pairs for Bottom, Left, and Right, with animation both enabled and disabled, every transition
   confirming application visibility in one attempt and every show matching its requested frame.
+  The focus-border sizing follow-up is installed in signed universal Debug build
+  `fc5f92417713-dirty` (CDHash `d5480d67495e4ce75a9d9f1ba8d641dce6198320`) and running from
+  `/Applications/WindowRanger.app`; startup session `F1A7DBFF-A4DD-41C8-A36C-79DBA9C33451`
+  confirms focus-border monitoring started and the visible Ghostty Quick App accepted its startup
+  geometry write. The same session records the expected inset Top frame at `4,34;3832x1266`,
+  matching requested frames through repeated one-press hide/show pairs, and the user confirmed the
+  result looks great. A live enable/disable resize was not separately observed.
   Broader feature completion still requires exercising a
   real assigned app across at least two profiles. Hidden startup and ambiguous multiple-window
   startup remain automated, fail-closed coverage rather than separate live observations.

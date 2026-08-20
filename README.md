@@ -217,7 +217,9 @@ never becomes an off-screen travel path. With animation disabled, WindowRanger a
 frame directly. Pressing the shortcut again or focusing another app uses macOS Hide for the Quick
 App's application, avoiding the Dock minimize animation; showing it prepares the final or collapsed
 frame before unhiding the application. Because Hide is application-wide, any other windows belonging
-to that app follow the same hidden state. While owned,
+to that app follow the same hidden state. When the focused-window border is enabled, Quick App uses
+the same four-point screen-edge clearance as managed layouts so the complete border remains visible;
+toggling the border setting updates an already presented Quick App immediately. While owned,
 that window stays outside normal workspace layout, reset, focus cycling, and frame persistence.
 If a native tab switch replaces the app's exact Accessibility window identity, WindowRanger keeps
 the Quick App session only when the same authoritative refresh finds one newly admitted replacement
