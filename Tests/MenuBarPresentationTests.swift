@@ -639,6 +639,30 @@ final class MenuBarPresentationTests: XCTestCase {
         ), .openMenu)
     }
 
+    func testDetachedStatusMenuWaitsForControlMouseUpEvents() {
+        let events = MenuBarStatusItemControlEventPolicy.actionEvents
+
+        XCTAssertTrue(events.contains(.leftMouseUp))
+        XCTAssertTrue(events.contains(.rightMouseUp))
+        XCTAssertFalse(events.contains(.leftMouseDown))
+        XCTAssertFalse(events.contains(.rightMouseDown))
+    }
+
+    func testStatusMenuPresentationRequestIsDeferredAndCoalesced() {
+        var gate = MenuBarMenuPresentationRequestGate()
+
+        XCTAssertTrue(gate.request())
+        XCTAssertFalse(gate.request())
+        XCTAssertTrue(gate.isPending)
+        XCTAssertTrue(gate.consume())
+        XCTAssertFalse(gate.isPending)
+        XCTAssertFalse(gate.consume())
+        XCTAssertTrue(gate.request())
+        XCTAssertTrue(gate.cancel())
+        XCTAssertFalse(gate.consume())
+        XCTAssertFalse(gate.cancel())
+    }
+
     func testDisplayGroupStatusItemPlanKeepsOneMovableItemPerDisplay() {
         let snapshot = independentSnapshot(displays: [mainDisplay, externalDisplay])
             .replacingMode(.full)

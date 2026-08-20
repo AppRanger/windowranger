@@ -1234,6 +1234,7 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
     private var panel: RadialMenuPanel?
     private var presentation: RadialMenuPresentationModel?
     private var context: RadialCommandContext?
+    private var activeDefinition: RadialWheelDefinition?
     private var session = RadialMenuSessionState()
     private var correlationID: String?
     private var globalMouseMonitor: Any?
@@ -1292,6 +1293,28 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
 
     func hasRelevantActions(in context: RadialCommandContext) -> Bool {
         !resolvedMenu(for: context).items.isEmpty
+    }
+
+    func presentSpatialCaptured(_ captured: RadialCommandContext) {
+        engine.radialCommandContext { [weak self] current in
+            guard let self else { return }
+            let current = self.contextEnricher(current)
+            guard current.sessionValidationToken == captured.sessionValidationToken,
+                  !self.resolvedMenu(for: current, definition: .spatial).items.isEmpty
+            else {
+                self.diagnostics.log(
+                    category: "radial-menu",
+                    event: "open-cancelled",
+                    fields: ["reason": "stale-palette-context"]
+                )
+                return
+            }
+            self.present(
+                current,
+                activationStyle: .pressToToggle,
+                definition: .spatial
+            )
+        }
     }
 
     func presentCaptured(
@@ -1393,6 +1416,7 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
         self.panel = nil
         presentation = nil
         context = nil
+        activeDefinition = nil
         correlationID = nil
         onDismissed?(reason)
     }
@@ -1401,9 +1425,11 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
         _ context: RadialCommandContext,
         activationStyle: RadialMenuActivationStyle,
         correlationID suppliedCorrelationID: String? = nil,
-        triggerGeneration: UInt64? = nil
+        triggerGeneration: UInt64? = nil,
+        definition suppliedDefinition: RadialWheelDefinition? = nil
     ) {
-        let menu = resolvedMenu(for: context)
+        let definition = suppliedDefinition ?? definitionProvider()
+        let menu = resolvedMenu(for: context, definition: definition)
         guard !menu.items.isEmpty else {
             diagnostics.log(
                 category: "radial-menu",
@@ -1469,6 +1495,7 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
         ))
 
         self.context = context
+        self.activeDefinition = definition
         self.presentation = presentation
         self.panel = panel
         self.session = RadialMenuSessionState()
@@ -1516,7 +1543,13 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
             }
             let current = self.contextEnricher(current)
             guard current.sessionValidationToken == original.sessionValidationToken,
-                  Self.contains(command: requestedCommand, in: self.resolvedMenu(for: current).items),
+                  Self.contains(
+                      command: requestedCommand,
+                      in: self.resolvedMenu(
+                          for: current,
+                          definition: self.activeDefinition ?? self.definitionProvider()
+                      ).items
+                  ),
                   self.session.commit()
             else {
                 self.dismiss(reason: "stale-target")
@@ -1542,6 +1575,7 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
             self.panel = nil
             self.presentation = nil
             self.context = nil
+            self.activeDefinition = nil
             self.correlationID = nil
             self.onDismissed?("action-committed")
             self.dispatcher.dispatch(requestedCommand, source: .radialMenu, correlationID: correlationID)
@@ -1664,8 +1698,14 @@ final class RadialMenuController: NSObject, NSWindowDelegate {
         String(value.prefix(12))
     }
 
-    private func resolvedMenu(for context: RadialCommandContext) -> RadialMenuModel {
-        RadialCommandContextBuilder.build(from: context, definition: definitionProvider())
+    private func resolvedMenu(
+        for context: RadialCommandContext,
+        definition: RadialWheelDefinition? = nil
+    ) -> RadialMenuModel {
+        RadialCommandContextBuilder.build(
+            from: context,
+            definition: definition ?? definitionProvider()
+        )
     }
 }
 
@@ -1960,7 +2000,7 @@ struct RadialMenuView: View {
                 )
                 .contentShape(Circle())
                 .onTapGesture { model.cancel?() }
-                .accessibilityLabel("Cancel command wheel")
+                .accessibilityLabel("Cancel Placement Wheel")
                 .accessibilityAddTraits(.isButton)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1980,7 +2020,7 @@ struct RadialMenuView: View {
         }
         .frame(width: RadialMenuController.panelSize.width, height: RadialMenuController.panelSize.height)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Contextual command wheel")
+        .accessibilityLabel("Placement Wheel")
     }
 }
 

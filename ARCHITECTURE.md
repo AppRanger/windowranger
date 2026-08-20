@@ -17,7 +17,7 @@ parking them at a recoverable screen edge.
 | Window engine | `Sources/Windows` | AX discovery, admission, membership, parking/restoration, focus, layout application and wake reconciliation. |
 | Reusable models | `Sources/Model` | Workspaces, layouts, profiles, display identity, app rules, window manipulation and radial-menu preferences. |
 | Settings | `Sources/Settings` | Profile/iCloud-backed configuration, machine-local state, searchable native UI and app-owned Settings-window routing. |
-| Menu bar and command wheel | `Sources/MenuBar`, `Sources/RadialMenu` | Context presentation and dispatch through the same typed command layer used by hotkeys. |
+| Command surfaces | `Sources/CommandPalette`, `Sources/MenuBar`, `Sources/RadialMenu` | Searchable and contextual presentation through the same typed command layer used by hotkeys. |
 | Diagnostics | `Sources/Diagnostics` | Structured privacy-filtered Debug traces with bounded rotation and no-op/test sinks. |
 
 The non-hosted `WindowRangerTests` target compiles shared sources directly and excludes
@@ -32,7 +32,7 @@ installing production hotkeys, asking for Accessibility permission or moving liv
    `ProfileLocalState`, then resolves abstract display roles against connected local displays.
 3. `WorkspaceEngine.start()` checks Accessibility trust, enumerates applications/windows and sends
    each candidate through the central admission classifier before it can enter any other subsystem.
-4. Hotkeys, the optional local workspace-swipe monitor, the menu bar and the command wheel emit
+4. Hotkeys, the optional local workspace-swipe monitor, the menu bar, the Command Palette and the Placement Wheel emit
    `WindowManagerCommand` values through one dispatcher. The engine validates current context again
    before applying a mutation.
 5. Engine state changes update the menu bar, Settings utility visibility and the persisted local
@@ -118,7 +118,7 @@ definitions/order/keys/layout geometry, Unified or Independent display mode, abs
 and their menu-bar icon styles, workspace-role assignments, typed app rules, and an optional
 Quick App bundle identifier/display name/presentation. Normalization makes Quick App ownership
 mutually exclusive with an App Rule for the same bundle identifier. Global preferences
-such as menu-bar presentation, general command shortcuts and command-wheel configuration use their
+such as menu-bar presentation, general command shortcuts and Command Palette configuration use their
 existing global settings path and are not profile content.
 
 `SyncedProfileLibraryPolicy` validates the atomic encoded byte size before decoding, then validates
@@ -133,8 +133,10 @@ action and never occurs as a side effect of a failed pull.
 The active/manual profile selection, automatic trigger mappings, runtime active-workspace state,
 monitor fingerprints, role-to-physical-monitor bindings, Accessibility state and live window
 session remain local. `WorkspaceStateStore` writes the current WindowServer-bound session beneath
-the user's cache directory using an atomic replacement. A changed WindowServer session invalidates
-exact window IDs rather than guessing.
+the user's cache directory using an atomic replacement. This includes an exact hidden Quick App
+identity only when WindowRanger hid that window's application. A changed WindowServer session
+invalidates exact window IDs and that ownership marker rather than guessing. Legacy minimized-window
+markers decode without granting application-unhide ownership.
 
 Portable profile transfer serializes only reusable profile definitions into a separately versioned
 JSON transport document. Import validates the complete document, remaps every internal identity,
@@ -170,22 +172,44 @@ The profile-aware Quick App is an engine-owned temporary presentation override. 
 one unambiguous admitted standard window for the configured bundle and targets the pointer/interaction
 display's usable bounds. Its optional Top, Bottom, Left, or Right movement uses generation-gated
 frame steps so a hide, profile switch, sleep, termination, or newer toggle supersedes delayed
-animation writes. Top expands from a collapsed frame at the usable top edge because macOS clamps
-ordinary app windows positioned above the menu bar; the other directions slide from beyond their
-screen edge. Once selected, the window is
+animation writes. Every direction expands from or collapses to a one-point frame inside the chosen
+usable edge. No animation path travels through off-screen coordinates, and the receiving
+application's Accessibility position transition is suppressed around direct frame writes. Once
+selected, the window is
 excluded from normal visibility, layout, focus-cycle, reset, manual-geometry reconciliation, and
-background-signature participation. The engine parks it while hidden, preserves its durable restore
-frame, restores it before configuration/profile changes and lifecycle cleanup, and ignores its own
-programmatic activation when deciding whether another app has taken focus. A successful AX snapshot
+background-signature participation. The engine uses AppKit Hide/Unhide for the configured
+application while retaining the exact window as the only geometry and session target. This avoids
+the Dock minimize/restore transition, but intentionally means every window belonging to that
+application follows its hidden state. Hide and Unhide are generation-gated and confirmed before the
+session changes state. The engine preserves the exact target's durable restore frame and unhides only
+application state it owns before configuration/profile changes and lifecycle cleanup. It also
+ignores its own programmatic activation when deciding whether another app has taken focus. A
+successful AX snapshot
 may replace an exact window identity during a native tab switch. The engine rebinds the session only
 when the old key disappeared and exactly one newly tracked, same-process, same-bundle eligible window
 remains. That replacement inherits the old local workspace, restore frame, display placement, and
 layout metadata before background layout runs. Multiple, pre-existing, cross-process, or unrelated
 replacements leave the exact-window safety boundary intact and clear the obsolete session.
+When the local focused-window border is enabled, Quick App presentation bounds reuse the border's
+four-point screen-edge clearance before applying the configured size fraction. Startup, wake,
+native-tab replacement, hide-failure restoration, and ordinary presentation all use those same
+bounds. Toggling the border while Quick App is presented supersedes any animation and reapplies the
+final frame without changing focus or session ownership.
+When a shortcut finds no eligible configured-app window, the engine asks Launch Services to open
+and activate that application so its normal reopen handling can create a window, then starts one
+generation-bound watchdog. Window discovery during that watchdog performs no Accessibility writes,
+so the first unambiguous eligible
+window can become the exact Quick App session before ordinary workspace layout moves it. The
+watchdog checks eight times after a short launch delay, then fails with explicit feedback; a profile
+change, shutdown, newer launch generation, missing installation, launch error, timeout, or multiple
+eligible windows never grants permission to guess a target.
 During startup reconciliation, the engine establishes this ownership before initial workspace
 visibility and layout. Exactly one eligible matching window is claimed: its observed pre-layout
-frame determines whether the session begins presented on that display or remains parked and hidden.
-An ambiguous set is left untouched by Quick App startup handling.
+frame determines whether the session begins presented on that display or is converted from a legacy
+off-screen state to application Hide. Crash-restart recovery may reclaim a hidden application only
+when the WindowServer-bound marker matches the exact process/window identity and bundle and AppKit
+still reports that application hidden. An ambiguous set is left untouched by Quick App startup
+handling.
 
 ## UI and focus safety
 
@@ -258,8 +282,13 @@ optional normalized bundle-identifier override wins. AppKit, Accessibility, and 
 publish another app's rendered corner radius, so the generation table uses verified values only and
 keeps the macOS 27 baseline for later releases until a future design change is verified. Per-app
 overrides are local appearance state rather than synced App Rule actions because the correct
-rendering depends on this Mac and OS. The radial command wheel is nonactivating until a validated
-action is committed.
+rendering depends on this Mac and OS. The Command Palette captures its external target before
+becoming key, restores the previous application before dispatch, and rejects a selection if that
+window/workspace/display/profile token changed while the user typed. Its inline Placement Halo
+stays in the key palette and exposes only validated position previews. The control is omitted when
+that provider is empty. Right Arrow enters a palette-owned keyboard mode whose arrows traverse only
+those generated positions; Escape collapses the halo and restores search handling. The optional
+Globe/Fn path uses the same position-only provider in a nonactivating Placement Wheel.
 
 The optional Globe/Fn wheel trigger keeps observation and filtering on separate safety boundaries.
 A passive session tap observes modifier, keyboard, mouse-button, and system-defined competition and
@@ -271,7 +300,27 @@ games through public bundle metadata suspend the Globe/Fn and workspace-swipe mo
 their window is borderless; this does not broaden the native-fullscreen geometry guard.
 
 Settings is an explicit app-owned floating utility: it may activate and focus, but it is excluded
-from third-party discovery, layout and persistence.
+from third-party discovery, layout and persistence. Every explicit open captures the engine's
+current virtual workspace and interaction display, updates the utility's assignment, and surfaces
+the one existing window as key and frontmost. AppKit's `moveToActiveSpace` is evaluated when a window
+is ordered in, so an already-visible Settings window is ordered out synchronously before it is
+re-shown; this moves the same window to the active native Space instead of switching back to its old
+one. Detached status-menu presentation first lets the originating status-item interaction complete:
+standard display-group buttons dispatch on mouse-up, and every menu route schedules presentation on
+the following main-loop turn. This prevents `NSMenu` from consuming the matching mouse-up inside a
+nested tracking loop and leaving the original status control pressed. The Settings menu action then
+records a pending request, but the explicit synchronous `NSMenu.popUp` call must return before that
+request is consumed and the native Settings command is scheduled on another main-loop turn. Popup
+menus own a nested event loop, so delegate close, tracking-end, and post-action notifications can all
+arrive before the presentation call itself returns; none is a sufficient handoff boundary. The
+action also does not call `cancelTracking()`. This keeps
+accessory-app activation outside AppKit's entire popup-menu transaction and preserves Carbon global
+hot-key delivery. Command-comma does not use that gate. Passive restoration when returning to its
+assigned virtual workspace remains nonactivating. Carbon remains the global shortcut owner, and
+shortcut recording clears its registrations until recording finishes. SwiftUI retains its Settings
+window after a normal close, so the coordinator retains only its weakly backed surface adapter and
+can reopen that exact window directly on the next explicit request. If SwiftUI actually releases the
+window, the unavailable adapter is discarded and the supported scene-opening action is used again.
 
 Workspace swiping is a separate off-by-default, machine-local hardware preference. Its AppKit/Core
 Graphics adapter is isolated behind an injected monitor and feeds a pure state machine only touch

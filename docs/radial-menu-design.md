@@ -1,7 +1,25 @@
 # Contextual Radial Menu
 
-**Status:** Functionality implemented, automated-test verified, and live validated; icon-family
-refinement remains WIP under WR-049
+**Status:** The renderer, captured-context validation, placement previews, and Globe/Fn input path
+remain implemented. WR-060 supersedes the broad configurable Command Wheel with a searchable
+Command Palette and uses this renderer only as a position-focused Placement Wheel. The hybrid is
+implemented, automated-test verified, and accepted in the signed installed app.
+
+## Current product scope
+
+- The Placement Wheel resolves only truthful `Place Window` actions: Freeform halves and quarters
+  or Tiled compass placements. It has one level with no family-selection ring.
+- The Command Palette owns layout and Accordion resize commands alongside workspace, profile,
+  recovery, focus, move, Quick App, and application commands.
+- The palette's icon-only control expands those positions as a Placement Halo without dismissing
+  the key palette. The optional Globe/Fn hold opens the same actions directly in the nonactivating
+  Placement Wheel at the pointer.
+- Saved broad-wheel definitions and activation styles remain decodable for migration safety but are
+  no longer authoritative or editable in Settings.
+
+The remaining sections document the reusable renderer/provider and historical migration contract.
+Where they describe the nine-family production wheel or its editor, treat that as the preserved
+pre-WR-060 design rather than current user-facing behavior.
 
 ## Goals
 
@@ -289,7 +307,7 @@ Preview asks the engine for a pure `TiledPlacementProposal` containing the old/p
 
 ## Settings editor and migration
 
-Command Wheel Settings remains ordered as:
+The preserved pre-WR-060 Command Wheel Settings design was ordered as:
 
 1. enabled state, global shortcut, activation style, optional device-local Globe/Fn hold, and hold delay;
 2. a compact rendering of the production wheel with representative contextual children, plus

@@ -1061,6 +1061,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private var supportSectionVisibleForCurrentOpen = false
     private var isPresentingMenu = false
     private var isInvalidated = false
+    private var menuPresentationRequestGate = MenuBarMenuPresentationRequestGate()
+    private var settingsStatusMenuOpenGate = SettingsStatusMenuOpenGate()
     private var shelfGeneration: UInt64 = 0
     private var pendingShelfTarget: MenuBarHitTarget?
     private var pendingShelfAnchorFrame: CGRect?
@@ -1185,7 +1187,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             self?.handle(target)
         }
         let menuAction: () -> Void = { [weak self] in
-            self?.presentMenu()
+            self?.requestMenuPresentation()
         }
         let workspaceHoverAction: (MenuBarHitTarget?, CGRect?) -> Void = { [weak self] target, frame in
             self?.workspaceHoverChanged(target, anchorFrame: frame)
@@ -1315,7 +1317,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         button.contentTintColor = .labelColor
         button.target = self
         button.action = #selector(displayGroupStatusButtonActivated(_:))
-        _ = button.sendAction(on: [.leftMouseDown, .rightMouseDown])
+        _ = button.sendAction(on: MenuBarStatusItemControlEventPolicy.actionEvents)
         let content: MenuBarDisplayGroupContentView
         if let existing = managed.contentView {
             existing.configure(
@@ -1581,7 +1583,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             pointerTarget: pointerTarget
         ) {
         case .openMenu:
-            presentMenu(relativeTo: sender)
+            requestMenuPresentation(relativeTo: sender)
         case let .switchWorkspace(workspaceID, displayIdentifier):
             handle(.workspace(
                 workspaceID: workspaceID,
@@ -1593,6 +1595,10 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     func invalidate() {
         guard !isInvalidated else { return }
         isInvalidated = true
+        menuPresentationRequestGate.cancel()
+        if settingsStatusMenuOpenGate.cancel() {
+            settingsCommandRequestRouter.cancelPendingRequest()
+        }
         dismissApplicationShelf()
         appMenu.delegate = nil
         statusItem.menu = nil
@@ -1610,9 +1616,34 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         dismissApplicationShelf()
         switch MenuBarInteractionRouter.action(for: target) {
         case .openMenu:
-            presentMenu(relativeTo: menuAnchor)
+            requestMenuPresentation(relativeTo: menuAnchor)
         case let .switchWorkspace(workspaceID, _):
             engine.switchToWorkspace(workspaceID)
+        }
+    }
+
+    private func requestMenuPresentation(relativeTo requestedAnchor: NSView? = nil) {
+        guard !isInvalidated,
+              !isPresentingMenu,
+              menuPresentationRequestGate.request()
+        else { return }
+        diagnostics.log(
+            category: "status-menu",
+            event: "presentation-requested",
+            fields: [
+                "source-event": NSApp.currentEvent.map { String($0.type.rawValue) } ?? "none",
+                "control-event-complete": String(
+                    NSApp.currentEvent?.type == .leftMouseUp
+                        || NSApp.currentEvent?.type == .rightMouseUp
+                        || NSApp.currentEvent == nil
+                ),
+            ]
+        )
+        // Return through the status view/button action before beginning NSMenu's nested tracking
+        // loop. This also keeps accessibility and custom-host requests on the same safe boundary.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.menuPresentationRequestGate.consume() else { return }
+            self.presentMenu(relativeTo: requestedAnchor)
         }
     }
 
@@ -1621,6 +1652,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         let anchor = requestedAnchor ?? hostView ?? statusItem.button
         guard !isInvalidated, !isPresentingMenu, let anchor else { return }
         isPresentingMenu = true
+        diagnostics.log(category: "status-menu", event: "presentation-started")
         hostView?.setMenuPresented(true)
         (anchor as? NSButton)?.highlight(true)
         defer {
@@ -1633,6 +1665,17 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             at: NSPoint(x: anchor.bounds.minX, y: anchor.bounds.minY),
             in: anchor
         )
+        diagnostics.log(category: "status-menu", event: "presentation-returned")
+        if settingsStatusMenuOpenGate.consumeAfterMenuPresentationReturns() {
+            diagnostics.log(
+                category: "settings-window",
+                event: "status-menu-presentation-ended",
+                fields: ["route": "status-menu-native-item"]
+            )
+            DispatchQueue.main.async { [weak self] in
+                self?.performPendingSettingsCommandFromStatusMenu()
+            }
+        }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -1802,18 +1845,27 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             category: nil,
             preferPointerDisplay: true
         ))
-        appMenu.cancelTracking()
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            guard SettingsMenuCommandDispatcher.performSettingsCommand(in: NSApp.mainMenu) else {
-                self.settingsCommandRequestRouter.cancelPendingRequest()
-                self.diagnostics.log(
-                    category: "settings-window",
-                    event: "main-menu-command-unavailable",
-                    fields: ["route": "status-menu-native-item"]
-                )
-                return
-            }
+        settingsStatusMenuOpenGate.requestAfterMenuPresentation()
+        diagnostics.log(
+            category: "settings-window",
+            event: "status-menu-open-deferred",
+            fields: ["reason": "awaiting-popup-return"]
+        )
+    }
+
+    private func performPendingSettingsCommandFromStatusMenu() {
+        guard !isInvalidated else {
+            settingsCommandRequestRouter.cancelPendingRequest()
+            return
+        }
+        guard SettingsMenuCommandDispatcher.performSettingsCommand(in: NSApp.mainMenu) else {
+            settingsCommandRequestRouter.cancelPendingRequest()
+            diagnostics.log(
+                category: "settings-window",
+                event: "main-menu-command-unavailable",
+                fields: ["route": "status-menu-native-item"]
+            )
+            return
         }
     }
 
