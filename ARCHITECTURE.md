@@ -295,7 +295,27 @@ games through public bundle metadata suspend the Globe/Fn and workspace-swipe mo
 their window is borderless; this does not broaden the native-fullscreen geometry guard.
 
 Settings is an explicit app-owned floating utility: it may activate and focus, but it is excluded
-from third-party discovery, layout and persistence.
+from third-party discovery, layout and persistence. Every explicit open captures the engine's
+current virtual workspace and interaction display, updates the utility's assignment, and surfaces
+the one existing window as key and frontmost. AppKit's `moveToActiveSpace` is evaluated when a window
+is ordered in, so an already-visible Settings window is ordered out synchronously before it is
+re-shown; this moves the same window to the active native Space instead of switching back to its old
+one. Detached status-menu presentation first lets the originating status-item interaction complete:
+standard display-group buttons dispatch on mouse-up, and every menu route schedules presentation on
+the following main-loop turn. This prevents `NSMenu` from consuming the matching mouse-up inside a
+nested tracking loop and leaving the original status control pressed. The Settings menu action then
+records a pending request, but the explicit synchronous `NSMenu.popUp` call must return before that
+request is consumed and the native Settings command is scheduled on another main-loop turn. Popup
+menus own a nested event loop, so delegate close, tracking-end, and post-action notifications can all
+arrive before the presentation call itself returns; none is a sufficient handoff boundary. The
+action also does not call `cancelTracking()`. This keeps
+accessory-app activation outside AppKit's entire popup-menu transaction and preserves Carbon global
+hot-key delivery. Command-comma does not use that gate. Passive restoration when returning to its
+assigned virtual workspace remains nonactivating. Carbon remains the global shortcut owner, and
+shortcut recording clears its registrations until recording finishes. SwiftUI retains its Settings
+window after a normal close, so the coordinator retains only its weakly backed surface adapter and
+can reopen that exact window directly on the next explicit request. If SwiftUI actually releases the
+window, the unavailable adapter is discarded and the supported scene-opening action is used again.
 
 Workspace swiping is a separate off-by-default, machine-local hardware preference. Its AppKit/Core
 Graphics adapter is isolated behind an injected monitor and feeds a pure state machine only touch

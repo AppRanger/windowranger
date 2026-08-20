@@ -450,6 +450,17 @@ Application Rules are selected from installed or currently running apps and are 
 
 Rules can be paused without deleting their saved actions. Rule edits apply immediately to managed windows and participate in the Settings window's normal Command-Z Undo chain. Disabled rules remain persisted and synced, but resolve to no behavior until resumed.
 
+Every explicit Settings command reassigns the existing Settings utility to the current WindowRanger
+workspace and interaction display, then brings it to the front. If that window was already visible
+on another native macOS Space, WindowRanger resets that old Space attachment before showing the same
+window on the current Space. WindowRanger lets the originating status-item click finish before
+presenting its detached menu, then a Settings selection waits until that popup has fully returned
+before activating the utility. This releases menu-bar input ownership before Settings becomes key
+and frontmost, so global shortcuts remain available. Closing and reopening Settings reuses and
+raises SwiftUI's retained window immediately; if macOS has released it, WindowRanger requests a new
+Settings scene. Returning to a workspace in the background still restores Settings without stealing
+focus.
+
 Existing global command shortcuts can be recorded and reset in Settings. The recorder temporarily suspends WindowRanger's Carbon registrations, rejects bare typing and conflicts with workspace, command-wheel, or other command bindings, and preserves every established default until the user explicitly changes it. Workspace-specific switch/move bindings remain configured with the workspace definitions; no default chord was invented for selecting Freeform.
 
 Moving a focused window is send-only by default: the source workspace remains active and focus moves to the next eligible visible window on the same interaction display. **Focus follows moved window** is opt-in in General Settings, and the command wheel always offers a one-shot **Move & Follow** action. If no local source window remains, internal focus state is cleared rather than selecting a parked or other-display fallback. General Settings can also opt this Mac into a click-through focused-window border with its own local colour, defaulting to white. Independent local filters can limit the border to Tiled workspaces, workspaces with multiple managed windows, or both. While enabled, Tiled and Accordion reserve four points at each screen edge for the border even when a filter currently hides it; Freeform frames remain user-controlled. The border uses a conservative default corner radius selected by macOS generation because public window metadata does not expose another app's rendered corner radius: macOS 27 and later use 16 points, while earlier releases retain the 10-point fallback. App Rules can override that radius for one bundle identifier on this Mac; the appearance override is local and does not sync with the rule's behavioral actions. The border also hides for WindowRanger-owned windows, apps identified as games through public bundle metadata, full-screen windows, and while the session is suspended.

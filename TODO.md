@@ -18,6 +18,84 @@ For bugs, record the observed behavior, expected behavior, reproduction context,
 evidence is user-observed, reproduced, or diagnostic-backed. For features and changes, record the
 smallest useful outcome and acceptance boundary.
 
+## Done
+
+### WR-059 — Always resurface Settings on the current workspace
+
+- **Type:** Settings window behavior change
+- **Priority:** P2
+- **Status:** Done
+- **Requested outcome:** Every Settings command must bring the one existing Settings window to the
+  front on the current WindowRanger workspace and interaction display, even when that window was
+  already visible elsewhere.
+- **Diagnostic-backed follow-up:** The first installed candidate could activate Settings from the
+  status-menu action before AppKit finished that menu-tracking transaction. Diagnostics showed no
+  Carbon hot-key deliveries during the resulting dead interval; unified logging then reported a
+  stale deferred activation immediately before focusing another app released the state and the next
+  shortcut dispatched normally. A follow-up candidate incorrectly treated delegate `menuDidClose`
+  as the later tracking-end signal; live diagnostics showed that callback preceded the selected-item
+  action, leaving `status-menu-open-deferred` pending, Settings unopened, and hotkeys unresponsive.
+  The next candidate used `didEndTrackingNotification`, but the fresh installed trace proved popup
+  tracking had also ended before the selected-item action; that request likewise remained pending.
+  The post-action-notification candidate opened Settings, but the status-item hover remained frozen,
+  Settings was visible without becoming key, and shortcuts stayed unavailable until Settings was
+  clicked. The fresh trace then recorded the very next shortcut through the normal Carbon route.
+  This proves `didSendActionNotification` was also delivered inside `NSMenu.popUp`'s nested event
+  loop, before the synchronous popup presentation returned. The popup-return candidate then logged
+  `status-menu-presentation-ended`, opened and surfaced Settings, but reproduced the same frozen
+  status-item highlight and absent shortcut deliveries until another click. Carbon resumed unchanged
+  afterward. The fault is therefore upstream of Settings and hot-key dispatch: the macOS 27 status
+  button was configured to invoke detached menu presentation on mouse-down, allowing the menu's
+  tracking loop to consume the matching mouse-up before the originating control completed. After
+  that input fix, the next trace showed a separate retained-window lifecycle gap: following a normal
+  Settings close, generation 3 requested a scene and generation 4 was coalesced, but neither could
+  surface the already reopened SwiftUI window until an unrelated workspace update caused its reader
+  to attach roughly ten seconds later.
+- **Acceptance:** Reopening reassigns the existing utility without creating a duplicate, activates
+  WindowRanger, moves the window to the requested display, and presents it key and frontmost on the
+  active native macOS Space. A status-menu request waits for its popup presentation to return
+  before activation, and global hotkeys remain responsive immediately afterward. Passive restoration during an
+  ordinary workspace switch remains nonactivating. Focused Settings tests and the complete
+  non-hosted suite pass; a signed build must be checked by opening Settings, using workspace and
+  Quick App shortcuts immediately, switching workspace/Space, and opening Settings again.
+- **Implemented:** Explicit opens retain the current virtual-workspace/display capture and floating
+  utility lifecycle. An already-visible native window now clears any `canJoinAllSpaces` behavior,
+  orders out before application activation so `moveToActiveSpace` is reapplied, then becomes key and
+  frontmost. Standard display-group status buttons now dispatch only on mouse-up, and every detached
+  menu request is coalesced and deferred one main-loop turn so its originating control action returns
+  before popup tracking begins. The status-menu action then records one pending request; only after the synchronous
+  `NSMenu.popUp` presentation returns does the controller consume it and perform the native Settings
+  command on the following main-loop turn. It uses no close, tracking-end, or post-action notification
+  as that boundary and does not call `cancelTracking()`; invalidation cancels the pending request.
+  A normal close now retains the existing weakly backed Settings surface instead of immediately
+  detaching it, allowing the next command to reopen and raise SwiftUI's retained `NSWindow` directly.
+  If that window has actually been released, its unavailable adapter is discarded before the normal
+  scene-opening path runs.
+  Carbon remains the sole global shortcut path. Debug diagnostics now record menu request, control
+  event completion, popup start and popup return in addition to the Settings handoff, window
+  visibility, native Space reset, and virtual-workspace reassignment.
+- **Automated evidence:** Test isolation, all 128 focused Radial Menu and Settings tests, and the
+  complete 602-test non-hosted suite pass. Coverage proves a normally closed retained surface
+  reopens directly without requesting another scene, while an actually released surface is
+  discarded and requests a new scene. The earlier 171 focused Menu Bar, Radial Menu, and Settings
+  tests also pass for the control-event boundary.
+- **Installed evidence:** With explicit approval, signed universal Debug build
+  `7d2284134f1e-dirty` (CDHash `df32cedbecbc21f56cc8aaea3a6d23130f760bba`) is installed and
+  running as process `46165` from `/Applications/WindowRanger.app`. Its embedded revision, Apple
+  Development signature, Team ID `44NAD22AK6`, bundle identity, `x86_64` and `arm64` architectures,
+  and running executable path were verified. Fresh startup session
+  `973903CD-0318-4C92-8F1A-7A4778A6A129` confirms the replacement launched normally. The rejected
+  popup-return candidate's session `61FFD4FA-CC75-4736-B2C8-48934C4AF1FE` captured its completed
+  Settings handoff followed by the same frozen input interval; normal Carbon delivery resumed after
+  another app received focus. The earlier rejected
+  `didEndTrackingNotification` candidate recorded
+  `status-menu-open-deferred` but no tracking-ended or Settings-open event and twice failed the
+  installer's graceful-quit timeout after becoming wedged, so only its exact installed process was
+  terminated before replacement.
+- **Live evidence:** On 20 August 2026, the maintainer confirmed the status-menu input fix restored
+  shortcut responsiveness, then accepted the installed retained-window candidate after checking
+  that an already-open Settings window returns to the front.
+
 ## Inbox
 
 ### WR-057 — Preserve each window through partial post-login recovery
