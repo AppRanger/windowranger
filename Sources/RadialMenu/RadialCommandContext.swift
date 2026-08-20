@@ -160,6 +160,7 @@ struct RadialWheelDefinition: Codable, Equatable, Sendable {
 
     static let builtInDefault = Self(items: RadialTopLevelItemID.allKnown)
     static let minimalFallback = Self(items: [.goToSpace, .nextSpace, .previousSpace, .layoutType])
+    static let spatial = Self(items: [.resize])
 
     var hasUnresolvedReferences: Bool {
         version != Self.currentVersion || !unresolvedItemIDs.isEmpty ||
@@ -572,6 +573,41 @@ enum RadialCommandCatalogue {
         }
     }
 
+    /// The pointer-facing spatial surface is deliberately narrower than the searchable command
+    /// catalogue. It exposes only the generated Freeform or Tiled placement proposals; layout
+    /// switching, floating toggles, and Accordion resize remain ordinary palette commands.
+    static func resolveSpatialPlacement(context: RadialCommandContext) -> RadialMenuItem? {
+        guard let resolved = resolve(.resize, context: context) else { return nil }
+        let placementChildren: [(VisualPlacement, RadialMenuItem)] = resolved.children.compactMap { child in
+            guard let placement = child.placementPreview?.placement ?? child.freeformPlacementPreview?.placement,
+                  let command = child.command
+            else { return nil }
+            switch command {
+            case .placeTiledWindow, .placeFreeformWindow:
+                return (placement, child)
+            default:
+                return nil
+            }
+        }
+        let childrenByPlacement = Dictionary(uniqueKeysWithValues: placementChildren)
+        let children = VisualPlacement.compassOrder.compactMap { childrenByPlacement[$0] }
+        guard !children.isEmpty else { return nil }
+        return RadialMenuItem(
+            id: RadialTopLevelItemID.resize.rawValue,
+            definitionID: RadialTopLevelItemID.resize.rawValue,
+            label: "Place Window",
+            detail: nil,
+            systemImage: SymbolName.placeWindow,
+            command: nil,
+            alternateCommand: nil,
+            children: children,
+            childGeometry: .compass,
+            isCurrent: false,
+            placementPreview: nil,
+            freeformPlacementPreview: nil
+        )
+    }
+
     private static func workspaceSystemImage(for workspace: RadialWorkspaceOption) -> String {
         let key = workspace.key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard key.count == 1,
@@ -597,14 +633,22 @@ enum RadialCommandContextBuilder {
         var seen = Set<RadialTopLevelItemID>()
         var resolved: [RadialMenuItem] = []
         var omitted: [String] = []
+        let isSpatialPlacementDefinition = effective == .spatial
         for reference in effective.items where seen.insert(reference).inserted {
-            guard let item = RadialCommandCatalogue.resolve(reference, context: context),
+            let candidate = isSpatialPlacementDefinition && reference == .resize
+                ? RadialCommandCatalogue.resolveSpatialPlacement(context: context)
+                : RadialCommandCatalogue.resolve(reference, context: context)
+            guard let item = candidate,
                   item.command != nil || !item.children.isEmpty
             else {
                 omitted.append(reference.rawValue)
                 continue
             }
-            resolved.append(item)
+            if isSpatialPlacementDefinition {
+                resolved.append(contentsOf: item.children)
+            } else {
+                resolved.append(item)
+            }
         }
 
         var note: String?

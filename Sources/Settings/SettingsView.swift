@@ -584,8 +584,8 @@ private struct GeneralSettingsView: View {
             Section("Moving windows") {
                 Toggle("Focus follows moved window", isOn: $store.focusFollowsMovedWindow)
                 Text(store.focusFollowsMovedWindow
-                    ? "Moving a window also opens its destination workspace and focuses it there. The command wheel still shows the effective move action."
-                    : "Moving a window keeps you on the source workspace and focuses the next visible local window. The command wheel offers Move & Follow when you want it once.")
+                    ? "Moving a window also opens its destination workspace and focuses it there. The Command Palette still shows the effective move action."
+                    : "Moving a window keeps you on the source workspace and focuses the next visible local window. The Command Palette offers Move & Follow when you want it once.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -3265,19 +3265,18 @@ private struct ShortcutSettingsView: View {
 private struct RadialMenuSettingsView: View {
     @ObservedObject var store: SettingsStore
     let recordingStateChanged: (Bool) -> Void
-    @Environment(\.undoManager) private var undoManager
     @State private var isRecordingShortcut = false
     @State private var shortcutEventMonitor: Any?
     @State private var conflictMessage: String?
 
-    private var wheelChord: HotKeyChord {
+    private var paletteChord: HotKeyChord {
         store.hotKeyConfiguration.chord(for: .commandWheel)
     }
 
     private var storedConflict: String? {
         HotKeyManager.configurableShortcutConflict(
             action: .commandWheel,
-            chord: wheelChord,
+            chord: paletteChord,
             configuration: store.hotKeyConfiguration,
             workspaces: store.workspaces
         )
@@ -3290,7 +3289,7 @@ private struct RadialMenuSettingsView: View {
     var body: some View {
         Form {
             Section("Activation") {
-                Toggle("Enable command wheel", isOn: $store.radialMenuEnabled)
+                Toggle("Enable Command Palette and Window Placement", isOn: $store.radialMenuEnabled)
                 LabeledContent("Global shortcut") {
                     HStack(spacing: 8) {
                         Button {
@@ -3299,7 +3298,7 @@ private struct RadialMenuSettingsView: View {
                             if isRecordingShortcut {
                                 Text("Press shortcut…").frame(minWidth: 120)
                             } else {
-                                ShortcutCaps(keys: wheelChord.keyCaps)
+                                ShortcutCaps(keys: paletteChord.keyCaps)
                                     .frame(minWidth: 120)
                             }
                         }
@@ -3312,8 +3311,8 @@ private struct RadialMenuSettingsView: View {
                             Image(systemName: "arrow.counterclockwise")
                         }
                         .disabled(store.hotKeyConfiguration.isUsingDefault(for: .commandWheel))
-                        .help("Reset command wheel shortcut")
-                        .accessibilityLabel("Reset command wheel shortcut")
+                        .help("Reset Command Palette shortcut")
+                        .accessibilityLabel("Reset Command Palette shortcut")
                     }
                 }
                 .disabled(!store.radialMenuEnabled)
@@ -3327,22 +3326,12 @@ private struct RadialMenuSettingsView: View {
                         .foregroundStyle(.orange)
                         .accessibilityLabel("Shortcut registration failed. \(runtimeIssue.message)")
                 }
-                LabeledContent("Activation style") {
-                    Picker("Activation style", selection: $store.radialMenuActivationStyle) {
-                        ForEach(RadialMenuActivationStyle.allCases) { style in
-                            Text(style.title).tag(style)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 220)
-                }
                 Toggle(
-                    "Hold Globe/Fn to show Command Wheel",
+                    "Hold Globe/Fn to show Placement Wheel",
                     isOn: $store.radialMenuGlobeFnHoldEnabled
                 )
                 .disabled(!store.radialMenuEnabled)
-                .help("A quick Globe/Fn tap remains assigned to macOS. Only a deliberate hold opens WindowRanger's command wheel.")
+                .help("A quick Globe/Fn tap remains assigned to macOS. Only a deliberate hold opens WindowRanger's Placement Wheel.")
                 Text("Optional and local to this Mac. A quick tap is passed through unchanged to macOS. Fn combined with another key or modifier is never treated as a wheel gesture.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -3352,8 +3341,7 @@ private struct RadialMenuSettingsView: View {
                         .foregroundStyle(.orange)
                         .accessibilityLabel("Globe or Function key monitoring unavailable. \(issue)")
                 }
-                if store.radialMenuActivationStyle == .holdToShow
-                    || store.radialMenuGlobeFnHoldEnabled {
+                if store.radialMenuGlobeFnHoldEnabled {
                     LabeledContent("Hold delay") {
                         HStack {
                             Slider(
@@ -3367,93 +3355,29 @@ private struct RadialMenuSettingsView: View {
                                 .frame(width: 48, alignment: .trailing)
                         }
                     }
-                    Text(store.radialMenuGlobeFnHoldEnabled
-                        ? "The same delay applies to Globe/Fn. Hold past it, point to an action, then release to run it; releasing with no action selected cancels."
-                        : "A shorter shortcut tap does nothing. Hold past the delay, point to an action, then release to run it; releasing with no action selected cancels.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Press once to show the wheel; click or use the keyboard to choose an action. Press the shortcut again or Escape to cancel.")
+                    Text("Hold past the delay, point to a spatial action, then release to run it; releasing with no action selected cancels.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text("The normal shortcut recorder accepts a modifier plus a non-modifier key. Globe/Fn hold is a separate optional hardware gesture, so it does not replace or conflict with that shortcut.")
+                Text("Press the global shortcut to open the searchable palette. The position icon appears only when the focused window has truthful placements. Click it, or press Right Arrow with an empty search, to expand the Placement Halo without closing the palette.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Appearance and interaction") {
-                CommandWheelPreview(definition: store.radialWheelDefinition)
+            Section("Window Placement") {
+                CommandWheelPreview(definition: .spatial)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
-                Text("The wheel opens at the pointer and first focuses the eligible window directly beneath it. Its inner ring mixes direct actions and groups; a group reveals its valid actions on the outer ring. Desktop, transient UI, and unavailable actions fall back safely.")
+                Text("The Placement Halo and Placement Wheel contain only truthful positions for the focused window: Freeform halves and quarters or Tiled compass placement. Layout changes and Accordion resizing stay in the searchable palette.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("Move across a ring to select. Return or Space activates, Tab enters a group, Shift-Tab or Delete returns inward, and Escape always cancels. The centre is a generous cancel zone.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Top-level catalogue") {
-                if store.radialWheelDefinition.hasUnresolvedReferences {
-                    Label("This definition contains duplicate or unavailable entries. They are omitted safely when the wheel opens.", systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                    Button("Repair Definition") {
-                        store.repairRadialWheelDefinition(undoManager: undoManager)
-                    }
-                }
-                if store.radialWheelDefinition.items.isEmpty {
-                    ContentUnavailableView(
-                        "No Saved Wheel Items",
-                        systemImage: "circle.dashed",
-                        description: Text("The wheel uses a minimal safe fallback until you add an item or reset it.")
-                    )
-                }
-                ForEach(Array(store.radialWheelDefinition.items.enumerated()), id: \.element.id) { index, item in
-                    CommandWheelEditorRow(
-                        store: store,
-                        item: item,
-                        index: index,
-                        total: store.radialWheelDefinition.items.count,
-                        undoManager: undoManager
-                    )
-                }
-                HStack {
-                    Menu("Add Item", systemImage: "plus") {
-                        ForEach(availableItems) { metadata in
-                            Button {
-                                store.updateRadialWheelDefinition(
-                                    actionName: "Add Wheel Item",
-                                    undoManager: undoManager
-                                ) { definition in
-                                    definition.add(metadata.reference)
-                                }
-                            } label: {
-                                CommandWheelMetadataLabel(metadata: metadata)
-                            }
-                        }
-                    }
-                    .disabled(availableItems.isEmpty)
-                    .help(availableItems.isEmpty
-                        ? "Every available command family is already in the wheel"
-                        : "Add a command family to the wheel")
-                    Spacer()
-                    Button("Reset to Built-In Default") {
-                        store.resetRadialWheelDefinition(undoManager: undoManager)
-                    }
-                    .disabled(store.radialWheelDefinition == .builtInDefault)
-                }
-                Text("Choose and order the command families on the inner ring. Each family generates its current workspace, profile, layout, or window actions automatically. This synced preference is global and is not part of a Profile.")
+                Text("The halo expands around the palette icon and keeps search open. Arrow keys move around it, Return places the window, and Escape returns to palette search. A Globe/Fn hold opens the same choices at the pointer; move across the ring and release to commit.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .onDisappear { finishShortcutRecording() }
-    }
-
-    private var availableItems: [RadialCommandMetadata] {
-        RadialCommandCatalogue.availableMetadata(excluding: store.radialWheelDefinition.items)
     }
 
     private func beginShortcutRecording() {
@@ -3595,9 +3519,7 @@ struct CommandWheelPreview: View {
             .allowsHitTesting(false)
             .id(definition.items.map(\.rawValue).joined(separator: "|"))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            "Production command wheel preview with \(definition.items.count) saved command families"
-        )
+        .accessibilityLabel("Placement Wheel preview")
     }
 }
 

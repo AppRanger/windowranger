@@ -55,8 +55,8 @@ final class DropDownAppTests: XCTestCase {
         XCTAssertEqual(bottom.position, CGPoint(x: 100, y: 204))
         XCTAssertEqual(bottom.size, CGSize(width: 1_400, height: 720))
         XCTAssertEqual(
-            DropDownAppGeometry.retractedFrame(for: bottom, in: bounds, direction: .bottom).position,
-            CGPoint(x: 100, y: 924)
+            DropDownAppGeometry.retractedFrame(for: bottom, in: bounds, direction: .bottom),
+            WindowFrame(position: CGPoint(x: 100, y: 923), size: CGSize(width: 1_400, height: 1))
         )
 
         let left = DropDownAppGeometry.presentedFrame(
@@ -67,8 +67,8 @@ final class DropDownAppTests: XCTestCase {
         XCTAssertEqual(left.position, CGPoint(x: 100, y: 24))
         XCTAssertEqual(left.size, CGSize(width: 1_120, height: 900))
         XCTAssertEqual(
-            DropDownAppGeometry.retractedFrame(for: left, in: bounds, direction: .left).position,
-            CGPoint(x: -1_020, y: 24)
+            DropDownAppGeometry.retractedFrame(for: left, in: bounds, direction: .left),
+            WindowFrame(position: CGPoint(x: 100, y: 24), size: CGSize(width: 1, height: 900))
         )
 
         let right = DropDownAppGeometry.presentedFrame(
@@ -79,9 +79,39 @@ final class DropDownAppTests: XCTestCase {
         XCTAssertEqual(right.position, CGPoint(x: 380, y: 24))
         XCTAssertEqual(right.size, CGSize(width: 1_120, height: 900))
         XCTAssertEqual(
-            DropDownAppGeometry.retractedFrame(for: right, in: bounds, direction: .right).position,
-            CGPoint(x: 1_500, y: 24)
+            DropDownAppGeometry.retractedFrame(for: right, in: bounds, direction: .right),
+            WindowFrame(position: CGPoint(x: 1_499, y: 24), size: CGSize(width: 1, height: 900))
         )
+    }
+
+    func testPresentationBoundsReserveFocusBorderClearanceOnlyWhenEnabled() {
+        let usableBounds = CGRect(x: -1_200, y: 30, width: 1_200, height: 1_920)
+
+        XCTAssertEqual(
+            DropDownAppGeometry.presentationBounds(
+                in: usableBounds,
+                focusedWindowHighlightEnabled: false
+            ),
+            usableBounds
+        )
+        XCTAssertEqual(
+            DropDownAppGeometry.presentationBounds(
+                in: usableBounds,
+                focusedWindowHighlightEnabled: true
+            ),
+            CGRect(x: -1_196, y: 34, width: 1_192, height: 1_912)
+        )
+
+        let right = DropDownAppGeometry.presentedFrame(
+            in: DropDownAppGeometry.presentationBounds(
+                in: usableBounds,
+                focusedWindowHighlightEnabled: true
+            ),
+            sizeFraction: 0.8,
+            direction: .right
+        )
+        XCTAssertEqual(right.position, CGPoint(x: -957.6, y: 34))
+        XCTAssertEqual(right.size, CGSize(width: 953.6, height: 1_912))
     }
 
     func testAnimationFinishesExactlyAtDestination() {
@@ -386,6 +416,37 @@ final class DropDownAppTests: XCTestCase {
         ))
     }
 
+    func testSameBundlePresentationEditsPreserveTheQuickAppSession() {
+        let ghostty = DropDownAppConfiguration(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            displayName: "Ghostty",
+            heightFraction: 0.8,
+            direction: .bottom
+        )
+        let resized = DropDownAppConfiguration(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            displayName: "Ghostty",
+            heightFraction: 0.5,
+            isAnimationEnabled: false,
+            direction: .top
+        )
+        XCTAssertTrue(DropDownAppConfigurationUpdatePolicy.shouldPreserveSession(
+            previous: ghostty,
+            next: resized
+        ))
+        XCTAssertFalse(DropDownAppConfigurationUpdatePolicy.shouldPreserveSession(
+            previous: ghostty,
+            next: DropDownAppConfiguration(
+                bundleIdentifier: "com.apple.Terminal",
+                displayName: "Terminal"
+            )
+        ))
+        XCTAssertFalse(DropDownAppConfigurationUpdatePolicy.shouldPreserveSession(
+            previous: ghostty,
+            next: nil
+        ))
+    }
+
     func testQuickAppSessionSurvivesDisplaySleepAndCoordinatedWakeTopologyChanges() {
         XCTAssertFalse(DropDownAppLifecyclePolicy.shouldClearSessionForTopologyChange(
             topologyChanged: true,
@@ -421,7 +482,8 @@ final class DropDownAppTests: XCTestCase {
                 key: key,
                 bundleIdentifier: "com.mitchellh.ghostty",
                 isMeaningfullyVisible: true,
-                displayIdentifier: "external"
+                displayIdentifier: "external",
+                wasHiddenByWindowRanger: false
             )]
         )
 
@@ -430,7 +492,8 @@ final class DropDownAppTests: XCTestCase {
             DropDownAppStartupSelection(
                 windowKey: key,
                 isPresented: true,
-                displayIdentifier: "external"
+                displayIdentifier: "external",
+                wasHiddenByWindowRanger: false
             )
         )
     }
@@ -444,7 +507,8 @@ final class DropDownAppTests: XCTestCase {
                 key: key,
                 bundleIdentifier: "com.mitchellh.ghostty",
                 isMeaningfullyVisible: false,
-                displayIdentifier: "external"
+                displayIdentifier: "external",
+                wasHiddenByWindowRanger: false
             )]
         )
 
@@ -453,7 +517,8 @@ final class DropDownAppTests: XCTestCase {
             DropDownAppStartupSelection(
                 windowKey: key,
                 isPresented: false,
-                displayIdentifier: nil
+                displayIdentifier: nil,
+                wasHiddenByWindowRanger: false
             )
         )
     }
@@ -469,13 +534,15 @@ final class DropDownAppTests: XCTestCase {
                     key: first,
                     bundleIdentifier: "com.mitchellh.ghostty",
                     isMeaningfullyVisible: true,
-                    displayIdentifier: "main"
+                    displayIdentifier: "main",
+                    wasHiddenByWindowRanger: false
                 ),
                 DropDownAppStartupCandidate(
                     key: second,
                     bundleIdentifier: "com.mitchellh.ghostty",
                     isMeaningfullyVisible: true,
-                    displayIdentifier: "main"
+                    displayIdentifier: "main",
+                    wasHiddenByWindowRanger: false
                 ),
             ]
         ))
@@ -485,8 +552,230 @@ final class DropDownAppTests: XCTestCase {
                 key: first,
                 bundleIdentifier: "com.example.Other",
                 isMeaningfullyVisible: true,
-                displayIdentifier: "main"
+                displayIdentifier: "main",
+                wasHiddenByWindowRanger: false
             )]
         ))
+    }
+
+    func testStartupRecoversOnlyTheExactWindowRangerHiddenQuickAppAsHidden() {
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+
+        let selection = DropDownAppStartupPolicy.selection(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            candidates: [DropDownAppStartupCandidate(
+                key: key,
+                bundleIdentifier: "com.mitchellh.ghostty",
+                isMeaningfullyVisible: true,
+                displayIdentifier: "external",
+                wasHiddenByWindowRanger: true
+            )]
+        )
+
+        XCTAssertEqual(selection, DropDownAppStartupSelection(
+            windowKey: key,
+            isPresented: false,
+            displayIdentifier: nil,
+            wasHiddenByWindowRanger: true
+        ))
+    }
+
+    func testHiddenSessionRecoveryRequiresTheExactWindowBundleAndStartupBoundary() {
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let persisted = PersistedDropDownAppSession(
+            windowKey: key,
+            bundleIdentifier: "com.mitchellh.ghostty",
+            displayIdentifier: "external",
+            isApplicationHiddenByWindowRanger: true
+        )
+
+        XCTAssertTrue(DropDownAppHiddenSessionRecoveryPolicy.matches(
+            persisted,
+            windowKey: key,
+            bundleIdentifier: "com.mitchellh.ghostty",
+            isStartup: true,
+            isApplicationHidden: true
+        ))
+        XCTAssertFalse(DropDownAppHiddenSessionRecoveryPolicy.matches(
+            persisted,
+            windowKey: WindowKey(processIdentifier: 42, windowIdentifier: 101),
+            bundleIdentifier: "com.mitchellh.ghostty",
+            isStartup: true,
+            isApplicationHidden: true
+        ))
+        XCTAssertFalse(DropDownAppHiddenSessionRecoveryPolicy.matches(
+            persisted,
+            windowKey: key,
+            bundleIdentifier: "com.apple.Terminal",
+            isStartup: true,
+            isApplicationHidden: true
+        ))
+        XCTAssertFalse(DropDownAppHiddenSessionRecoveryPolicy.matches(
+            persisted,
+            windowKey: key,
+            bundleIdentifier: "com.mitchellh.ghostty",
+            isStartup: false,
+            isApplicationHidden: true
+        ))
+        XCTAssertFalse(DropDownAppHiddenSessionRecoveryPolicy.matches(
+            persisted,
+            windowKey: key,
+            bundleIdentifier: "com.mitchellh.ghostty",
+            isStartup: true,
+            isApplicationHidden: false
+        ))
+    }
+
+    func testApplicationVisibilityConfirmationWaitsForDelayedStateWithoutWaitingForever() {
+        XCTAssertEqual(
+            DropDownAppVisibilityConfirmationPolicy.disposition(
+                expectedHidden: false,
+                observedHidden: true,
+                attempt: 0
+            ),
+            .retry
+        )
+        XCTAssertEqual(
+            DropDownAppVisibilityConfirmationPolicy.disposition(
+                expectedHidden: false,
+                observedHidden: nil,
+                attempt: 9
+            ),
+            .retry
+        )
+        XCTAssertEqual(
+            DropDownAppVisibilityConfirmationPolicy.disposition(
+                expectedHidden: false,
+                observedHidden: false,
+                attempt: 10
+            ),
+            .confirmed
+        )
+        XCTAssertEqual(
+            DropDownAppVisibilityConfirmationPolicy.disposition(
+                expectedHidden: false,
+                observedHidden: true,
+                attempt: 10
+            ),
+            .timedOut
+        )
+        XCTAssertEqual(
+            DropDownAppVisibilityConfirmationPolicy.disposition(
+                expectedHidden: true,
+                observedHidden: true,
+                attempt: 1
+            ),
+            .confirmed
+        )
+        XCTAssertEqual(
+            DropDownAppVisibilityConfirmationPolicy.disposition(
+                expectedHidden: true,
+                observedHidden: false,
+                attempt: 10
+            ),
+            .timedOut
+        )
+    }
+
+    func testApplicationVisibilityRequestUsesObservedStateInsteadOfAppKitReturnValue() {
+        XCTAssertTrue(DropDownAppVisibilityRequestPolicy.wasDispatched(
+            applicationMatched: true,
+            appKitReturnValue: false
+        ))
+        XCTAssertTrue(DropDownAppVisibilityRequestPolicy.wasDispatched(
+            applicationMatched: true,
+            appKitReturnValue: true
+        ))
+        XCTAssertFalse(DropDownAppVisibilityRequestPolicy.wasDispatched(
+            applicationMatched: false,
+            appKitReturnValue: true
+        ))
+    }
+
+    func testLaunchWindowWatchdogResolvesRetriesAndStopsAtItsBound() {
+        XCTAssertTrue(
+            DropDownAppLaunchWatchdogPolicy.activatesApplication,
+            "A normal activation is required to make windowless apps handle reopen and create a window."
+        )
+        XCTAssertEqual(
+            DropDownAppLaunchWatchdogPolicy.disposition(
+                availableWindowCount: 1,
+                remainingAttempts: 8
+            ),
+            .resolveToggle
+        )
+        XCTAssertEqual(
+            DropDownAppLaunchWatchdogPolicy.disposition(
+                availableWindowCount: 2,
+                remainingAttempts: 8
+            ),
+            .resolveToggle,
+            "The ordinary toggle path must report ambiguity rather than letting the watchdog guess."
+        )
+        XCTAssertEqual(
+            DropDownAppLaunchWatchdogPolicy.disposition(
+                availableWindowCount: 0,
+                remainingAttempts: 8
+            ),
+            .retry(remainingAttempts: 7)
+        )
+        XCTAssertEqual(
+            DropDownAppLaunchWatchdogPolicy.disposition(
+                availableWindowCount: 0,
+                remainingAttempts: 1
+            ),
+            .exhausted
+        )
+        XCTAssertEqual(DropDownAppLaunchWatchdogPolicy.maximumAttempts, 8)
+        XCTAssertEqual(DropDownAppLaunchWatchdogPolicy.initialDelay, 0.2)
+        XCTAssertEqual(DropDownAppLaunchWatchdogPolicy.retryDelay, 0.15)
+    }
+
+    func testWorkspaceStateRoundTripsTheWindowServerBoundHiddenQuickAppOwnership() throws {
+        let workspaceID = UUID()
+        let persisted = PersistedWorkspaceState(
+            version: PersistedWorkspaceState.currentVersion,
+            windowServerSession: "same-session",
+            activeWorkspaceID: workspaceID,
+            windows: [:],
+            dropDownAppSession: PersistedDropDownAppSession(
+                windowKey: WindowKey(processIdentifier: 42, windowIdentifier: 100),
+                bundleIdentifier: "com.mitchellh.ghostty",
+                displayIdentifier: "external",
+                isApplicationHiddenByWindowRanger: true
+            )
+        )
+
+        let roundTripped = try JSONDecoder().decode(
+            PersistedWorkspaceState.self,
+            from: JSONEncoder().encode(persisted)
+        )
+        XCTAssertEqual(roundTripped, persisted)
+
+        var legacyMinimized = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(persisted)) as? [String: Any]
+        )
+        var legacySession = try XCTUnwrap(legacyMinimized["dropDownAppSession"] as? [String: Any])
+        legacySession.removeValue(forKey: "isApplicationHiddenByWindowRanger")
+        legacySession["isMinimizedByWindowRanger"] = true
+        legacyMinimized["dropDownAppSession"] = legacySession
+        let legacyMinimizedDecoded = try JSONDecoder().decode(
+            PersistedWorkspaceState.self,
+            from: JSONSerialization.data(withJSONObject: legacyMinimized)
+        )
+        XCTAssertEqual(
+            legacyMinimizedDecoded.dropDownAppSession?.isApplicationHiddenByWindowRanger,
+            false
+        )
+
+        var legacy = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(persisted)) as? [String: Any]
+        )
+        legacy.removeValue(forKey: "dropDownAppSession")
+        let legacyDecoded = try JSONDecoder().decode(
+            PersistedWorkspaceState.self,
+            from: JSONSerialization.data(withJSONObject: legacy)
+        )
+        XCTAssertNil(legacyDecoded.dropDownAppSession)
     }
 }

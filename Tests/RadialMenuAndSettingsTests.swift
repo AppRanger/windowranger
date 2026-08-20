@@ -1453,6 +1453,115 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsRetainedWindowReopensDirectlyAfterNormalClose() {
+        let displays = settingsDisplays()
+        let coordinator = SettingsWindowCoordinator(displayProvider: { displays })
+        let surface = TestSettingsWindowSurface(
+            frame: CGRect(x: 100, y: 100, width: 900, height: 640)
+        )
+        coordinator.attach(surface: surface)
+        let context = SettingsSurfaceContext(
+            workspaceID: workspaceA.id,
+            displayIdentifier: "main",
+            displayMode: .unified,
+            resolutionReason: "test"
+        )
+        coordinator.requestOpen(context: context, openSettings: { true })
+
+        coordinator.windowWillClose()
+
+        XCTAssertNil(coordinator.assignedContext)
+        XCTAssertEqual(coordinator.requestOpen(
+            context: context,
+            openSettings: { XCTFail("The retained window must reopen directly"); return false }
+        ), .resurfacedExistingWindow)
+        XCTAssertEqual(surface.surfacedFrames.count, 2)
+        XCTAssertEqual(coordinator.assignedContext, context)
+    }
+
+    @MainActor
+    func testSettingsReleasedWindowRequestsANewSceneAfterClose() {
+        let displays = settingsDisplays()
+        let coordinator = SettingsWindowCoordinator(displayProvider: { displays })
+        let surface = TestSettingsWindowSurface(
+            frame: CGRect(x: 100, y: 100, width: 900, height: 640)
+        )
+        coordinator.attach(surface: surface)
+        let context = SettingsSurfaceContext(
+            workspaceID: workspaceA.id,
+            displayIdentifier: "main",
+            displayMode: .unified,
+            resolutionReason: "test"
+        )
+        coordinator.requestOpen(context: context, openSettings: { true })
+        surface.isAvailable = false
+        coordinator.windowWillClose()
+
+        var requestedScene = false
+        XCTAssertEqual(coordinator.requestOpen(context: context, openSettings: {
+            requestedScene = true
+            return true
+        }), .sceneRequested)
+        XCTAssertTrue(requestedScene)
+    }
+
+    func testSettingsExplicitOpenResetsOnlyAnAlreadyVisibleNativeSpaceAssignment() {
+        XCTAssertTrue(SettingsWindowResurfacePolicy.shouldResetSpaceAssignment(isVisible: true))
+        XCTAssertFalse(SettingsWindowResurfacePolicy.shouldResetSpaceAssignment(isVisible: false))
+    }
+
+    func testSettingsStatusMenuOpenConsumesOnlyAfterPopupPresentationReturns() {
+        var gate = SettingsStatusMenuOpenGate()
+
+        XCTAssertFalse(gate.consumeAfterMenuPresentationReturns())
+        gate.requestAfterMenuPresentation()
+        XCTAssertTrue(gate.isPending)
+        XCTAssertTrue(gate.consumeAfterMenuPresentationReturns())
+        XCTAssertFalse(gate.isPending)
+        XCTAssertFalse(gate.consumeAfterMenuPresentationReturns())
+    }
+
+    func testSettingsStatusMenuOpenCanBeCancelledBeforePopupReturns() {
+        var gate = SettingsStatusMenuOpenGate()
+
+        gate.requestAfterMenuPresentation()
+        XCTAssertTrue(gate.cancel())
+        XCTAssertFalse(gate.consumeAfterMenuPresentationReturns())
+        XCTAssertFalse(gate.cancel())
+    }
+
+    @MainActor
+    func testSettingsReopenResetsOldSpaceBeforeApplicationActivation() {
+        let displays = settingsDisplays()
+        var surface: TestSettingsWindowSurface!
+        var activationObservedSpaceReset = false
+        let coordinator = SettingsWindowCoordinator(
+            displayProvider: { displays },
+            applicationActivator: {
+                activationObservedSpaceReset = surface.spaceResetCount == 1 && !surface.isVisible
+            }
+        )
+        surface = TestSettingsWindowSurface(
+            frame: CGRect(x: 100, y: 100, width: 900, height: 640)
+        )
+        coordinator.attach(surface: surface)
+        let context = SettingsSurfaceContext(
+            workspaceID: workspaceA.id,
+            displayIdentifier: "main",
+            displayMode: .independent,
+            resolutionReason: "test"
+        )
+
+        coordinator.requestOpen(context: context, openSettings: { true })
+        XCTAssertFalse(activationObservedSpaceReset, "The first hidden open needs no Space reset")
+        coordinator.requestOpen(context: context, openSettings: { true })
+
+        XCTAssertTrue(activationObservedSpaceReset)
+        XCTAssertEqual(surface.spaceResetCount, 1)
+        XCTAssertTrue(surface.isVisible)
+    }
+
+    @MainActor
     func testSettingsVirtualWorkspaceVisibilityDoesNotActivateOnReturn() {
         let displays = settingsDisplays()
         var activationCount = 0
@@ -2644,25 +2753,20 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
-    func testSettingsSearchRoutesHoldAndTwoRingEditorToCommandWheel() {
+    func testSettingsSearchRoutesGlobeHoldAndPlacementToCommandPalette() {
         XCTAssertEqual(
-            SettingsCatalog.search("hold trigger timeout", includeDebug: false).first?.id,
-            "radial-activation"
+            SettingsCatalog.search("Globe function hold", includeDebug: false).first?.id,
+            "radial-globe-fn"
         )
         XCTAssertEqual(
-            SettingsCatalog.search("outer ring customize", includeDebug: false).first?.id,
-            "radial-editor"
+            SettingsCatalog.search("pointer position snap", includeDebug: false).first?.id,
+            "radial-item-resize"
         )
     }
 
-    func testSettingsSearchIndexesEveryBuiltInWheelItem() {
-        for metadata in RadialCommandCatalogue.allMetadata {
-            let matches = SettingsCatalog.search(metadata.title, includeDebug: false)
-            XCTAssertTrue(
-                matches.contains { $0.category == .radialMenu },
-                "Expected Settings search to route \(metadata.title) to Command Wheel"
-            )
-        }
+    func testSettingsNoLongerExposesTheLegacyWheelCatalogueEditor() {
+        XCTAssertTrue(SettingsCatalog.search("outer ring customize", includeDebug: false).isEmpty)
+        XCTAssertEqual(SettingsCategory.radialMenu.title, "Command Palette")
     }
 
     @MainActor
@@ -2919,8 +3023,10 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 private final class TestSettingsWindowSurface: SettingsWindowSurface {
     var frame: CGRect
     private(set) var isVisible = false
+    var isAvailable = true
     private(set) var constraintCount = 0
     private(set) var prepareCount = 0
+    private(set) var spaceResetCount = 0
     private(set) var surfacedFrames: [CGRect] = []
     private(set) var nonactivatingSurfaceFrames: [CGRect] = []
     private(set) var repositionedFrames: [CGRect] = []
@@ -2934,6 +3040,13 @@ private final class TestSettingsWindowSurface: SettingsWindowSurface {
     func applyWindowConstraints() { constraintCount += 1 }
 
     func prepareAsFloatingUtility() { prepareCount += 1 }
+
+    func resetVisibleSpaceAssignmentIfNeeded() -> Bool {
+        guard isVisible else { return false }
+        isVisible = false
+        spaceResetCount += 1
+        return true
+    }
 
     func surface(at frame: CGRect) {
         self.frame = frame

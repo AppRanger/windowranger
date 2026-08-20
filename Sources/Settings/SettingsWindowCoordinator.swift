@@ -120,6 +120,37 @@ enum SettingsSceneOpenResult: Equatable, Sendable {
     case sceneActionUnavailable
 }
 
+enum SettingsWindowResurfacePolicy {
+    /// `moveToActiveSpace` is applied when a window is ordered in. An already-visible window keeps
+    /// its existing native Space attachment unless it is briefly ordered out first.
+    static func shouldResetSpaceAssignment(isVisible: Bool) -> Bool {
+        isVisible
+    }
+}
+
+struct SettingsStatusMenuOpenGate {
+    private(set) var isPending = false
+
+    mutating func requestAfterMenuPresentation() {
+        isPending = true
+    }
+
+    /// `NSMenu.popUp` owns a nested event loop. Its close, tracking-end, and post-action
+    /// notifications can all arrive before the synchronous presentation call returns.
+    mutating func consumeAfterMenuPresentationReturns() -> Bool {
+        guard isPending else { return false }
+        isPending = false
+        return true
+    }
+
+    @discardableResult
+    mutating func cancel() -> Bool {
+        let wasPending = isPending
+        isPending = false
+        return wasPending
+    }
+}
+
 enum SettingsWindowGeometry {
     /// Keeps a user-positioned Settings window when it already belongs to the requested display,
     /// but centers it when crossing displays. In both cases the result is clamped to the display's
@@ -181,8 +212,10 @@ enum SettingsWindowGeometry {
 protocol SettingsWindowSurface: AnyObject {
     var frame: CGRect { get }
     var isVisible: Bool { get }
+    var isAvailable: Bool { get }
     func applyWindowConstraints()
     func prepareAsFloatingUtility()
+    func resetVisibleSpaceAssignmentIfNeeded() -> Bool
     func surface(at frame: CGRect)
     func surfaceWithoutActivation(at frame: CGRect)
     func repositionWithoutActivation(to frame: CGRect)
@@ -259,6 +292,7 @@ final class SettingsWindowCoordinator {
     /// AppKit status menu can bridge to the supported SwiftUI control without a private selector.
     @discardableResult
     func prepareOpen(context: SettingsSurfaceContext) -> SettingsSceneOpenResult {
+        discardUnavailableSurfaceIfNeeded()
         let wasWaitingForScene = pendingContext != nil && surface == nil
         requestGeneration &+= 1
         pendingContext = context
@@ -420,7 +454,9 @@ final class SettingsWindowCoordinator {
     }
 
     private func surfacePendingRequestIfPossible() {
-        guard let context = pendingContext, let surface else { return }
+        guard let context = pendingContext, let surface, surface.isAvailable else { return }
+        let wasVisible = surface.isVisible
+        let previousContext = assignedContext
         surface.applyWindowConstraints()
         guard let placement = SettingsWindowGeometry.placement(
             currentFrame: surface.frame,
@@ -432,6 +468,7 @@ final class SettingsWindowCoordinator {
         assignedContext = context
         isHiddenForWorkspace = false
         surface.prepareAsFloatingUtility()
+        let resetSpaceAssignment = surface.resetVisibleSpaceAssignmentIfNeeded()
         applicationActivator()
         surface.surface(at: placement.frame)
         diagnostics.log(
@@ -444,19 +481,35 @@ final class SettingsWindowCoordinator {
                 "resolved-display": Self.short(placement.displayIdentifier),
                 "display-resolution": placement.resolutionReason,
                 "window-level": "floating",
+                "was-visible": String(wasVisible),
+                "space-assignment-reset": String(resetSpaceAssignment),
+                "workspace-reassigned": String(previousContext?.workspaceID != context.workspaceID),
             ]
         )
     }
 
-    private func windowWillClose() {
+    func windowWillClose() {
+        // SwiftUI retains and later reuses its Settings NSWindow after a normal close. Keep the
+        // weakly backed adapter so the next explicit request can reopen and raise that exact window
+        // directly. If SwiftUI actually releases it, prepareOpen discards the unavailable adapter
+        // before requesting a new scene.
+        surface?.restoreOrdinaryLifecycle()
         diagnostics.log(
             category: "settings-window",
             event: "closed",
-            fields: ["workspace": assignedContext.map { Self.short($0.workspaceID.uuidString) } ?? "none"]
+            fields: [
+                "workspace": assignedContext.map { Self.short($0.workspaceID.uuidString) } ?? "none",
+                "surface-retained": String(surface?.isAvailable == true),
+            ]
         )
-        detach(restoreLifecycle: true)
         assignedContext = nil
         isHiddenForWorkspace = false
+    }
+
+    private func discardUnavailableSurfaceIfNeeded() {
+        guard let surface, !surface.isAvailable else { return }
+        detach(restoreLifecycle: false)
+        diagnostics.log(category: "settings-window", event: "released-surface-discarded")
     }
 
     private func detach(restoreLifecycle: Bool) {
@@ -535,6 +588,7 @@ private final class AppKitSettingsWindowSurface: SettingsWindowSurface {
 
     var frame: CGRect { window?.frame ?? .zero }
     var isVisible: Bool { window?.isVisible == true }
+    var isAvailable: Bool { window != nil }
 
     func applyWindowConstraints() {
         guard let window else { return }
@@ -581,7 +635,17 @@ private final class AppKitSettingsWindowSurface: SettingsWindowSurface {
             "\(ApplicationIdentity.bundleIdentifier).settings"
         )
         window.level = .floating
+        window.collectionBehavior.remove(.canJoinAllSpaces)
         window.collectionBehavior.insert(.moveToActiveSpace)
+    }
+
+    func resetVisibleSpaceAssignmentIfNeeded() -> Bool {
+        guard let window else { return false }
+        if SettingsWindowResurfacePolicy.shouldResetSpaceAssignment(isVisible: window.isVisible) {
+            window.orderOut(nil)
+            return true
+        }
+        return false
     }
 
     func surface(at frame: CGRect) {
@@ -613,6 +677,8 @@ private final class AppKitSettingsWindowSurface: SettingsWindowSurface {
 }
 
 extension SettingsWindowSurface {
+    var isAvailable: Bool { true }
+
     func surfaceWithoutActivation(at frame: CGRect) {
         surface(at: frame)
     }

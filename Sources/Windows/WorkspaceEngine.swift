@@ -479,22 +479,34 @@ enum DropDownAppLifecyclePolicy {
     }
 }
 
+enum DropDownAppConfigurationUpdatePolicy {
+    static func shouldPreserveSession(
+        previous: DropDownAppConfiguration?,
+        next: DropDownAppConfiguration?
+    ) -> Bool {
+        guard let previous, let next else { return false }
+        return previous.bundleIdentifier.caseInsensitiveCompare(next.bundleIdentifier) == .orderedSame
+    }
+}
+
 struct DropDownAppStartupCandidate {
     let key: WindowKey
     let bundleIdentifier: String?
     let isMeaningfullyVisible: Bool
     let displayIdentifier: String?
+    let wasHiddenByWindowRanger: Bool
 }
 
 struct DropDownAppStartupSelection: Equatable {
     let windowKey: WindowKey
     let isPresented: Bool
     let displayIdentifier: String?
+    let wasHiddenByWindowRanger: Bool
 }
 
 /// Startup has no exact Quick App session to restore. It may claim a configured application only
 /// when one eligible window is unambiguous; current on-screen visibility decides whether that local
-/// session begins presented or parked.
+/// session begins presented or hidden, while exact persisted application-hide ownership remains hidden.
 enum DropDownAppStartupPolicy {
     static func selection(
         bundleIdentifier: String,
@@ -506,9 +518,118 @@ enum DropDownAppStartupPolicy {
         guard matching.count == 1, let candidate = matching.first else { return nil }
         return DropDownAppStartupSelection(
             windowKey: candidate.key,
-            isPresented: candidate.isMeaningfullyVisible,
-            displayIdentifier: candidate.isMeaningfullyVisible ? candidate.displayIdentifier : nil
+            isPresented: candidate.isMeaningfullyVisible && !candidate.wasHiddenByWindowRanger,
+            displayIdentifier: candidate.isMeaningfullyVisible && !candidate.wasHiddenByWindowRanger
+                ? candidate.displayIdentifier : nil,
+            wasHiddenByWindowRanger: candidate.wasHiddenByWindowRanger
         )
+    }
+}
+
+struct PersistedDropDownAppSession: Codable, Equatable, Sendable {
+    let windowKey: WindowKey
+    let bundleIdentifier: String
+    let displayIdentifier: String?
+    let isApplicationHiddenByWindowRanger: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case windowKey
+        case bundleIdentifier
+        case displayIdentifier
+        case isApplicationHiddenByWindowRanger
+    }
+
+    init(
+        windowKey: WindowKey,
+        bundleIdentifier: String,
+        displayIdentifier: String?,
+        isApplicationHiddenByWindowRanger: Bool
+    ) {
+        self.windowKey = windowKey
+        self.bundleIdentifier = bundleIdentifier
+        self.displayIdentifier = displayIdentifier
+        self.isApplicationHiddenByWindowRanger = isApplicationHiddenByWindowRanger
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        windowKey = try container.decode(WindowKey.self, forKey: .windowKey)
+        bundleIdentifier = try container.decode(String.self, forKey: .bundleIdentifier)
+        displayIdentifier = try container.decodeIfPresent(String.self, forKey: .displayIdentifier)
+        isApplicationHiddenByWindowRanger = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .isApplicationHiddenByWindowRanger
+        ) ?? false
+    }
+}
+
+enum DropDownAppHiddenSessionRecoveryPolicy {
+    static func matches(
+        _ persisted: PersistedDropDownAppSession?,
+        windowKey: WindowKey,
+        bundleIdentifier: String?,
+        isStartup: Bool,
+        isApplicationHidden: Bool
+    ) -> Bool {
+        guard isStartup,
+              isApplicationHidden,
+              let persisted,
+              persisted.isApplicationHiddenByWindowRanger,
+              persisted.windowKey == windowKey,
+              let bundleIdentifier
+        else { return false }
+        return persisted.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+    }
+}
+
+enum DropDownAppVisibilityConfirmationDisposition: Equatable {
+    case confirmed
+    case retry
+    case timedOut
+}
+
+enum DropDownAppVisibilityConfirmationPolicy {
+    static let maximumAttempts = 10
+
+    static func disposition(
+        expectedHidden: Bool,
+        observedHidden: Bool?,
+        attempt: Int,
+        maximumAttempts: Int = maximumAttempts
+    ) -> DropDownAppVisibilityConfirmationDisposition {
+        if observedHidden == expectedHidden { return .confirmed }
+        return attempt < maximumAttempts ? .retry : .timedOut
+    }
+}
+
+enum DropDownAppVisibilityRequestPolicy {
+    static func wasDispatched(
+        applicationMatched: Bool,
+        appKitReturnValue _: Bool
+    ) -> Bool {
+        applicationMatched
+    }
+}
+
+enum DropDownAppLaunchWatchdogDisposition: Equatable {
+    case resolveToggle
+    case retry(remainingAttempts: Int)
+    case exhausted
+}
+
+enum DropDownAppLaunchWatchdogPolicy {
+    static let activatesApplication = true
+    static let initialDelay: TimeInterval = 0.2
+    static let retryDelay: TimeInterval = 0.15
+    static let maximumAttempts = 8
+
+    static func disposition(
+        availableWindowCount: Int,
+        remainingAttempts: Int
+    ) -> DropDownAppLaunchWatchdogDisposition {
+        if availableWindowCount > 0 { return .resolveToggle }
+        guard remainingAttempts > 1 else { return .exhausted }
+        return .retry(remainingAttempts: remainingAttempts - 1)
     }
 }
 
@@ -637,6 +758,7 @@ struct PersistedWorkspaceState: Codable, Equatable, Sendable {
     let activeWorkspaceIDsByDisplay: [String: UUID]?
     let profileID: UUID?
     let tiledTrees: [PersistedTiledTree]?
+    let dropDownAppSession: PersistedDropDownAppSession?
 
     init(
         version: Int,
@@ -645,7 +767,8 @@ struct PersistedWorkspaceState: Codable, Equatable, Sendable {
         windows: [String: PersistedWindowAssignment],
         activeWorkspaceIDsByDisplay: [String: UUID]? = nil,
         profileID: UUID? = nil,
-        tiledTrees: [PersistedTiledTree]? = nil
+        tiledTrees: [PersistedTiledTree]? = nil,
+        dropDownAppSession: PersistedDropDownAppSession? = nil
     ) {
         self.version = version
         self.windowServerSession = windowServerSession
@@ -654,6 +777,7 @@ struct PersistedWorkspaceState: Codable, Equatable, Sendable {
         self.activeWorkspaceIDsByDisplay = activeWorkspaceIDsByDisplay
         self.profileID = profileID
         self.tiledTrees = tiledTrees
+        self.dropDownAppSession = dropDownAppSession
     }
 
     func assignment(
@@ -1117,11 +1241,18 @@ final class WorkspaceEngine {
     private struct DropDownAppSession {
         var windowKey: WindowKey
         let bundleIdentifier: String
-        let direction: DropDownAppDirection
-        let isAnimationEnabled: Bool
+        var direction: DropDownAppDirection
+        var isAnimationEnabled: Bool
         var isPresented: Bool
+        var isApplicationHiddenByWindowRanger: Bool
         var displayIdentifier: String?
         var previousFocusKey: WindowKey?
+    }
+
+    private struct PendingDropDownAppLaunch {
+        let bundleIdentifier: String
+        let displayName: String
+        let generation: UInt64
     }
 
     private enum ManualTiledMoveReconciliation: Equatable {
@@ -1147,6 +1278,8 @@ final class WorkspaceEngine {
     private var dropDownAppConfiguration: DropDownAppConfiguration?
     private var dropDownAppSession: DropDownAppSession?
     private var dropDownAnimationGeneration: UInt64 = 0
+    private var dropDownLaunchGeneration: UInt64 = 0
+    private var pendingDropDownAppLaunch: PendingDropDownAppLaunch?
     private var focusFollowsMovedWindow: Bool
     private var automaticallyUnhideApplications: Bool
     private var focusedWindowHighlightEnabled: Bool
@@ -1206,6 +1339,7 @@ final class WorkspaceEngine {
     private let diagnostics: DiagnosticLogger
     private var windowServerSessionValidated = true
     private var pendingRestoredWindows: [String: PersistedWindowAssignment]
+    private var pendingRestoredDropDownAppSession: PersistedDropDownAppSession?
     private let startupGraceDeadline = Date().addingTimeInterval(30)
     private let ownProcessIdentifier = ProcessInfo.processInfo.processIdentifier
 
@@ -1242,6 +1376,16 @@ final class WorkspaceEngine {
             )
         } ?? false
         pendingRestoredWindows = restoredProfileMatches ? (restoredState?.windows ?? [:]) : [:]
+        pendingRestoredDropDownAppSession = restoredProfileMatches
+            ? restoredState?.dropDownAppSession.flatMap { session in
+                guard session.isApplicationHiddenByWindowRanger,
+                      session.bundleIdentifier.caseInsensitiveCompare(
+                        dropDownApp?.bundleIdentifier ?? ""
+                      ) == .orderedSame
+                else { return nil }
+                return session
+            }
+            : nil
         let validWorkspaceIDs = Set(initial.map(\.id))
         currentWorkspaceID = (restoredProfileMatches ? restoredState : nil)
             .map(\.activeWorkspaceID)
@@ -1340,6 +1484,7 @@ final class WorkspaceEngine {
             wakeReconciliationWorkItem = nil
             directionalMoveGestureContext = nil
             manualTiledDragSession = nil
+            cancelPendingDropDownAppLaunch()
             invalidateFocusWorkForLifecycle()
             persistState(preservingPendingRestores: true, waitForCompletion: true)
             diagnostics.log(
@@ -1506,7 +1651,8 @@ final class WorkspaceEngine {
             directionalMoveGestureContext = nil
             manualTiledDragSession = nil
             dropDownAnimationGeneration &+= 1
-            dropDownAppSession = nil
+            cancelPendingDropDownAppLaunch()
+            restoreAndClearDropDownAppSession(reason: "application-stop")
             // Preserve workspace membership and original frames before the safety escape hatch
             // places every managed window on the main display.
             persistState(preservingPendingRestores: true, waitForCompletion: true)
@@ -1519,9 +1665,47 @@ final class WorkspaceEngine {
             guard let self else { return }
             let normalized = configuration?.normalized()
             guard normalized != self.dropDownAppConfiguration else { return }
-            self.restoreAndClearDropDownAppSession(reason: "configuration-changed")
-            self.dropDownAppConfiguration = normalized
-            self.applyVisibility()
+            self.cancelPendingDropDownAppLaunch()
+            let previous = self.dropDownAppConfiguration
+            if DropDownAppConfigurationUpdatePolicy.shouldPreserveSession(
+                previous: previous,
+                next: normalized
+            ), var session = self.dropDownAppSession, let normalized {
+                let previousFocusKey = session.previousFocusKey
+                self.dropDownAppConfiguration = normalized
+                session.direction = normalized.direction
+                session.isAnimationEnabled = normalized.isAnimationEnabled
+                self.dropDownAppSession = session
+                if session.isPresented, let target = self.windows[session.windowKey] {
+                    self.showDropDownApp(
+                        target,
+                        configuration: normalized,
+                        correlationID: self.diagnostics.makeCorrelationID()
+                    )
+                    if var updated = self.dropDownAppSession {
+                        updated.previousFocusKey = previousFocusKey
+                        self.dropDownAppSession = updated
+                    }
+                } else if !session.isApplicationHiddenByWindowRanger,
+                          let target = self.windows[session.windowKey] {
+                    // A Settings edit can arrive during the short collapse interval. Supersede
+                    // the old frame callbacks and complete the exact-window hide with the new
+                    // presentation settings retained in the session.
+                    self.dropDownAnimationGeneration &+= 1
+                    self.finishDropDownAppHide(
+                        target,
+                        session: session,
+                        generation: self.dropDownAnimationGeneration,
+                        restorePreviousFocus: false,
+                        reason: "presentation-updated-during-hide",
+                        correlationID: self.diagnostics.makeCorrelationID()
+                    )
+                }
+            } else {
+                self.restoreAndClearDropDownAppSession(reason: "configuration-changed")
+                self.dropDownAppConfiguration = normalized
+                self.applyVisibility()
+            }
             self.persistState(preservingPendingRestores: true)
             self.emitState()
         }
@@ -1531,58 +1715,266 @@ final class WorkspaceEngine {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self else { return }
-            guard let configuration = self.dropDownAppConfiguration else {
+            if let pending = self.pendingDropDownAppLaunch,
+               pending.bundleIdentifier.caseInsensitiveCompare(
+                   self.dropDownAppConfiguration?.bundleIdentifier ?? ""
+               ) == .orderedSame {
                 self.emitCommandFeedback(
-                    "Choose a Quick App in Applications first.",
+                    "Launching \(pending.displayName).",
                     correlationID: correlationID
                 )
                 return
             }
-            self.refreshWindows(correlationID: correlationID)
-            if self.dropDownAppSession?.isPresented == true {
-                self.hideDropDownApp(
-                    restorePreviousFocus: true,
-                    reason: "shortcut-toggle",
-                    correlationID: correlationID
-                )
-                return
-            }
-
-            let matching = self.windows.values.filter {
-                $0.bundleIdentifier?.caseInsensitiveCompare(configuration.bundleIdentifier) == .orderedSame &&
-                    !self.temporarilyDeferredWindowKeys.contains($0.key) &&
-                    self.fullscreenSessions[$0.key] == nil
-            }
-            let target: TrackedWindow
-            if let session = self.dropDownAppSession,
-               let existing = self.windows[session.windowKey],
-               matching.contains(where: { $0.key == existing.key }) {
-                target = existing
-            } else {
-                guard matching.count == 1, let only = matching.first else {
-                    let message = matching.isEmpty
-                        ? "(configuration.displayName) is not running with an available window."
-                        : "(configuration.displayName) has more than one available window. Close the extras before using it as the Quick App."
-                    self.emitCommandFeedback(message, correlationID: correlationID)
-                    return
-                }
-                target = only
-                self.dropDownAppSession = DropDownAppSession(
-                    windowKey: only.key,
-                    bundleIdentifier: configuration.bundleIdentifier,
-                    direction: configuration.direction,
-                    isAnimationEnabled: configuration.isAnimationEnabled,
-                    isPresented: false,
-                    displayIdentifier: nil,
-                    previousFocusKey: nil
-                )
-            }
-            self.showDropDownApp(
-                target,
-                configuration: configuration,
-                correlationID: correlationID
+            self.toggleDropDownAppInternal(
+                correlationID: correlationID,
+                allowsLaunchAttempt: true,
+                refreshBeforeResolving: true
             )
         }
+    }
+
+    private func toggleDropDownAppInternal(
+        correlationID: String,
+        allowsLaunchAttempt: Bool,
+        refreshBeforeResolving: Bool
+    ) {
+        guard let configuration = dropDownAppConfiguration else {
+            emitCommandFeedback(
+                "Choose a Quick App in Applications first.",
+                correlationID: correlationID
+            )
+            return
+        }
+        if refreshBeforeResolving {
+            refreshWindows(correlationID: correlationID)
+        }
+        if dropDownAppSession?.isPresented == true {
+            hideDropDownApp(
+                restorePreviousFocus: true,
+                reason: "shortcut-toggle",
+                correlationID: correlationID
+            )
+            return
+        }
+
+        let matching = availableDropDownAppWindows(for: configuration)
+        let target: TrackedWindow
+        if let session = dropDownAppSession,
+           let existing = windows[session.windowKey],
+           session.isApplicationHiddenByWindowRanger ||
+            matching.contains(where: { $0.key == existing.key }) {
+            target = existing
+        } else {
+            if matching.isEmpty {
+                if allowsLaunchAttempt {
+                    launchQuickAppIfNeededForToggle(
+                        configuration: configuration,
+                        correlationID: correlationID
+                    )
+                } else {
+                    emitCommandFeedback(
+                        "Could not find a usable \(configuration.displayName) window yet.",
+                        correlationID: correlationID
+                    )
+                }
+                return
+            }
+            guard matching.count == 1, let only = matching.first else {
+                emitCommandFeedback(
+                    "\(configuration.displayName) has more than one available window. Close the extras before using it as the Quick App.",
+                    correlationID: correlationID
+                )
+                return
+            }
+            target = only
+            dropDownAppSession = DropDownAppSession(
+                windowKey: only.key,
+                bundleIdentifier: configuration.bundleIdentifier,
+                direction: configuration.direction,
+                isAnimationEnabled: configuration.isAnimationEnabled,
+                isPresented: false,
+                isApplicationHiddenByWindowRanger: false,
+                displayIdentifier: nil,
+                previousFocusKey: nil
+            )
+        }
+        showDropDownApp(
+            target,
+            configuration: configuration,
+            correlationID: correlationID
+        )
+    }
+
+    private func availableDropDownAppWindows(
+        for configuration: DropDownAppConfiguration
+    ) -> [TrackedWindow] {
+        windows.values.filter {
+            $0.bundleIdentifier?.caseInsensitiveCompare(configuration.bundleIdentifier) == .orderedSame &&
+                !temporarilyDeferredWindowKeys.contains($0.key) &&
+                fullscreenSessions[$0.key] == nil
+        }
+    }
+
+    private func launchQuickAppIfNeededForToggle(
+        configuration: DropDownAppConfiguration,
+        correlationID: String
+    ) {
+        guard let applicationURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: configuration.bundleIdentifier
+        ) else {
+            emitCommandFeedback(
+                "\(configuration.displayName) is not installed and cannot be launched.",
+                correlationID: correlationID
+            )
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "launch-missing-application",
+                correlation: correlationID,
+                fields: ["bundle": configuration.bundleIdentifier]
+            )
+            return
+        }
+
+        dropDownLaunchGeneration &+= 1
+        let generation = dropDownLaunchGeneration
+        pendingDropDownAppLaunch = PendingDropDownAppLaunch(
+            bundleIdentifier: configuration.bundleIdentifier,
+            displayName: configuration.displayName,
+            generation: generation
+        )
+        emitCommandFeedback(
+            "Launching \(configuration.displayName).",
+            correlationID: correlationID
+        )
+        diagnostics.log(
+            category: "drop-down-app",
+            event: "launch-requested",
+            correlation: correlationID,
+            fields: [
+                "bundle": configuration.bundleIdentifier,
+                "activates-application": String(DropDownAppLaunchWatchdogPolicy.activatesApplication),
+            ]
+        )
+
+        let launchConfiguration = NSWorkspace.OpenConfiguration()
+        launchConfiguration.activates = DropDownAppLaunchWatchdogPolicy.activatesApplication
+        NSWorkspace.shared.openApplication(
+            at: applicationURL,
+            configuration: launchConfiguration
+        ) { [weak self] _, error in
+            self?.queue.async { [weak self] in
+                guard let self else { return }
+                guard self.pendingDropDownAppLaunch?.generation == generation else { return }
+                if let error {
+                    self.pendingDropDownAppLaunch = nil
+                    let safeError = error as NSError
+                    self.diagnostics.log(
+                        category: "drop-down-app",
+                        event: "launch-failed",
+                        correlation: correlationID,
+                        fields: [
+                            "bundle": configuration.bundleIdentifier,
+                            "error-domain": safeError.domain,
+                            "error-code": String(safeError.code),
+                        ]
+                    )
+                    self.emitCommandFeedback(
+                        "Could not launch \(configuration.displayName).",
+                        correlationID: correlationID
+                    )
+                    return
+                }
+
+                self.diagnostics.log(
+                    category: "drop-down-app",
+                    event: "launch-request-accepted",
+                    correlation: correlationID,
+                    fields: ["bundle": configuration.bundleIdentifier]
+                )
+                self.queue.asyncAfter(
+                    deadline: .now() + DropDownAppLaunchWatchdogPolicy.initialDelay
+                ) { [weak self] in
+                    self?.awaitLaunchedQuickAppWindow(
+                        configuration: configuration,
+                        correlationID: correlationID,
+                        generation: generation,
+                        remainingAttempts: DropDownAppLaunchWatchdogPolicy.maximumAttempts
+                    )
+                }
+            }
+        }
+    }
+
+    private func awaitLaunchedQuickAppWindow(
+        configuration: DropDownAppConfiguration,
+        correlationID: String,
+        generation: UInt64,
+        remainingAttempts: Int
+    ) {
+        guard pendingDropDownAppLaunch?.generation == generation,
+              dropDownAppConfiguration?.bundleIdentifier.caseInsensitiveCompare(
+                  configuration.bundleIdentifier
+              ) == .orderedSame
+        else { return }
+
+        refreshWindows(
+            correlationID: correlationID,
+            performAXWrites: false,
+            observeFocus: false
+        )
+        let matching = availableDropDownAppWindows(for: configuration)
+        switch DropDownAppLaunchWatchdogPolicy.disposition(
+            availableWindowCount: matching.count,
+            remainingAttempts: remainingAttempts
+        ) {
+        case .resolveToggle:
+            pendingDropDownAppLaunch = nil
+            toggleDropDownAppInternal(
+                correlationID: correlationID,
+                allowsLaunchAttempt: false,
+                refreshBeforeResolving: false
+            )
+        case let .retry(nextRemainingAttempts):
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "launch-window-watchdog-retry",
+                correlation: correlationID,
+                fields: [
+                    "bundle": configuration.bundleIdentifier,
+                    "remaining-attempts": String(nextRemainingAttempts),
+                ]
+            )
+            queue.asyncAfter(
+                deadline: .now() + DropDownAppLaunchWatchdogPolicy.retryDelay
+            ) { [weak self] in
+                self?.awaitLaunchedQuickAppWindow(
+                    configuration: configuration,
+                    correlationID: correlationID,
+                    generation: generation,
+                    remainingAttempts: nextRemainingAttempts
+                )
+            }
+        case .exhausted:
+            pendingDropDownAppLaunch = nil
+            emitCommandFeedback(
+                "Could not find a usable \(configuration.displayName) window yet.",
+                correlationID: correlationID
+            )
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "launch-window-watchdog-exhausted",
+                correlation: correlationID,
+                fields: [
+                    "bundle": configuration.bundleIdentifier,
+                    "remaining-attempts": "0",
+                ]
+            )
+        }
+    }
+
+    private func cancelPendingDropDownAppLaunch() {
+        dropDownLaunchGeneration &+= 1
+        pendingDropDownAppLaunch = nil
     }
 
     func updateWorkspaces(_ definitions: [WorkspaceDefinition]) {
@@ -2033,7 +2425,9 @@ final class WorkspaceEngine {
             guard let self, self.focusedWindowHighlightEnabled != enabled else { return }
             self.focusedWindowHighlightEnabled = enabled
             self.lastBackgroundLayoutSignature = nil
-            self.applyVisibility(displays: Self.activeDisplays())
+            let displays = Self.activeDisplays()
+            self.reapplyPresentedDropDownAppFrameForFocusBorder(displays: displays)
+            self.applyVisibility(displays: displays)
             self.persistState(preservingPendingRestores: true)
             self.emitState()
         }
@@ -6713,13 +7107,13 @@ final class WorkspaceEngine {
         correlationID: String
     ) {
         guard var session = dropDownAppSession,
-              let target = windows[session.windowKey],
-              eligibleWindowKeys.contains(target.key)
+              let target = windows[session.windowKey]
         else { return }
 
         dropDownAnimationGeneration &+= 1
         let geometryWriteSucceeded: Bool
         if session.isPresented {
+            guard eligibleWindowKeys.contains(target.key) else { return }
             guard let configuration = dropDownAppConfiguration,
                   let display = session.displayIdentifier.flatMap({ identifier in
                       displays.first { $0.identifier == identifier }
@@ -6727,19 +7121,22 @@ final class WorkspaceEngine {
             else { return }
             session.displayIdentifier = display.identifier
             dropDownAppSession = session
-            geometryWriteSucceeded = AccessibilityWindow.setFrame(
+            geometryWriteSucceeded = setDropDownAppFrame(
                 DropDownAppGeometry.presentedFrame(
-                    in: display.usableBounds,
+                    in: dropDownAppPresentationBounds(for: display),
                     sizeFraction: configuration.heightFraction,
                     direction: session.direction
                 ),
-                of: target.element
+                target: target
             )
         } else {
-            geometryWriteSucceeded = AccessibilityWindow.setPositionIfNeeded(
-                parkingPosition(displays: displays),
-                of: target.element
+            geometryWriteSucceeded = requestDropDownApplicationHidden(
+                true,
+                processIdentifier: target.processIdentifier,
+                bundleIdentifier: session.bundleIdentifier
             )
+            session.isApplicationHiddenByWindowRanger = geometryWriteSucceeded
+            dropDownAppSession = session
         }
 
         diagnostics.log(
@@ -6751,6 +7148,9 @@ final class WorkspaceEngine {
                 "presented": String(session.isPresented),
                 "display": session.displayIdentifier ?? "none",
                 "geometry-write": String(geometryWriteSucceeded),
+                "hidden-state": session.isPresented
+                    ? "visible"
+                    : session.isApplicationHiddenByWindowRanger ? "application-hidden" : "unverified",
             ]
         )
     }
@@ -6785,6 +7185,7 @@ final class WorkspaceEngine {
         staleParkedFocusSuppression.removeAll()
         lastAutomaticUnhideAttemptByProcess.removeAll()
         postSleepWindowRecoveryState.clear()
+        pendingRestoredDropDownAppSession = nil
         tiledTrees.removeAll()
         lastSolvedTiledFrames.removeAll()
         radialPlacementCommitContext = nil
@@ -6983,15 +7384,26 @@ final class WorkspaceEngine {
                 }
                 ignoredWindowKeys.remove(key)
 
-                // Minimized or temporarily unusual AX objects retain existing state, matching the
-                // prior behaviour, but are not newly admitted until they become manageable again.
-                guard admissionDecision.disposition.admitsNewWindow,
+                let isPersistedHiddenQuickApp = DropDownAppHiddenSessionRecoveryPolicy.matches(
+                    pendingRestoredDropDownAppSession,
+                    windowKey: key,
+                    bundleIdentifier: app.bundleIdentifier,
+                    isStartup: isStartup,
+                    isApplicationHidden: app.isHidden
+                )
+
+                // Temporarily unusual AX objects retain existing state. The one exception is an
+                // exact Quick App window whose WindowServer-bound state says WindowRanger hid its
+                // application; admit it only far enough to recover that hidden session.
+                guard admissionDecision.disposition.admitsNewWindow || isPersistedHiddenQuickApp,
                       let frame = observedFrame
                 else {
                     if windows[key] != nil { deferredWindowKeys.insert(key) }
                     continue
                 }
-                if WakeWindowRecoveryPolicy.isWriteEligible(
+                if isPersistedHiddenQuickApp {
+                    deferredWindowKeys.insert(key)
+                } else if WakeWindowRecoveryPolicy.isWriteEligible(
                     wasFreshlyEnumerated: true,
                     disposition: admissionDecision.disposition
                 ) {
@@ -7085,6 +7497,8 @@ final class WorkspaceEngine {
                         layoutWeight: Self.validLayoutWeight(remembered?.layoutWeight)
                     )
                     windows[key] = tracked
+
+                    if isPersistedHiddenQuickApp { continue }
 
                     let layoutDecision = Self.layoutDecision(
                         layoutOverride: tracked.layoutOverride,
@@ -8132,6 +8546,16 @@ final class WorkspaceEngine {
         focusedWindow.map(ignoredWindowKeys.contains) == true
     }
 
+    static func shouldPreserveInteractionFocusAnchor(
+        focusedWindow: WindowKey?,
+        ownProcessIdentifier: pid_t,
+        ignoredWindowKeys: Set<WindowKey>
+    ) -> Bool {
+        guard let focusedWindow else { return false }
+        return focusedWindow.processIdentifier == ownProcessIdentifier ||
+            ignoredWindowKeys.contains(focusedWindow)
+    }
+
     static func exactWindowFocusPlan(applicationIsActive: Bool) -> [ExactWindowFocusStep] {
         applicationIsActive
             ? [.markWindowMain, .focusWindowElement, .focusApplicationWindow, .raiseWindow]
@@ -8300,12 +8724,14 @@ final class WorkspaceEngine {
         if let focusedWindow, !staleParkedFocusSuppression.isEmpty {
             staleParkedFocusSuppression = staleParkedFocusSuppression.filter { $0.key == focusedWindow }
         }
-        if Self.shouldIgnoreFocusObservation(
+        if Self.shouldPreserveInteractionFocusAnchor(
             focusedWindow: focusedWindow,
+            ownProcessIdentifier: ownProcessIdentifier,
             ignoredWindowKeys: ignoredWindowKeys
         ) {
-            // Admission already emitted one privacy-safe record. Do not consume or repeatedly log
-            // focus on an ignored popup, and do not clear the last managed interaction anchor.
+            // WindowRanger's own palette/settings surfaces and ignored popups must not consume the
+            // external managed anchor. The palette deliberately becomes key while it is open; the
+            // captured command target still needs to validate against that preserved anchor.
             return
         }
         if isStartup {
@@ -8728,7 +9154,7 @@ final class WorkspaceEngine {
         processIdentifier != ownProcessIdentifier
     }
 
-    /// Application activation normally cancels an in-flight command-wheel gesture. The one safe
+    /// Application activation normally cancels an in-flight Placement Wheel gesture. The one safe
     /// exception is the activation WindowRanger itself just requested to target the pointer window
     /// for that same gesture. The target, deadline, and focus generation must all still agree; any
     /// external or stale activation continues to cancel immediately.
@@ -8848,38 +9274,223 @@ final class WorkspaceEngine {
         }
         let focusedKey = interactionFocusedWindowSnapshot()?.key
         let previousFocus = focusedKey == target.key ? nil : focusedKey
+        let presentationBounds = dropDownAppPresentationBounds(for: display)
         let presented = DropDownAppGeometry.presentedFrame(
-            in: display.usableBounds,
+            in: presentationBounds,
             sizeFraction: configuration.heightFraction,
             direction: configuration.direction
         )
         let retracted = DropDownAppGeometry.retractedFrame(
             for: presented,
-            in: display.usableBounds,
+            in: presentationBounds,
             direction: configuration.direction
         )
         dropDownAnimationGeneration &+= 1
         let generation = dropDownAnimationGeneration
+        let wasHiddenByWindowRanger = dropDownAppSession.map {
+            $0.windowKey == target.key && $0.isApplicationHiddenByWindowRanger
+        } == true
+        let applicationWasHidden = isDropDownApplicationHidden(
+            processIdentifier: target.processIdentifier,
+            bundleIdentifier: configuration.bundleIdentifier
+        ) == true
+        let initialFrame = configuration.isAnimationEnabled ? retracted : presented
+        _ = setDropDownAppFrame(initialFrame, target: target)
+        let shouldUnhideApplication = wasHiddenByWindowRanger || applicationWasHidden
+        let unhideRequestAccepted = !shouldUnhideApplication || requestDropDownApplicationHidden(
+            false,
+            processIdentifier: target.processIdentifier,
+            bundleIdentifier: configuration.bundleIdentifier
+        )
+        guard unhideRequestAccepted else {
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "show-failed",
+                correlation: correlationID,
+                fields: [
+                    "window": Self.diagnosticWindowKey(target.key),
+                    "reason": "application-unhide-request-rejected",
+                    "application-hidden-observed": isDropDownApplicationHidden(
+                        processIdentifier: target.processIdentifier,
+                        bundleIdentifier: configuration.bundleIdentifier
+                    )
+                        .map(String.init) ?? "unavailable",
+                ]
+            )
+            return
+        }
+
+        if shouldUnhideApplication,
+           isDropDownApplicationHidden(
+               processIdentifier: target.processIdentifier,
+               bundleIdentifier: configuration.bundleIdentifier
+           ) != false {
+            awaitDropDownAppUnhidden(
+                target,
+                configuration: configuration,
+                display: display,
+                presented: presented,
+                retracted: retracted,
+                previousFocus: previousFocus,
+                generation: generation,
+                correlationID: correlationID,
+                attempt: 0
+            )
+            return
+        }
+        completeDropDownAppShow(
+            target,
+            configuration: configuration,
+            display: display,
+            presented: presented,
+            retracted: retracted,
+            previousFocus: previousFocus,
+            generation: generation,
+            correlationID: correlationID,
+            unhideConfirmationAttempts: 0
+        )
+    }
+
+    private func awaitDropDownAppUnhidden(
+        _ target: TrackedWindow,
+        configuration: DropDownAppConfiguration,
+        display: DisplaySnapshot,
+        presented: WindowFrame,
+        retracted: WindowFrame,
+        previousFocus: WindowKey?,
+        generation: UInt64,
+        correlationID: String,
+        attempt: Int
+    ) {
+        guard dropDownAnimationGeneration == generation,
+              dropDownAppSession?.windowKey == target.key,
+              windows[target.key] != nil
+        else { return }
+        let observedHidden = isDropDownApplicationHidden(
+            processIdentifier: target.processIdentifier,
+            bundleIdentifier: configuration.bundleIdentifier
+        )
+        switch DropDownAppVisibilityConfirmationPolicy.disposition(
+            expectedHidden: false,
+            observedHidden: observedHidden,
+            attempt: attempt
+        ) {
+        case .confirmed:
+            completeDropDownAppShow(
+                target,
+                configuration: configuration,
+                display: display,
+                presented: presented,
+                retracted: retracted,
+                previousFocus: previousFocus,
+                generation: generation,
+                correlationID: correlationID,
+                unhideConfirmationAttempts: attempt
+            )
+            return
+        case .timedOut:
+            _ = requestDropDownApplicationHidden(
+                true,
+                processIdentifier: target.processIdentifier,
+                bundleIdentifier: configuration.bundleIdentifier
+            )
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "show-failed",
+                correlation: correlationID,
+                fields: [
+                    "window": Self.diagnosticWindowKey(target.key),
+                    "reason": "application-unhide-confirmation-timeout",
+                    "confirmation-attempts": String(attempt),
+                    "application-hidden-observed": observedHidden.map(String.init) ?? "unavailable",
+                ]
+            )
+            return
+        case .retry:
+            break
+        }
+        queue.asyncAfter(deadline: .now() + .milliseconds(75)) { [weak self] in
+            self?.awaitDropDownAppUnhidden(
+                target,
+                configuration: configuration,
+                display: display,
+                presented: presented,
+                retracted: retracted,
+                previousFocus: previousFocus,
+                generation: generation,
+                correlationID: correlationID,
+                attempt: attempt + 1
+            )
+        }
+    }
+
+    private func completeDropDownAppShow(
+        _ target: TrackedWindow,
+        configuration: DropDownAppConfiguration,
+        display: DisplaySnapshot,
+        presented: WindowFrame,
+        retracted: WindowFrame,
+        previousFocus: WindowKey?,
+        generation: UInt64,
+        correlationID: String,
+        unhideConfirmationAttempts: Int
+    ) {
+        guard dropDownAnimationGeneration == generation,
+              dropDownAppSession?.windowKey == target.key,
+              windows[target.key] != nil
+        else { return }
         dropDownAppSession = DropDownAppSession(
             windowKey: target.key,
             bundleIdentifier: configuration.bundleIdentifier,
             direction: configuration.direction,
             isAnimationEnabled: configuration.isAnimationEnabled,
             isPresented: true,
+            isApplicationHiddenByWindowRanger: false,
             displayIdentifier: display.identifier,
             previousFocusKey: previousFocus
         )
         if configuration.isAnimationEnabled {
-            AccessibilityWindow.setFrame(retracted, of: target.element)
+            // Some applications defer hidden-window frame changes until restore. Reassert the
+            // collapsed edge frame after unhiding before the first intentional animation step.
+            _ = setDropDownAppFrame(retracted, target: target)
             animateDropDownApp(
                 target,
                 frames: DropDownAppGeometry.animationFrames(from: retracted, to: presented),
                 generation: generation
-            )
+            ) { [weak self] in
+                self?.logDropDownAppShown(
+                    target,
+                    display: display,
+                    configuration: configuration,
+                    requestedFrame: presented,
+                    correlationID: correlationID,
+                    unhideConfirmationAttempts: unhideConfirmationAttempts
+                )
+            }
         } else {
-            AccessibilityWindow.setFrame(presented, of: target.element)
+            _ = setDropDownAppFrame(presented, target: target)
+            logDropDownAppShown(
+                target,
+                display: display,
+                configuration: configuration,
+                requestedFrame: presented,
+                correlationID: correlationID,
+                unhideConfirmationAttempts: unhideConfirmationAttempts
+            )
         }
         focusManagedWindow(target.key, tracked: target, correlationID: correlationID)
+        persistState(preservingPendingRestores: true)
+    }
+
+    private func logDropDownAppShown(
+        _ target: TrackedWindow,
+        display: DisplaySnapshot,
+        configuration: DropDownAppConfiguration,
+        requestedFrame: WindowFrame,
+        correlationID: String,
+        unhideConfirmationAttempts: Int
+    ) {
+        let observedFrame = AccessibilityWindow.frame(of: target.element)
         diagnostics.log(
             category: "drop-down-app",
             event: "shown",
@@ -8890,6 +9501,17 @@ final class WorkspaceEngine {
                 "size-percent": String(Int((configuration.heightFraction * 100).rounded())),
                 "direction": configuration.direction.rawValue,
                 "animated": String(configuration.isAnimationEnabled),
+                "unhide-confirmation-attempts": String(unhideConfirmationAttempts),
+                "requested-frame": Self.diagnosticFrame(requestedFrame),
+                "observed-frame": observedFrame.map(Self.diagnosticFrame) ?? "unavailable",
+                "frame-matched": String(observedFrame.map {
+                    AccessibilityWindow.framesMatch($0, requestedFrame)
+                } == true),
+                "application-hidden-observed": isDropDownApplicationHidden(
+                    processIdentifier: target.processIdentifier,
+                    bundleIdentifier: configuration.bundleIdentifier
+                )
+                    .map(String.init) ?? "unavailable",
             ]
         )
     }
@@ -8904,6 +9526,7 @@ final class WorkspaceEngine {
               let target = windows[session.windowKey]
         else { return }
         session.isPresented = false
+        session.isApplicationHiddenByWindowRanger = false
         dropDownAppSession = session
         dropDownAnimationGeneration &+= 1
         let generation = dropDownAnimationGeneration
@@ -8918,30 +9541,210 @@ final class WorkspaceEngine {
                 in: display.usableBounds,
                 direction: session.direction
             )
-            let parkAfterRetraction = { [weak self] in
-                guard let self,
-                      self.dropDownAnimationGeneration == generation,
-                      self.dropDownAppSession?.isPresented == false,
-                      let latest = self.windows[target.key]
-                else { return }
-                self.applyPositionChanges([
-                    PositionChange(window: latest, position: self.parkingPosition(displays: displays)),
-                ], correlationID: correlationID)
-            }
             if session.isAnimationEnabled {
                 animateDropDownApp(
                     target,
                     frames: DropDownAppGeometry.animationFrames(from: current, to: retracted),
                     generation: generation,
-                    completion: parkAfterRetraction
+                    completion: { [weak self] in
+                        self?.finishDropDownAppHide(
+                            target,
+                            session: session,
+                            generation: generation,
+                            restorePreviousFocus: restorePreviousFocus,
+                            reason: reason,
+                            correlationID: correlationID
+                        )
+                    }
                 )
             } else {
-                parkAfterRetraction()
+                finishDropDownAppHide(
+                    target,
+                    session: session,
+                    generation: generation,
+                    restorePreviousFocus: restorePreviousFocus,
+                    reason: reason,
+                    correlationID: correlationID
+                )
             }
         } else {
-            applyPositionChanges([
-                PositionChange(window: target, position: parkingPosition(displays: displays)),
-            ], correlationID: correlationID)
+            finishDropDownAppHide(
+                target,
+                session: session,
+                generation: generation,
+                restorePreviousFocus: restorePreviousFocus,
+                reason: reason,
+                correlationID: correlationID
+            )
+        }
+    }
+
+    private func finishDropDownAppHide(
+        _ target: TrackedWindow,
+        session: DropDownAppSession,
+        generation: UInt64,
+        restorePreviousFocus: Bool,
+        reason: String,
+        correlationID: String?
+    ) {
+        guard dropDownAnimationGeneration == generation,
+              dropDownAppSession?.windowKey == target.key,
+              dropDownAppSession?.isPresented == false,
+              windows[target.key] != nil
+        else { return }
+
+        guard requestDropDownApplicationHidden(
+            true,
+            processIdentifier: target.processIdentifier,
+            bundleIdentifier: session.bundleIdentifier
+        ) else {
+            completeDropDownAppHide(
+                target,
+                session: session,
+                generation: generation,
+                restorePreviousFocus: restorePreviousFocus,
+                reason: reason,
+                correlationID: correlationID,
+                hideSucceeded: false,
+                confirmationAttempts: 0,
+                failureReason: "application-hide-request-rejected"
+            )
+            return
+        }
+        if isDropDownApplicationHidden(
+            processIdentifier: target.processIdentifier,
+            bundleIdentifier: session.bundleIdentifier
+        ) != true {
+            awaitDropDownAppHidden(
+                target,
+                session: session,
+                generation: generation,
+                restorePreviousFocus: restorePreviousFocus,
+                reason: reason,
+                correlationID: correlationID,
+                attempt: 0
+            )
+            return
+        }
+        completeDropDownAppHide(
+            target,
+            session: session,
+            generation: generation,
+            restorePreviousFocus: restorePreviousFocus,
+            reason: reason,
+            correlationID: correlationID,
+            hideSucceeded: true,
+            confirmationAttempts: 0,
+            failureReason: nil
+        )
+    }
+
+    private func awaitDropDownAppHidden(
+        _ target: TrackedWindow,
+        session: DropDownAppSession,
+        generation: UInt64,
+        restorePreviousFocus: Bool,
+        reason: String,
+        correlationID: String?,
+        attempt: Int
+    ) {
+        guard dropDownAnimationGeneration == generation,
+              dropDownAppSession?.windowKey == target.key,
+              dropDownAppSession?.isPresented == false,
+              windows[target.key] != nil
+        else { return }
+        switch DropDownAppVisibilityConfirmationPolicy.disposition(
+            expectedHidden: true,
+            observedHidden: isDropDownApplicationHidden(
+                processIdentifier: target.processIdentifier,
+                bundleIdentifier: session.bundleIdentifier
+            ),
+            attempt: attempt
+        ) {
+        case .confirmed:
+            completeDropDownAppHide(
+                target,
+                session: session,
+                generation: generation,
+                restorePreviousFocus: restorePreviousFocus,
+                reason: reason,
+                correlationID: correlationID,
+                hideSucceeded: true,
+                confirmationAttempts: attempt,
+                failureReason: nil
+            )
+        case .timedOut:
+            _ = requestDropDownApplicationHidden(
+                false,
+                processIdentifier: target.processIdentifier,
+                bundleIdentifier: session.bundleIdentifier
+            )
+            completeDropDownAppHide(
+                target,
+                session: session,
+                generation: generation,
+                restorePreviousFocus: restorePreviousFocus,
+                reason: reason,
+                correlationID: correlationID,
+                hideSucceeded: false,
+                confirmationAttempts: attempt,
+                failureReason: "application-hide-confirmation-timeout"
+            )
+        case .retry:
+            queue.asyncAfter(deadline: .now() + .milliseconds(75)) { [weak self] in
+                self?.awaitDropDownAppHidden(
+                    target,
+                    session: session,
+                    generation: generation,
+                    restorePreviousFocus: restorePreviousFocus,
+                    reason: reason,
+                    correlationID: correlationID,
+                    attempt: attempt + 1
+                )
+            }
+        }
+    }
+
+    private func completeDropDownAppHide(
+        _ target: TrackedWindow,
+        session: DropDownAppSession,
+        generation: UInt64,
+        restorePreviousFocus: Bool,
+        reason: String,
+        correlationID: String?,
+        hideSucceeded: Bool,
+        confirmationAttempts: Int,
+        failureReason: String?
+    ) {
+        guard dropDownAnimationGeneration == generation,
+              dropDownAppSession?.windowKey == target.key,
+              dropDownAppSession?.isPresented == false,
+              windows[target.key] != nil
+        else { return }
+
+        if hideSucceeded {
+            var hiddenSession = session
+            hiddenSession.isPresented = false
+            hiddenSession.isApplicationHiddenByWindowRanger = true
+            dropDownAppSession = hiddenSession
+        } else {
+            var restoredSession = session
+            restoredSession.isPresented = true
+            restoredSession.isApplicationHiddenByWindowRanger = false
+            dropDownAppSession = restoredSession
+            if let configuration = dropDownAppConfiguration,
+               let display = session.displayIdentifier.flatMap({ identifier in
+                   Self.activeDisplays().first { $0.identifier == identifier }
+                }) ?? dropDownTargetDisplay(displays: Self.activeDisplays()) {
+                _ = setDropDownAppFrame(
+                    DropDownAppGeometry.presentedFrame(
+                        in: dropDownAppPresentationBounds(for: display),
+                        sizeFraction: configuration.heightFraction,
+                        direction: session.direction
+                    ),
+                    target: target
+                )
+            }
         }
         if restorePreviousFocus,
            let previousFocusKey = session.previousFocusKey,
@@ -8952,14 +9755,25 @@ final class WorkspaceEngine {
         }
         diagnostics.log(
             category: "drop-down-app",
-            event: "hidden",
+            event: hideSucceeded ? "hidden" : "hide-failed",
             correlation: correlationID,
             fields: [
                 "window": Self.diagnosticWindowKey(target.key),
                 "reason": reason,
+                "failure-reason": failureReason ?? "none",
+                "hide-confirmation-attempts": String(confirmationAttempts),
                 "restored-previous-focus": String(restorePreviousFocus),
+                "hidden-state": hideSucceeded ? "application-hidden" : "visible",
+                "application-hidden-observed": isDropDownApplicationHidden(
+                    processIdentifier: target.processIdentifier,
+                    bundleIdentifier: session.bundleIdentifier
+                )
+                    .map(String.init) ?? "unavailable",
+                "observed-frame": AccessibilityWindow.frame(of: target.element)
+                    .map(Self.diagnosticFrame) ?? "unavailable",
             ]
         )
+        persistState(preservingPendingRestores: true)
     }
 
     private func animateDropDownApp(
@@ -8979,23 +9793,94 @@ final class WorkspaceEngine {
                       self.dropDownAnimationGeneration == generation,
                       self.windows[target.key] != nil
                 else { return }
-                AccessibilityWindow.setFrame(frame, of: target.element)
+                _ = self.setDropDownAppFrame(frame, target: target)
                 if index == frames.count - 1 { completion?() }
             }
         }
     }
 
+    @discardableResult
+    private func setDropDownAppFrame(_ frame: WindowFrame, target: TrackedWindow) -> Bool {
+        var succeeded = false
+        AccessibilityWindow.withoutPositionAnimations(for: target.processIdentifier) {
+            succeeded = AccessibilityWindow.setFrame(frame, of: target.element)
+        }
+        return succeeded
+    }
+
+    private func dropDownRunningApplication(
+        processIdentifier: pid_t,
+        bundleIdentifier: String
+    ) -> NSRunningApplication? {
+        guard let application = NSRunningApplication(processIdentifier: processIdentifier),
+              let observedBundleIdentifier = application.bundleIdentifier,
+              observedBundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        else { return nil }
+        return application
+    }
+
+    private func isDropDownApplicationHidden(
+        processIdentifier: pid_t,
+        bundleIdentifier: String
+    ) -> Bool? {
+        dropDownRunningApplication(
+            processIdentifier: processIdentifier,
+            bundleIdentifier: bundleIdentifier
+        )?.isHidden
+    }
+
+    @discardableResult
+    private func requestDropDownApplicationHidden(
+        _ hidden: Bool,
+        processIdentifier: pid_t,
+        bundleIdentifier: String
+    ) -> Bool {
+        guard let application = dropDownRunningApplication(
+            processIdentifier: processIdentifier,
+            bundleIdentifier: bundleIdentifier
+        ) else { return false }
+        if application.isHidden == hidden { return true }
+        // Ghostty can return false from Hide/Unhide and publish the requested AppKit state moments
+        // later. Finding the exact bundle/process makes the request dispatchable; the bounded
+        // observed-state confirmation remains the only success postcondition.
+        let appKitReturnValue = hidden ? application.hide() : application.unhide()
+        return DropDownAppVisibilityRequestPolicy.wasDispatched(
+            applicationMatched: true,
+            appKitReturnValue: appKitReturnValue
+        )
+    }
+
     private func restoreAndClearDropDownAppSession(reason: String) {
-        guard let session = dropDownAppSession else { return }
+        guard let session = dropDownAppSession else {
+            pendingRestoredDropDownAppSession = nil
+            return
+        }
         dropDownAnimationGeneration &+= 1
+        var frameWriteSucceeded: Bool?
+        var unhideSucceeded: Bool?
         if let target = windows[session.windowKey] {
-            applyFrameChanges([FrameChange(window: target, frame: target.restoreFrame)])
+            frameWriteSucceeded = setDropDownAppFrame(target.restoreFrame, target: target)
+        }
+        if session.isApplicationHiddenByWindowRanger {
+            unhideSucceeded = requestDropDownApplicationHidden(
+                false,
+                processIdentifier: session.windowKey.processIdentifier,
+                bundleIdentifier: session.bundleIdentifier
+            )
+            if unhideSucceeded == true, let target = windows[session.windowKey] {
+                frameWriteSucceeded = setDropDownAppFrame(target.restoreFrame, target: target)
+            }
         }
         dropDownAppSession = nil
+        pendingRestoredDropDownAppSession = nil
         diagnostics.log(
             category: "drop-down-app",
             event: "session-cleared",
-            fields: ["reason": reason]
+            fields: [
+                "reason": reason,
+                "frame-write": frameWriteSucceeded.map(String.init) ?? "not-requested",
+                "application-unhide": unhideSucceeded.map(String.init) ?? "not-requested",
+            ]
         )
     }
 
@@ -9005,12 +9890,27 @@ final class WorkspaceEngine {
         performAXWrites: Bool,
         correlationID: String?
     ) {
+        let persistedHiddenSession = pendingRestoredDropDownAppSession
+        defer { pendingRestoredDropDownAppSession = nil }
         guard dropDownAppSession == nil,
               let configuration = dropDownAppConfiguration,
               let selection = DropDownAppStartupPolicy.selection(
                 bundleIdentifier: configuration.bundleIdentifier,
                 candidates: windows.compactMap { key, tracked in
-                    guard !temporarilyDeferredWindowKeys.contains(key),
+                    let applicationHidden = isDropDownApplicationHidden(
+                        processIdentifier: tracked.processIdentifier,
+                        bundleIdentifier: configuration.bundleIdentifier
+                    ) == true
+                    let wasHiddenByWindowRanger = DropDownAppHiddenSessionRecoveryPolicy.matches(
+                        persistedHiddenSession,
+                        windowKey: key,
+                        bundleIdentifier: tracked.bundleIdentifier,
+                        isStartup: true,
+                        isApplicationHidden: applicationHidden
+                    )
+                    guard !applicationHidden || wasHiddenByWindowRanger else { return nil }
+                    guard (!temporarilyDeferredWindowKeys.contains(key) ||
+                            wasHiddenByWindowRanger),
                           fullscreenSessions[key] == nil
                     else { return nil }
                     let observedFrame = observedFrames[key]
@@ -9022,7 +9922,8 @@ final class WorkspaceEngine {
                         } == true,
                         displayIdentifier: observedFrame.flatMap {
                             Self.displayPlacement(for: $0, displays: displays)?.displayIdentifier
-                        }
+                        },
+                        wasHiddenByWindowRanger: wasHiddenByWindowRanger
                     )
                 }
               ),
@@ -9039,6 +9940,7 @@ final class WorkspaceEngine {
             direction: configuration.direction,
             isAnimationEnabled: configuration.isAnimationEnabled,
             isPresented: selection.isPresented,
+            isApplicationHiddenByWindowRanger: selection.wasHiddenByWindowRanger,
             displayIdentifier: display?.identifier,
             previousFocusKey: nil
         )
@@ -9047,16 +9949,21 @@ final class WorkspaceEngine {
         if performAXWrites {
             if selection.isPresented, let display {
                 let presented = DropDownAppGeometry.presentedFrame(
-                    in: display.usableBounds,
+                    in: dropDownAppPresentationBounds(for: display),
                     sizeFraction: configuration.heightFraction,
                     direction: configuration.direction
                 )
-                geometryWriteSucceeded = AccessibilityWindow.setFrame(presented, of: target.element)
+                geometryWriteSucceeded = setDropDownAppFrame(presented, target: target)
             } else {
-                geometryWriteSucceeded = AccessibilityWindow.setPositionIfNeeded(
-                    parkingPosition(displays: displays),
-                    of: target.element
+                geometryWriteSucceeded = requestDropDownApplicationHidden(
+                    true,
+                    processIdentifier: target.processIdentifier,
+                    bundleIdentifier: configuration.bundleIdentifier
                 )
+                if var session = dropDownAppSession {
+                    session.isApplicationHiddenByWindowRanger = geometryWriteSucceeded == true
+                    dropDownAppSession = session
+                }
             }
         }
 
@@ -9070,6 +9977,15 @@ final class WorkspaceEngine {
                 "presented": String(selection.isPresented),
                 "display": display?.identifier ?? "none",
                 "geometry-write": geometryWriteSucceeded.map(String.init) ?? "not-requested",
+                "hidden-state": dropDownAppSession?.isPresented == true
+                    ? "visible"
+                    : dropDownAppSession?.isApplicationHiddenByWindowRanger == true
+                        ? "application-hidden" : "unverified",
+                "application-hidden-observed": isDropDownApplicationHidden(
+                    processIdentifier: target.processIdentifier,
+                    bundleIdentifier: configuration.bundleIdentifier
+                )
+                    .map(String.init) ?? "unavailable",
             ]
         )
     }
@@ -9133,19 +10049,22 @@ final class WorkspaceEngine {
                    displays.first { $0.identifier == identifier }
                }) ?? dropDownTargetDisplay(displays: displays) {
                 let presented = DropDownAppGeometry.presentedFrame(
-                    in: display.usableBounds,
+                    in: dropDownAppPresentationBounds(for: display),
                     sizeFraction: configuration.heightFraction,
                     direction: session.direction
                 )
-                geometryWriteSucceeded = AccessibilityWindow.setFrame(
+                geometryWriteSucceeded = setDropDownAppFrame(
                     presented,
-                    of: replacement.element
+                    target: replacement
                 )
             } else if !session.isPresented {
-                geometryWriteSucceeded = AccessibilityWindow.setPositionIfNeeded(
-                    parkingPosition(displays: displays),
-                    of: replacement.element
+                geometryWriteSucceeded = requestDropDownApplicationHidden(
+                    true,
+                    processIdentifier: replacement.processIdentifier,
+                    bundleIdentifier: session.bundleIdentifier
                 )
+                session.isApplicationHiddenByWindowRanger = geometryWriteSucceeded == true
+                dropDownAppSession = session
             }
         }
 
@@ -9159,6 +10078,9 @@ final class WorkspaceEngine {
                 "bundle": session.bundleIdentifier,
                 "presented": String(session.isPresented),
                 "geometry-write": geometryWriteSucceeded.map(String.init) ?? "not-requested",
+                "hidden-state": session.isPresented
+                    ? "visible"
+                    : session.isApplicationHiddenByWindowRanger ? "application-hidden" : "unverified",
             ]
         )
         return true
@@ -9176,6 +10098,46 @@ final class WorkspaceEngine {
         return displays.first(where: { $0.identifier == interactionDisplayIdentifier })
             ?? displays.first(where: \.isMain)
             ?? displays.first
+    }
+
+    private func dropDownAppPresentationBounds(for display: DisplaySnapshot) -> CGRect {
+        DropDownAppGeometry.presentationBounds(
+            in: display.usableBounds,
+            focusedWindowHighlightEnabled: focusedWindowHighlightEnabled
+        )
+    }
+
+    private func reapplyPresentedDropDownAppFrameForFocusBorder(
+        displays: [DisplaySnapshot]
+    ) {
+        guard var session = dropDownAppSession,
+              session.isPresented,
+              let configuration = dropDownAppConfiguration,
+              let target = windows[session.windowKey],
+              let display = session.displayIdentifier.flatMap({ identifier in
+                  displays.first { $0.identifier == identifier }
+              }) ?? dropDownTargetDisplay(displays: displays)
+        else { return }
+
+        dropDownAnimationGeneration &+= 1
+        session.displayIdentifier = display.identifier
+        dropDownAppSession = session
+        let requestedFrame = DropDownAppGeometry.presentedFrame(
+            in: dropDownAppPresentationBounds(for: display),
+            sizeFraction: configuration.heightFraction,
+            direction: session.direction
+        )
+        let writeSucceeded = setDropDownAppFrame(requestedFrame, target: target)
+        diagnostics.log(
+            category: "drop-down-app",
+            event: "focus-border-geometry-updated",
+            fields: [
+                "window": Self.diagnosticWindowKey(target.key),
+                "focus-border-enabled": String(focusedWindowHighlightEnabled),
+                "requested-frame": Self.diagnosticFrame(requestedFrame),
+                "geometry-write": String(writeSucceeded),
+            ]
+        )
     }
 
     private func isDropDownAppWindow(_ key: WindowKey) -> Bool {
@@ -10275,6 +11237,15 @@ final class WorkspaceEngine {
                     return $0.displayIdentifier < $1.displayIdentifier
                 }.compactMap { partition in
                     tiledTrees[partition].map { PersistedTiledTree(partition: partition, tree: $0) }
+                },
+                dropDownAppSession: dropDownAppSession.flatMap { session in
+                    guard session.isApplicationHiddenByWindowRanger else { return nil }
+                    return PersistedDropDownAppSession(
+                        windowKey: session.windowKey,
+                        bundleIdentifier: session.bundleIdentifier,
+                        displayIdentifier: session.displayIdentifier,
+                        isApplicationHiddenByWindowRanger: true
+                    )
                 }
             ),
             waitForCompletion: waitForCompletion

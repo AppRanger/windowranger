@@ -1301,6 +1301,33 @@ final class WorkspaceDefinitionTests: XCTestCase {
         ))
     }
 
+    func testAppOwnedAndIgnoredWindowsPreserveExternalInteractionFocusAnchor() {
+        let ownWindow = WindowKey(processIdentifier: 69767, windowIdentifier: 20689)
+        let ignoredPopup = WindowKey(processIdentifier: 42_394, windowIdentifier: 17_298)
+        let externalWindow = WindowKey(processIdentifier: 1_697, windowIdentifier: 115)
+
+        XCTAssertTrue(WorkspaceEngine.shouldPreserveInteractionFocusAnchor(
+            focusedWindow: ownWindow,
+            ownProcessIdentifier: ownWindow.processIdentifier,
+            ignoredWindowKeys: [ignoredPopup]
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldPreserveInteractionFocusAnchor(
+            focusedWindow: ignoredPopup,
+            ownProcessIdentifier: ownWindow.processIdentifier,
+            ignoredWindowKeys: [ignoredPopup]
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldPreserveInteractionFocusAnchor(
+            focusedWindow: externalWindow,
+            ownProcessIdentifier: ownWindow.processIdentifier,
+            ignoredWindowKeys: [ignoredPopup]
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldPreserveInteractionFocusAnchor(
+            focusedWindow: nil,
+            ownProcessIdentifier: ownWindow.processIdentifier,
+            ignoredWindowKeys: [ignoredPopup]
+        ))
+    }
+
     func testUnchangedAdmissionDecisionDoesNotRepeatDiagnosticsOrReadmitPopup() {
         let ignored = WindowAdmissionDecision(
             disposition: .ignoredTransientPopup,

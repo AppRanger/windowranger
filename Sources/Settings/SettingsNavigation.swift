@@ -23,7 +23,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
         case .layouts: "Layouts"
         case .appRules: "Applications"
         case .shortcuts: "Shortcuts"
-        case .radialMenu: "Command Wheel"
+        case .radialMenu: "Command Palette"
         case .diagnostics: "Diagnostics"
         }
     }
@@ -37,7 +37,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
         case .layouts: "rectangle.3.group"
         case .appRules: "app.badge.checkmark"
         case .shortcuts: "keyboard"
-        case .radialMenu: "circle.hexagongrid"
+        case .radialMenu: "magnifyingglass"
         case .diagnostics: "waveform.path.ecg"
         }
     }
@@ -142,20 +142,11 @@ enum SettingsCatalog {
         SettingsSearchEntry(id: "smart-resize", category: .shortcuts, title: "Smart layout resize", description: "Adjust the focused Tiled share or the current Accordion padding in safe 50-point steps.", synonyms: ["Control Option minus equal", "KEY-08"]),
         SettingsSearchEntry(id: "move-workspace-display", category: .shortcuts, title: "Move workspace to another display", description: "Reassign the active Independent Displays workspace and keep both displays in a valid active state.", synonyms: ["Option Shift Tab", "monitor", "KEY-09", "MON-05"]),
         SettingsSearchEntry(id: "layout-shortcuts", category: .shortcuts, title: "Layout shortcuts", description: "Review Tiled, Accordion, Freeform, and per-window Floating commands.", synonyms: ["none", "manual frames", "tile", "float", "cycle layout"]),
-        SettingsSearchEntry(id: "radial-enabled", category: .radialMenu, title: "Enable contextual command wheel", description: "Show a compact command wheel built from the current window, workspace, layout, and display.", synonyms: ["radial menu", "wheel", "Loop", "Snap Wheel"]),
-        SettingsSearchEntry(id: "radial-shortcut", category: .radialMenu, title: "Command wheel shortcut", description: "Record a conflict-checked global chord for the command wheel.", synonyms: ["trigger", "hotkey", "Control Option Space", "radial menu", "snap wheel"]),
-        SettingsSearchEntry(id: "radial-activation", category: .radialMenu, title: "Press or hold activation", description: "Toggle the wheel with a press, or hold past a configurable delay and release to commit.", synonyms: ["Loop", "trigger timeout", "hold to show", "release"]),
-        SettingsSearchEntry(id: "radial-globe-fn", category: .radialMenu, title: "Hold Globe or Fn to show Command Wheel", description: "Optionally use a deliberate Globe/Fn hold while preserving the Mac's normal quick-tap action.", synonyms: ["emoji", "function key", "hardware trigger", "Loop", "quick tap"]),
-        SettingsSearchEntry(id: "radial-editor", category: .radialMenu, title: "Command wheel items", description: "Add, hide, and reorder contextual top-level items; their outer-ring commands are generated automatically.", synonyms: ["slots", "outer ring", "submenu", "customize", "undo", "repair", "reset"]),
-        SettingsSearchEntry(id: "radial-item-move", category: .radialMenu, title: "Move to Space", description: "Send the focused window to a generated destination, with Option for one-shot Move and Follow.", synonyms: ["command wheel", "send window", "follow window"]),
-        SettingsSearchEntry(id: "radial-item-resize", category: .radialMenu, title: "Resize or Place", description: "Generate truthful layout-aware resize or Tiled placement choices for the focused window.", synonyms: ["command wheel", "compass", "tiled preview"]),
-        SettingsSearchEntry(id: "radial-item-go", category: .radialMenu, title: "Go to Space", description: "Generate valid workspace destinations in stable user order.", synonyms: ["command wheel", "switch workspace"]),
-        SettingsSearchEntry(id: "radial-item-next", category: .radialMenu, title: "Next Space", description: "Move to the next valid workspace from the command wheel.", synonyms: ["cycle workspace"]),
-        SettingsSearchEntry(id: "radial-item-previous", category: .radialMenu, title: "Previous Space", description: "Move to the previous valid workspace from the command wheel.", synonyms: ["cycle workspace"]),
-        SettingsSearchEntry(id: "radial-item-profiles", category: .radialMenu, title: "Profiles", description: "Select a generated reusable profile or Resume Automatic when relevant.", synonyms: ["command wheel", "configuration profile"]),
-        SettingsSearchEntry(id: "radial-item-reset-space", category: .radialMenu, title: "Reset Windows in Space", description: "Bring the current workspace's managed windows safely back into view.", synonyms: ["command wheel", "recover windows"]),
-        SettingsSearchEntry(id: "radial-item-reset-all", category: .radialMenu, title: "Reset All Windows", description: "Use the broad established recovery command with an unmistakable scope.", synonyms: ["command wheel", "recover every workspace"]),
-        SettingsSearchEntry(id: "radial-item-layout", category: .radialMenu, title: "Layout Type", description: "Cycle or select Freeform, Tiled, and Accordion for the current workspace.", synonyms: ["command wheel", "layout mode"]),
+        SettingsSearchEntry(id: "radial-enabled", category: .radialMenu, title: "Enable Command Palette and Window Placement", description: "Show the searchable global command surface and its position-only placement controls.", synonyms: ["launcher", "radial menu", "wheel", "halo", "Loop", "Snap Wheel"]),
+        SettingsSearchEntry(id: "radial-shortcut", category: .radialMenu, title: "Command Palette shortcut", description: "Record a conflict-checked global chord for the searchable palette.", synonyms: ["trigger", "hotkey", "Control Option Space", "command wheel", "snap wheel"]),
+        SettingsSearchEntry(id: "palette-context", category: .radialMenu, title: "Context-aware commands", description: "Search valid window, workspace, layout, profile, and WindowRanger actions without losing the original target.", synonyms: ["move to space", "go to space", "reset windows", "profile", "layout"]),
+        SettingsSearchEntry(id: "radial-globe-fn", category: .radialMenu, title: "Hold Globe or Fn to show Placement Wheel", description: "Optionally open the position-only wheel with a deliberate hold while preserving the Mac's normal quick-tap action.", synonyms: ["emoji", "function key", "hardware trigger", "Loop", "quick tap"]),
+        SettingsSearchEntry(id: "radial-item-resize", category: .radialMenu, title: "Placement Halo", description: "Expand truthful layout-aware window positions around the icon without closing the Command Palette.", synonyms: ["placement wheel", "pointer", "compass", "tiled preview", "snap", "position", "Loop"]),
         SettingsSearchEntry(id: "diagnostics-copy", category: .diagnostics, title: "Copy recent diagnostics", description: "Copy a bounded privacy-safe Debug diagnostic excerpt.", synonyms: ["logs", "debug"], debugOnly: true),
         SettingsSearchEntry(id: "diagnostics-reveal", category: .diagnostics, title: "Reveal diagnostics file", description: "Show the rotating Debug JSON Lines file in Finder.", synonyms: ["logs", "JSONL"], debugOnly: true),
         SettingsSearchEntry(id: "diagnostics-admission", category: .diagnostics, title: "Window admission classifications", description: "Inspect privacy-safe reasons windows are managed, floated, deferred, or ignored.", synonyms: ["rejected windows", "unmanaged", "popup", "dialog", "REL-06"], debugOnly: true),
