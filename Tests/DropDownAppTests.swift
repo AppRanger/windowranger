@@ -173,6 +173,7 @@ final class DropDownAppTests: XCTestCase {
         var object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: JSONEncoder().encode(profile)) as? [String: Any]
         )
+        object.removeValue(forKey: "quickApps")
         var oldConfiguration = try XCTUnwrap(object["dropDownApp"] as? [String: Any])
         oldConfiguration.removeValue(forKey: "isAnimationEnabled")
         oldConfiguration.removeValue(forKey: "direction")

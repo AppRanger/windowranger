@@ -118,6 +118,43 @@ final class ProfileTransferTests: XCTestCase {
                 .limitExceeded("more than \(ProfileTransferCodec.maximumProfiles) profiles")
             )
         }
+
+        portable = PortableProfileDefinition(profile: source)
+        portable.quickApps = (0...QuickAppShelfPolicy.maximumCount).map {
+            DropDownAppConfiguration(
+                bundleIdentifier: "com.example.quick\($0)",
+                displayName: "Quick \($0)"
+            )
+        }
+        XCTAssertThrowsError(try decode(PortableProfileArchive(profiles: [portable]))) {
+            XCTAssertEqual(
+                $0 as? ProfileTransferError,
+                .limitExceeded(
+                    "more than \(QuickAppShelfPolicy.maximumCount) Quick Apps in one profile"
+                )
+            )
+        }
+
+        portable = PortableProfileDefinition(profile: source)
+        portable.quickApps = [
+            DropDownAppConfiguration(bundleIdentifier: "com.example.quick", displayName: "One"),
+            DropDownAppConfiguration(bundleIdentifier: "COM.EXAMPLE.QUICK", displayName: "Two"),
+        ]
+        XCTAssertThrowsError(try decode(PortableProfileArchive(profiles: [portable]))) {
+            XCTAssertEqual(
+                $0 as? ProfileTransferError,
+                .invalidValue("Quick Apps must be distinct normalized configurations")
+            )
+        }
+
+        portable = PortableProfileDefinition(profile: source)
+        portable.quickAppShelfPresentation.visibleCount = QuickAppShelfPolicy.maximumCount + 1
+        XCTAssertThrowsError(try decode(PortableProfileArchive(profiles: [portable]))) {
+            XCTAssertEqual(
+                $0 as? ProfileTransferError,
+                .invalidValue("Quick App Shelf visible count")
+            )
+        }
     }
 
     func testEveryIdentityAndRelationshipIsRemappedWithDeterministicUniqueNames() throws {

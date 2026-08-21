@@ -67,6 +67,8 @@ not an installable macOS app.
 - Automatic workspace following when a managed window is focused through the Dock or another macOS route.
 - Per-workspace Freeform, Tiled, and Accordion layouts with migration-safe persistence, automatic or explicit orientation, gaps, outer padding, Accordion overlap, and stable ordering/weights.
 - A searchable global Command Palette with an inline Placement Halo and optional Globe/Fn Placement Wheel for pointer-driven window positioning.
+- A profile-aware Quick App Shelf with up to four ordered entries, palette selection, optional cycle
+  shortcut, exact-window presentation, and conservative launch/recovery handling.
 - Extensible per-application rules for workspace routing, visibility on every workspace, layout exclusion, and conservative secondary-window floating.
 - Per-window floating overrides that retain workspace membership while opting out of Tiled and Accordion.
 - Directional focus/reorder, smart resize, workspace reset, and workspace-to-display commands.
@@ -208,16 +210,32 @@ after a relevant geometry input changes or the user explicitly requests the layo
 A profile is a reusable configuration, never a snapshot of open windows. Each profile contains its
 ordered workspace definitions and keys, per-workspace layout and geometry, Unified or Independent
 Displays mode, abstract display roles and workspace-role homes, the complete app-rule collection
-including paused rules, and one optional Quick App with its presentation settings. An application
-is either a Quick App or has normal App Rules within one profile, never both. Exact
+including paused rules, and an ordered shelf of up to four Quick Apps with presentation settings
+owned once by the shelf. Each Quick App entry contains only its application identity and position
+in that order. An application is either a Quick App or has normal App Rules within one profile, never
+both. Exact
 open-window IDs, workspace membership, frames, and focus remain local session state and are not
 copied into a profile.
 
-The profile Quick App is a Quake-style single-window overlay for a configured app. Its
-configurable shortcut defaults to Control-Option-Backtick. The one unambiguous standard window for
-that app optionally expands from a chosen screen edge, defaulting to a roll-down from the top at
+The profile Quick App Shelf presents one or more coordinated Quake-style exact-window overlays. It
+can use non-overlapping Carousel cards or an overlapping Accordion, with a configured maximum of one
+to four visible apps. That maximum applies only to configured apps that already expose one
+unambiguous available window; WindowRanger never launches extra apps merely to fill the shelf. The
+explicitly selected app retains the existing bounded launch behaviour.
+
+The regular shortcut defaults to Control-Option-Backtick and toggles the currently selected entry.
+The Command Palette can show a specific entry or select the previous/next entry in the stable
+configured order; an optional cycle shortcut is unset by default. Selection is remembered locally
+for each profile without reordering its synced shelf. Opening the Command Palette keeps an already
+presented shelf visible. While the shelf is presented, the normal Previous Window and Next Window
+shortcuts temporarily cycle through shelf entries instead of the underlying workspace; moving to an
+already visible neighbour promotes it without closing the shelf. The palette retains keyboard focus
+while entries are previewed, and closing it focuses the currently selected entry. The selected app
+optionally expands the shelf from a chosen screen edge, defaulting to a roll-down from the top at
 full usable width and 80 percent height. Left and right presentations use the same percentage as
-screen width. Every edge animation collapses within the selected display, so a neighbouring monitor
+screen width. Carousel divides the shelf across the other axis, while Accordion leaves a reachable
+edge of each overlapping neighbour and keeps the selected window foremost. Every edge animation
+collapses within the selected display, so a neighbouring monitor
 never becomes an off-screen travel path. With animation disabled, WindowRanger applies the final
 frame directly. Pressing the shortcut again or focusing another app uses macOS Hide for the Quick
 App's application, avoiding the Dock minimize animation; showing it prepares the final or collapsed
@@ -237,13 +255,17 @@ hidden. The hidden ownership marker is local to the current WindowServer session
 rather than applied to a different window identity. Legacy minimized-window markers do not grant
 permission to unhide an application. Multiple matching windows remain
 ordinary managed windows rather than being guessed between.
-If the configured app has no available window, pressing the Quick App shortcut opens and activates
-it so apps that create a window only when foregrounded receive their normal reopen request.
+If the configured app has no available window, pressing the Quick App shortcut normally opens and
+activates it so apps that create a window only when foregrounded receive their normal reopen request.
+Palette-owned shelf previews launch without taking keyboard focus from the palette.
 WindowRanger waits briefly for one eligible window, then claims and presents that window before
 ordinary layout can move it. A missing installation, launch failure, timeout, or
 multiple eligible windows produces clear feedback instead of guessing or retrying indefinitely.
-Profiles can choose different apps and heights, while the shortcut remains a global preference.
-WindowRanger still reports a clear no-op for multiple ambiguous windows rather than guessing.
+Profiles can choose different ordered shelves and shared shelf presentation. These are managed in
+the dedicated Quick App Shelf Settings section, while shortcuts remain global preferences. Existing
+profiles migrate the first configured Quick App's presentation to the shared shelf setting.
+WindowRanger omits ambiguous neighbours and still reports a clear no-op rather than guessing when
+the explicitly selected app has multiple eligible windows.
 
 Profile definitions are stored as one versioned value and sync atomically through iCloud when sync is
 enabled. New installations start local-only until **Sync settings with iCloud** is explicitly enabled.
@@ -308,25 +330,34 @@ The Command Palette is a global interaction preference, not part of a profile. I
 the shared recorder and conflict model, retaining **Control-Option-Space** as the migration-safe
 default from the earlier Command Wheel. It opens a keyboard-focused search field containing the
 commands currently valid for the focused window, workspace, layout, profile, and interaction
-display. Results also show their configured shortcuts where one exists. Arrow keys move selection,
-Return runs it, and Escape or a second shortcut press closes the palette.
+display. A compact **Quick Actions** block directly below search keeps workspace-wide layout and
+focused-window placement visually separate from the command results. Its first row shows the
+current workspace's **Freeform**, **Tiled**, or **Accordion** layout and changes it without closing
+the palette. Its second row opens focused-window placement only when truthful placements exist.
+Results also show their configured shortcuts where one exists. Arrow keys move selection, Return
+runs it, and Escape or a second shortcut press closes the palette.
 
 Opening a key window must not retarget a window-management command to WindowRanger itself. The
 palette therefore captures the external interaction context and frontmost application first. It
 restores that application before dispatch, then revalidates the exact window, workspace, display,
 layout, profile, and generated placement token. A changed or unavailable target cancels safely.
 
-The icon beside the search field expands a compact **Placement Halo** around itself without closing
-the palette. It contains only Loop-style positions that can be previewed truthfully for the focused
-window: Freeform halves and quarters or Tiled compass placement. Layout selection, Accordion
-resizing, and every other former wheel command remain searchable palette actions. When no position
-is available, the icon is omitted instead of showing a disabled or invented choice.
+The **Place focused window** Quick Action expands a compact **Placement Halo** from its row without
+closing the palette. It contains only Loop-style positions that can be previewed truthfully for the
+focused window: Freeform halves and quarters or Tiled compass placement. Layout selection,
+Accordion resizing, and every other former wheel command remain searchable palette actions, while
+the current workspace layout is always visible above them. When no position is available, the
+entire placement row is omitted instead of showing a disabled or invented choice.
 
-With an empty search field, Right Arrow enters the Placement Halo and begins on Right. The arrow
-keys move around the available positions, Return commits the highlighted placement, and Escape
-collapses the halo and returns keyboard control to palette search. Pointer use remains available at
-the same time. The expanded transparent panel disables its AppKit window shadow so macOS does not
-draw an outline around the halo; the halo retains its own bounded material shadow.
+Tab enters Quick Actions without moving focus away from search. Up from the first command result
+enters the visually adjacent bottom Quick Action, then Up and Down move through its stacked rows.
+Left and Right change layout only while the workspace-layout row is selected. Return on the
+placement row opens the Halo, whose arrow keys move around the available positions. Return commits
+the highlighted placement, and Escape collapses the Halo or returns from Quick Actions to command
+results. Typing hides Quick Actions and any open Halo so filtering becomes the only active mode;
+clearing the query shows them again. Pointer use remains available at the same time. The
+expanded transparent panel disables its AppKit window shadow so macOS does not draw an outline
+around the halo; the halo retains its own bounded material shadow.
 
 **Hold Globe/Fn to show Placement Wheel** remains an optional per-Mac gesture. A deliberate hold
 opens the same position-only choices directly at the pointer; quick taps and Fn chords continue to

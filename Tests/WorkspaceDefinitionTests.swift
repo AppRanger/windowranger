@@ -1326,6 +1326,12 @@ final class WorkspaceDefinitionTests: XCTestCase {
             ownProcessIdentifier: ownWindow.processIdentifier,
             ignoredWindowKeys: [ignoredPopup]
         ))
+        XCTAssertTrue(WorkspaceEngine.shouldPreserveInteractionFocusAnchor(
+            focusedWindow: nil,
+            ownProcessIdentifier: ownWindow.processIdentifier,
+            ignoredWindowKeys: [ignoredPopup],
+            commandPalettePresented: true
+        ))
     }
 
     func testUnchangedAdmissionDecisionDoesNotRepeatDiagnosticsOrReadmitPopup() {

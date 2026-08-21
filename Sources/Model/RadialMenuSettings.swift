@@ -47,6 +47,7 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
     case selectTiled
     case toggleFloating
     case toggleDropDownApp
+    case cycleQuickApp
     case focusLeft
     case focusDown
     case focusUp
@@ -73,6 +74,7 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
         case .selectTiled: "Select Tiled"
         case .toggleFloating: "Toggle focused window Floating"
         case .toggleDropDownApp: "Toggle Quick App"
+        case .cycleQuickApp: "Cycle Quick Apps"
         case .focusLeft: "Focus left"
         case .focusDown: "Focus down"
         case .focusUp: "Focus up"
@@ -99,6 +101,7 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
         case .selectTiled: .selectLayoutFromShortcut(.tiled)
         case .toggleFloating: .toggleFloating
         case .toggleDropDownApp: .toggleDropDownApp
+        case .cycleQuickApp: .cycleQuickApp(1)
         case .focusLeft: .focusDirection(.left)
         case .focusDown: .focusDirection(.down)
         case .focusUp: .focusDirection(.up)
@@ -125,6 +128,7 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
         case .selectTiled: .init(keyCode: 47, modifiers: UInt32(optionKey))
         case .toggleFloating: .init(keyCode: 3, modifiers: UInt32(controlKey | optionKey))
         case .toggleDropDownApp: .init(keyCode: 50, modifiers: UInt32(controlKey | optionKey))
+        case .cycleQuickApp: .init(keyCode: 0, modifiers: 0)
         case .focusLeft: .init(keyCode: 4, modifiers: UInt32(optionKey))
         case .focusDown: .init(keyCode: 38, modifiers: UInt32(optionKey))
         case .focusUp: .init(keyCode: 40, modifiers: UInt32(optionKey))
@@ -146,6 +150,15 @@ struct HotKeyConfiguration: Codable, Equatable, Sendable {
 
     func chord(for action: ConfigurableHotKeyAction) -> HotKeyChord {
         overrides[action.rawValue] ?? action.defaultChord
+    }
+
+    func optionalChord(for action: ConfigurableHotKeyAction) -> HotKeyChord? {
+        if action == .cycleQuickApp, overrides[action.rawValue] == nil { return nil }
+        return chord(for: action)
+    }
+
+    func isEnabled(_ action: ConfigurableHotKeyAction) -> Bool {
+        optionalChord(for: action) != nil
     }
 
     func isUsingDefault(for action: ConfigurableHotKeyAction) -> Bool {

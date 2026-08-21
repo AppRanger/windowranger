@@ -133,6 +133,160 @@ struct DropDownAppConfiguration: Codable, Equatable, Sendable {
     }
 }
 
+/// Presentation shared by every entry in a profile's Quick App Shelf.
+struct QuickAppShelfPresentation: Codable, Equatable, Sendable {
+    enum LayoutStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+        case accordion
+        case carousel
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .accordion: "Accordion"
+            case .carousel: "Carousel"
+            }
+        }
+    }
+
+    var heightFraction: Double
+    var isAnimationEnabled: Bool
+    var direction: DropDownAppDirection
+    var layoutStyle: LayoutStyle
+    var visibleCount: Int
+
+    init(
+        heightFraction: Double = DropDownAppConfiguration.defaultHeightFraction,
+        isAnimationEnabled: Bool = true,
+        direction: DropDownAppDirection = .top,
+        layoutStyle: LayoutStyle = .carousel,
+        visibleCount: Int = 1
+    ) {
+        self.heightFraction = DropDownAppConfiguration.clampedHeightFraction(heightFraction)
+        self.isAnimationEnabled = isAnimationEnabled
+        self.direction = direction
+        self.layoutStyle = layoutStyle
+        self.visibleCount = Self.clampedVisibleCount(visibleCount)
+    }
+
+    init(_ configuration: DropDownAppConfiguration) {
+        self.init(
+            heightFraction: configuration.heightFraction,
+            isAnimationEnabled: configuration.isAnimationEnabled,
+            direction: configuration.direction
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case heightFraction, isAnimationEnabled, direction, layoutStyle, visibleCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        heightFraction = try container.decodeIfPresent(Double.self, forKey: .heightFraction)
+            ?? DropDownAppConfiguration.defaultHeightFraction
+        isAnimationEnabled = try container.decodeIfPresent(Bool.self, forKey: .isAnimationEnabled)
+            ?? true
+        direction = try container.decodeIfPresent(DropDownAppDirection.self, forKey: .direction)
+            ?? .top
+        layoutStyle = try container.decodeIfPresent(LayoutStyle.self, forKey: .layoutStyle)
+            ?? .carousel
+        visibleCount = try container.decodeIfPresent(Int.self, forKey: .visibleCount) ?? 1
+    }
+
+    func applying(to configuration: DropDownAppConfiguration) -> DropDownAppConfiguration {
+        DropDownAppConfiguration(
+            bundleIdentifier: configuration.bundleIdentifier,
+            displayName: configuration.displayName,
+            heightFraction: heightFraction,
+            isAnimationEnabled: isAnimationEnabled,
+            direction: direction
+        )
+    }
+
+    static func clampedVisibleCount(_ value: Int) -> Int {
+        min(QuickAppShelfPolicy.maximumCount, max(1, value))
+    }
+}
+
+/// The ordered, profile-owned Quick App shelf. The first entry remains the legacy Quick App so
+/// existing shortcuts and profile files keep their established meaning.
+enum QuickAppShelfPolicy {
+    static let maximumCount = 4
+
+    static func normalized(_ values: [DropDownAppConfiguration]) -> [DropDownAppConfiguration] {
+        var seen = Set<String>()
+        return values.compactMap { value in
+            guard let normalized = value.normalized(),
+                  seen.insert(normalized.bundleIdentifier.lowercased()).inserted
+            else { return nil }
+            return normalized
+        }.prefix(maximumCount).map { $0 }
+    }
+
+    static func replacing(
+        _ values: [DropDownAppConfiguration],
+        with value: DropDownAppConfiguration
+    ) -> [DropDownAppConfiguration] {
+        let normalized = normalized(values)
+        guard let normalizedValue = value.normalized() else { return normalized }
+        let bundle = normalizedValue.bundleIdentifier.lowercased()
+        if normalized.contains(where: { $0.bundleIdentifier.lowercased() == bundle }) {
+            return normalized
+        }
+        return normalized.count < maximumCount ? normalized + [normalizedValue] : normalized
+    }
+}
+
+enum QuickAppShelfSelectionPolicy {
+    static func selectedIndex(
+        bundleIdentifier: String?,
+        in configurations: [DropDownAppConfiguration]
+    ) -> Int? {
+        guard let bundleIdentifier else { return nil }
+        return configurations.firstIndex {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
+    }
+
+    static func index(
+        currentBundleIdentifier: String?,
+        offset: Int,
+        in configurations: [DropDownAppConfiguration]
+    ) -> Int? {
+        guard !configurations.isEmpty else { return nil }
+        let current = selectedIndex(bundleIdentifier: currentBundleIdentifier, in: configurations) ?? 0
+        return (current + offset % configurations.count + configurations.count) % configurations.count
+    }
+}
+
+enum QuickAppShelfGroupPolicy {
+    static func visibleConfigurations(
+        selectedBundleIdentifier: String?,
+        configurations: [DropDownAppConfiguration],
+        availableBundleIdentifiers: Set<String>,
+        maximumCount: Int
+    ) -> [DropDownAppConfiguration] {
+        let normalizedAvailableBundleIdentifiers = Set(
+            availableBundleIdentifiers.map { $0.lowercased() }
+        )
+        let available = configurations.filter {
+            normalizedAvailableBundleIdentifiers.contains($0.bundleIdentifier.lowercased())
+        }
+        guard !available.isEmpty else { return [] }
+        let count = min(QuickAppShelfPresentation.clampedVisibleCount(maximumCount), available.count)
+        let selectedIndex = selectedBundleIdentifier.flatMap { selected in
+            available.firstIndex {
+                $0.bundleIdentifier.caseInsensitiveCompare(selected) == .orderedSame
+            }
+        } ?? 0
+        let start = selectedIndex - ((count - 1) / 2)
+        return (0..<count).map { offset in
+            available[(start + offset + available.count) % available.count]
+        }
+    }
+}
+
 struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     var name: String
@@ -142,6 +296,8 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
     var workspaceRoleAssignments: [UUID: UUID]
     var appRules: [AppRule]
     var dropDownApp: DropDownAppConfiguration?
+    var quickApps: [DropDownAppConfiguration]
+    var quickAppShelfPresentation: QuickAppShelfPresentation
 
     init(
         id: UUID = UUID(),
@@ -151,7 +307,9 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
         displayRoles: [ProfileDisplayRole],
         workspaceRoleAssignments: [UUID: UUID],
         appRules: [AppRule],
-        dropDownApp: DropDownAppConfiguration? = nil
+        dropDownApp: DropDownAppConfiguration? = nil,
+        quickApps: [DropDownAppConfiguration]? = nil,
+        quickAppShelfPresentation: QuickAppShelfPresentation? = nil
     ) {
         self.id = id
         self.name = name
@@ -160,7 +318,44 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
         self.displayRoles = displayRoles
         self.workspaceRoleAssignments = workspaceRoleAssignments
         self.appRules = appRules
-        self.dropDownApp = dropDownApp
+        let normalizedQuickApps = QuickAppShelfPolicy.normalized(
+            quickApps ?? dropDownApp.map { [$0] } ?? []
+        )
+        let presentation = quickAppShelfPresentation
+            ?? normalizedQuickApps.first.map(QuickAppShelfPresentation.init)
+            ?? QuickAppShelfPresentation()
+        self.quickAppShelfPresentation = presentation
+        self.quickApps = normalizedQuickApps.map(presentation.applying)
+        self.dropDownApp = self.quickApps.first
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, workspaces, displayMode, displayRoles, workspaceRoleAssignments, appRules
+        case dropDownApp, quickApps, quickAppShelfPresentation
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        workspaces = try container.decode([WorkspaceDefinition].self, forKey: .workspaces)
+        displayMode = try container.decode(MultiDisplayMode.self, forKey: .displayMode)
+        displayRoles = try container.decode([ProfileDisplayRole].self, forKey: .displayRoles)
+        workspaceRoleAssignments = try container.decode([UUID: UUID].self, forKey: .workspaceRoleAssignments)
+        appRules = try container.decode([AppRule].self, forKey: .appRules)
+        let legacy = try container.decodeIfPresent(DropDownAppConfiguration.self, forKey: .dropDownApp)
+        let decoded = try container.decodeIfPresent([DropDownAppConfiguration].self, forKey: .quickApps)
+        let decodedQuickApps = decoded ?? legacy.map { [$0] } ?? []
+        quickAppShelfPresentation = if decoded == nil, let legacy {
+            QuickAppShelfPresentation(legacy)
+        } else {
+            try container.decodeIfPresent(
+                QuickAppShelfPresentation.self,
+                forKey: .quickAppShelfPresentation
+            ) ?? decodedQuickApps.first.map(QuickAppShelfPresentation.init) ?? QuickAppShelfPresentation()
+        }
+        quickApps = decodedQuickApps.map(quickAppShelfPresentation.applying)
+        dropDownApp = quickApps.first ?? legacy
     }
 
     func cloned(
@@ -211,7 +406,9 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
             displayRoles: clonedRoles,
             workspaceRoleAssignments: clonedAssignments,
             appRules: clonedRules,
-            dropDownApp: dropDownApp
+            dropDownApp: dropDownApp,
+            quickApps: quickApps,
+            quickAppShelfPresentation: quickAppShelfPresentation
         )
     }
 
@@ -224,9 +421,19 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
         let assignments = workspaceRoleAssignments.filter {
             workspaceIDs.contains($0.key) && roleIDs.contains($0.value)
         }
-        let quickAppBundleIdentifier = dropDownApp?.normalized()?.bundleIdentifier.lowercased()
+        let normalizedShelfPresentation = QuickAppShelfPresentation(
+            heightFraction: quickAppShelfPresentation.heightFraction,
+            isAnimationEnabled: quickAppShelfPresentation.isAnimationEnabled,
+            direction: quickAppShelfPresentation.direction,
+            layoutStyle: quickAppShelfPresentation.layoutStyle,
+            visibleCount: quickAppShelfPresentation.visibleCount
+        )
+        let normalizedQuickApps = QuickAppShelfPolicy.normalized(
+            quickApps.isEmpty ? dropDownApp.map { [$0] } ?? [] : quickApps
+        ).map(normalizedShelfPresentation.applying)
+        let quickAppBundleIdentifiers = Set(normalizedQuickApps.map { $0.bundleIdentifier.lowercased() })
         let rules = Self.uniqueAppRules(appRules).filter { rule in
-            rule.bundleIdentifier.lowercased() != quickAppBundleIdentifier
+            !quickAppBundleIdentifiers.contains(rule.bundleIdentifier.lowercased())
         }.map { rule -> AppRule in
             var normalized = rule
             if let workspaceID = normalized.assignedWorkspaceID,
@@ -246,7 +453,9 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
             displayRoles: roles,
             workspaceRoleAssignments: assignments,
             appRules: rules,
-            dropDownApp: dropDownApp?.normalized()
+            dropDownApp: normalizedQuickApps.first,
+            quickApps: normalizedQuickApps,
+            quickAppShelfPresentation: normalizedShelfPresentation
         )
     }
 
@@ -295,6 +504,17 @@ struct ProfileLibrary: Codable, Equatable, Sendable {
 struct ProfileRuntimeWorkspaceState: Codable, Equatable, Sendable {
     var currentWorkspaceID: UUID
     var activeWorkspaceIDByRole: [UUID: UUID]
+    var selectedQuickAppBundleIdentifier: String?
+
+    init(
+        currentWorkspaceID: UUID,
+        activeWorkspaceIDByRole: [UUID: UUID],
+        selectedQuickAppBundleIdentifier: String? = nil
+    ) {
+        self.currentWorkspaceID = currentWorkspaceID
+        self.activeWorkspaceIDByRole = activeWorkspaceIDByRole
+        self.selectedQuickAppBundleIdentifier = selectedQuickAppBundleIdentifier
+    }
 }
 
 struct ExactProfileTrigger: Codable, Equatable, Identifiable, Sendable {
@@ -380,11 +600,17 @@ struct ProfileLocalState: Codable, Equatable, Sendable {
             let activeByRole = runtime.activeWorkspaceIDByRole.filter {
                 validRoleIDs.contains($0.key) && validWorkspaceIDs.contains($0.value)
             }
+            let selectedQuickAppBundleIdentifier = runtime.selectedQuickAppBundleIdentifier.flatMap {
+                selected in profile.quickApps.contains(where: {
+                    $0.bundleIdentifier.caseInsensitiveCompare(selected) == .orderedSame
+                }) ? selected : nil
+            }
             return (
                 profileID,
                 ProfileRuntimeWorkspaceState(
                     currentWorkspaceID: currentWorkspaceID,
-                    activeWorkspaceIDByRole: activeByRole
+                    activeWorkspaceIDByRole: activeByRole,
+                    selectedQuickAppBundleIdentifier: selectedQuickAppBundleIdentifier
                 )
             )
         })
@@ -534,6 +760,9 @@ struct ProfileEngineConfiguration: Equatable, Sendable {
     let workspaceDisplayAssignments: [UUID: String]
     let appRules: [AppRule]
     let dropDownApp: DropDownAppConfiguration?
+    let quickApps: [DropDownAppConfiguration]
+    let quickAppShelfPresentation: QuickAppShelfPresentation
+    let selectedQuickAppBundleIdentifier: String?
     let preferredCurrentWorkspaceID: UUID?
     let preferredActiveWorkspaceIDByDisplay: [String: UUID]
     let selectionReason: ProfileSelectionReason
@@ -546,6 +775,9 @@ struct ProfileEngineConfiguration: Equatable, Sendable {
         workspaceDisplayAssignments: [UUID: String],
         appRules: [AppRule],
         dropDownApp: DropDownAppConfiguration? = nil,
+        quickApps: [DropDownAppConfiguration] = [],
+        quickAppShelfPresentation: QuickAppShelfPresentation = QuickAppShelfPresentation(),
+        selectedQuickAppBundleIdentifier: String? = nil,
         preferredCurrentWorkspaceID: UUID?,
         preferredActiveWorkspaceIDByDisplay: [String: UUID],
         selectionReason: ProfileSelectionReason
@@ -557,6 +789,16 @@ struct ProfileEngineConfiguration: Equatable, Sendable {
         self.workspaceDisplayAssignments = workspaceDisplayAssignments
         self.appRules = appRules
         self.dropDownApp = dropDownApp
+        let normalizedQuickApps = QuickAppShelfPolicy.normalized(
+            quickApps.isEmpty ? dropDownApp.map { [$0] } ?? [] : quickApps
+        )
+        self.quickApps = normalizedQuickApps
+        self.quickAppShelfPresentation = quickAppShelfPresentation
+        self.selectedQuickAppBundleIdentifier = selectedQuickAppBundleIdentifier.flatMap { selected in
+            normalizedQuickApps.contains(where: {
+                $0.bundleIdentifier.caseInsensitiveCompare(selected) == .orderedSame
+            }) ? selected : nil
+        }
         self.preferredCurrentWorkspaceID = preferredCurrentWorkspaceID
         self.preferredActiveWorkspaceIDByDisplay = preferredActiveWorkspaceIDByDisplay
         self.selectionReason = selectionReason

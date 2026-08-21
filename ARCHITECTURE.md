@@ -115,9 +115,11 @@ rule from ambiguous per-window state.
 
 The profile library can sync through iCloud key-value storage. A profile contains workspace
 definitions/order/keys/layout geometry, Unified or Independent display mode, abstract display roles
-and their menu-bar icon styles, workspace-role assignments, typed app rules, and an optional
-Quick App bundle identifier/display name/presentation. Normalization makes Quick App ownership
-mutually exclusive with an App Rule for the same bundle identifier. Global preferences
+and their menu-bar icon styles, workspace-role assignments, typed app rules, and an ordered Quick
+App Shelf of up to four bundle identifier/display name entries plus one shared shelf presentation.
+Legacy per-entry presentation migrates deterministically from the first configured entry. Normalization
+removes duplicates, preserves configured order, and makes Quick App ownership mutually exclusive
+with an App Rule for the same bundle identifier. Global preferences
 such as menu-bar presentation, general command shortcuts and Command Palette configuration use their
 existing global settings path and are not profile content.
 
@@ -131,10 +133,11 @@ action and never occurs as a side effect of a failed pull.
 ### Local to one Mac
 
 The active/manual profile selection, automatic trigger mappings, runtime active-workspace state,
-monitor fingerprints, role-to-physical-monitor bindings, Accessibility state and live window
+the selected Quick App identity for each profile, monitor fingerprints, role-to-physical-monitor
+bindings, Accessibility state and live window
 session remain local. `WorkspaceStateStore` writes the current WindowServer-bound session beneath
-the user's cache directory using an atomic replacement. This includes an exact hidden Quick App
-identity only when WindowRanger hid that window's application. A changed WindowServer session
+the user's cache directory using an atomic replacement. This includes exact hidden Quick App
+identities only when WindowRanger hid those windows' applications. A changed WindowServer session
 invalidates exact window IDs and that ownership marker rather than guessing. Legacy minimized-window
 markers decode without granting application-unhide ownership.
 
@@ -168,21 +171,52 @@ On graceful quit, persistent assignment state is saved before managed windows ar
 visible frames. A debugger Stop or crash cannot run synchronous cleanup; startup reconciliation is
 the recovery boundary for those cases.
 
-The profile-aware Quick App is an engine-owned temporary presentation override. It resolves only
-one unambiguous admitted standard window for the configured bundle and targets the pointer/interaction
-display's usable bounds. Its optional Top, Bottom, Left, or Right movement uses generation-gated
+The profile-aware Quick App Shelf is an engine-owned coordinated set of temporary presentation
+overrides. Direction, size fraction, animation, Accordion or Carousel style, and a one-to-four
+visible maximum are profile-owned shelf presentation, applied uniformly to every ordered entry
+before engine publication. Carousel divides the shelf's cross-axis into non-overlapping cards;
+Accordion overlaps entries along that axis while leaving a fixed reachable edge and raising the
+selected window. Only already available, unambiguous neighbour windows can join the group. The
+selected entry retains the existing bounded launch path, but presentation never launches extra apps
+merely to fill the visible maximum. The synced shelf order and machine-local selected identity
+are separate state: configuration publication cannot reorder the shelf or cancel an unchanged
+entry's in-flight launch. Direct Command Palette selection means idempotent Show, the regular
+shortcut means Toggle selected, and Previous/Next traverse the stable configured order. Launch,
+show, hide, focus-loss, switching, removal, profile changes, screen suspension, and native-tab
+replacement are generation-gated through one serialized transition path; a rapid switch retains
+only the latest valid requested selection.
+
+Exact ownership and application Hide confirmation remain independent for every visible member,
+while one selected entry owns focus and the ordinary toggle/animation transition. Selecting an
+already visible neighbour promotes it without collapsing the group. Moving beyond the visible group
+safely hides the current members, then presents the requested entry and whichever eligible
+neighbours fit the new group. Ambiguous neighbours fail closed without disturbing valid members.
+
+Command Palette presentation is an explicit shelf-focus lease. Activating WindowRanger for that
+panel does not count as external focus loss, palette-owned launches do not activate the target app,
+and completed shelf previews retain palette keyboard focus. While an entry is presented, the normal
+Previous Window and Next Window commands route through the shelf's ordered selection path. Closing
+the palette restores exact focus to a presented shelf window only when that Shelf application was
+frontmost before the palette opened. A merely retained Shelf session stays in its existing
+visibility state while focus returns to the application that actually preceded the palette.
+Activating any unrelated application still ends ordinary shelf presentation.
+
+Each entry resolves only one unambiguous admitted standard window for the configured bundle. The
+group targets the pointer/interaction display's usable bounds. Its optional Top, Bottom, Left, or
+Right movement uses generation-gated
 frame steps so a hide, profile switch, sleep, termination, or newer toggle supersedes delayed
 animation writes. Every direction expands from or collapses to a one-point frame inside the chosen
 usable edge. No animation path travels through off-screen coordinates, and the receiving
 application's Accessibility position transition is suppressed around direct frame writes. Once
-selected, the window is
+owned, each shelf window is
 excluded from normal visibility, layout, focus-cycle, reset, manual-geometry reconciliation, and
 background-signature participation. The engine uses AppKit Hide/Unhide for the configured
 application while retaining the exact window as the only geometry and session target. This avoids
 the Dock minimize/restore transition, but intentionally means every window belonging to that
 application follows its hidden state. Hide and Unhide are generation-gated and confirmed before the
-session changes state. The engine preserves the exact target's durable restore frame and unhides only
-application state it owns before configuration/profile changes and lifecycle cleanup. It also
+session changes state. The engine preserves every exact target's durable restore frame and unhides
+only application state it owns before that entry is removed, configuration/profile changes, and
+lifecycle cleanup. It also
 ignores its own programmatic activation when deciding whether another app has taken focus. A
 successful AX snapshot
 may replace an exact window identity during a native tab switch. The engine rebinds the session only
@@ -203,8 +237,9 @@ window can become the exact Quick App session before ordinary workspace layout m
 watchdog checks eight times after a short launch delay, then fails with explicit feedback; a profile
 change, shutdown, newer launch generation, missing installation, launch error, timeout, or multiple
 eligible windows never grants permission to guess a target.
-During startup reconciliation, the engine establishes this ownership before initial workspace
-visibility and layout. Exactly one eligible matching window is claimed: its observed pre-layout
+During startup reconciliation, the engine establishes ownership only for configured shelf entries
+before initial workspace visibility and layout. For each persisted entry, exactly one eligible
+matching window is claimed: its observed pre-layout
 frame determines whether the session begins presented on that display or is converted from a legacy
 off-screen state to application Hide. Crash-restart recovery may reclaim a hidden application only
 when the WindowServer-bound marker matches the exact process/window identity and bundle and AppKit
@@ -284,11 +319,26 @@ keeps the macOS 27 baseline for later releases until a future design change is v
 overrides are local appearance state rather than synced App Rule actions because the correct
 rendering depends on this Mac and OS. The Command Palette captures its external target before
 becoming key, restores the previous application before dispatch, and rejects a selection if that
-window/workspace/display/profile token changed while the user typed. Its inline Placement Halo
-stays in the key palette and exposes only validated position previews. The control is omitted when
-that provider is empty. Right Arrow enters a palette-owned keyboard mode whose arrows traverse only
-those generated positions; Escape collapses the halo and restores search handling. The optional
-Globe/Fn path uses the same position-only provider in a nonactivating Placement Wheel.
+window/workspace/display/profile token changed while the user typed. A top segmented control shows
+the captured workspace's Freeform, Tiled, or Accordion layout. It dispatches through the same typed
+command path and keeps the palette open; an observable presentation context adopts each accepted
+layout token so repeated changes remain valid. A selection made after an inline layout change is
+revalidated against a fresh context; a placement command may adopt the settled placement token only
+when the exact window, workspace, layout, display topology, and profile identity are unchanged.
+Every genuinely different target still fails closed. Exact placement is revalidated and enqueued
+while the palette still owns a preserved managed-window anchor; a transient nil AX focus during
+dismissal retains that anchor. The engine's serial queue commits placement before palette dismissal
+ends Shelf preservation or restores a Quick App Shelf window or fallback application. The command
+results, workspace layout, and focused-window placement remain separate interaction
+regions. A compact Quick Actions block stacks workspace layout above conditional window placement.
+Tab enters that block; Up from the first command result enters its visually adjacent bottom row,
+then Up and Down change rows, while Left and Right change layout only on the workspace row. Return
+on the placement row opens the inline Placement Halo in a separate
+palette-owned keyboard mode whose arrows traverse only validated position previews. The placement
+row is omitted when that provider is empty. Escape collapses the halo or restores command-result
+handling. A nonempty query hides Quick Actions and collapses the Halo until search is cleared. The
+optional Globe/Fn path uses the same position-only
+provider in a nonactivating Placement Wheel.
 
 The optional Globe/Fn wheel trigger keeps observation and filtering on separate safety boundaries.
 A passive session tap observes modifier, keyboard, mouse-button, and system-defined competition and

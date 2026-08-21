@@ -11,6 +11,8 @@ enum WindowManagerCommand: Hashable, Sendable {
     case selectLayoutFromShortcut(WorkspaceLayout)
     case toggleFloating
     case toggleDropDownApp
+    case selectQuickApp(String)
+    case cycleQuickApp(Int)
     case previousWorkspace
     case resetCurrentWorkspace
     case resetAllWindows
@@ -49,6 +51,10 @@ enum WindowManagerCommand: Hashable, Sendable {
             ["action": "toggle-floating"]
         case .toggleDropDownApp:
             ["action": "toggle-drop-down-app"]
+        case let .selectQuickApp(bundleIdentifier):
+            ["action": "select-quick-app", "bundle": bundleIdentifier]
+        case let .cycleQuickApp(offset):
+            ["action": "cycle-quick-app", "offset": String(offset)]
         case .previousWorkspace:
             ["action": "previous-workspace"]
         case .resetCurrentWorkspace:
@@ -154,6 +160,10 @@ final class WindowManagerCommandDispatcher {
             case .toggleFloating: engine?.toggleFocusedWindowFloating()
             case .toggleDropDownApp:
                 engine?.toggleDropDownApp(correlationID: correlationID)
+            case let .selectQuickApp(bundleIdentifier):
+                engine?.selectQuickApp(bundleIdentifier: bundleIdentifier, correlationID: correlationID)
+            case let .cycleQuickApp(offset):
+                engine?.cycleQuickApp(offset: offset, correlationID: correlationID)
             case .previousWorkspace:
                 engine?.switchToPreviousWorkspace(correlationID: correlationID)
             case .resetCurrentWorkspace: engine?.resetCurrentWorkspace(correlationID: correlationID)

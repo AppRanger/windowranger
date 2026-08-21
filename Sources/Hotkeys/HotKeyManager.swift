@@ -151,10 +151,11 @@ enum ShortcutConflictModel {
             ))
         }
 
-        for action in ConfigurableHotKeyAction.allCases where includeCommandWheel || action != .commandWheel {
+        for action in ConfigurableHotKeyAction.allCases
+        where (includeCommandWheel || action != .commandWheel) && configuration.isEnabled(action) {
             let binding = ShortcutBindingDefinition(
                 owner: .global(action),
-                chord: configuration.chord(for: action)
+                chord: configuration.optionalChord(for: action)!
             )
             if let reason = validationMessage(binding.chord) {
                 issues.append(ShortcutConfigurationIssue(

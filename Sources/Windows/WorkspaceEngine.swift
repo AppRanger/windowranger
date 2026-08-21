@@ -633,6 +633,118 @@ enum DropDownAppLaunchWatchdogPolicy {
     }
 }
 
+enum QuickAppTransitionPhase: Equatable, Sendable {
+    case idle
+    case launching(String)
+    case showing(String)
+    case hiding(String)
+}
+
+enum QuickAppSwitchRequestDisposition: Equatable, Sendable {
+    case begin
+    case cancelLaunchAndBegin
+    case queueLatest
+    case ignore
+}
+
+enum QuickAppTransitionPolicy {
+    static func cycleOriginBundleIdentifier(
+        selectedBundleIdentifier: String?,
+        pendingBundleIdentifier: String?
+    ) -> String? {
+        pendingBundleIdentifier ?? selectedBundleIdentifier
+    }
+
+    static func switchDisposition(
+        phase: QuickAppTransitionPhase,
+        targetBundleKey: String
+    ) -> QuickAppSwitchRequestDisposition {
+        switch phase {
+        case .idle:
+            .begin
+        case let .launching(activeBundleKey):
+            activeBundleKey == targetBundleKey ? .ignore : .cancelLaunchAndBegin
+        case .showing, .hiding:
+            .queueLatest
+        }
+    }
+
+    static func directShowDisposition(
+        phase: QuickAppTransitionPhase,
+        isPresented: Bool
+    ) -> QuickAppSwitchRequestDisposition {
+        if isPresented { return .ignore }
+        return switch phase {
+        case .idle:
+            .begin
+        case .hiding:
+            .queueLatest
+        case .launching, .showing:
+            .ignore
+        }
+    }
+
+    static func shouldCancelPendingLaunch(
+        bundleIdentifier: String,
+        previousConfigurations: [DropDownAppConfiguration],
+        nextConfigurations: [DropDownAppConfiguration]
+    ) -> Bool {
+        let previous = previousConfigurations.first {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
+        let next = nextConfigurations.first {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
+        return next == nil || next != previous
+    }
+
+    static func shouldInvalidateAnimationForRebind(
+        reboundBundleKey: String,
+        phase: QuickAppTransitionPhase,
+        sessionIsPresented: Bool
+    ) -> Bool {
+        if sessionIsPresented { return true }
+        return switch phase {
+        case let .showing(activeKey), let .hiding(activeKey):
+            activeKey == reboundBundleKey
+        case .idle, .launching:
+            false
+        }
+    }
+}
+
+enum QuickAppInteractionPolicy {
+    static func preservesPresentedShelfForActivation(
+        activatedProcessIdentifier: pid_t,
+        ownProcessIdentifier: pid_t,
+        commandPalettePresented: Bool
+    ) -> Bool {
+        commandPalettePresented && activatedProcessIdentifier == ownProcessIdentifier
+    }
+
+    static func routesWindowCycleToShelf(
+        shelfIsPresented: Bool,
+        configuredAppCount: Int
+    ) -> Bool {
+        shelfIsPresented && configuredAppCount > 0
+    }
+
+    static func restoresPresentedShelfFocus(
+        shelfProcessIdentifier: pid_t,
+        precedingProcessIdentifier: pid_t?
+    ) -> Bool {
+        shelfProcessIdentifier == precedingProcessIdentifier
+    }
+
+    static func activatesApplicationForLaunch(commandPalettePresented: Bool) -> Bool {
+        !commandPalettePresented
+    }
+
+    static func focusesQuickAppAfterShow(commandPalettePresented: Bool) -> Bool {
+        !commandPalettePresented
+    }
+}
+
 enum WindowLayoutOverride: String, Codable, Equatable, Sendable {
     case automatic
     case floating
@@ -759,6 +871,7 @@ struct PersistedWorkspaceState: Codable, Equatable, Sendable {
     let profileID: UUID?
     let tiledTrees: [PersistedTiledTree]?
     let dropDownAppSession: PersistedDropDownAppSession?
+    let dropDownAppSessions: [String: PersistedDropDownAppSession]?
 
     init(
         version: Int,
@@ -768,7 +881,8 @@ struct PersistedWorkspaceState: Codable, Equatable, Sendable {
         activeWorkspaceIDsByDisplay: [String: UUID]? = nil,
         profileID: UUID? = nil,
         tiledTrees: [PersistedTiledTree]? = nil,
-        dropDownAppSession: PersistedDropDownAppSession? = nil
+        dropDownAppSession: PersistedDropDownAppSession? = nil,
+        dropDownAppSessions: [String: PersistedDropDownAppSession]? = nil
     ) {
         self.version = version
         self.windowServerSession = windowServerSession
@@ -778,6 +892,7 @@ struct PersistedWorkspaceState: Codable, Equatable, Sendable {
         self.profileID = profileID
         self.tiledTrees = tiledTrees
         self.dropDownAppSession = dropDownAppSession
+        self.dropDownAppSessions = dropDownAppSessions
     }
 
     func assignment(
@@ -1142,6 +1257,7 @@ enum WorkspaceApplicationSummaryPolicy {
 
 final class WorkspaceEngine {
     var onStateChanged: ((WorkspaceEngineState) -> Void)?
+    var onQuickAppSelectionChanged: ((String) -> Void)?
     var onWorkspaceLayoutChanged: ((UUID, WorkspaceLayout) -> Void)?
     var onWorkspaceLayoutConfigurationChanged: ((UUID, WorkspaceLayoutConfiguration) -> Void)?
     var onTiledPlacementCommitted: ((TiledPlacementUndoTransaction) -> Void)?
@@ -1255,6 +1371,11 @@ final class WorkspaceEngine {
         let generation: UInt64
     }
 
+    private struct PendingQuickAppSelection {
+        let bundleIdentifier: String
+        let correlationID: String
+    }
+
     private enum ManualTiledMoveReconciliation: Equatable {
         case none
         case dragInProgress
@@ -1275,11 +1396,43 @@ final class WorkspaceEngine {
     private var displayMode: MultiDisplayMode
     private var workspaceDisplayAssignments: [UUID: String]
     private var appRulesByBundleIdentifier: [String: AppRule]
+    private var quickAppConfigurations: [DropDownAppConfiguration]
+    private var quickAppShelfPresentation: QuickAppShelfPresentation
+    /// Exact ownership is retained per configured Quick App, including entries that are currently
+    /// hidden while another shelf entry is presented. The computed legacy property below keeps
+    /// the existing presentation code focused on the selected entry.
+    private var quickAppSessions: [String: DropDownAppSession] = [:]
     private var dropDownAppConfiguration: DropDownAppConfiguration?
-    private var dropDownAppSession: DropDownAppSession?
+    private var dropDownAppSession: DropDownAppSession? {
+        get {
+            guard let bundleIdentifier = dropDownAppConfiguration?.bundleIdentifier else {
+                return nil
+            }
+            return quickAppSessions[Self.normalizedBundleIdentifier(bundleIdentifier)]
+        }
+        set {
+            guard let bundleIdentifier = dropDownAppConfiguration?.bundleIdentifier else {
+                return
+            }
+            let key = Self.normalizedBundleIdentifier(bundleIdentifier)
+            if let newValue {
+                quickAppSessions[key] = newValue
+            } else {
+                quickAppSessions.removeValue(forKey: key)
+            }
+        }
+    }
+    private var isQuickAppShelfPresented: Bool {
+        quickAppSessions.values.contains(where: \.isPresented)
+    }
     private var dropDownAnimationGeneration: UInt64 = 0
     private var dropDownLaunchGeneration: UInt64 = 0
     private var pendingDropDownAppLaunch: PendingDropDownAppLaunch?
+    private var pendingQuickAppSelection: PendingQuickAppSelection?
+    private var pendingQuickAppHideAfterPresentation = false
+    private var quickAppTransition: QuickAppTransitionPhase = .idle
+    private var quickAppNeighborVisibilityGeneration: [String: UInt64] = [:]
+    private var commandPalettePresented = false
     private var focusFollowsMovedWindow: Bool
     private var automaticallyUnhideApplications: Bool
     private var focusedWindowHighlightEnabled: Bool
@@ -1339,7 +1492,7 @@ final class WorkspaceEngine {
     private let diagnostics: DiagnosticLogger
     private var windowServerSessionValidated = true
     private var pendingRestoredWindows: [String: PersistedWindowAssignment]
-    private var pendingRestoredDropDownAppSession: PersistedDropDownAppSession?
+    private var pendingRestoredDropDownAppSessions: [String: PersistedDropDownAppSession]
     private let startupGraceDeadline = Date().addingTimeInterval(30)
     private let ownProcessIdentifier = ProcessInfo.processInfo.processIdentifier
 
@@ -1350,6 +1503,9 @@ final class WorkspaceEngine {
         workspaceDisplayAssignments: [UUID: String] = [:],
         appRules: [AppRule] = [],
         dropDownApp: DropDownAppConfiguration? = nil,
+        quickApps: [DropDownAppConfiguration] = [],
+        quickAppShelfPresentation: QuickAppShelfPresentation = QuickAppShelfPresentation(),
+        selectedQuickAppBundleIdentifier: String? = nil,
         focusFollowsMovedWindow: Bool = false,
         automaticallyUnhideApplications: Bool = false,
         focusedWindowHighlightEnabled: Bool = false,
@@ -1362,7 +1518,15 @@ final class WorkspaceEngine {
         self.displayMode = displayMode
         self.workspaceDisplayAssignments = workspaceDisplayAssignments
         appRulesByBundleIdentifier = Self.indexedAppRules(appRules)
-        dropDownAppConfiguration = dropDownApp?.normalized()
+        quickAppConfigurations = QuickAppShelfPolicy.normalized(
+            quickApps.isEmpty ? dropDownApp.map { [$0] } ?? [] : quickApps
+        )
+        self.quickAppShelfPresentation = quickAppShelfPresentation
+        dropDownAppConfiguration = quickAppConfigurations.first(where: {
+            $0.bundleIdentifier.caseInsensitiveCompare(
+                selectedQuickAppBundleIdentifier ?? ""
+            ) == .orderedSame
+        }) ?? quickAppConfigurations.first
         self.focusFollowsMovedWindow = focusFollowsMovedWindow
         self.automaticallyUnhideApplications = automaticallyUnhideApplications
         self.focusedWindowHighlightEnabled = focusedWindowHighlightEnabled
@@ -1376,16 +1540,20 @@ final class WorkspaceEngine {
             )
         } ?? false
         pendingRestoredWindows = restoredProfileMatches ? (restoredState?.windows ?? [:]) : [:]
-        pendingRestoredDropDownAppSession = restoredProfileMatches
-            ? restoredState?.dropDownAppSession.flatMap { session in
-                guard session.isApplicationHiddenByWindowRanger,
-                      session.bundleIdentifier.caseInsensitiveCompare(
-                        dropDownApp?.bundleIdentifier ?? ""
-                      ) == .orderedSame
-                else { return nil }
-                return session
-            }
-            : nil
+        let persistedSessions = restoredProfileMatches
+            ? (restoredState?.dropDownAppSessions
+                ?? restoredState?.dropDownAppSession.map {
+                    [Self.normalizedBundleIdentifier($0.bundleIdentifier): $0]
+                }
+                ?? [:])
+            : [:]
+        let configuredQuickAppBundleKeys = Set(quickAppConfigurations.map {
+            Self.normalizedBundleIdentifier($0.bundleIdentifier)
+        })
+        pendingRestoredDropDownAppSessions = persistedSessions.filter {
+            $0.value.isApplicationHiddenByWindowRanger &&
+                configuredQuickAppBundleKeys.contains($0.key)
+        }
         let validWorkspaceIDs = Set(initial.map(\.id))
         currentWorkspaceID = (restoredProfileMatches ? restoredState : nil)
             .map(\.activeWorkspaceID)
@@ -1535,6 +1703,11 @@ final class WorkspaceEngine {
             wakeReconciliationWorkItem = nil
             directionalMoveGestureContext = nil
             manualTiledDragSession = nil
+            dropDownAnimationGeneration &+= 1
+            cancelPendingDropDownAppLaunch()
+            pendingQuickAppSelection = nil
+            pendingQuickAppHideAfterPresentation = false
+            quickAppTransition = .idle
             invalidateFocusWorkForLifecycle()
             persistState(preservingPendingRestores: true, waitForCompletion: true)
             diagnostics.log(
@@ -1660,61 +1833,264 @@ final class WorkspaceEngine {
         }
     }
 
-    func updateDropDownAppConfiguration(_ configuration: DropDownAppConfiguration?) {
+    func updateQuickAppConfigurations(
+        _ configurations: [DropDownAppConfiguration],
+        presentation: QuickAppShelfPresentation
+    ) {
         queue.async { [weak self] in
             guard let self else { return }
-            let normalized = configuration?.normalized()
-            guard normalized != self.dropDownAppConfiguration else { return }
-            self.cancelPendingDropDownAppLaunch()
-            let previous = self.dropDownAppConfiguration
-            if DropDownAppConfigurationUpdatePolicy.shouldPreserveSession(
-                previous: previous,
-                next: normalized
-            ), var session = self.dropDownAppSession, let normalized {
-                let previousFocusKey = session.previousFocusKey
-                self.dropDownAppConfiguration = normalized
-                session.direction = normalized.direction
-                session.isAnimationEnabled = normalized.isAnimationEnabled
-                self.dropDownAppSession = session
-                if session.isPresented, let target = self.windows[session.windowKey] {
-                    self.showDropDownApp(
-                        target,
-                        configuration: normalized,
-                        correlationID: self.diagnostics.makeCorrelationID()
-                    )
-                    if var updated = self.dropDownAppSession {
-                        updated.previousFocusKey = previousFocusKey
-                        self.dropDownAppSession = updated
-                    }
-                } else if !session.isApplicationHiddenByWindowRanger,
-                          let target = self.windows[session.windowKey] {
-                    // A Settings edit can arrive during the short collapse interval. Supersede
-                    // the old frame callbacks and complete the exact-window hide with the new
-                    // presentation settings retained in the session.
-                    self.dropDownAnimationGeneration &+= 1
-                    self.finishDropDownAppHide(
-                        target,
-                        session: session,
-                        generation: self.dropDownAnimationGeneration,
-                        restorePreviousFocus: false,
-                        reason: "presentation-updated-during-hide",
-                        correlationID: self.diagnostics.makeCorrelationID()
-                    )
+            let normalizedShelf = QuickAppShelfPolicy.normalized(configurations)
+            guard normalizedShelf != self.quickAppConfigurations
+                || presentation != self.quickAppShelfPresentation else { return }
+            let previousSelected = self.dropDownAppConfiguration
+            let nextSelected = previousSelected.flatMap { previous in
+                normalizedShelf.first(where: {
+                    $0.bundleIdentifier.caseInsensitiveCompare(previous.bundleIdentifier) == .orderedSame
+                })
+            } ?? normalizedShelf.first
+            let nextBundleKeys = Set(normalizedShelf.map {
+                Self.normalizedBundleIdentifier($0.bundleIdentifier)
+            })
+            if let pendingLaunch = self.pendingDropDownAppLaunch {
+                if QuickAppTransitionPolicy.shouldCancelPendingLaunch(
+                    bundleIdentifier: pendingLaunch.bundleIdentifier,
+                    previousConfigurations: self.quickAppConfigurations,
+                    nextConfigurations: normalizedShelf
+                ) {
+                    self.cancelPendingDropDownAppLaunch()
                 }
-            } else {
-                self.restoreAndClearDropDownAppSession(reason: "configuration-changed")
-                self.dropDownAppConfiguration = normalized
+            }
+            if let pendingSelection = self.pendingQuickAppSelection,
+               !nextBundleKeys.contains(Self.normalizedBundleIdentifier(
+                   pendingSelection.bundleIdentifier
+               )) {
+                self.pendingQuickAppSelection = nil
+            }
+            let removedBundleKeys = Set(self.quickAppConfigurations.map {
+                Self.normalizedBundleIdentifier($0.bundleIdentifier)
+            }).subtracting(nextBundleKeys)
+            for bundleKey in removedBundleKeys {
+                self.restoreAndClearQuickAppSession(bundleKey: bundleKey, reason: "configuration-changed")
+            }
+            self.quickAppConfigurations = normalizedShelf
+            self.quickAppShelfPresentation = presentation
+            self.dropDownAppConfiguration = nextSelected
+            for configuration in normalizedShelf {
+                let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
+                guard var session = self.quickAppSessions[bundleKey] else { continue }
+                session.direction = configuration.direction
+                session.isAnimationEnabled = configuration.isAnimationEnabled
+                self.quickAppSessions[bundleKey] = session
+            }
+            if self.dropDownAppSession?.isPresented == true {
+                self.reconcilePresentedQuickAppGroup(
+                    correlationID: self.diagnostics.makeCorrelationID(),
+                    focusSelected: false
+                )
+            } else if previousSelected?.bundleIdentifier.caseInsensitiveCompare(
+                nextSelected?.bundleIdentifier ?? ""
+            ) != .orderedSame {
                 self.applyVisibility()
+                if let nextSelected {
+                    self.onQuickAppSelectionChanged?(nextSelected.bundleIdentifier)
+                }
             }
             self.persistState(preservingPendingRestores: true)
             self.emitState()
         }
     }
 
+    func selectQuickApp(bundleIdentifier: String, correlationID: String? = nil) {
+        let correlationID = correlationID ?? diagnostics.makeCorrelationID()
+        queue.async { [weak self] in
+            guard let self,
+                  let selected = self.quickAppConfigurations.first(where: {
+                      $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+                  })
+            else { return }
+            guard selected != self.dropDownAppConfiguration else {
+                switch QuickAppTransitionPolicy.directShowDisposition(
+                    phase: self.quickAppTransition,
+                    isPresented: self.dropDownAppSession?.isPresented == true
+                ) {
+                case .begin:
+                    break
+                case .queueLatest:
+                    self.pendingQuickAppSelection = PendingQuickAppSelection(
+                        bundleIdentifier: selected.bundleIdentifier,
+                        correlationID: correlationID
+                    )
+                    return
+                case .ignore, .cancelLaunchAndBegin:
+                    return
+                }
+                self.toggleDropDownAppInternal(
+                    correlationID: correlationID,
+                    allowsLaunchAttempt: true,
+                    refreshBeforeResolving: true
+                )
+                return
+            }
+            self.switchQuickApp(to: selected, correlationID: correlationID)
+        }
+    }
+
+    func cycleQuickApp(offset: Int, correlationID: String? = nil) {
+        let correlationID = correlationID ?? diagnostics.makeCorrelationID()
+        queue.async { [weak self] in
+            self?.cycleQuickAppInternal(offset: offset, correlationID: correlationID)
+        }
+    }
+
+    private func cycleQuickAppInternal(offset: Int, correlationID: String) {
+        guard !quickAppConfigurations.isEmpty,
+              let index = QuickAppShelfSelectionPolicy.index(
+                  currentBundleIdentifier: QuickAppTransitionPolicy.cycleOriginBundleIdentifier(
+                      selectedBundleIdentifier: dropDownAppConfiguration?.bundleIdentifier,
+                      pendingBundleIdentifier: pendingQuickAppSelection?.bundleIdentifier
+                  ),
+                  offset: offset,
+                  in: quickAppConfigurations
+              )
+        else { return }
+        let target = quickAppConfigurations[index]
+        if target == dropDownAppConfiguration,
+           pendingQuickAppSelection == nil,
+           dropDownAppSession?.isPresented == true {
+            return
+        }
+        let targetKey = Self.normalizedBundleIdentifier(target.bundleIdentifier)
+        if quickAppSessions[targetKey]?.isPresented == true,
+           quickAppTransition == .idle {
+            dropDownAppConfiguration = target
+            onQuickAppSelectionChanged?(target.bundleIdentifier)
+            reconcilePresentedQuickAppGroup(correlationID: correlationID, focusSelected: true)
+            return
+        }
+        switchQuickApp(to: target, correlationID: correlationID)
+    }
+
+    func commandPalettePresentationChanged(_ isPresented: Bool) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.commandPalettePresented = isPresented
+            self.diagnostics.log(
+                category: "command-palette",
+                event: isPresented
+                    ? "shelf-focus-preservation-began"
+                    : "shelf-focus-preservation-ended"
+            )
+        }
+    }
+
+    func restoreFocusAfterCommandPalette(fallbackProcessIdentifier: pid_t?) {
+        let correlationID = diagnostics.makeCorrelationID()
+        queue.async { [weak self] in
+            guard let self else { return }
+            if let session = self.dropDownAppSession,
+               session.isPresented,
+               let target = self.windows[session.windowKey],
+               QuickAppInteractionPolicy.restoresPresentedShelfFocus(
+                   shelfProcessIdentifier: session.windowKey.processIdentifier,
+                   precedingProcessIdentifier: fallbackProcessIdentifier
+               ) {
+                self.diagnostics.log(
+                    category: "command-palette",
+                    event: "presented-shelf-focus-restored",
+                    correlation: correlationID,
+                    fields: ["window": Self.diagnosticWindowKey(session.windowKey)]
+                )
+                self.focusManagedWindow(
+                    session.windowKey,
+                    tracked: target,
+                    correlationID: correlationID
+                )
+                return
+            }
+            if let session = self.dropDownAppSession,
+               session.isPresented {
+                self.diagnostics.log(
+                    category: "command-palette",
+                    event: "presented-shelf-focus-restore-skipped",
+                    correlation: correlationID,
+                    fields: [
+                        "reason": "preceding-application-different",
+                        "window": Self.diagnosticWindowKey(session.windowKey),
+                    ]
+                )
+            }
+            guard let fallbackProcessIdentifier else { return }
+            DispatchQueue.main.async {
+                NSRunningApplication(processIdentifier: fallbackProcessIdentifier)?.activate(options: [])
+            }
+        }
+    }
+
+    private func switchQuickApp(
+        to configuration: DropDownAppConfiguration,
+        correlationID: String
+    ) {
+        let targetBundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
+        if quickAppTransition == .idle,
+           quickAppSessions[targetBundleKey]?.isPresented == true {
+            pendingQuickAppSelection = nil
+            dropDownAppConfiguration = configuration
+            onQuickAppSelectionChanged?(configuration.bundleIdentifier)
+            reconcilePresentedQuickAppGroup(
+                correlationID: correlationID,
+                focusSelected: true
+            )
+            return
+        }
+        switch QuickAppTransitionPolicy.switchDisposition(
+            phase: quickAppTransition,
+            targetBundleKey: targetBundleKey
+        ) {
+        case .begin:
+            break
+        case .cancelLaunchAndBegin:
+            cancelPendingDropDownAppLaunch()
+        case .queueLatest:
+            pendingQuickAppSelection = PendingQuickAppSelection(
+                bundleIdentifier: configuration.bundleIdentifier,
+                correlationID: correlationID
+            )
+            return
+        case .ignore:
+            return
+        }
+        if isQuickAppShelfPresented {
+            pendingQuickAppSelection = PendingQuickAppSelection(
+                bundleIdentifier: configuration.bundleIdentifier,
+                correlationID: correlationID
+            )
+            hideDropDownApp(
+                restorePreviousFocus: false,
+                reason: "quick-app-selection",
+                correlationID: correlationID
+            )
+            return
+        }
+        dropDownAppConfiguration = configuration
+        onQuickAppSelectionChanged?(configuration.bundleIdentifier)
+        toggleDropDownAppInternal(
+            correlationID: correlationID,
+            allowsLaunchAttempt: true,
+            refreshBeforeResolving: true
+        )
+    }
+
     func toggleDropDownApp(correlationID: String? = nil) {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self else { return }
+            guard self.quickAppTransition == .idle else {
+                self.emitCommandFeedback(
+                    "The Quick App is still changing.",
+                    correlationID: correlationID
+                )
+                return
+            }
             if let pending = self.pendingDropDownAppLaunch,
                pending.bundleIdentifier.caseInsensitiveCompare(
                    self.dropDownAppConfiguration?.bundleIdentifier ?? ""
@@ -1748,7 +2124,7 @@ final class WorkspaceEngine {
         if refreshBeforeResolving {
             refreshWindows(correlationID: correlationID)
         }
-        if dropDownAppSession?.isPresented == true {
+        if isQuickAppShelfPresented {
             hideDropDownApp(
                 restorePreviousFocus: true,
                 reason: "shortcut-toggle",
@@ -1815,6 +2191,383 @@ final class WorkspaceEngine {
         }
     }
 
+    private func quickAppGroupTarget(
+        for configuration: DropDownAppConfiguration
+    ) -> TrackedWindow? {
+        let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
+        if let session = quickAppSessions[bundleKey],
+           let exact = windows[session.windowKey],
+           session.isPresented || session.isApplicationHiddenByWindowRanger {
+            return exact
+        }
+        let matching = availableDropDownAppWindows(for: configuration)
+        guard matching.count == 1, let target = matching.first,
+              isDropDownApplicationHidden(
+                processIdentifier: target.processIdentifier,
+                bundleIdentifier: configuration.bundleIdentifier
+              ) != true
+        else { return nil }
+        return target
+    }
+
+    private func reconcilePresentedQuickAppGroup(
+        correlationID: String?,
+        focusSelected: Bool
+    ) {
+        guard let selected = dropDownAppConfiguration,
+              dropDownAppSession?.isPresented == true
+        else { return }
+        let displays = Self.activeDisplays()
+        guard let selectedSession = dropDownAppSession,
+              let display = selectedSession.displayIdentifier.flatMap({ identifier in
+                  displays.first { $0.identifier == identifier }
+              }) ?? dropDownTargetDisplay(displays: displays)
+        else { return }
+
+        let targets = Dictionary(uniqueKeysWithValues: quickAppConfigurations.compactMap {
+            configuration -> (String, TrackedWindow)? in
+            guard let target = quickAppGroupTarget(for: configuration) else { return nil }
+            return (Self.normalizedBundleIdentifier(configuration.bundleIdentifier), target)
+        })
+        let desired = QuickAppShelfGroupPolicy.visibleConfigurations(
+            selectedBundleIdentifier: selected.bundleIdentifier,
+            configurations: quickAppConfigurations,
+            availableBundleIdentifiers: Set(targets.keys),
+            maximumCount: quickAppShelfPresentation.visibleCount
+        )
+        let desiredKeys = Set(desired.map {
+            Self.normalizedBundleIdentifier($0.bundleIdentifier)
+        })
+
+        for (bundleKey, session) in Array(quickAppSessions)
+        where session.isPresented
+            && bundleKey != Self.normalizedBundleIdentifier(selected.bundleIdentifier)
+            && !desiredKeys.contains(bundleKey) {
+            beginHidingQuickAppNeighbor(
+                bundleKey: bundleKey,
+                session: session,
+                reason: "group-membership-changed",
+                correlationID: correlationID
+            )
+        }
+
+        for configuration in desired {
+            let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
+            guard bundleKey != Self.normalizedBundleIdentifier(selected.bundleIdentifier),
+                  let target = targets[bundleKey],
+                  quickAppSessions[bundleKey]?.isPresented != true
+            else { continue }
+            beginPresentingQuickAppNeighbor(
+                configuration: configuration,
+                target: target,
+                display: display,
+                correlationID: correlationID
+            )
+        }
+
+        layoutPresentedQuickAppGroup(
+            display: display,
+            correlationID: correlationID,
+            focusSelected: focusSelected
+        )
+    }
+
+    private func layoutPresentedQuickAppGroup(
+        display: DisplaySnapshot,
+        correlationID: String?,
+        focusSelected: Bool
+    ) {
+        guard let selected = dropDownAppConfiguration,
+              let selectedSession = dropDownAppSession,
+              selectedSession.isPresented
+        else { return }
+        let presentedKeys = Set(quickAppSessions.compactMap { key, session in
+            session.isPresented ? key : nil
+        })
+        let visible = QuickAppShelfGroupPolicy.visibleConfigurations(
+            selectedBundleIdentifier: selected.bundleIdentifier,
+            configurations: quickAppConfigurations,
+            availableBundleIdentifiers: presentedKeys,
+            maximumCount: quickAppShelfPresentation.visibleCount
+        )
+        let container = DropDownAppGeometry.presentedFrame(
+            in: dropDownAppPresentationBounds(for: display),
+            sizeFraction: quickAppShelfPresentation.heightFraction,
+            direction: quickAppShelfPresentation.direction
+        )
+        let frames = DropDownAppGeometry.groupFrames(
+            in: container,
+            count: visible.count,
+            style: quickAppShelfPresentation.layoutStyle,
+            direction: quickAppShelfPresentation.direction
+        )
+        for (configuration, frame) in zip(visible, frames) {
+            let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
+            guard var session = quickAppSessions[bundleKey],
+                  let target = windows[session.windowKey]
+            else { continue }
+            session.displayIdentifier = display.identifier
+            session.direction = quickAppShelfPresentation.direction
+            session.isAnimationEnabled = quickAppShelfPresentation.isAnimationEnabled
+            quickAppSessions[bundleKey] = session
+            _ = setDropDownAppFrame(frame, target: target)
+        }
+        if let selectedTarget = windows[selectedSession.windowKey] {
+            _ = AXUIElementPerformAction(selectedTarget.element, kAXRaiseAction as CFString)
+            if focusSelected,
+               QuickAppInteractionPolicy.focusesQuickAppAfterShow(
+                commandPalettePresented: commandPalettePresented
+               ) {
+                focusManagedWindow(
+                    selectedSession.windowKey,
+                    tracked: selectedTarget,
+                    correlationID: correlationID
+                )
+            }
+        }
+        diagnostics.log(
+            category: "drop-down-app",
+            event: "group-laid-out",
+            correlation: correlationID,
+            fields: [
+                "style": quickAppShelfPresentation.layoutStyle.rawValue,
+                "configured-visible-count": String(quickAppShelfPresentation.visibleCount),
+                "presented-count": String(visible.count),
+                "selected-bundle": selected.bundleIdentifier,
+                "display": display.identifier,
+            ]
+        )
+    }
+
+    private func nextQuickAppNeighborVisibilityGeneration(bundleKey: String) -> UInt64 {
+        let next = (quickAppNeighborVisibilityGeneration[bundleKey] ?? 0) &+ 1
+        quickAppNeighborVisibilityGeneration[bundleKey] = next
+        return next
+    }
+
+    private func beginPresentingQuickAppNeighbor(
+        configuration: DropDownAppConfiguration,
+        target: TrackedWindow,
+        display: DisplaySnapshot,
+        correlationID: String?
+    ) {
+        let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
+        let generation = nextQuickAppNeighborVisibilityGeneration(bundleKey: bundleKey)
+        let previous = quickAppSessions[bundleKey]
+        quickAppSessions[bundleKey] = DropDownAppSession(
+            windowKey: target.key,
+            bundleIdentifier: configuration.bundleIdentifier,
+            direction: quickAppShelfPresentation.direction,
+            isAnimationEnabled: quickAppShelfPresentation.isAnimationEnabled,
+            isPresented: false,
+            isApplicationHiddenByWindowRanger: previous?.isApplicationHiddenByWindowRanger == true,
+            displayIdentifier: display.identifier,
+            previousFocusKey: nil
+        )
+        let applicationIsHidden = isDropDownApplicationHidden(
+            processIdentifier: target.processIdentifier,
+            bundleIdentifier: configuration.bundleIdentifier
+        ) == true
+        guard !applicationIsHidden || requestDropDownApplicationHidden(
+            false,
+            processIdentifier: target.processIdentifier,
+            bundleIdentifier: configuration.bundleIdentifier
+        ) else {
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "group-neighbor-show-failed",
+                correlation: correlationID,
+                fields: ["bundle": configuration.bundleIdentifier, "reason": "unhide-rejected"]
+            )
+            return
+        }
+        awaitQuickAppNeighborPresented(
+            bundleKey: bundleKey,
+            target: target,
+            display: display,
+            generation: generation,
+            correlationID: correlationID,
+            attempt: 0
+        )
+    }
+
+    private func awaitQuickAppNeighborPresented(
+        bundleKey: String,
+        target: TrackedWindow,
+        display: DisplaySnapshot,
+        generation: UInt64,
+        correlationID: String?,
+        attempt: Int
+    ) {
+        guard quickAppNeighborVisibilityGeneration[bundleKey] == generation,
+              var session = quickAppSessions[bundleKey],
+              session.windowKey == target.key,
+              windows[target.key] != nil
+        else { return }
+        let observed = isDropDownApplicationHidden(
+            processIdentifier: target.processIdentifier,
+            bundleIdentifier: session.bundleIdentifier
+        )
+        switch DropDownAppVisibilityConfirmationPolicy.disposition(
+            expectedHidden: false,
+            observedHidden: observed,
+            attempt: attempt
+        ) {
+        case .confirmed:
+            session.isPresented = true
+            session.isApplicationHiddenByWindowRanger = false
+            session.displayIdentifier = display.identifier
+            quickAppSessions[bundleKey] = session
+            layoutPresentedQuickAppGroup(
+                display: display,
+                correlationID: correlationID,
+                focusSelected: false
+            )
+            persistState(preservingPendingRestores: true)
+        case .timedOut:
+            if session.isApplicationHiddenByWindowRanger {
+                _ = requestDropDownApplicationHidden(
+                    true,
+                    processIdentifier: target.processIdentifier,
+                    bundleIdentifier: session.bundleIdentifier
+                )
+            } else {
+                quickAppSessions.removeValue(forKey: bundleKey)
+            }
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "group-neighbor-show-failed",
+                correlation: correlationID,
+                fields: [
+                    "bundle": session.bundleIdentifier,
+                    "reason": "unhide-timeout",
+                    "recovery": session.isApplicationHiddenByWindowRanger
+                        ? "rehide-owned-application"
+                        : "release-unowned-session",
+                ]
+            )
+            persistState(preservingPendingRestores: true)
+        case .retry:
+            queue.asyncAfter(deadline: .now() + .milliseconds(75)) { [weak self] in
+                self?.awaitQuickAppNeighborPresented(
+                    bundleKey: bundleKey,
+                    target: target,
+                    display: display,
+                    generation: generation,
+                    correlationID: correlationID,
+                    attempt: attempt + 1
+                )
+            }
+        }
+    }
+
+    private func beginHidingQuickAppNeighbor(
+        bundleKey: String,
+        session: DropDownAppSession,
+        reason: String,
+        correlationID: String?
+    ) {
+        guard session.isPresented, let target = windows[session.windowKey] else { return }
+        let generation = nextQuickAppNeighborVisibilityGeneration(bundleKey: bundleKey)
+        var hiding = session
+        hiding.isPresented = false
+        hiding.isApplicationHiddenByWindowRanger = false
+        quickAppSessions[bundleKey] = hiding
+        guard requestDropDownApplicationHidden(
+            true,
+            processIdentifier: target.processIdentifier,
+            bundleIdentifier: session.bundleIdentifier
+        ) else {
+            quickAppSessions[bundleKey] = session
+            return
+        }
+        awaitQuickAppNeighborHidden(
+            bundleKey: bundleKey,
+            target: target,
+            originalSession: session,
+            reason: reason,
+            generation: generation,
+            correlationID: correlationID,
+            attempt: 0
+        )
+    }
+
+    private func awaitQuickAppNeighborHidden(
+        bundleKey: String,
+        target: TrackedWindow,
+        originalSession: DropDownAppSession,
+        reason: String,
+        generation: UInt64,
+        correlationID: String?,
+        attempt: Int
+    ) {
+        guard quickAppNeighborVisibilityGeneration[bundleKey] == generation,
+              quickAppSessions[bundleKey]?.windowKey == target.key,
+              windows[target.key] != nil
+        else { return }
+        let observed = isDropDownApplicationHidden(
+            processIdentifier: target.processIdentifier,
+            bundleIdentifier: originalSession.bundleIdentifier
+        )
+        switch DropDownAppVisibilityConfirmationPolicy.disposition(
+            expectedHidden: true,
+            observedHidden: observed,
+            attempt: attempt
+        ) {
+        case .confirmed:
+            var hidden = originalSession
+            hidden.isPresented = false
+            hidden.isApplicationHiddenByWindowRanger = true
+            quickAppSessions[bundleKey] = hidden
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "group-neighbor-hidden",
+                correlation: correlationID,
+                fields: ["bundle": originalSession.bundleIdentifier, "reason": reason]
+            )
+            if isQuickAppShelfPresented {
+                reconcilePresentedQuickAppGroup(
+                    correlationID: correlationID,
+                    focusSelected: false
+                )
+            }
+            persistState(preservingPendingRestores: true)
+        case .timedOut:
+            _ = requestDropDownApplicationHidden(
+                false,
+                processIdentifier: target.processIdentifier,
+                bundleIdentifier: originalSession.bundleIdentifier
+            )
+            quickAppSessions[bundleKey] = originalSession
+            if let displayID = originalSession.displayIdentifier,
+               let display = Self.activeDisplays().first(where: { $0.identifier == displayID }) {
+                layoutPresentedQuickAppGroup(
+                    display: display,
+                    correlationID: correlationID,
+                    focusSelected: false
+                )
+            }
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "group-neighbor-hide-failed",
+                correlation: correlationID,
+                fields: ["bundle": originalSession.bundleIdentifier, "reason": "hide-timeout"]
+            )
+        case .retry:
+            queue.asyncAfter(deadline: .now() + .milliseconds(75)) { [weak self] in
+                self?.awaitQuickAppNeighborHidden(
+                    bundleKey: bundleKey,
+                    target: target,
+                    originalSession: originalSession,
+                    reason: reason,
+                    generation: generation,
+                    correlationID: correlationID,
+                    attempt: attempt + 1
+                )
+            }
+        }
+    }
+
     private func launchQuickAppIfNeededForToggle(
         configuration: DropDownAppConfiguration,
         correlationID: String
@@ -1842,9 +2595,15 @@ final class WorkspaceEngine {
             displayName: configuration.displayName,
             generation: generation
         )
+        quickAppTransition = .launching(
+            Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
+        )
         emitCommandFeedback(
             "Launching \(configuration.displayName).",
             correlationID: correlationID
+        )
+        let activatesApplication = QuickAppInteractionPolicy.activatesApplicationForLaunch(
+            commandPalettePresented: commandPalettePresented
         )
         diagnostics.log(
             category: "drop-down-app",
@@ -1852,12 +2611,12 @@ final class WorkspaceEngine {
             correlation: correlationID,
             fields: [
                 "bundle": configuration.bundleIdentifier,
-                "activates-application": String(DropDownAppLaunchWatchdogPolicy.activatesApplication),
+                "activates-application": String(activatesApplication),
             ]
         )
 
         let launchConfiguration = NSWorkspace.OpenConfiguration()
-        launchConfiguration.activates = DropDownAppLaunchWatchdogPolicy.activatesApplication
+        launchConfiguration.activates = activatesApplication
         NSWorkspace.shared.openApplication(
             at: applicationURL,
             configuration: launchConfiguration
@@ -1867,6 +2626,7 @@ final class WorkspaceEngine {
                 guard self.pendingDropDownAppLaunch?.generation == generation else { return }
                 if let error {
                     self.pendingDropDownAppLaunch = nil
+                    self.quickAppTransition = .idle
                     let safeError = error as NSError
                     self.diagnostics.log(
                         category: "drop-down-app",
@@ -1882,6 +2642,7 @@ final class WorkspaceEngine {
                         "Could not launch \(configuration.displayName).",
                         correlationID: correlationID
                     )
+                    self.continuePendingQuickAppSelectionIfPossible()
                     return
                 }
 
@@ -1929,6 +2690,7 @@ final class WorkspaceEngine {
         ) {
         case .resolveToggle:
             pendingDropDownAppLaunch = nil
+            quickAppTransition = .idle
             toggleDropDownAppInternal(
                 correlationID: correlationID,
                 allowsLaunchAttempt: false,
@@ -1956,6 +2718,7 @@ final class WorkspaceEngine {
             }
         case .exhausted:
             pendingDropDownAppLaunch = nil
+            quickAppTransition = .idle
             emitCommandFeedback(
                 "Could not find a usable \(configuration.displayName) window yet.",
                 correlationID: correlationID
@@ -1969,12 +2732,31 @@ final class WorkspaceEngine {
                     "remaining-attempts": "0",
                 ]
             )
+            continuePendingQuickAppSelectionIfPossible()
         }
     }
 
     private func cancelPendingDropDownAppLaunch() {
         dropDownLaunchGeneration &+= 1
         pendingDropDownAppLaunch = nil
+        if case .launching = quickAppTransition {
+            quickAppTransition = .idle
+        }
+    }
+
+    private func continuePendingQuickAppSelectionIfPossible() {
+        guard quickAppTransition == .idle,
+              let pending = pendingQuickAppSelection
+        else { return }
+        pendingQuickAppSelection = nil
+        guard let configuration = quickAppConfigurations.first(where: {
+            $0.bundleIdentifier.caseInsensitiveCompare(pending.bundleIdentifier) == .orderedSame
+        }) else { return }
+        if configuration == dropDownAppConfiguration,
+           dropDownAppSession?.isPresented == true {
+            return
+        }
+        switchQuickApp(to: configuration, correlationID: pending.correlationID)
     }
 
     func updateWorkspaces(_ definitions: [WorkspaceDefinition]) {
@@ -2029,8 +2811,16 @@ final class WorkspaceEngine {
                 return
             }
             let switchingProfile = self.currentProfileID != configuration.profileID
+            self.cancelPendingDropDownAppLaunch()
+            self.pendingQuickAppSelection = nil
             self.restoreAndClearDropDownAppSession(reason: "profile-transition")
-            self.dropDownAppConfiguration = configuration.dropDownApp?.normalized()
+            self.quickAppConfigurations = QuickAppShelfPolicy.normalized(configuration.quickApps)
+            self.quickAppShelfPresentation = configuration.quickAppShelfPresentation
+            self.dropDownAppConfiguration = self.quickAppConfigurations.first(where: {
+                $0.bundleIdentifier.caseInsensitiveCompare(
+                    configuration.selectedQuickAppBundleIdentifier ?? ""
+                ) == .orderedSame
+            }) ?? self.quickAppConfigurations.first
             self.directionalMoveGestureContext = nil
             self.invalidateFocusWorkForLifecycle()
             self.pendingFocusVerification?.cancel()
@@ -3019,6 +3809,19 @@ final class WorkspaceEngine {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self, offset != 0 else { return }
+            if QuickAppInteractionPolicy.routesWindowCycleToShelf(
+                shelfIsPresented: self.isQuickAppShelfPresented,
+                configuredAppCount: self.quickAppConfigurations.count
+            ) {
+                self.diagnostics.log(
+                    category: "focus-cycle",
+                    event: "routed-to-quick-app-shelf",
+                    correlation: correlationID,
+                    fields: ["offset": String(offset)]
+                )
+                self.cycleQuickAppInternal(offset: offset, correlationID: correlationID)
+                return
+            }
             let rawFocusedBefore = self.focusedWindowSnapshot()
             self.refreshWindows(correlationID: correlationID)
             let focusedBefore = self.interactionFocusedWindowSnapshot(rawFocusedBefore)
@@ -4302,14 +5105,24 @@ final class WorkspaceEngine {
             DispatchQueue.main.async {
                 radialInteractionCancellation(shouldCancelRadialInteraction)
             }
-            if let dropDownSession = self.dropDownAppSession,
-               dropDownSession.isPresented,
-               dropDownSession.windowKey.processIdentifier != processIdentifier {
+            let preservesPresentedShelf = QuickAppInteractionPolicy.preservesPresentedShelfForActivation(
+                activatedProcessIdentifier: processIdentifier,
+                ownProcessIdentifier: self.ownProcessIdentifier,
+                commandPalettePresented: self.commandPalettePresented
+            ) || self.quickAppSessions.values.contains {
+                $0.isPresented && $0.windowKey.processIdentifier == processIdentifier
+            }
+            if self.isQuickAppShelfPresented,
+               !preservesPresentedShelf {
                 self.hideDropDownApp(
                     restorePreviousFocus: false,
                     reason: "another-app-focused",
                     correlationID: nil
                 )
+            } else if case .showing = self.quickAppTransition,
+                      let dropDownSession = self.dropDownAppSession,
+                      dropDownSession.windowKey.processIdentifier != processIdentifier {
+                self.pendingQuickAppHideAfterPresentation = true
             }
             guard Self.shouldProcessApplicationActivation(
                 processIdentifier: processIdentifier,
@@ -4322,9 +5135,21 @@ final class WorkspaceEngine {
                 )
                 return
             }
-            if let dropDownSession = self.dropDownAppSession,
-               dropDownSession.isPresented,
-               dropDownSession.windowKey.processIdentifier == processIdentifier {
+            if let dropDownSession = self.quickAppSessions.values.first(where: {
+                $0.isPresented && $0.windowKey.processIdentifier == processIdentifier
+            }) {
+                if let selected = self.quickAppConfigurations.first(where: {
+                    $0.bundleIdentifier.caseInsensitiveCompare(
+                        dropDownSession.bundleIdentifier
+                    ) == .orderedSame
+                }), selected != self.dropDownAppConfiguration {
+                    self.dropDownAppConfiguration = selected
+                    self.onQuickAppSelectionChanged?(selected.bundleIdentifier)
+                    self.reconcilePresentedQuickAppGroup(
+                        correlationID: nil,
+                        focusSelected: false
+                    )
+                }
                 self.diagnostics.log(
                     category: "drop-down-app",
                     event: "target-activation-observed",
@@ -4338,9 +5163,9 @@ final class WorkspaceEngine {
                 (intendedGeneration.map(self.isFocusActionGenerationCurrent) ?? true)
             self.refreshWindows()
 
-            if let dropDownSession = self.dropDownAppSession,
-               dropDownSession.isPresented,
-               dropDownSession.windowKey.processIdentifier == processIdentifier,
+            if let dropDownSession = self.quickAppSessions.values.first(where: {
+                $0.isPresented && $0.windowKey.processIdentifier == processIdentifier
+            }),
                intendedTarget != dropDownSession.windowKey {
                 self.lastObservedFocusedWindow = dropDownSession.windowKey
                 self.recentInteractionFocusTarget = nil
@@ -7106,7 +7931,37 @@ final class WorkspaceEngine {
         eligibleWindowKeys: Set<WindowKey>,
         correlationID: String
     ) {
-        guard var session = dropDownAppSession,
+        for bundleIdentifier in Array(quickAppSessions.keys) {
+            reconcileQuickAppSessionAfterWake(
+                bundleIdentifier: bundleIdentifier,
+                displays: displays,
+                eligibleWindowKeys: eligibleWindowKeys,
+                correlationID: correlationID
+            )
+        }
+        if let selected = dropDownAppSession,
+           selected.isPresented,
+           let display = selected.displayIdentifier.flatMap({ identifier in
+               displays.first { $0.identifier == identifier }
+           }) ?? dropDownTargetDisplay(displays: displays) {
+            layoutPresentedQuickAppGroup(
+                display: display,
+                correlationID: correlationID,
+                focusSelected: false
+            )
+        }
+    }
+
+    private func reconcileQuickAppSessionAfterWake(
+        bundleIdentifier: String,
+        displays: [DisplaySnapshot],
+        eligibleWindowKeys: Set<WindowKey>,
+        correlationID: String
+    ) {
+        guard var session = quickAppSessions[bundleIdentifier],
+              let configuration = quickAppConfigurations.first(where: {
+                  Self.normalizedBundleIdentifier($0.bundleIdentifier) == bundleIdentifier
+              }),
               let target = windows[session.windowKey]
         else { return }
 
@@ -7114,13 +7969,12 @@ final class WorkspaceEngine {
         let geometryWriteSucceeded: Bool
         if session.isPresented {
             guard eligibleWindowKeys.contains(target.key) else { return }
-            guard let configuration = dropDownAppConfiguration,
-                  let display = session.displayIdentifier.flatMap({ identifier in
+            guard let display = session.displayIdentifier.flatMap({ identifier in
                       displays.first { $0.identifier == identifier }
                   }) ?? dropDownTargetDisplay(displays: displays)
             else { return }
             session.displayIdentifier = display.identifier
-            dropDownAppSession = session
+            quickAppSessions[bundleIdentifier] = session
             geometryWriteSucceeded = setDropDownAppFrame(
                 DropDownAppGeometry.presentedFrame(
                     in: dropDownAppPresentationBounds(for: display),
@@ -7136,7 +7990,7 @@ final class WorkspaceEngine {
                 bundleIdentifier: session.bundleIdentifier
             )
             session.isApplicationHiddenByWindowRanger = geometryWriteSucceeded
-            dropDownAppSession = session
+            quickAppSessions[bundleIdentifier] = session
         }
 
         diagnostics.log(
@@ -7185,7 +8039,7 @@ final class WorkspaceEngine {
         staleParkedFocusSuppression.removeAll()
         lastAutomaticUnhideAttemptByProcess.removeAll()
         postSleepWindowRecoveryState.clear()
-        pendingRestoredDropDownAppSession = nil
+        pendingRestoredDropDownAppSessions.removeAll()
         tiledTrees.removeAll()
         lastSolvedTiledFrames.removeAll()
         radialPlacementCommitContext = nil
@@ -7384,8 +8238,12 @@ final class WorkspaceEngine {
                 }
                 ignoredWindowKeys.remove(key)
 
+                let candidateBundleKey = Self.normalizedBundleIdentifier(app.bundleIdentifier ?? "")
+                let isConfiguredQuickApp = quickAppConfigurations.contains {
+                    Self.normalizedBundleIdentifier($0.bundleIdentifier) == candidateBundleKey
+                }
                 let isPersistedHiddenQuickApp = DropDownAppHiddenSessionRecoveryPolicy.matches(
-                    pendingRestoredDropDownAppSession,
+                    isConfiguredQuickApp ? pendingRestoredDropDownAppSessions[candidateBundleKey] : nil,
                     windowKey: key,
                     bundleIdentifier: app.bundleIdentifier,
                     isStartup: isStartup,
@@ -7610,7 +8468,7 @@ final class WorkspaceEngine {
             )
         }
 
-        if dropDownAppSession != nil,
+        if !quickAppSessions.isEmpty,
            DropDownAppLifecyclePolicy.shouldClearSessionForTopologyChange(
                topologyChanged: topologyChanged,
                isLifecycleTransitionActive: lifecycleTransitionActive,
@@ -7620,8 +8478,9 @@ final class WorkspaceEngine {
         }
 
         if performAXWrites,
-           let dropDownWindowKey = dropDownAppSession?.windowKey,
-           postSleepRecoveryUpdate.newlyRecoveredWindowKeys.contains(dropDownWindowKey) {
+           quickAppSessions.values.contains(where: {
+               postSleepRecoveryUpdate.newlyRecoveredWindowKeys.contains($0.windowKey)
+           }) {
             reconcileDropDownAppSessionAfterWake(
                 displays: displays,
                 eligibleWindowKeys: writeEligibleWindowKeys,
@@ -7641,18 +8500,24 @@ final class WorkspaceEngine {
         )
         let removedTrackedWindows = windows.filter { removedTrackedWindowKeys.contains($0.key) }
         if !removedTrackedWindowKeys.isEmpty {
-            let didRebindDropDownApp = rebindDropDownAppSessionIfNeeded(
-                removedWindowKeys: removedTrackedWindowKeys,
-                newlyTrackedWindowKeys: Set(windows.keys).subtracting(trackedWindowKeysBeforeEnumeration),
-                displays: displays,
-                performAXWrites: performAXWrites,
-                correlationID: correlationID
-            )
-            if !didRebindDropDownApp,
-               let dropDownKey = dropDownAppSession?.windowKey,
-               removedTrackedWindowKeys.contains(dropDownKey) {
-                dropDownAnimationGeneration &+= 1
-                dropDownAppSession = nil
+            let sessionBundleKeys = Array(quickAppSessions.keys)
+            var reboundBundleKeys = Set<String>()
+            for bundleKey in sessionBundleKeys {
+                if rebindDropDownAppSessionIfNeeded(
+                    bundleIdentifier: bundleKey,
+                    removedWindowKeys: removedTrackedWindowKeys,
+                    newlyTrackedWindowKeys: Set(windows.keys).subtracting(trackedWindowKeysBeforeEnumeration),
+                    displays: displays,
+                    performAXWrites: performAXWrites,
+                    correlationID: correlationID
+                ) {
+                    reboundBundleKeys.insert(bundleKey)
+                }
+            }
+            for (bundleKey, session) in Array(quickAppSessions) where
+                removedTrackedWindowKeys.contains(session.windowKey) &&
+                !reboundBundleKeys.contains(bundleKey) {
+                restoreAndClearQuickAppSession(bundleKey: bundleKey, reason: "window-removed")
             }
             windows = windows.filter { !removedTrackedWindowKeys.contains($0.key) }
             lastFocusedWindow = WindowEnumerationLifecycle.pruning(
@@ -7774,6 +8639,12 @@ final class WorkspaceEngine {
                 performAXWrites: performAXWrites,
                 correlationID: correlationID
             )
+            if performAXWrites, dropDownAppSession?.isPresented == true {
+                reconcilePresentedQuickAppGroup(
+                    correlationID: correlationID,
+                    focusSelected: false
+                )
+            }
         }
 
         let focusedSnapshot = observeFocus ? focusedWindowSnapshot() : nil
@@ -8549,9 +9420,10 @@ final class WorkspaceEngine {
     static func shouldPreserveInteractionFocusAnchor(
         focusedWindow: WindowKey?,
         ownProcessIdentifier: pid_t,
-        ignoredWindowKeys: Set<WindowKey>
+        ignoredWindowKeys: Set<WindowKey>,
+        commandPalettePresented: Bool = false
     ) -> Bool {
-        guard let focusedWindow else { return false }
+        guard let focusedWindow else { return commandPalettePresented }
         return focusedWindow.processIdentifier == ownProcessIdentifier ||
             ignoredWindowKeys.contains(focusedWindow)
     }
@@ -8727,7 +9599,8 @@ final class WorkspaceEngine {
         if Self.shouldPreserveInteractionFocusAnchor(
             focusedWindow: focusedWindow,
             ownProcessIdentifier: ownProcessIdentifier,
-            ignoredWindowKeys: ignoredWindowKeys
+            ignoredWindowKeys: ignoredWindowKeys,
+            commandPalettePresented: commandPalettePresented
         ) {
             // WindowRanger's own palette/settings surfaces and ignored popups must not consume the
             // external managed anchor. The palette deliberately becomes key while it is open; the
@@ -9057,13 +9930,20 @@ final class WorkspaceEngine {
         _ rawFocusedWindow: FocusedWindowSnapshot? = nil
     ) -> FocusedWindowSnapshot? {
         let rawFocusedWindow = rawFocusedWindow ?? focusedWindowSnapshot()
-        guard let rawFocusedWindow else { return nil }
+        guard let rawFocusedWindow else {
+            guard commandPalettePresented else { return nil }
+            return preservedInteractionFocusSnapshot()
+        }
         let unusableAnchor = rawFocusedWindow.key.processIdentifier == ownProcessIdentifier ||
             ignoredWindowKeys.contains(rawFocusedWindow.key) ||
             isDropDownAppWindow(rawFocusedWindow.key) ||
             staleParkedFocusSuppression[rawFocusedWindow.key] != nil
         guard unusableAnchor else { return rawFocusedWindow }
 
+        return preservedInteractionFocusSnapshot()
+    }
+
+    private func preservedInteractionFocusSnapshot() -> FocusedWindowSnapshot? {
         let fallbackKeys = [recentInteractionFocusTarget, lastObservedFocusedWindow].compactMap { $0 }
         for key in fallbackKeys {
             guard !isDropDownAppWindow(key),
@@ -9270,8 +10150,14 @@ final class WorkspaceEngine {
         let displays = Self.activeDisplays()
         guard let display = dropDownTargetDisplay(displays: displays) else {
             emitCommandFeedback("No display is available for the Quick App.", correlationID: correlationID)
+            pendingQuickAppHideAfterPresentation = false
+            quickAppTransition = .idle
+            continuePendingQuickAppSelectionIfPossible()
             return
         }
+        quickAppTransition = .showing(
+            Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
+        )
         let focusedKey = interactionFocusedWindowSnapshot()?.key
         let previousFocus = focusedKey == target.key ? nil : focusedKey
         let presentationBounds = dropDownAppPresentationBounds(for: display)
@@ -9317,6 +10203,9 @@ final class WorkspaceEngine {
                         .map(String.init) ?? "unavailable",
                 ]
             )
+            pendingQuickAppHideAfterPresentation = false
+            quickAppTransition = .idle
+            continuePendingQuickAppSelectionIfPossible()
             return
         }
 
@@ -9405,6 +10294,9 @@ final class WorkspaceEngine {
                     "application-hidden-observed": observedHidden.map(String.init) ?? "unavailable",
                 ]
             )
+            pendingQuickAppHideAfterPresentation = false
+            quickAppTransition = .idle
+            continuePendingQuickAppSelectionIfPossible()
             return
         case .retry:
             break
@@ -9449,6 +10341,7 @@ final class WorkspaceEngine {
             displayIdentifier: display.identifier,
             previousFocusKey: previousFocus
         )
+        quickAppTransition = .idle
         if configuration.isAnimationEnabled {
             // Some applications defer hidden-window frame changes until restore. Reassert the
             // collapsed edge frame after unhiding before the first intentional animation step.
@@ -9466,6 +10359,10 @@ final class WorkspaceEngine {
                     correlationID: correlationID,
                     unhideConfirmationAttempts: unhideConfirmationAttempts
                 )
+                self?.reconcilePresentedQuickAppGroup(
+                    correlationID: correlationID,
+                    focusSelected: false
+                )
             }
         } else {
             _ = setDropDownAppFrame(presented, target: target)
@@ -9477,8 +10374,36 @@ final class WorkspaceEngine {
                 correlationID: correlationID,
                 unhideConfirmationAttempts: unhideConfirmationAttempts
             )
+            reconcilePresentedQuickAppGroup(
+                correlationID: correlationID,
+                focusSelected: false
+            )
         }
-        focusManagedWindow(target.key, tracked: target, correlationID: correlationID)
+        if pendingQuickAppHideAfterPresentation {
+            pendingQuickAppHideAfterPresentation = false
+            hideDropDownApp(
+                restorePreviousFocus: false,
+                reason: "another-app-focused-during-show",
+                correlationID: correlationID
+            )
+            return
+        }
+        if pendingQuickAppSelection != nil {
+            continuePendingQuickAppSelectionIfPossible()
+            if quickAppTransition != .idle { return }
+        }
+        if QuickAppInteractionPolicy.focusesQuickAppAfterShow(
+            commandPalettePresented: commandPalettePresented
+        ) {
+            focusManagedWindow(target.key, tracked: target, correlationID: correlationID)
+        } else {
+            diagnostics.log(
+                category: "command-palette",
+                event: "shelf-preview-focus-retained",
+                correlation: correlationID,
+                fields: ["window": Self.diagnosticWindowKey(target.key)]
+            )
+        }
         persistState(preservingPendingRestores: true)
     }
 
@@ -9525,6 +10450,19 @@ final class WorkspaceEngine {
               session.isPresented,
               let target = windows[session.windowKey]
         else { return }
+        let selectedBundleKey = Self.normalizedBundleIdentifier(session.bundleIdentifier)
+        for (bundleKey, neighbor) in Array(quickAppSessions)
+        where bundleKey != selectedBundleKey && neighbor.isPresented {
+            beginHidingQuickAppNeighbor(
+                bundleKey: bundleKey,
+                session: neighbor,
+                reason: reason,
+                correlationID: correlationID
+            )
+        }
+        quickAppTransition = .hiding(
+            Self.normalizedBundleIdentifier(session.bundleIdentifier)
+        )
         session.isPresented = false
         session.isApplicationHiddenByWindowRanger = false
         dropDownAppSession = session
@@ -9774,6 +10712,18 @@ final class WorkspaceEngine {
             ]
         )
         persistState(preservingPendingRestores: true)
+        quickAppTransition = .idle
+        if hideSucceeded {
+            continuePendingQuickAppSelectionIfPossible()
+        } else {
+            // A failed hide leaves the current exact session presented. Never carry a stale
+            // selection into a later, unrelated hide completion.
+            pendingQuickAppSelection = nil
+            reconcilePresentedQuickAppGroup(
+                correlationID: correlationID,
+                focusSelected: false
+            )
+        }
     }
 
     private func animateDropDownApp(
@@ -9850,11 +10800,23 @@ final class WorkspaceEngine {
         )
     }
 
-    private func restoreAndClearDropDownAppSession(reason: String) {
-        guard let session = dropDownAppSession else {
-            pendingRestoredDropDownAppSession = nil
-            return
+    private func restoreAndClearQuickAppSession(bundleKey: String, reason: String) {
+        _ = nextQuickAppNeighborVisibilityGeneration(bundleKey: bundleKey)
+        if pendingQuickAppSelection.map({
+            Self.normalizedBundleIdentifier($0.bundleIdentifier) == bundleKey
+        }) == true {
+            pendingQuickAppSelection = nil
         }
+        pendingQuickAppHideAfterPresentation = false
+        switch quickAppTransition {
+        case let .launching(activeKey) where activeKey == bundleKey,
+             let .showing(activeKey) where activeKey == bundleKey,
+             let .hiding(activeKey) where activeKey == bundleKey:
+            quickAppTransition = .idle
+        default:
+            break
+        }
+        guard let session = quickAppSessions[bundleKey] else { return }
         dropDownAnimationGeneration &+= 1
         var frameWriteSucceeded: Bool?
         var unhideSucceeded: Bool?
@@ -9871,17 +10833,52 @@ final class WorkspaceEngine {
                 frameWriteSucceeded = setDropDownAppFrame(target.restoreFrame, target: target)
             }
         }
-        dropDownAppSession = nil
-        pendingRestoredDropDownAppSession = nil
+        let unhideConfirmed = !session.isApplicationHiddenByWindowRanger ||
+            isDropDownApplicationHidden(
+                processIdentifier: session.windowKey.processIdentifier,
+                bundleIdentifier: session.bundleIdentifier
+            ) == false
+        guard unhideConfirmed else {
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "session-retained",
+                fields: [
+                    "reason": reason,
+                    "bundle": bundleKey,
+                    "application-unhide": unhideSucceeded.map(String.init) ?? "not-requested",
+                ]
+            )
+            return
+        }
+        quickAppSessions.removeValue(forKey: bundleKey)
+        quickAppNeighborVisibilityGeneration.removeValue(forKey: bundleKey)
         diagnostics.log(
             category: "drop-down-app",
             event: "session-cleared",
             fields: [
                 "reason": reason,
+                "bundle": bundleKey,
                 "frame-write": frameWriteSucceeded.map(String.init) ?? "not-requested",
                 "application-unhide": unhideSucceeded.map(String.init) ?? "not-requested",
             ]
         )
+    }
+
+    private func restoreAndClearDropDownAppSession(reason: String) {
+        guard !quickAppSessions.isEmpty else {
+            pendingRestoredDropDownAppSessions.removeAll()
+            pendingQuickAppSelection = nil
+            pendingQuickAppHideAfterPresentation = false
+            quickAppTransition = .idle
+            return
+        }
+        for bundleKey in Array(quickAppSessions.keys) {
+            restoreAndClearQuickAppSession(bundleKey: bundleKey, reason: reason)
+        }
+        pendingRestoredDropDownAppSessions.removeAll()
+        pendingQuickAppSelection = nil
+        pendingQuickAppHideAfterPresentation = false
+        quickAppTransition = .idle
     }
 
     private func prepareDropDownAppSessionForStartup(
@@ -9890,8 +10887,40 @@ final class WorkspaceEngine {
         performAXWrites: Bool,
         correlationID: String?
     ) {
-        let persistedHiddenSession = pendingRestoredDropDownAppSession
-        defer { pendingRestoredDropDownAppSession = nil }
+        let persistedSessions = pendingRestoredDropDownAppSessions
+        defer { pendingRestoredDropDownAppSessions.removeAll() }
+
+        // Recover every exact hidden shelf owner before selecting the one entry that may be
+        // presented. These sessions remain excluded from ordinary admission and can be reused
+        // without guessing if the user cycles back to them.
+        for configuration in quickAppConfigurations
+        where configuration.bundleIdentifier.caseInsensitiveCompare(
+            dropDownAppConfiguration?.bundleIdentifier ?? ""
+        ) != .orderedSame {
+            let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
+            guard let persisted = persistedSessions[bundleKey],
+                  let target = windows[persisted.windowKey],
+                  target.bundleIdentifier?.caseInsensitiveCompare(configuration.bundleIdentifier) == .orderedSame,
+                  isDropDownApplicationHidden(
+                      processIdentifier: target.processIdentifier,
+                      bundleIdentifier: configuration.bundleIdentifier
+                  ) == true
+            else { continue }
+            quickAppSessions[bundleKey] = DropDownAppSession(
+                windowKey: target.key,
+                bundleIdentifier: configuration.bundleIdentifier,
+                direction: configuration.direction,
+                isAnimationEnabled: configuration.isAnimationEnabled,
+                isPresented: false,
+                isApplicationHiddenByWindowRanger: true,
+                displayIdentifier: persisted.displayIdentifier,
+                previousFocusKey: nil
+            )
+        }
+
+        let persistedHiddenSession = dropDownAppConfiguration.map {
+            persistedSessions[Self.normalizedBundleIdentifier($0.bundleIdentifier)]
+        } ?? nil
         guard dropDownAppSession == nil,
               let configuration = dropDownAppConfiguration,
               let selection = DropDownAppStartupPolicy.selection(
@@ -9992,13 +11021,17 @@ final class WorkspaceEngine {
 
     @discardableResult
     private func rebindDropDownAppSessionIfNeeded(
+        bundleIdentifier: String,
         removedWindowKeys: Set<WindowKey>,
         newlyTrackedWindowKeys: Set<WindowKey>,
         displays: [DisplaySnapshot],
         performAXWrites: Bool,
         correlationID: String?
     ) -> Bool {
-        guard var session = dropDownAppSession,
+        guard var session = quickAppSessions[bundleIdentifier],
+              let configuration = quickAppConfigurations.first(where: {
+                  Self.normalizedBundleIdentifier($0.bundleIdentifier) == bundleIdentifier
+              }),
               let previous = windows[session.windowKey],
               let replacementKey = DropDownAppWindowHandoffPolicy.replacementWindowKey(
                 sessionWindowKey: session.windowKey,
@@ -10033,8 +11066,29 @@ final class WorkspaceEngine {
 
         let previousKey = session.windowKey
         session.windowKey = replacementKey
-        dropDownAnimationGeneration &+= 1
-        dropDownAppSession = session
+        let interruptedTransition: Bool
+        switch quickAppTransition {
+        case let .showing(activeKey) where activeKey == bundleIdentifier:
+            interruptedTransition = true
+            if pendingQuickAppSelection == nil {
+                pendingQuickAppSelection = PendingQuickAppSelection(
+                    bundleIdentifier: configuration.bundleIdentifier,
+                    correlationID: correlationID ?? diagnostics.makeCorrelationID()
+                )
+            }
+        case let .hiding(activeKey) where activeKey == bundleIdentifier:
+            interruptedTransition = true
+        default:
+            interruptedTransition = false
+        }
+        if QuickAppTransitionPolicy.shouldInvalidateAnimationForRebind(
+            reboundBundleKey: bundleIdentifier,
+            phase: quickAppTransition,
+            sessionIsPresented: session.isPresented
+        ) {
+            dropDownAnimationGeneration &+= 1
+        }
+        quickAppSessions[bundleIdentifier] = session
 
         lastFocusedWindow = lastFocusedWindow.mapValues { $0 == previousKey ? replacementKey : $0 }
         if lastObservedFocusedWindow == previousKey { lastObservedFocusedWindow = replacementKey }
@@ -10044,7 +11098,6 @@ final class WorkspaceEngine {
         var geometryWriteSucceeded: Bool?
         if performAXWrites {
             if session.isPresented,
-               let configuration = dropDownAppConfiguration,
                let display = session.displayIdentifier.flatMap({ identifier in
                    displays.first { $0.identifier == identifier }
                }) ?? dropDownTargetDisplay(displays: displays) {
@@ -10064,7 +11117,7 @@ final class WorkspaceEngine {
                     bundleIdentifier: session.bundleIdentifier
                 )
                 session.isApplicationHiddenByWindowRanger = geometryWriteSucceeded == true
-                dropDownAppSession = session
+                quickAppSessions[bundleIdentifier] = session
             }
         }
 
@@ -10083,6 +11136,20 @@ final class WorkspaceEngine {
                     : session.isApplicationHiddenByWindowRanger ? "application-hidden" : "unverified",
             ]
         )
+        if session.isPresented,
+           let display = session.displayIdentifier.flatMap({ identifier in
+               displays.first { $0.identifier == identifier }
+           }) ?? dropDownTargetDisplay(displays: displays) {
+            layoutPresentedQuickAppGroup(
+                display: display,
+                correlationID: correlationID,
+                focusSelected: false
+            )
+        }
+        if interruptedTransition {
+            quickAppTransition = .idle
+            continuePendingQuickAppSelectionIfPossible()
+        }
         return true
     }
 
@@ -10112,7 +11179,6 @@ final class WorkspaceEngine {
     ) {
         guard var session = dropDownAppSession,
               session.isPresented,
-              let configuration = dropDownAppConfiguration,
               let target = windows[session.windowKey],
               let display = session.displayIdentifier.flatMap({ identifier in
                   displays.first { $0.identifier == identifier }
@@ -10122,26 +11188,22 @@ final class WorkspaceEngine {
         dropDownAnimationGeneration &+= 1
         session.displayIdentifier = display.identifier
         dropDownAppSession = session
-        let requestedFrame = DropDownAppGeometry.presentedFrame(
-            in: dropDownAppPresentationBounds(for: display),
-            sizeFraction: configuration.heightFraction,
-            direction: session.direction
-        )
-        let writeSucceeded = setDropDownAppFrame(requestedFrame, target: target)
+        reconcilePresentedQuickAppGroup(correlationID: nil, focusSelected: false)
+        let requestedFrame = AccessibilityWindow.frame(of: target.element)
         diagnostics.log(
             category: "drop-down-app",
             event: "focus-border-geometry-updated",
             fields: [
                 "window": Self.diagnosticWindowKey(target.key),
                 "focus-border-enabled": String(focusedWindowHighlightEnabled),
-                "requested-frame": Self.diagnosticFrame(requestedFrame),
-                "geometry-write": String(writeSucceeded),
+                "requested-frame": requestedFrame.map(Self.diagnosticFrame) ?? "unavailable",
+                "geometry-write": "group-reconciled",
             ]
         )
     }
 
     private func isDropDownAppWindow(_ key: WindowKey) -> Bool {
-        dropDownAppSession?.windowKey == key
+        quickAppSessions.values.contains { $0.windowKey == key }
     }
 
     @discardableResult
@@ -10186,14 +11248,15 @@ final class WorkspaceEngine {
             .map { PositionChange(window: $0, position: parkingPosition) },
             correlationID: correlationID
         )
-        if let session = dropDownAppSession,
-           !session.isPresented,
-           let target = windows[session.windowKey],
-           isEligible(target) {
-            applyPositionChanges(
-                [PositionChange(window: target, position: parkingPosition)],
-                correlationID: correlationID
-            )
+        let hiddenQuickAppChanges = quickAppSessions.values.compactMap { session -> PositionChange? in
+            guard !session.isPresented,
+                  let target = windows[session.windowKey],
+                  isEligible(target)
+            else { return nil }
+            return PositionChange(window: target, position: parkingPosition)
+        }
+        if !hiddenQuickAppChanges.isEmpty {
+            applyPositionChanges(hiddenQuickAppChanges, correlationID: correlationID)
         }
         return expectedLayoutFrames
     }
@@ -10444,6 +11507,10 @@ final class WorkspaceEngine {
     static func validLayoutWeight(_ value: Double?) -> Double {
         guard let value, value.isFinite, value > 0 else { return 1 }
         return min(value, 1000)
+    }
+
+    private static func normalizedBundleIdentifier(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private static func indexedAppRules(_ rules: [AppRule]) -> [String: AppRule] {
@@ -11244,6 +12311,15 @@ final class WorkspaceEngine {
                         windowKey: session.windowKey,
                         bundleIdentifier: session.bundleIdentifier,
                         displayIdentifier: session.displayIdentifier,
+                        isApplicationHiddenByWindowRanger: true
+                    )
+                },
+                dropDownAppSessions: quickAppSessions.reduce(into: [:]) { result, pair in
+                    guard pair.value.isApplicationHiddenByWindowRanger else { return }
+                    result[pair.key] = PersistedDropDownAppSession(
+                        windowKey: pair.value.windowKey,
+                        bundleIdentifier: pair.value.bundleIdentifier,
+                        displayIdentifier: pair.value.displayIdentifier,
                         isApplicationHiddenByWindowRanger: true
                     )
                 }

@@ -1895,6 +1895,23 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertNotNil(dynamic?.workspaceID)
     }
 
+    func testQuickAppShelfSearchRoutesSharedPresentationAndMembership() {
+        for query in [
+            "Quick App Shelf applications",
+            "shelf presentation",
+            "dropdown launcher",
+            "Accordion cards",
+            "show at once",
+        ] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .quickAppShelf,
+                "Expected Quick App Shelf routing for \(query)"
+            )
+        }
+        XCTAssertTrue(SettingsCatalog.availableCategories(includeDebug: false).contains(.quickAppShelf))
+    }
+
     func testTwoArrowTiledPlacementSearchRoutesToShortcuts() {
         let result = SettingsCatalog.search("top right BSP", includeDebug: false).first
         XCTAssertEqual(result?.id, "directional-move")
@@ -2460,7 +2477,10 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertFalse(first.registeredOwners.contains { $0.configurableAction == .nextWindow })
         XCTAssertTrue(first.registeredOwners.contains { $0.configurableAction == .previousWindow })
         let firstTokens = Set(service.registrations.map(\.token))
-        XCTAssertEqual(firstTokens.count, ConfigurableHotKeyAction.allCases.count - 1)
+        let enabledActionCount = ConfigurableHotKeyAction.allCases.filter {
+            HotKeyConfiguration().isEnabled($0)
+        }.count
+        XCTAssertEqual(firstTokens.count, enabledActionCount - 1)
 
         service.failures.removeAll()
         let second = manager.register(
@@ -2470,7 +2490,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
         XCTAssertEqual(Set(service.unregistrations), firstTokens)
         XCTAssertTrue(second.runtimeIssues.isEmpty)
-        XCTAssertEqual(second.registeredOwners.count, ConfigurableHotKeyAction.allCases.count)
+        XCTAssertEqual(second.registeredOwners.count, enabledActionCount)
 
         let replacementTokens = Set(service.registrations.suffix(second.registeredOwners.count).map(\.token))
         manager.suspendRegistration()
@@ -2587,7 +2607,12 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 
         XCTAssertTrue(service.registrations.isEmpty)
         XCTAssertTrue(report.registeredOwners.isEmpty)
-        XCTAssertEqual(report.runtimeIssues.count, ConfigurableHotKeyAction.allCases.count - 1)
+        XCTAssertEqual(
+            report.runtimeIssues.count,
+            ConfigurableHotKeyAction.allCases.filter {
+                HotKeyConfiguration().isEnabled($0) && $0 != .commandWheel
+            }.count
+        )
         XCTAssertTrue(report.runtimeIssues.allSatisfy { $0.status == -9_876 })
         XCTAssertTrue(sink.text.contains("event-handler-installation-failed"))
     }

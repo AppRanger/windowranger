@@ -143,6 +143,37 @@ final class SettingsStore: ObservableObject {
         didSet { activeProfileContentDidChange() }
     }
 
+    @Published var quickAppShelfPresentation: QuickAppShelfPresentation {
+        didSet {
+            let updated = QuickAppShelfPolicy.normalized(quickApps)
+                .map(quickAppShelfPresentation.applying)
+            if quickApps != updated {
+                quickApps = updated
+                return
+            }
+            activeProfileContentDidChange()
+        }
+    }
+
+    /// Ordered Quick App Shelf entries. The legacy `dropDownApp` property remains the first entry
+    /// for compatibility with existing engine and profile callers.
+    @Published var quickApps: [DropDownAppConfiguration] {
+        didSet {
+            let normalized = QuickAppShelfPolicy.normalized(quickApps)
+                .map(quickAppShelfPresentation.applying)
+            if quickApps != normalized {
+                quickApps = normalized
+                return
+            }
+            if !isApplyingProfileActivation {
+                let first = normalized.first
+                if dropDownApp != first { dropDownApp = first }
+                reconcileSelectedQuickApp()
+            }
+            activeProfileContentDidChange()
+        }
+    }
+
     @Published var iCloudSyncEnabled: Bool {
         didSet {
             guard !isApplyingRemoteChange else { return }
@@ -316,7 +347,12 @@ final class SettingsStore: ObservableObject {
         workspaces = active.workspaces
         multiDisplayMode = active.displayMode
         appRules = active.appRules
-        dropDownApp = active.dropDownApp
+        quickAppShelfPresentation = active.quickAppShelfPresentation
+        let activeQuickApps = QuickAppShelfPolicy.normalized(active.quickApps.isEmpty
+            ? active.dropDownApp.map { [$0] } ?? [] : active.quickApps)
+            .map(active.quickAppShelfPresentation.applying)
+        quickApps = activeQuickApps
+        dropDownApp = activeQuickApps.first
         connectedDisplays = initialDisplays
         workspaceDisplayHomesForEngine = ProfileRoleBindingResolver.resolve(
             profile: active,
@@ -463,6 +499,13 @@ final class SettingsStore: ObservableObject {
     var undockedProfileID: UUID? { localProfileState.undockedProfileID }
     var exactProfileTriggers: [ExactProfileTrigger] { localProfileState.exactTriggers }
     var roleBindings: [UUID: WorkspaceDisplayPin] { localProfileState.roleBindings }
+    var selectedQuickAppBundleIdentifier: String? {
+        let selected = localProfileState.runtimeWorkspaceStates[activeProfileID]?
+            .selectedQuickAppBundleIdentifier
+        return quickApps.first(where: {
+            $0.bundleIdentifier.caseInsensitiveCompare(selected ?? "") == .orderedSame
+        })?.bundleIdentifier ?? quickApps.first?.bundleIdentifier
+    }
     var profileTransferDiagnosticLogger: DiagnosticLogger { diagnostics }
 
     var workspaceDisplayPins: [UUID: WorkspaceDisplayPin] {
@@ -1070,8 +1113,10 @@ final class SettingsStore: ObservableObject {
         defaultWorkspaceID: UUID? = nil
     ) {
         guard !appRules.contains(where: { $0.id == application.id }) else { return }
-        if dropDownApp?.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame {
-            dropDownApp = nil
+        if let quickAppIndex = quickApps.firstIndex(where: {
+            $0.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame
+        }) {
+            removeQuickApp(at: quickAppIndex)
         }
         var rule = AppRule(
             bundleIdentifier: application.bundleIdentifier,
@@ -1099,13 +1144,14 @@ final class SettingsStore: ObservableObject {
             for: application.bundleIdentifier,
             undoManager: nil
         )
-        dropDownApp = DropDownAppConfiguration(
+        let configuration = DropDownAppConfiguration(
             bundleIdentifier: application.bundleIdentifier,
             displayName: application.displayName,
-            heightFraction: dropDownApp?.heightFraction ?? DropDownAppConfiguration.defaultHeightFraction,
-            isAnimationEnabled: dropDownApp?.isAnimationEnabled ?? true,
-            direction: dropDownApp?.direction ?? .top
+            heightFraction: quickAppShelfPresentation.heightFraction,
+            isAnimationEnabled: quickAppShelfPresentation.isAnimationEnabled,
+            direction: quickAppShelfPresentation.direction
         )
+        quickApps = QuickAppShelfPolicy.replacing(quickApps, with: configuration)
     }
 
     func convertAppRuleToQuickApp(bundleIdentifier: String) {
@@ -1122,12 +1168,18 @@ final class SettingsStore: ObservableObject {
         ))
     }
 
-    func removeDropDownApp() {
-        dropDownApp = nil
+    func removeDropDownApp(bundleIdentifier: String? = nil) {
+        let bundleIdentifier = bundleIdentifier ?? dropDownApp?.bundleIdentifier ?? ""
+        quickApps.removeAll {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
     }
 
-    func convertQuickAppToAppRule() {
-        guard let configuration = dropDownApp else { return }
+    func convertQuickAppToAppRule(bundleIdentifier: String? = nil) {
+        let configuration = quickApps.first(where: {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier ?? dropDownApp?.bundleIdentifier ?? "") == .orderedSame
+        }) ?? dropDownApp
+        guard let configuration else { return }
         let application = InstalledApplication(
             bundleIdentifier: configuration.bundleIdentifier,
             displayName: configuration.displayName,
@@ -1138,26 +1190,89 @@ final class SettingsStore: ObservableObject {
                 withBundleIdentifier: configuration.bundleIdentifier
             ).contains(where: { !$0.isTerminated })
         )
-        dropDownApp = nil
+        removeDropDownApp(bundleIdentifier: configuration.bundleIdentifier)
         addAppRule(for: application)
     }
 
     func setDropDownAppHeightFraction(_ fraction: Double) {
-        guard var configuration = dropDownApp else { return }
-        configuration.heightFraction = DropDownAppConfiguration.clampedHeightFraction(fraction)
-        dropDownApp = configuration
+        quickAppShelfPresentation.heightFraction = DropDownAppConfiguration.clampedHeightFraction(fraction)
     }
 
     func setDropDownAppAnimationEnabled(_ isEnabled: Bool) {
-        guard var configuration = dropDownApp else { return }
-        configuration.isAnimationEnabled = isEnabled
-        dropDownApp = configuration
+        quickAppShelfPresentation.isAnimationEnabled = isEnabled
     }
 
     func setDropDownAppDirection(_ direction: DropDownAppDirection) {
-        guard var configuration = dropDownApp else { return }
-        configuration.direction = direction
-        dropDownApp = configuration
+        quickAppShelfPresentation.direction = direction
+    }
+
+    func setQuickAppShelfLayoutStyle(_ style: QuickAppShelfPresentation.LayoutStyle) {
+        quickAppShelfPresentation.layoutStyle = style
+    }
+
+    func setQuickAppShelfVisibleCount(_ count: Int) {
+        quickAppShelfPresentation.visibleCount = QuickAppShelfPresentation.clampedVisibleCount(count)
+    }
+
+    func setQuickAppDirection(_ direction: DropDownAppDirection, bundleIdentifier: String) {
+        setDropDownAppDirection(direction)
+    }
+
+    func setQuickAppHeightFraction(_ fraction: Double, bundleIdentifier: String) {
+        setDropDownAppHeightFraction(fraction)
+    }
+
+    func setQuickAppAnimationEnabled(_ enabled: Bool, bundleIdentifier: String) {
+        setDropDownAppAnimationEnabled(enabled)
+    }
+
+    func removeQuickApp(at index: Int) {
+        guard quickApps.indices.contains(index) else { return }
+        quickApps.remove(at: index)
+    }
+
+    func moveQuickApps(from source: IndexSet, to destination: Int) {
+        quickApps.move(fromOffsets: source, toOffset: destination)
+    }
+
+    func recordSelectedQuickApp(bundleIdentifier: String) {
+        guard let selected = quickApps.first(where: {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }), let fallbackWorkspaceID = workspaces.first?.id else { return }
+        var local = localProfileState
+        var runtime = local.runtimeWorkspaceStates[activeProfileID] ?? ProfileRuntimeWorkspaceState(
+            currentWorkspaceID: fallbackWorkspaceID,
+            activeWorkspaceIDByRole: [:]
+        )
+        guard runtime.selectedQuickAppBundleIdentifier?.caseInsensitiveCompare(
+            selected.bundleIdentifier
+        ) != .orderedSame else { return }
+        runtime.selectedQuickAppBundleIdentifier = selected.bundleIdentifier
+        local.runtimeWorkspaceStates[activeProfileID] = runtime
+        localProfileState = local
+        persistLocalProfileState()
+    }
+
+    private func reconcileSelectedQuickApp() {
+        let previous = localProfileState.runtimeWorkspaceStates[activeProfileID]?
+            .selectedQuickAppBundleIdentifier
+        let canonical = quickApps.first(where: {
+            $0.bundleIdentifier.caseInsensitiveCompare(previous ?? "") == .orderedSame
+        })?.bundleIdentifier ?? quickApps.first?.bundleIdentifier
+        let selectionMatches = switch (previous, canonical) {
+        case (nil, nil): true
+        case let (previous?, canonical?):
+            previous.caseInsensitiveCompare(canonical) == .orderedSame
+        default: false
+        }
+        guard !selectionMatches,
+              var runtime = localProfileState.runtimeWorkspaceStates[activeProfileID]
+        else { return }
+        runtime.selectedQuickAppBundleIdentifier = canonical
+        var local = localProfileState
+        local.runtimeWorkspaceStates[activeProfileID] = runtime
+        localProfileState = local
+        persistLocalProfileState()
     }
 
     func focusedWindowHighlightCornerRadiusOverride(for bundleIdentifier: String) -> Double? {
@@ -1309,7 +1424,10 @@ final class SettingsStore: ObservableObject {
         }
         let runtime = ProfileRuntimeWorkspaceState(
             currentWorkspaceID: state.currentWorkspaceID,
-            activeWorkspaceIDByRole: activeByRole
+            activeWorkspaceIDByRole: activeByRole,
+            selectedQuickAppBundleIdentifier: localProfileState
+                .runtimeWorkspaceStates[activeProfileID]?
+                .selectedQuickAppBundleIdentifier
         )
         guard localProfileState.runtimeWorkspaceStates[activeProfileID] != runtime else { return }
         var local = localProfileState
@@ -1328,7 +1446,11 @@ final class SettingsStore: ObservableObject {
         updated[index].workspaces = workspaces
         updated[index].displayMode = multiDisplayMode
         updated[index].appRules = Self.normalizedAppRules(appRules)
-        updated[index].dropDownApp = dropDownApp?.normalized()
+        updated[index].quickApps = QuickAppShelfPolicy.normalized(
+            quickApps.isEmpty ? dropDownApp.map { [$0] } ?? [] : quickApps
+        ).map(quickAppShelfPresentation.applying)
+        updated[index].quickAppShelfPresentation = quickAppShelfPresentation
+        updated[index].dropDownApp = updated[index].quickApps.first
         guard let normalized = updated[index].normalized() else { return }
         updated[index] = normalized
         profiles = updated
@@ -1473,7 +1595,11 @@ final class SettingsStore: ObservableObject {
         workspaces = profile.workspaces
         multiDisplayMode = profile.displayMode
         appRules = profile.appRules
-        dropDownApp = profile.dropDownApp
+        quickAppShelfPresentation = profile.quickAppShelfPresentation
+        quickApps = QuickAppShelfPolicy.normalized(profile.quickApps.isEmpty
+            ? profile.dropDownApp.map { [$0] } ?? [] : profile.quickApps)
+            .map(profile.quickAppShelfPresentation.applying)
+        dropDownApp = quickApps.first
         refreshResolvedWorkspaceDisplayAssignments()
         isApplyingProfileActivation = false
         persistLocalProfileState()
@@ -1514,6 +1640,9 @@ final class SettingsStore: ObservableObject {
             ).workspaceDisplayHomes,
             appRules: profile.appRules,
             dropDownApp: profile.dropDownApp,
+            quickApps: profile.quickApps,
+            quickAppShelfPresentation: profile.quickAppShelfPresentation,
+            selectedQuickAppBundleIdentifier: runtime?.selectedQuickAppBundleIdentifier,
             preferredCurrentWorkspaceID: runtime?.currentWorkspaceID,
             preferredActiveWorkspaceIDByDisplay: activeByDisplay,
             selectionReason: selectionReason

@@ -1,4 +1,5 @@
 import XCTest
+import Carbon
 
 final class CommandPaletteTests: XCTestCase {
     private let focusID = UUID(uuidString: "81000000-0000-0000-0000-000000000001")!
@@ -129,6 +130,194 @@ final class CommandPaletteTests: XCTestCase {
         )
     }
 
+    func testQuickActionsStackLayoutAboveAvailablePlacement() {
+        XCTAssertEqual(
+            CommandPaletteQuickActionNavigation.availableActions(
+                supportsLayoutSelection: true,
+                supportsPlacement: true
+            ),
+            [.workspaceLayout, .placement]
+        )
+        XCTAssertEqual(
+            CommandPaletteQuickActionNavigation.availableActions(
+                supportsLayoutSelection: true,
+                supportsPlacement: false
+            ),
+            [.workspaceLayout]
+        )
+        XCTAssertEqual(
+            CommandPaletteQuickActionNavigation.availableActions(
+                supportsLayoutSelection: false,
+                supportsPlacement: true
+            ),
+            [.placement]
+        )
+        XCTAssertTrue(CommandPaletteQuickActionNavigation.availableActions(
+            supportsLayoutSelection: false,
+            supportsPlacement: false
+        ).isEmpty)
+        XCTAssertTrue(CommandPaletteQuickActionNavigation.availableActions(
+            supportsLayoutSelection: true,
+            supportsPlacement: true,
+            isSearchEmpty: false
+        ).isEmpty)
+    }
+
+    func testUpFromTopResultEntersTheNearestVisibleQuickAction() {
+        let actions: [CommandPaletteQuickAction] = [.workspaceLayout, .placement]
+
+        XCTAssertEqual(
+            CommandPaletteQuickActionNavigation.actionEnteringFromTopResult(
+                selectedIndex: 0,
+                resultCount: 4,
+                actions: actions
+            ),
+            .placement
+        )
+        XCTAssertEqual(
+            CommandPaletteQuickActionNavigation.actionEnteringFromTopResult(
+                selectedIndex: 0,
+                resultCount: 4,
+                actions: [.workspaceLayout]
+            ),
+            .workspaceLayout
+        )
+        XCTAssertNil(CommandPaletteQuickActionNavigation.actionEnteringFromTopResult(
+            selectedIndex: 1,
+            resultCount: 4,
+            actions: actions
+        ))
+        XCTAssertNil(CommandPaletteQuickActionNavigation.actionEnteringFromTopResult(
+            selectedIndex: 0,
+            resultCount: 4,
+            actions: []
+        ))
+    }
+
+    func testQuickActionVerticalNavigationDoesNotCrossLayoutSegments() {
+        let actions: [CommandPaletteQuickAction] = [.workspaceLayout, .placement]
+
+        XCTAssertEqual(
+            CommandPaletteQuickActionNavigation.moved(
+                from: .workspaceLayout,
+                offset: 1,
+                in: actions
+            ),
+            .placement
+        )
+        XCTAssertEqual(
+            CommandPaletteQuickActionNavigation.moved(
+                from: .placement,
+                offset: -1,
+                in: actions
+            ),
+            .workspaceLayout
+        )
+        XCTAssertNil(CommandPaletteQuickActionNavigation.moved(
+            from: .workspaceLayout,
+            offset: -1,
+            in: actions
+        ))
+        XCTAssertNil(CommandPaletteQuickActionNavigation.moved(
+            from: .placement,
+            offset: 1,
+            in: actions
+        ))
+    }
+
+    func testLayoutQuickActionWrapsOnlyItsOwnSegmentOrder() {
+        XCTAssertEqual(
+            CommandPaletteLayoutNavigation.moved(from: .none, offset: 1),
+            .tiled
+        )
+        XCTAssertEqual(
+            CommandPaletteLayoutNavigation.moved(from: .accordion, offset: 1),
+            .none
+        )
+        XCTAssertEqual(
+            CommandPaletteLayoutNavigation.moved(from: .none, offset: -1),
+            .accordion
+        )
+    }
+
+    func testInlineLayoutRefreshRebindsPlacementToSettledValidationToken() {
+        let original = freeformPlacementContext(validationToken: "before-layout-settled")
+        let current = freeformPlacementContext(validationToken: "after-layout-settled")
+
+        XCTAssertEqual(
+            CommandPaletteSelectionRevalidation.destination(
+                .command(.placeFreeformWindow(.left, validationToken: original.validationToken)),
+                original: original,
+                current: current,
+                hotKeyConfiguration: HotKeyConfiguration(),
+                allowsInlineLayoutRefresh: true
+            ),
+            .command(.placeFreeformWindow(.left, validationToken: current.validationToken))
+        )
+    }
+
+    func testInlineLayoutRefreshRebindsAnOlderPlacementWithinSettledContext() {
+        let settled = freeformPlacementContext(validationToken: "settled-token")
+
+        XCTAssertEqual(
+            CommandPaletteSelectionRevalidation.destination(
+                .command(.placeFreeformWindow(.right, validationToken: "older-preview-token")),
+                original: settled,
+                current: settled,
+                hotKeyConfiguration: HotKeyConfiguration(),
+                allowsInlineLayoutRefresh: true
+            ),
+            .command(.placeFreeformWindow(.right, validationToken: settled.validationToken))
+        )
+    }
+
+    func testPlacementDefersFocusRestorationUntilAfterDispatch() {
+        XCTAssertTrue(CommandPaletteSelectionRevalidation.defersFocusRestoration(
+            for: .command(.placeFreeformWindow(.left, validationToken: "token"))
+        ))
+        XCTAssertTrue(CommandPaletteSelectionRevalidation.defersFocusRestoration(
+            for: .command(.placeTiledWindow(.topLeft, validationToken: "token"))
+        ))
+        XCTAssertFalse(CommandPaletteSelectionRevalidation.defersFocusRestoration(
+            for: .command(.setLayout(.none))
+        ))
+        XCTAssertFalse(CommandPaletteSelectionRevalidation.defersFocusRestoration(for: .settings))
+    }
+
+    func testInlineLayoutRefreshRejectsAChangedWindowOrLayout() {
+        let original = freeformPlacementContext(validationToken: "before-layout-settled")
+        let changedWindow = freeformPlacementContext(
+            validationToken: "after-layout-settled",
+            windowIdentifier: 999
+        )
+        let changedLayout = context(layout: .tiled, validationToken: "after-layout-settled")
+        let requested = CommandPaletteDestination.command(
+            .placeFreeformWindow(.left, validationToken: original.validationToken)
+        )
+
+        XCTAssertNil(CommandPaletteSelectionRevalidation.destination(
+            requested,
+            original: original,
+            current: changedWindow,
+            hotKeyConfiguration: HotKeyConfiguration(),
+            allowsInlineLayoutRefresh: true
+        ))
+        XCTAssertNil(CommandPaletteSelectionRevalidation.destination(
+            requested,
+            original: original,
+            current: changedLayout,
+            hotKeyConfiguration: HotKeyConfiguration(),
+            allowsInlineLayoutRefresh: true
+        ))
+        XCTAssertNil(CommandPaletteSelectionRevalidation.destination(
+            requested,
+            original: original,
+            current: freeformPlacementContext(validationToken: "after-layout-settled"),
+            hotKeyConfiguration: HotKeyConfiguration(),
+            allowsInlineLayoutRefresh: false
+        ))
+    }
+
     func testProfileAndLayoutChildrenUseTheSharedContextCatalogue() {
         let laptop = UUID(uuidString: "82000000-0000-0000-0000-000000000001")!
         let studio = UUID(uuidString: "82000000-0000-0000-0000-000000000002")!
@@ -152,14 +341,53 @@ final class CommandPaletteTests: XCTestCase {
         XCTAssertTrue(destinations.contains(.command(.setLayout(.none))))
     }
 
+    func testQuickAppShelfAddsDirectSelectionAndCycleActionsOnlyWhenConfigured() {
+        var value = context()
+        value.quickApps = [
+            DropDownAppConfiguration(bundleIdentifier: "com.example.one", displayName: "One"),
+            DropDownAppConfiguration(bundleIdentifier: "com.example.two", displayName: "Two"),
+        ]
+        let defaults = CommandPaletteIndex.entries(
+            context: value,
+            query: "",
+            hotKeyConfiguration: HotKeyConfiguration()
+        )
+        XCTAssertTrue(defaults.contains { $0.destination == .command(.selectQuickApp("com.example.one")) })
+        XCTAssertEqual(
+            defaults.first { $0.destination == .command(.selectQuickApp("com.example.one")) }?.detail,
+            "Quick App · \(value.workspaceName)"
+        )
+        XCTAssertTrue(defaults.contains { $0.destination == .command(.cycleQuickApp(-1)) })
+        XCTAssertTrue(defaults.contains { $0.destination == .command(.cycleQuickApp(1)) })
+        XCTAssertEqual(
+            defaults.first { $0.destination == .command(.cycleQuickApp(-1)) }?.title,
+            "Previous Quick App"
+        )
+        XCTAssertEqual(
+            defaults.first { $0.destination == .command(.cycleQuickApp(1)) }?.title,
+            "Next Quick App"
+        )
+        XCTAssertFalse(defaults.contains { $0.destination == .command(.cycleQuickApp(1)) && $0.shortcut != nil })
+
+        var configured = HotKeyConfiguration()
+        configured.setChord(HotKeyChord(keyCode: 18, modifiers: UInt32(controlKey | optionKey)), for: .cycleQuickApp)
+        XCTAssertEqual(
+            CommandPaletteIndex.entries(context: value, query: "", hotKeyConfiguration: configured)
+                .first { $0.destination == .command(.cycleQuickApp(1)) }?.shortcut,
+            configured.chord(for: .cycleQuickApp).title
+        )
+    }
+
     private func context(
         layout: WorkspaceLayout = .accordion,
-        canSmartResize: Bool = true
+        canSmartResize: Bool = true,
+        validationToken: String = "palette-test",
+        windowIdentifier: CGWindowID = 510
     ) -> RadialCommandContext {
         RadialCommandContext(
             focusedWindow: RadialFocusedWindowContext(
                 processIdentifier: 410,
-                windowIdentifier: 510,
+                windowIdentifier: windowIdentifier,
                 workspaceID: focusID,
                 frame: WindowFrame(
                     position: CGPoint(x: 100, y: 100),
@@ -203,13 +431,21 @@ final class CommandPaletteTests: XCTestCase {
                 ),
             ],
             supportedCommands: RadialCommandCapability.current,
-            validationToken: "palette-test"
+            validationToken: validationToken
         )
     }
 
-    private func freeformPlacementContext() -> RadialCommandContext {
-        var value = context(layout: .none, canSmartResize: false)
-        let key = WindowKey(processIdentifier: 410, windowIdentifier: 510)
+    private func freeformPlacementContext(
+        validationToken: String = "palette-test",
+        windowIdentifier: CGWindowID = 510
+    ) -> RadialCommandContext {
+        var value = context(
+            layout: .none,
+            canSmartResize: false,
+            validationToken: validationToken,
+            windowIdentifier: windowIdentifier
+        )
+        let key = WindowKey(processIdentifier: 410, windowIdentifier: windowIdentifier)
         let originalFrame = WindowFrame(
             position: CGPoint(x: 100, y: 100),
             size: CGSize(width: 900, height: 700)

@@ -21,6 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         workspaceDisplayAssignments: settingsStore.workspaceDisplayHomesForEngine,
         appRules: settingsStore.appRules,
         dropDownApp: settingsStore.dropDownApp,
+        quickApps: settingsStore.quickApps,
+        quickAppShelfPresentation: settingsStore.quickAppShelfPresentation,
+        selectedQuickAppBundleIdentifier: settingsStore.selectedQuickAppBundleIdentifier,
         focusFollowsMovedWindow: settingsStore.focusFollowsMovedWindow,
         automaticallyUnhideApplications: settingsStore.automaticallyUnhideApplications,
         focusedWindowHighlightEnabled: settingsStore.focusedWindowHighlightEnabled,
@@ -152,6 +155,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.focusedWindowHighlightPresenter.updateWorkspaceContexts(
                 state.focusedWindowHighlightWorkspaceContexts
             )
+        }
+        engine.onQuickAppSelectionChanged = { [weak self] bundleIdentifier in
+            Task { @MainActor [weak self] in
+                self?.settingsStore.recordSelectedQuickApp(bundleIdentifier: bundleIdentifier)
+            }
         }
         engine.onWorkspaceLayoutChanged = { [weak self] workspaceID, layout in
             self?.settingsStore.setLayout(layout, for: workspaceID)
@@ -417,13 +425,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         .store(in: &cancellables)
 
-        settingsStore.$dropDownApp
+        Publishers.CombineLatest(
+            settingsStore.$quickApps,
+            settingsStore.$quickAppShelfPresentation
+            )
             .dropFirst()
             .filter { [weak self] _ in self?.settingsStore.isApplyingProfileActivation == false }
-            .removeDuplicates()
+            .removeDuplicates { previous, next in
+                previous.0 == next.0 && previous.1 == next.1
+            }
             .debounce(for: .milliseconds(100), scheduler: RunLoop.main)
-            .sink { [weak self] configuration in
-                self?.engine.updateDropDownAppConfiguration(configuration)
+            .sink { [weak self] configurations, presentation in
+                self?.engine.updateQuickAppConfigurations(
+                    configurations,
+                    presentation: presentation
+                )
             }
             .store(in: &cancellables)
 
@@ -674,6 +690,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "pinned=\(settingsStore.manualPinnedProfileID?.uuidString ?? "none")",
             settingsStore.profiles.map { "\($0.id.uuidString)=\($0.name)" }.joined(separator: ","),
         ].joined(separator: "|")
+        enriched.quickApps = settingsStore.quickApps
         return enriched
     }
 

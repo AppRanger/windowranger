@@ -140,6 +140,7 @@ struct SettingsView: View {
                         }
                         Section("Behavior") {
                             sidebarRow(.appRules)
+                            sidebarRow(.quickAppShelf)
                             sidebarRow(.shortcuts)
                             sidebarRow(.radialMenu)
                         }
@@ -222,6 +223,8 @@ struct SettingsView: View {
                     EmptyView()
                 case .appRules:
                     AppRulesSettingsView(store: store, engine: engine)
+                case .quickAppShelf:
+                    QuickAppShelfSettingsView(store: store)
                 case .shortcuts:
                     ShortcutSettingsView(
                         store: store,
@@ -1172,7 +1175,12 @@ private struct ProfilesSettingsView: View {
         let workspaceLabel = profile.workspaces.count == 1 ? "workspace" : "workspaces"
         let roleLabel = profile.displayRoles.count == 1 ? "display role" : "display roles"
         let ruleLabel = profile.appRules.count == 1 ? "app rule" : "app rules"
-        let quickAppLabel = profile.dropDownApp == nil ? "" : " · Quick App"
+        let quickAppCount = profile.quickApps.count
+        let quickAppLabel: String = if quickAppCount == 0 {
+            ""
+        } else {
+            " · \(quickAppCount) Quick App\(quickAppCount == 1 ? "" : "s")"
+        }
         return "\(profile.workspaces.count) \(workspaceLabel) · "
             + "\(profile.displayRoles.count) \(roleLabel) · "
             + "\(profile.appRules.count) \(ruleLabel)"
@@ -2211,6 +2219,190 @@ private struct WorkspaceShortcutCaps: View {
     }
 }
 
+private struct QuickAppShelfSettingsView: View {
+    @ObservedObject var store: SettingsStore
+    @State private var showsAppPicker = false
+
+    var body: some View {
+        Form {
+            Section {
+                Picker(
+                    "Style",
+                    selection: Binding(
+                        get: { store.quickAppShelfPresentation.layoutStyle },
+                        set: { store.setQuickAppShelfLayoutStyle($0) }
+                    )
+                ) {
+                    ForEach(QuickAppShelfPresentation.LayoutStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Stepper(
+                    value: Binding(
+                        get: { store.quickAppShelfPresentation.visibleCount },
+                        set: { store.setQuickAppShelfVisibleCount($0) }
+                    ),
+                    in: 1...QuickAppShelfPolicy.maximumCount
+                ) {
+                    LabeledContent("Show at once") {
+                        Text("\(store.quickAppShelfPresentation.visibleCount)")
+                            .monospacedDigit()
+                    }
+                }
+
+                Picker(
+                    "Open from",
+                    selection: Binding(
+                        get: { store.quickAppShelfPresentation.direction },
+                        set: { store.setDropDownAppDirection($0) }
+                    )
+                ) {
+                    ForEach(DropDownAppDirection.allCases) { direction in
+                        Text(direction.title).tag(direction)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                LabeledContent(store.quickAppShelfPresentation.direction.sizeLabel) {
+                    HStack(spacing: 10) {
+                        Slider(
+                            value: Binding(
+                                get: { store.quickAppShelfPresentation.heightFraction },
+                                set: { store.setDropDownAppHeightFraction($0) }
+                            ),
+                            in: DropDownAppConfiguration.minimumHeightFraction
+                                ... DropDownAppConfiguration.maximumHeightFraction,
+                            step: 0.05
+                        )
+                        .frame(minWidth: 180)
+                        Text("\(Int((store.quickAppShelfPresentation.heightFraction * 100).rounded()))%")
+                            .monospacedDigit()
+                            .frame(width: 42, alignment: .trailing)
+                    }
+                }
+
+                Toggle(
+                    "Animate opening and closing",
+                    isOn: Binding(
+                        get: { store.quickAppShelfPresentation.isAnimationEnabled },
+                        set: { store.setDropDownAppAnimationEnabled($0) }
+                    )
+                )
+
+                if store.quickAppShelfPresentation.direction == .top {
+                    Label(
+                        "Top opens by resizing the window. Choose another edge if an app does not resize smoothly.",
+                        systemImage: "info.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Presentation")
+            } footer: {
+                Text("These settings apply to every app in the shelf for the \(store.activeProfile.name) profile. The visible count is a maximum; WindowRanger does not launch other apps just to fill it.")
+            }
+
+            Section {
+                if store.quickApps.isEmpty {
+                    ContentUnavailableView(
+                        "No Quick Apps",
+                        systemImage: "rectangle.stack.badge.play",
+                        description: Text("Add up to four apps, then arrange the order used when cycling the shelf.")
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                } else {
+                    ForEach(Array(store.quickApps.enumerated()), id: \.element.bundleIdentifier) { index, app in
+                        HStack(spacing: 12) {
+                            Image(nsImage: appIcon(bundleIdentifier: app.bundleIdentifier))
+                                .resizable()
+                                .frame(width: 30, height: 30)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(app.displayName).fontWeight(.medium)
+                                Text("Shelf position \(index + 1)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button {
+                                store.moveQuickApps(from: IndexSet(integer: index), to: index - 1)
+                            } label: {
+                                Image(systemName: "chevron.up")
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(index == 0)
+                            .help("Move \(app.displayName) up")
+
+                            Button {
+                                store.moveQuickApps(from: IndexSet(integer: index), to: index + 2)
+                            } label: {
+                                Image(systemName: "chevron.down")
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(index == store.quickApps.count - 1)
+                            .help("Move \(app.displayName) down")
+
+                            Button(role: .destructive) {
+                                store.removeQuickApp(at: index)
+                            } label: {
+                                Image(systemName: "minus.circle")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Remove \(app.displayName) from the shelf")
+                        }
+                    }
+                }
+
+                Button {
+                    showsAppPicker = true
+                } label: {
+                    Label("Add Quick App", systemImage: "plus")
+                }
+                .disabled(store.quickApps.count >= QuickAppShelfPolicy.maximumCount)
+            } header: {
+                HStack {
+                    Text("Apps")
+                    Spacer()
+                    Text("\(store.quickApps.count) of \(QuickAppShelfPolicy.maximumCount)")
+                        .foregroundStyle(.secondary)
+                        .textCase(nil)
+                }
+            } footer: {
+                Text("The regular shortcut toggles the most recently used app. The cycle shortcuts follow this order while the shelf is open.")
+            }
+
+            Section("Shortcut") {
+                LabeledContent("Show or hide shelf") {
+                    ShortcutCaps(keys: store.hotKeyConfiguration.chord(for: .toggleDropDownApp).keyCaps)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .sheet(isPresented: $showsAppPicker) {
+            InstalledApplicationPicker(
+                excludedBundleIdentifiers: Set(
+                    store.appRules.map { $0.bundleIdentifier.lowercased() }
+                        + store.quickApps.map { $0.bundleIdentifier.lowercased() }
+                )
+            ) { application in
+                store.setDropDownApp(application)
+                showsAppPicker = false
+            }
+        }
+    }
+
+    private func appIcon(bundleIdentifier: String) -> NSImage {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
+            .map { NSWorkspace.shared.icon(forFile: $0.path) }
+            ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)
+            ?? NSImage()
+    }
+}
+
 private enum ApplicationConfigurationMode: String, CaseIterable, Identifiable {
     case appRules
     case quickApp
@@ -2233,7 +2425,6 @@ private struct AppRulesSettingsView: View {
     @State private var selectedRuleID: AppRule.ID?
     @State private var showsCompactEditor = false
     @State private var pendingQuickAppRule: AppRule?
-    @State private var pendingAppRulesConversion: DropDownAppConfiguration?
 
     var body: some View {
         GeometryReader { geometry in
@@ -2241,17 +2432,16 @@ private struct AppRulesSettingsView: View {
         }
         .onAppear { reconcileSelection() }
         .onChange(of: store.appRules.map(\.id)) { _, _ in reconcileSelection() }
-        .onChange(of: store.dropDownApp?.bundleIdentifier) { _, _ in reconcileSelection() }
         .confirmationDialog(
-            pendingQuickAppRule.map { "Make \($0.displayName) the Quick App?" }
-                ?? "Make this the Quick App?",
+            pendingQuickAppRule.map { "Add \($0.displayName) to Quick Apps?" }
+                ?? "Add this application to Quick Apps?",
             isPresented: Binding(
                 get: { pendingQuickAppRule != nil },
                 set: { if !$0 { pendingQuickAppRule = nil } }
             ),
             titleVisibility: .visible
         ) {
-            Button("Make Quick App", role: .destructive) {
+            Button("Add to Quick Apps", role: .destructive) {
                 if let rule = pendingQuickAppRule {
                     store.convertAppRuleToQuickApp(bundleIdentifier: rule.bundleIdentifier)
                     selectedRuleID = rule.id
@@ -2260,34 +2450,13 @@ private struct AppRulesSettingsView: View {
             }
             Button("Cancel", role: .cancel) { pendingQuickAppRule = nil }
         } message: {
-            if store.dropDownApp == nil {
-                Text("Its saved workspace and window rules will be removed.")
-            } else {
-                Text("Its saved workspace and window rules will be removed, and \(store.dropDownApp?.displayName ?? "the current app") will stop being the Quick App.")
-            }
-        }
-        .confirmationDialog(
-            pendingAppRulesConversion.map { "Use \($0.displayName) with App Rules?" }
-                ?? "Use this application with App Rules?",
-            isPresented: Binding(
-                get: { pendingAppRulesConversion != nil },
-                set: { if !$0 { pendingAppRulesConversion = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Change to App Rules", role: .destructive) {
-                store.convertQuickAppToAppRule()
-                pendingAppRulesConversion = nil
-            }
-            Button("Cancel", role: .cancel) { pendingAppRulesConversion = nil }
-        } message: {
-            Text("Its Quick App size, direction, and animation settings will be removed. You can then choose its normal workspace and window rules.")
+            Text("Its saved workspace and window rules will be removed. Existing Quick Apps will stay in the shelf.")
         }
         .sheet(isPresented: $showsAppPicker) {
             InstalledApplicationPicker(
                 excludedBundleIdentifiers: Set(
                     store.appRules.map { $0.bundleIdentifier.lowercased() }
-                        + [store.dropDownApp?.bundleIdentifier.lowercased()].compactMap { $0 }
+                        + store.quickApps.map { $0.bundleIdentifier.lowercased() }
                 )
             ) { application in
                 addRule(for: application)
@@ -2329,7 +2498,7 @@ private struct AppRulesSettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Applications")
                     .font(.headline)
-                Text("Choose how each app works in \(store.activeProfile.name).")
+                Text("Choose workspace and layout rules for apps in \(store.activeProfile.name).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -2338,13 +2507,15 @@ private struct AppRulesSettingsView: View {
 
             Divider()
 
-            if store.appRules.isEmpty && store.dropDownApp == nil {
+            if store.appRules.isEmpty {
                 ContentUnavailableView {
                     Label("No Applications Yet", systemImage: "app.badge")
                 } description: {
-                    Text("Add an app, then choose App Rules or Quick App.")
+                    Text("Add an app to route its windows or change how it participates in layouts.")
                 } actions: {
-                    Button("Add Application") { showsAppPicker = true }
+                    Button("Add Application") {
+                        showsAppPicker = true
+                    }
                         .buttonStyle(.borderedProminent)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2356,22 +2527,6 @@ private struct AppRulesSettingsView: View {
                         if showsDisclosure, selection != nil { showsCompactEditor = true }
                     }
                 )) {
-                    if let quickApp = store.dropDownApp {
-                        quickAppListRow(quickApp, showsDisclosure: showsDisclosure)
-                            .tag(quickApp.bundleIdentifier.lowercased())
-                            .onTapGesture {
-                                selectedRuleID = quickApp.bundleIdentifier.lowercased()
-                                if showsDisclosure { showsCompactEditor = true }
-                            }
-                            .contextMenu {
-                                Button("Change to App Rules") {
-                                    pendingAppRulesConversion = quickApp
-                                }
-                                Button("Stop Using as Quick App", role: .destructive) {
-                                    store.removeDropDownApp()
-                                }
-                            }
-                    }
                     ForEach(store.appRules) { rule in
                         ruleListRow(rule, showsDisclosure: showsDisclosure)
                             .tag(rule.id)
@@ -2380,7 +2535,7 @@ private struct AppRulesSettingsView: View {
                                 if showsDisclosure { showsCompactEditor = true }
                             }
                             .contextMenu {
-                                Button("Make Quick App…") {
+                                Button("Add to Quick Apps…") {
                                     pendingQuickAppRule = rule
                                 }
                                 Divider()
@@ -2402,9 +2557,15 @@ private struct AppRulesSettingsView: View {
             Divider()
 
             HStack(spacing: 8) {
-                SettingsMasterActionButton(systemImage: "plus") { showsAppPicker = true }
-                .help("Add application")
-                .accessibilityLabel("Add application")
+                Button {
+                    showsAppPicker = true
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .help("Add an application rule")
+                .accessibilityLabel("Add application rule")
 
                 SettingsMasterActionButton(systemImage: "trash", role: .destructive) {
                     removeSelectedRule()
@@ -2441,15 +2602,7 @@ private struct AppRulesSettingsView: View {
 
     @ViewBuilder
     private var ruleInspectorColumn: some View {
-        if selectedIsQuickApp, store.dropDownApp != nil {
-            QuickAppEditor(
-                store: store,
-                changeToAppRules: {
-                    pendingAppRulesConversion = store.dropDownApp
-                }
-            )
-                .id("quick-app-\(store.dropDownApp?.bundleIdentifier ?? "none")")
-        } else if let rule = selectedRule {
+        if let rule = selectedRule {
             AppRuleEditor(
                 store: store,
                 rule: Binding(
@@ -2506,70 +2659,23 @@ private struct AppRulesSettingsView: View {
         .accessibilityHint(showsDisclosure ? "Opens application rule details" : "")
     }
 
-    private func quickAppListRow(
-        _ configuration: DropDownAppConfiguration,
-        showsDisclosure: Bool
-    ) -> some View {
-        HStack(spacing: 10) {
-            Image(nsImage: appIcon(bundleIdentifier: configuration.bundleIdentifier))
-                .resizable()
-                .frame(width: 28, height: 28)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(configuration.displayName)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-                Text("Quick App · \(configuration.direction.title) · \(Int((configuration.heightFraction * 100).rounded()))%")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            if showsDisclosure {
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
-            }
-        }
-        .padding(.vertical, 3)
-        .frame(minHeight: SettingsWindowMetrics.masterRowMinimumHeight)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityHint(showsDisclosure ? "Opens Quick App details" : "")
-    }
-
     private var selectedRule: AppRule? {
         selectedRuleID.flatMap { id in store.appRules.first { $0.id == id } }
     }
 
-    private var selectedIsQuickApp: Bool {
-        guard let selectedRuleID, let bundleIdentifier = store.dropDownApp?.bundleIdentifier else {
-            return false
-        }
-        return selectedRuleID == bundleIdentifier.lowercased()
-    }
-
     private var selectedDisplayName: String? {
-        selectedIsQuickApp ? store.dropDownApp?.displayName : selectedRule?.displayName
+        selectedRule?.displayName
     }
 
     private func reconcileSelection() {
         if let selectedRuleID,
-           store.appRules.contains(where: { $0.id == selectedRuleID })
-            || store.dropDownApp?.bundleIdentifier.lowercased() == selectedRuleID {
+           store.appRules.contains(where: { $0.id == selectedRuleID }) {
             return
         }
-        selectedRuleID = store.dropDownApp?.bundleIdentifier.lowercased() ?? store.appRules.first?.id
+        selectedRuleID = store.appRules.first?.id
     }
 
     private func removeSelectedRule() {
-        if selectedIsQuickApp {
-            store.removeDropDownApp()
-            selectedRuleID = store.appRules.first?.id
-            if selectedRuleID == nil { showsCompactEditor = false }
-            return
-        }
         guard let selectedRule else { return }
         let ids = store.appRules.map(\.id)
         let index = ids.firstIndex(of: selectedRule.id) ?? 0
@@ -2581,7 +2687,7 @@ private struct AppRulesSettingsView: View {
             ids[index - 1]
         }
         store.removeAppRule(bundleIdentifier: selectedRule.bundleIdentifier)
-        selectedRuleID = nextID ?? store.dropDownApp?.bundleIdentifier.lowercased()
+        selectedRuleID = nextID
         if selectedRuleID == nil { showsCompactEditor = false }
     }
 
@@ -2617,124 +2723,6 @@ private struct AppRulesSettingsView: View {
     }
 
     private func appIcon(bundleIdentifier: String) -> NSImage {
-        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
-            .map { NSWorkspace.shared.icon(forFile: $0.path) }
-            ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)
-            ?? NSImage()
-    }
-}
-
-private struct QuickAppEditor: View {
-    @ObservedObject var store: SettingsStore
-    let changeToAppRules: () -> Void
-
-    var body: some View {
-        Form {
-            if let configuration = store.dropDownApp {
-                Section {
-                    HStack(spacing: 12) {
-                        Image(nsImage: icon(bundleIdentifier: configuration.bundleIdentifier))
-                            .resizable()
-                            .frame(width: 36, height: 36)
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 7) {
-                                Text(configuration.displayName).font(.headline)
-                                Label("Quick App", systemImage: "bolt.fill")
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(.quaternary, in: Capsule())
-                            }
-                            Text(configuration.bundleIdentifier)
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
-                        Spacer()
-                    }
-                    LabeledContent("Mode") {
-                        Picker(
-                            "Mode",
-                            selection: Binding(
-                                get: { ApplicationConfigurationMode.quickApp },
-                                set: { mode in
-                                    if mode == .appRules { changeToAppRules() }
-                                }
-                            )
-                        ) {
-                            ForEach(ApplicationConfigurationMode.allCases) { mode in
-                                Text(mode.title).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 220)
-                    }
-                    LabeledContent("Global shortcut") {
-                        ShortcutCaps(
-                            keys: store.hotKeyConfiguration
-                                .chord(for: .toggleDropDownApp).keyCaps
-                        )
-                    }
-                    Text("Press the shortcut to show this app above your current work. It hides when you press it again or focus another app.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Presentation") {
-                    Picker(
-                        "Open from",
-                        selection: Binding(
-                            get: { configuration.direction },
-                            set: { store.setDropDownAppDirection($0) }
-                        )
-                    ) {
-                        ForEach(DropDownAppDirection.allCases) { direction in
-                            Text(direction.title).tag(direction)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    LabeledContent(configuration.direction.sizeLabel) {
-                        HStack(spacing: 10) {
-                            Slider(
-                                value: Binding(
-                                    get: { configuration.heightFraction },
-                                    set: { store.setDropDownAppHeightFraction($0) }
-                                ),
-                                in: DropDownAppConfiguration.minimumHeightFraction
-                                    ... DropDownAppConfiguration.maximumHeightFraction,
-                                step: 0.05
-                            )
-                            .frame(minWidth: 150)
-                            Text("\(Int((configuration.heightFraction * 100).rounded()))%")
-                                .monospacedDigit()
-                                .frame(width: 42, alignment: .trailing)
-                        }
-                    }
-                    Toggle(
-                        "Animate opening and closing",
-                        isOn: Binding(
-                            get: { configuration.isAnimationEnabled },
-                            set: { store.setDropDownAppAnimationEnabled($0) }
-                        )
-                    )
-                    if configuration.direction == .top {
-                        Label(
-                            "Top opens by resizing the window. Choose another edge if this app does not resize smoothly.",
-                            systemImage: "info.circle"
-                        )
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    private func icon(bundleIdentifier: String) -> NSImage {
         NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
             .map { NSWorkspace.shared.icon(forFile: $0.path) }
             ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)
@@ -3070,7 +3058,7 @@ private struct ShortcutSettingsView: View {
 
     private let workspaceActions: [ConfigurableHotKeyAction] = [
         .previousWorkspace, .nextWorkspace, .backAndForthWorkspace, .moveWorkspaceToNextDisplay,
-        .toggleDropDownApp,
+        .toggleDropDownApp, .cycleQuickApp,
     ]
     private let focusActions: [ConfigurableHotKeyAction] = [
         .previousWindow, .nextWindow, .focusLeft, .focusDown, .focusUp, .focusRight,
@@ -3165,7 +3153,7 @@ private struct ShortcutSettingsView: View {
     }
 
     private func shortcutRow(_ action: ConfigurableHotKeyAction) -> some View {
-        let chord = store.hotKeyConfiguration.chord(for: action)
+        let chord = store.hotKeyConfiguration.optionalChord(for: action)
         return LabeledContent {
             HStack(spacing: 8) {
                 Button {
@@ -3174,8 +3162,12 @@ private struct ShortcutSettingsView: View {
                     if recordingAction == action {
                         Text("Press shortcut…")
                             .frame(minWidth: 110)
-                    } else {
+                    } else if let chord {
                         ShortcutCaps(keys: chord.keyCaps)
+                            .frame(minWidth: 110)
+                    } else {
+                        Text("Not set")
+                            .foregroundStyle(.secondary)
                             .frame(minWidth: 110)
                     }
                 }
@@ -3189,7 +3181,7 @@ private struct ShortcutSettingsView: View {
                 } label: {
                     Image(systemName: "arrow.counterclockwise")
                 }
-                .disabled(store.hotKeyConfiguration.isUsingDefault(for: action))
+                .disabled(!store.hotKeyConfiguration.hasExplicitChord(for: action))
                 .help("Reset \(action.title)")
                 .accessibilityLabel("Reset \(action.title)")
             }
@@ -3359,7 +3351,7 @@ private struct RadialMenuSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text("Press the global shortcut to open the searchable palette. The position icon appears only when the focused window has truthful placements. Click it, or press Right Arrow with an empty search, to expand the Placement Halo without closing the palette.")
+                Text("Press the global shortcut to open the searchable palette. Quick Actions keep the current workspace layout above the command list and show Place focused window only when truthful placements exist. Choose a layout segment or click Place focused window; press Up from the first command or Tab to enter the rows. Typing hides Quick Actions until the search is cleared.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -3371,7 +3363,7 @@ private struct RadialMenuSettingsView: View {
                 Text("The Placement Halo and Placement Wheel contain only truthful positions for the focused window: Freeform halves and quarters or Tiled compass placement. Layout changes and Accordion resizing stay in the searchable palette.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("The halo expands around the palette icon and keeps search open. Arrow keys move around it, Return places the window, and Escape returns to palette search. A Globe/Fn hold opens the same choices at the pointer; move across the ring and release to commit.")
+                Text("Return on Place focused window opens the halo without closing the palette. Arrow keys move around it, Return places the window, and Escape returns to palette search. A Globe/Fn hold opens the same choices at the pointer; move across the ring and release to commit.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

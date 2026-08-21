@@ -112,20 +112,21 @@ smallest useful outcome and acceptance boundary.
   or retargets the external window merely because its search field became key. A command restores
   the prior application and revalidates the captured session before dispatch. The Placement Halo
   and Globe/Fn wheel expose only truthful Freeform or Tiled positions in stable compass order;
-  the halo control is omitted when none exist. With an empty query, Right Arrow enters the halo,
-  arrows traverse its available positions, Return commits, and Escape restores palette search.
-  Layout, Accordion resize, and all other actions remain searchable. Existing shortcut
-  persistence and legacy wheel preferences remain migration-safe. Focused tests, the complete
-  non-hosted suite, an unsigned app build, and signed live use with real windows are required.
+  the placement entry is omitted when none exist, arrows traverse available positions, Return
+  commits, and Escape restores palette search. Layout, Accordion resize, and all other actions
+  remain searchable. WR-065 owns the current compact Quick Actions entry and keyboard path. Existing
+  shortcut persistence and legacy wheel preferences remain migration-safe. Focused tests, the
+  complete non-hosted suite, an unsigned app build, and signed live use with real windows are
+  required.
 - **Implemented:** Added a searchable key panel backed by the established contextual catalogue,
   configurable shortcut registry, and shared typed dispatcher. The existing Control-Option-Space
   default now toggles the palette. It captures the external focus/workspace/display/profile token
   before activation, restores the previous application before selection, and rejects stale actions.
   The old renderer is retained as a one-level, position-only Placement Wheel for optional Globe/Fn
-  hold. The search-field control is now an icon-only Placement Halo anchored around that control;
-  opening or collapsing it keeps the key palette and its query alive. Settings describes this
-  hybrid and no longer exposes the obsolete broad-wheel activation style or catalogue editor;
-  legacy values remain decodable.
+  hold. The original icon-only search-field control expanded a Placement Halo while keeping the key
+  palette and its query alive; WR-065 later superseded that entry surface with a conditional stacked
+  Quick Action. Settings no longer exposes the obsolete broad-wheel activation style or catalogue
+  editor; legacy values remain decodable.
 - **Automated evidence:** Test isolation, six focused Command Palette tests, the owned-focus-anchor
   regression, the production Placement Halo offscreen render, and all 610 non-hosted tests pass.
   Coverage includes contextual/global command composition, stable grouped search order,
@@ -166,6 +167,213 @@ smallest useful outcome and acceptance boundary.
   accepted flow keeps the palette open while the halo expands and returns Escape focus to search.
 
 ## Inbox
+
+### WR-065 — Put the current workspace layout at the top of Command Palette
+
+- **Type:** Command Palette interaction improvement
+- **Priority:** P1
+- **Status:** Up-to-Quick-Actions and search-hiding follow-up installed; signed live keyboard and
+  pointer validation pending.
+- **User-observed:** Removing the Command Wheel also removed the easiest discoverable way to switch
+  a workspace back to Freeform. Tiled and Accordion have default shortcuts, but Freeform does not.
+- **Installed regression observed:** The first signed candidate changes to Freeform and immediately
+  exposes its valid Placement Halo, but choosing a position does nothing until the palette is closed
+  and reopened. Diagnostics confirm the layout and halo succeed, then the placement is rejected as
+  `stale-context`; reopening captures the settled post-layout token and the same placement succeeds.
+- **Second installed regression observed:** The corrected candidate reaches placement dispatch, but
+  an open Quick App Shelf can restore its selected shelf window before the queued placement commits.
+  Diagnostics then show `freeform-placement-rejected` with `runtime-context-changed`. A rapid series
+  of layout choices can also leave the visible placement command carrying an older token even when
+  the controller's surrounding context has already settled.
+- **Third installed regression observed:** The second-correction candidate still rejects placement
+  as `stale-context`. Fresh diagnostics show palette dismissal briefly reports no focused AX window
+  before revalidation, so the validation request loses the preserved managed anchor before it can
+  dispatch. The same session also records a separate, genuine `toggle-drop-down-app` hotkey event
+  while the palette is open; the unexpected Shelf presentation did not originate from palette
+  selection or placement dispatch.
+- **Escape regression observed:** The latest installed candidate fixes immediate post-layout
+  placement, but Escape can bring a retained Shelf window to the foreground even when another app
+  preceded the palette. Diagnostics show `presented-shelf-focus-restored` selecting the startup-
+  retained Ghostty session. Shelf restoration must require the preceding application's PID to match
+  the presented Shelf window; otherwise dismissal returns to the actual preceding app.
+- **Smallest useful outcome:** Show a compact Quick Actions block directly beneath Command Palette
+  search. Stack the current workspace's Freeform/Tiled/Accordion control above a focused-window
+  placement row, keeping their different scopes explicit and the command list primary. Omit the
+  placement row when no truthful placement exists. Tab or Up from the first command enters Quick
+  Actions; Up/Down moves between rows, Left/Right changes layout only on the workspace row, Return
+  opens placement, and Escape returns to command search/results. Starting a search hides Quick
+  Actions and an open Halo until the query is cleared.
+- **Terminology boundary:** Use **Freeform**, not Floating. Freeform is the workspace layout;
+  Floating remains the separate per-window override.
+- **Acceptance:** Quick Actions target the palette's current interaction workspace and focused
+  window without conflating them. Pointer and keyboard paths remain available, command-result
+  Up/Down behavior remains unchanged, typing resumes filtering, and unavailable placement is absent
+  rather than disabled. Layout dispatches through the shared typed command path, remains usable
+  through repeated changes, refreshes palette context after each accepted change, and still rejects
+  or closes on an unrelated stale context. Accessibility labels, diagnostics, tests, the production
+  offscreen render, and the universal app build must pass before signed live validation.
+- **Implemented:** A compact Quick Actions block stacks the current interaction workspace's
+  Freeform/Tiled/Accordion control above a conditional Place focused window row. Tab or Up from the
+  first command enters the block at the appropriate edge; Up/Down moves between rows, Left/Right
+  changes layout only on the workspace row, and Return opens placement from its row. Escape restores
+  command handling. A nonempty query hides Quick Actions and collapses an open Halo until cleared.
+  Pointer selection and keyboard changes keep the palette open, while an unavailable placement row
+  is omitted. Accepted layout changes refresh the palette's
+  captured context, while unrelated workspace/context changes retain the existing fail-closed
+  dismissal behavior. A post-layout action is checked against a fresh engine context and placement
+  tokens are rebound only when the exact window, workspace, layout, display topology, and profile
+  remain unchanged. Placement commits are enqueued before palette dismissal restores Quick App or
+  fallback focus. The latest correction validates and queues placement while the palette's preserved
+  target is still authoritative, treats a transient nil AX focus as palette-owned, then dismisses
+  the palette and restores focus in serial order. Escape restores a presented Shelf window only
+  when its application genuinely preceded the palette, not merely because a Shelf session remains
+  retained.
+- **Automated evidence:** The complete 643-test non-hosted suite passes with focused Quick Action
+  availability/navigation, Up-from-first-result entry, nonempty-search hiding, layout-only
+  horizontal movement, settled/older-token rebinding,
+  changed-window/layout rejection, deferred placement focus restoration, palette-owned transient
+  nil-focus coverage, and preceding-app-gated Shelf
+  restoration, alongside test-isolation, project-regeneration, shell-syntax, and diff checks. The
+  production-view offscreen snapshots render available, omitted-placement, and placement-only Quick
+  Actions, and the expanded Placement Halo follows its row without obscuring the layout control. The
+  actual unsigned Debug app target builds successfully as a universal `x86_64 arm64` binary.
+- **Current installed evidence:** With explicit maintainer approval, the compact Quick Actions
+  signed universal Debug candidate `9828628787b7-dirty` is installed and running from
+  `/Applications/WindowRanger.app` as process `84435`. The built and installed executable, debug
+  dylib, and preview dylib match exactly; the Apple Development signature, Team ID `44NAD22AK6`,
+  canonical bundle identifier, embedded source marker, `x86_64 arm64` architectures, running path,
+  and CDHash `28f07ff8da7488d3266c086bc98352d3908a42f5` were verified. The immediately
+  preceding candidate remains recoverable at `/Applications/.WindowRanger.previous` without an
+  `.app` suffix. Live validation of Up-from-first-result and search-hiding behavior remains pending.
+- **Sixth superseded installed evidence:** With explicit maintainer approval, the first compact
+  Quick Actions signed universal Debug candidate `9828628787b7-dirty` was installed and running
+  from `/Applications/WindowRanger.app` as process `80874`. The built and installed executable,
+  debug dylib, and preview dylib matched exactly; the Apple Development signature, Team ID
+  `44NAD22AK6`, canonical bundle identifier, embedded source marker, `x86_64 arm64` architectures,
+  running path, and CDHash `a13376eadc3cf5d11ccfac1472177cff15b438b4` were verified. This
+  candidate predated the Up-to-Quick-Actions and search-hiding follow-up.
+- **Fifth superseded installed evidence:** With explicit maintainer approval, the Escape-correction signed
+  universal Debug candidate `9828628787b7-dirty` is installed and running from
+  `/Applications/WindowRanger.app`. The built and installed executable, debug dylib, and preview
+  dylib match exactly; the Apple Development signature, Team ID `44NAD22AK6`, canonical bundle
+  identifier, embedded source marker, both architectures, running path, and CDHash
+  `dabcc8d451bbadf7328d96d2a1879e307d3966d6` were verified. The immediately preceding candidate
+  remains recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Fourth superseded installed evidence:** With explicit maintainer approval, the placement-
+  correction signed universal Debug candidate `9828628787b7-dirty` is installed and running from
+  `/Applications/WindowRanger.app`. The built and installed executable, debug dylib, and preview
+  dylib match exactly; the Apple Development signature, Team ID `44NAD22AK6`, canonical bundle
+  identifier, embedded source marker, both architectures, running path, and CDHash
+  `a47a5af7464f99fc548a24c80195b3b09d002b1b` were verified. The immediately preceding candidate
+  remains recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix. Live use
+  accepts immediate post-layout placement but exposed the Escape Shelf restoration regression, so
+  this candidate is not acceptance evidence for the Escape correction.
+- **Third superseded installed evidence:** With explicit maintainer approval, the second-correction
+  signed universal Debug candidate `9828628787b7-dirty` is installed and running from
+  `/Applications/WindowRanger.app`. The built and installed executable, debug dylib, and preview
+  dylib match exactly; the Apple Development signature, Team ID `44NAD22AK6`, canonical bundle
+  identifier, embedded source marker, both architectures, running path, and CDHash
+  `041e8ad33b1c4cc96f9dbd200f1906c9cb0d5543` were verified. The immediately preceding candidate
+  remains recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix. Live use
+  exposed the transient nil-focus rejection described above, so this candidate is not acceptance
+  evidence for the latest correction.
+- **Second superseded installed evidence:** With explicit maintainer approval, the corrected signed
+  universal Debug candidate `9828628787b7-dirty` is installed and running from
+  `/Applications/WindowRanger.app`. The built and installed executable and debug dylib match exactly;
+  the Apple Development signature, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source
+  marker, both architectures, running path, and CDHash
+  `fd584316919bbb2760a2f8fbb2ce65bbbe257a43` were verified. The superseded signed candidate is
+  retained at `/Applications/.WindowRanger.previous` without an `.app` suffix. Live diagnostics show
+  that this candidate can dispatch placement and still lose its anchor when shelf focus is restored
+  first, so it is not acceptance evidence for the second correction.
+- **Superseded installed evidence:** With explicit maintainer approval, the first signed universal
+  Debug candidate `9828628787b7-dirty` is installed and running from
+  `/Applications/WindowRanger.app`. The built and installed executable and debug dylib match exactly;
+  the Apple Development signature, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source
+  marker, both architectures, running path, and CDHash
+  `aec1bef572f7e3477526921aac988f515499c3a7` were verified. The previous daily copy remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix. Live use exposed
+  the stale post-layout placement token described above, so this candidate is not acceptance
+  evidence for the correction.
+- **Live validation remaining:** In the signed installed app, verify pointer selection plus entry,
+  repeated changes, and exit with Up, Left/Right, Down, Return, and Escape across Freeform, Tiled,
+  and Accordion workspaces. Confirm the palette stays open, its selected segment follows accepted
+  engine state, an immediately selected Freeform/Tiled placement runs without reopening, results
+  remain usable, and an external workspace/context change still closes it.
+
+### WR-063 — Give Quick App Shelf its own shared Settings section
+
+- **Type:** Settings and profile-model change
+- **Priority:** P1
+- **Status:** Live validation
+- **Requested:** 21 August 2026.
+- **Smallest useful outcome:** Move Quick App Shelf out of the per-application inspector into its
+  own Settings sidebar destination. The shelf owns edge, size, and animation once per profile;
+  assigned apps retain only stable bundle identity, display name, and order.
+- **Migration boundary:** Existing profiles deterministically adopt the first configured entry's
+  presentation values as the shared shelf settings. Legacy single-Quick-App profiles retain their
+  exact behavior. Machine-local selected identity never influences synced migration.
+- **Acceptance:** Add, remove, and reorder shelf apps in the dedicated section; no app row exposes
+  contradictory presentation controls. Profile clone, export/import, iCloud validation, legacy
+  decoding, and Settings search preserve or discover the shared shelf configuration. Automated
+  tests and a universal app build pass before signed live validation.
+- **Implemented:** Quick App Shelf is now a dedicated Settings destination. Edge, size, and
+  animation are one profile-owned presentation applied uniformly to every ordered shelf entry;
+  Applications now lists only normal App Rules. Existing profiles migrate the first configured
+  entry's presentation, and portable transfer plus iCloud validation preserve the shared setting.
+- **Automated evidence:** The complete 630-test non-hosted suite, test-isolation check, project
+  regeneration, shell syntax checks, and an unsigned universal Debug app build pass. Signed-app
+  visual and interaction validation remains.
+- **Installed evidence:** With explicit maintainer approval, the signed universal Debug candidate
+  for `9828628787b7-dirty` is installed and running from `/Applications/WindowRanger.app`. The built
+  and installed executables match exactly, and the Apple Development signature, Team ID
+  `44NAD22AK6`, bundle identity, embedded revision, both architectures, running path, and CDHash
+  `3c4b90d922bd58d588cb00895a5607c1ada81218` were verified. Dedicated Settings layout and live
+  profile migration/interaction remain for maintainer validation.
+
+### WR-064 — Multi-window Quick App Shelf presentation
+
+- **Type:** Feature / interaction design
+- **Priority:** P1
+- **Status:** Implementation and automated verification complete; signed live validation pending.
+- **Requested:** 21 August 2026.
+- **Direction:** Add shelf-owned Accordion and Carousel presentation styles plus a bounded visible
+  app count. Cycling changes the selected entry while preserving the shelf as one coordinated
+  presentation group.
+- **Semantics:** Accordion overlaps the visible entries inside the shelf bounds with the
+  selected window foremost and a fixed reachable edge for its neighbours. Carousel lays the visible
+  entries out as non-overlapping cards along the edge's cross-axis, centred around the selected
+  entry. The visible count is capped by the four-entry shelf.
+- **Decision:** On 21 August 2026, the maintainer chose the non-launching option: visible count is a
+  maximum over configured apps that already expose one unambiguous available window. Opening or
+  cycling may still launch the explicitly selected app through the existing bounded path, but never
+  launches neighbours merely to fill the group. Proceed with the proposed Accordion overlap and
+  non-overlapping Carousel geometry.
+- **Acceptance boundary after decision:** Exact ownership remains per window; ambiguous apps fail
+  closed without disturbing valid neighbours; focus, palette cycling, application Hide ownership,
+  profile changes, native-tab replacement, sleep/wake, and removal restore every member safely.
+- **Implemented:** The dedicated shelf presentation now includes Carousel and Accordion styles plus
+  a one-to-four visible maximum. The engine resolves only already available, unambiguous neighbour
+  windows, gives each member exact session and confirmed Hide/Unhide ownership, lays the group out
+  within focus-border-aware bounds, and keeps the selected window raised. Choosing or cycling to an
+  already visible member promotes it without collapsing the shelf; moving outside the visible group
+  safely transitions to the new selection. Legacy profiles default to the existing one-window
+  Carousel behavior, and profile clone/export/import/iCloud paths preserve and validate both fields.
+- **Automated evidence:** The complete 633-test non-hosted suite passes alongside test-isolation,
+  project-regeneration, shell-syntax, and diff checks. Focused coverage exercises group membership,
+  both geometries, Settings persistence/search, legacy defaults, transfer round-trip, and invalid
+  synced/imported counts. The unsigned Debug app builds successfully as a universal `x86_64 arm64`
+  binary. Signed multi-app interaction and lifecycle validation remain pending.
+- **Installed evidence:** With explicit maintainer approval, the signed universal Debug candidate
+  `9828628787b7-dirty` is installed and running from `/Applications/WindowRanger.app`. The built and
+  installed executable and debug dylib match exactly; the Apple Development signature, Team ID
+  `44NAD22AK6`, canonical bundle identifier, embedded source marker, both architectures, running
+  path, and CDHash `c28d7a9b89ad18ce0f29d3786d50dd897f4946fe` were verified. The previous
+  daily copy remains recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Live validation remaining:** Exercise both styles at all four edges with two to four shelf apps;
+  verify visible and off-group cycling, palette focus retention, ambiguous neighbours, a closed
+  selected app, focus loss, style/count changes while open, profile changes, native-tab replacement,
+  sleep/wake, focus-border toggling, and safe restoration before moving this item to Done.
 
 ### WR-057 — Preserve each window through partial post-login recovery
 
@@ -294,7 +502,8 @@ smallest useful outcome and acceptance boundary.
   complete non-hosted suite and universal Debug build pass; final behavior remains in Live validation
   until a signed build is exercised with a real assigned app on at least two profiles.
 - **Implemented:** Profile storage/clone/transfer, a unified Applications settings list where each
-  bundle has either normal App Rules or the one optional Quick App, explicit confirmed conversion
+  bundle has either normal App Rules or one entry in the ordered Quick App Shelf, explicit confirmed
+  conversion
   between modes, visible list summaries, an intent-led mode selector, shortcut and behavior context,
   a focused Quick App presentation editor, safer destructive actions, profile context, and a useful
   empty state. Application removal uses the one consistent delete control in the Applications list.
@@ -625,6 +834,58 @@ smallest useful outcome and acceptance boundary.
   preview were working or visibly improved, then explicitly closed the pass for merge.
 
 ## Live validation
+
+### WR-061 — Quick App Shelf
+
+- **Type:** Feature / corrective overhaul
+- **Priority:** P1
+- **Status:** Implementation and automated verification complete; signed live validation pending.
+- **Source:** `docs/omarchy-inspired-ideas.md`
+- **User-observed:** The first signed shelf candidate exposed multiple Quick Apps in Settings and the
+  Command Palette, but the feature was only partly functional and did not behave as a coherent
+  shelf. In the corrected candidate, opening the Command Palette still closed a presented shelf
+  entry, and the established Previous/Next Window shortcuts did not traverse an open shelf.
+- **Review evidence:** The superseded implementation had two engine configuration publishers,
+  reordered configured entries to store runtime selection, canceled an unchanged secondary-app
+  launch on publication echo, made three/four-item cycling unstable, allowed transition generations
+  to strand exact sessions, and made palette actions labelled Show toggle. A final independent diff
+  review also found and prompted corrections for repeated cycling during one hide and an inactive
+  shelf entry's native-tab handoff invalidating another entry's active animation.
+- **Implemented:** One stable profile-owned ordered shelf now drives the engine. Per-profile selected
+  identity is machine-local and never reorders synced configuration. Direct palette selection is
+  idempotent Show; the established shortcut is Toggle selected; Previous/Next cycle from the latest
+  desired selection. Launch/show/hide/switch intents are serialized, focus loss during Show queues a
+  hide, screen suspension cancels transient intent while retaining exact recovery ownership, startup
+  ignores persisted non-shelf sessions, and native-tab rebind invalidates animation only for the
+  active or presented entry. Settings provides labelled add choices, visible reordering, per-entry
+  editing/removal, a four-entry cap, and shelf-aware copy. Palette activation now holds an explicit
+  focus lease so an open shelf remains visible; Previous/Next Window route through the shelf while
+  it is presented, palette-owned previews retain keyboard focus, and palette dismissal focuses the
+  currently presented entry.
+- **Safety boundary:** Existing exact-window ownership, launch watchdog, ambiguity rejection,
+  application hide/unhide confirmation, focus, placement, focus-border clearance, lifecycle
+  recovery, and fail-closed admission remain authoritative. The engine never guesses among multiple
+  windows or releases application-hidden ownership without confirmed recovery.
+- **Automated evidence:** Fifteen focused shelf tests cover stable three/four-entry cycling,
+  per-profile selection, legacy migration, persisted exact-session ownership, closed-secondary
+  launch echo, idempotent direct Show, rapid transition policy, repeated in-flight cycling, and
+  cross-entry native-tab handoff, plus palette focus preservation and open-shelf window-cycle
+  routing. Related transfer and iCloud tests reject oversized or duplicate
+  shelf data instead of silently trimming it. `./scripts/verify-local-ci.sh --quick` passes test
+  isolation, script checks, project regeneration, and all 626 non-hosted tests. The actual app target
+  also builds as an unsigned universal arm64/x86_64 Debug app. Final independent review reports no
+  remaining actionable issue in the combined diff.
+- **Live validation remaining:** Validate palette opening and Previous/Next Window shelf previews
+  alongside two profiles, a closed secondary app, repeated cycling/direct selection, focus-loss
+  hide, native-tab replacement, and lock/wake before moving this item to Done.
+- **Current installed candidate:** The signed universal Debug candidate `9828628787b7-dirty` was
+  installed and launched from `/Applications/WindowRanger.app` on 21 August 2026; its bundle
+  identifier, signature, source marker, architectures, and running executable path were verified.
+  After the palette focus-lease correction, a fresh approved install was matched byte-for-byte to
+  the just-built executable before live handoff. User interaction evidence remains pending.
+- **Previous candidate:** The superseded daily copy is retained at the repository-defined
+  non-launchable backup path. Its 619 passing tests did not exercise the failing interaction
+  sequences and are not acceptance evidence for this overhaul.
 
 ### WR-052 — Move the application identity under AppRanger
 
@@ -1073,20 +1334,6 @@ design notes, but every active candidate must map back to a work item here or be
   Resolve Omarchy-inspired workspace personalities through the existing per-workspace layout model:
   Grid/Columns are candidate Tiled presets, while Focus, Presentation, and Transient need explicit
   behavior and lifecycle boundaries rather than a parallel workspace-mode system.
-
-### WR-061 — Quick App Shelf
-
-- **Type:** Feature research
-- **Status:** Needs decision
-- **Source:** `docs/omarchy-inspired-ideas.md`
-- **Current foundation:** `WR-050` supplies one profile-aware Quick App with exact-window ownership,
-  launch, focus, placement, hiding, recovery, and ambiguity handling. The existing menu-bar workspace
-  application shelf is a separate workspace preview and not this feature.
-- **Smallest useful outcome:** A small explicit set of summonable Quick App windows, with the existing
-  shortcut opening the most recently used entry and a discoverable selector/cycle path.
-- **Decision:** Shelf size and profile ownership, exact window versus application fallback, MRU and
-  cycling behavior, add/remove interaction, launch policy, and how restart, tab replacement,
-  ambiguity, sleep, display changes, and focus-border clearance extend from the single Quick App.
 
 ### WR-019 — Separate the local Xcode development identity
 

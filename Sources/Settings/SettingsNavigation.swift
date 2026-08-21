@@ -8,6 +8,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
     case displays
     case layouts
     case appRules
+    case quickAppShelf
     case shortcuts
     case radialMenu
     case diagnostics
@@ -22,6 +23,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
         case .displays: "Displays"
         case .layouts: "Layouts"
         case .appRules: "Applications"
+        case .quickAppShelf: "Quick App Shelf"
         case .shortcuts: "Shortcuts"
         case .radialMenu: "Command Palette"
         case .diagnostics: "Diagnostics"
@@ -36,6 +38,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
         case .displays: "display.2"
         case .layouts: "rectangle.3.group"
         case .appRules: "app.badge.checkmark"
+        case .quickAppShelf: "rectangle.stack.badge.play"
         case .shortcuts: "keyboard"
         case .radialMenu: "magnifyingglass"
         case .diagnostics: "waveform.path.ecg"
@@ -133,6 +136,9 @@ enum SettingsCatalog {
         SettingsSearchEntry(id: "app-float-secondary", category: .appRules, title: "Float secondary windows", description: "Keep conservatively detected dialogs and secondary windows from distorting layouts for a selected app.", synonyms: ["dialog", "sheet", "panel", "APP-05"]),
         SettingsSearchEntry(id: "app-rule-pause", category: .appRules, title: "Pause an application rule", description: "Temporarily stop a rule without deleting its saved actions.", synonyms: ["disable", "resume", "enabled", "BST-RUL-02"]),
         SettingsSearchEntry(id: "app-rule-undo", category: .appRules, title: "Undo an application rule change", description: "Rule edits apply to managed windows immediately and can be reversed with Command-Z.", synonyms: ["revert", "bulk move", "routing", "BST-RUL-04"]),
+        SettingsSearchEntry(id: "quick-app-shelf-apps", category: .quickAppShelf, title: "Quick App Shelf applications", description: "Choose and order up to four applications in this profile's shelf.", synonyms: ["quake", "dropdown", "drop-down", "launcher", "overlay"]),
+        SettingsSearchEntry(id: "quick-app-shelf-presentation", category: .quickAppShelf, title: "Quick App Shelf presentation", description: "Choose the shared edge, size, and animation for every app in the shelf.", synonyms: ["direction", "top", "bottom", "left", "right", "screen height", "screen width"]),
+        SettingsSearchEntry(id: "quick-app-shelf-style", category: .quickAppShelf, title: "Quick App Shelf style and visible count", description: "Show available shelf windows as an overlapping Accordion or a non-overlapping Carousel.", synonyms: ["show at once", "multiple apps", "cards", "overlap", "maximum windows"]),
         SettingsSearchEntry(id: "workspace-shortcuts", category: .workspaces, title: "Workspace shortcuts", description: "Edit each workspace key and review its derived switching and window-moving key bindings.", synonyms: ["hotkeys", "keyboard", "switch to", "move window to"]),
         SettingsSearchEntry(id: "shortcut-recorder", category: .shortcuts, title: "Record and reset shortcuts", description: "Rebind global WindowRanger commands with conflict feedback or restore their defaults.", synonyms: ["customize hotkeys", "keyboard recorder", "key binding", "BST-UX-02"]),
         SettingsSearchEntry(id: "shortcut-conflicts", category: .shortcuts, title: "Repair shortcut conflicts", description: "Identify every command sharing a shortcut or failing macOS registration, then record a replacement or safely reset custom bindings.", synonyms: ["registration failed", "hotkey unavailable", "duplicate shortcut", "REL-01"]),
