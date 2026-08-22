@@ -5,6 +5,10 @@ final class QuickAppShelfTests: XCTestCase {
         DropDownAppConfiguration(bundleIdentifier: bundle, displayName: name)
     }
 
+    private func rect(_ frame: WindowFrame) -> CGRect {
+        CGRect(origin: frame.position, size: frame.size)
+    }
+
     func testNormalizesDuplicatesAndCapsAtFourInOrder() {
         let values = [app("A"), app("b"), app("a"), app("C"), app("D"), app("E")]
         XCTAssertEqual(
@@ -102,6 +106,55 @@ final class QuickAppShelfTests: XCTestCase {
             ).map(\.bundleIdentifier),
             ["C"]
         )
+    }
+
+    func testTwoWindowShelfGeometrySupportsReversalAndWrappingWithoutRelayout() {
+        let container = WindowFrame(
+            position: CGPoint(x: 100, y: 200),
+            size: CGSize(width: 900, height: 600)
+        )
+
+        for style in [
+            QuickAppShelfPresentation.LayoutStyle.carousel,
+            .accordion,
+        ] {
+            let frames = DropDownAppGeometry.groupFrames(
+                in: container,
+                count: 2,
+                style: style,
+                direction: .top
+            )
+            XCTAssertEqual(
+                WorkspaceEngine.directionalCandidateOrder(
+                    from: rect(frames[0]),
+                    direction: .right,
+                    candidates: [DirectionalWindowCandidate(key: "B", frame: rect(frames[1]))]
+                ).first,
+                "B"
+            )
+            XCTAssertEqual(
+                WorkspaceEngine.directionalCandidateOrder(
+                    from: rect(frames[1]),
+                    direction: .left,
+                    candidates: [DirectionalWindowCandidate(key: "A", frame: rect(frames[0]))]
+                ).first,
+                "A"
+            )
+            let wrappedLeft = WorkspaceEngine.wrappingDirectionalCandidateOrder(
+                from: rect(frames[0]),
+                direction: .left,
+                candidates: [DirectionalWindowCandidate(key: "B", frame: rect(frames[1]))]
+            )
+            XCTAssertTrue(wrappedLeft.didWrap)
+            XCTAssertEqual(wrappedLeft.candidates, ["B"])
+            let wrappedRight = WorkspaceEngine.wrappingDirectionalCandidateOrder(
+                from: rect(frames[1]),
+                direction: .right,
+                candidates: [DirectionalWindowCandidate(key: "A", frame: rect(frames[0]))]
+            )
+            XCTAssertTrue(wrappedRight.didWrap)
+            XCTAssertEqual(wrappedRight.candidates, ["A"])
+        }
     }
 
     func testCarouselAndAccordionFramesStayInsideTheShelfContainer() {
@@ -284,6 +337,242 @@ final class QuickAppShelfTests: XCTestCase {
         ))
     }
 
+    func testDirectionalFocusStaysInsidePresentedShelf() {
+        XCTAssertTrue(QuickAppInteractionPolicy.routesDirectionalFocusToShelf(
+            shelfIsPresented: true,
+            presentedWindowCount: 3,
+            transitionInProgress: false
+        ))
+        XCTAssertTrue(QuickAppInteractionPolicy.routesDirectionalFocusToShelf(
+            shelfIsPresented: true,
+            presentedWindowCount: 1,
+            transitionInProgress: false
+        ), "A one-window Shelf must still contain arrow focus instead of escaping behind it.")
+        XCTAssertTrue(QuickAppInteractionPolicy.routesDirectionalFocusToShelf(
+            shelfIsPresented: false,
+            presentedWindowCount: 0,
+            transitionInProgress: true
+        ), "A Shelf transition must contain arrow focus even between presented session states.")
+        XCTAssertFalse(QuickAppInteractionPolicy.routesDirectionalFocusToShelf(
+            shelfIsPresented: false,
+            presentedWindowCount: 3,
+            transitionInProgress: false
+        ))
+        XCTAssertFalse(QuickAppInteractionPolicy.routesDirectionalFocusToShelf(
+            shelfIsPresented: true,
+            presentedWindowCount: 0,
+            transitionInProgress: false
+        ))
+    }
+
+    func testDirectionalFocusUsesOnlyTheShelfLayoutAxis() {
+        for edge in [DropDownAppDirection.top, .bottom] {
+            XCTAssertTrue(QuickAppInteractionPolicy.directionalFocusUsesShelfAxis(
+                .left,
+                shelfDirection: edge
+            ))
+            XCTAssertTrue(QuickAppInteractionPolicy.directionalFocusUsesShelfAxis(
+                .right,
+                shelfDirection: edge
+            ))
+            XCTAssertFalse(QuickAppInteractionPolicy.directionalFocusUsesShelfAxis(
+                .up,
+                shelfDirection: edge
+            ))
+            XCTAssertFalse(QuickAppInteractionPolicy.directionalFocusUsesShelfAxis(
+                .down,
+                shelfDirection: edge
+            ))
+        }
+        for edge in [DropDownAppDirection.left, .right] {
+            XCTAssertTrue(QuickAppInteractionPolicy.directionalFocusUsesShelfAxis(
+                .up,
+                shelfDirection: edge
+            ))
+            XCTAssertTrue(QuickAppInteractionPolicy.directionalFocusUsesShelfAxis(
+                .down,
+                shelfDirection: edge
+            ))
+            XCTAssertFalse(QuickAppInteractionPolicy.directionalFocusUsesShelfAxis(
+                .left,
+                shelfDirection: edge
+            ))
+            XCTAssertFalse(QuickAppInteractionPolicy.directionalFocusUsesShelfAxis(
+                .right,
+                shelfDirection: edge
+            ))
+        }
+    }
+
+    func testShelfCommandAvailabilityMatchesAxisAndIncludesWrappedEdge() {
+        let container = WindowFrame(
+            position: CGPoint(x: 100, y: 200),
+            size: CGSize(width: 900, height: 600)
+        )
+        for edge in [DropDownAppDirection.top, .bottom] {
+            let frames = DropDownAppGeometry.groupFrames(
+                in: container,
+                count: 3,
+                style: .carousel,
+                direction: edge
+            )
+            XCTAssertEqual(
+                WorkspaceEngine.availableShelfFocusDirections(
+                    from: rect(frames[0]),
+                    candidates: [1, 2].map {
+                        DirectionalWindowCandidate(key: $0, frame: rect(frames[$0]))
+                    },
+                    shelfDirection: edge
+                ),
+                [.left, .right],
+                "The palette must advertise both direct and wrapped horizontal Shelf focus."
+            )
+        }
+        for edge in [DropDownAppDirection.left, .right] {
+            let frames = DropDownAppGeometry.groupFrames(
+                in: container,
+                count: 3,
+                style: .accordion,
+                direction: edge
+            )
+            XCTAssertEqual(
+                WorkspaceEngine.availableShelfFocusDirections(
+                    from: rect(frames[0]),
+                    candidates: [1, 2].map {
+                        DirectionalWindowCandidate(key: $0, frame: rect(frames[$0]))
+                    },
+                    shelfDirection: edge
+                ),
+                [.up, .down],
+                "The palette must advertise both direct and wrapped vertical Shelf focus."
+            )
+        }
+        XCTAssertTrue(WorkspaceEngine.availableShelfFocusDirections(
+            from: rect(container),
+            candidates: [DirectionalWindowCandidate<Int>](),
+            shelfDirection: .top
+        ).isEmpty)
+    }
+
+    func testDirectionalFocusUsesPresentedShelfGeometryWithWrapping() {
+        let container = WindowFrame(
+            position: CGPoint(x: 100, y: 200),
+            size: CGSize(width: 900, height: 600)
+        )
+        for style in [
+            QuickAppShelfPresentation.LayoutStyle.carousel,
+            .accordion,
+        ] {
+            for edge in [DropDownAppDirection.top, .bottom] {
+                let frames = DropDownAppGeometry.groupFrames(
+                    in: container,
+                    count: 3,
+                    style: style,
+                    direction: edge
+                )
+                XCTAssertEqual(
+                    WorkspaceEngine.directionalCandidateOrder(
+                        from: rect(frames[1]),
+                        direction: .left,
+                        candidates: [0, 2].map {
+                            DirectionalWindowCandidate(key: $0, frame: rect(frames[$0]))
+                        }
+                    ).first,
+                    0
+                )
+                XCTAssertEqual(
+                    WorkspaceEngine.directionalCandidateOrder(
+                        from: rect(frames[1]),
+                        direction: .right,
+                        candidates: [0, 2].map {
+                            DirectionalWindowCandidate(key: $0, frame: rect(frames[$0]))
+                        }
+                    ).first,
+                    2
+                )
+                let wrappedLeft = WorkspaceEngine.wrappingDirectionalCandidateOrder(
+                    from: rect(frames[0]),
+                    direction: .left,
+                    candidates: [1, 2].map {
+                        DirectionalWindowCandidate(key: $0, frame: rect(frames[$0]))
+                    }
+                )
+                XCTAssertTrue(wrappedLeft.didWrap)
+                XCTAssertEqual(wrappedLeft.candidates.first, 2)
+                let wrappedRight = WorkspaceEngine.wrappingDirectionalCandidateOrder(
+                    from: rect(frames[2]),
+                    direction: .right,
+                    candidates: [0, 1].map {
+                        DirectionalWindowCandidate(key: $0, frame: rect(frames[$0]))
+                    }
+                )
+                XCTAssertTrue(wrappedRight.didWrap)
+                XCTAssertEqual(wrappedRight.candidates.first, 0)
+                XCTAssertTrue(WorkspaceEngine.wrappingDirectionalCandidateOrder(
+                    from: rect(frames[0]),
+                    direction: .up,
+                    candidates: [1, 2].map {
+                        DirectionalWindowCandidate(key: $0, frame: rect(frames[$0]))
+                    }
+                ).candidates.isEmpty)
+            }
+
+            for edge in [DropDownAppDirection.left, .right] {
+                let frames = DropDownAppGeometry.groupFrames(
+                    in: container,
+                    count: 3,
+                    style: style,
+                    direction: edge
+                )
+                XCTAssertEqual(
+                    WorkspaceEngine.directionalCandidateOrder(
+                        from: rect(frames[1]),
+                        direction: .up,
+                        candidates: [0, 2].map {
+                            DirectionalWindowCandidate(key: $0, frame: rect(frames[$0]))
+                        }
+                    ).first,
+                    0
+                )
+                XCTAssertEqual(
+                    WorkspaceEngine.directionalCandidateOrder(
+                        from: rect(frames[1]),
+                        direction: .down,
+                        candidates: [0, 2].map {
+                            DirectionalWindowCandidate(key: $0, frame: rect(frames[$0]))
+                        }
+                    ).first,
+                    2
+                )
+                let wrappedUp = WorkspaceEngine.wrappingDirectionalCandidateOrder(
+                    from: rect(frames[0]),
+                    direction: .up,
+                    candidates: [1, 2].map {
+                        DirectionalWindowCandidate(key: $0, frame: rect(frames[$0]))
+                    }
+                )
+                XCTAssertTrue(wrappedUp.didWrap)
+                XCTAssertEqual(wrappedUp.candidates.first, 2)
+                let wrappedDown = WorkspaceEngine.wrappingDirectionalCandidateOrder(
+                    from: rect(frames[2]),
+                    direction: .down,
+                    candidates: [0, 1].map {
+                        DirectionalWindowCandidate(key: $0, frame: rect(frames[$0]))
+                    }
+                )
+                XCTAssertTrue(wrappedDown.didWrap)
+                XCTAssertEqual(wrappedDown.candidates.first, 0)
+                XCTAssertTrue(WorkspaceEngine.wrappingDirectionalCandidateOrder(
+                    from: rect(frames[0]),
+                    direction: .left,
+                    candidates: [1, 2].map {
+                        DirectionalWindowCandidate(key: $0, frame: rect(frames[$0]))
+                    }
+                ).candidates.isEmpty)
+            }
+        }
+    }
+
     func testInactiveSessionRebindDoesNotInvalidateAnotherAppsTransition() {
         XCTAssertFalse(QuickAppTransitionPolicy.shouldInvalidateAnimationForRebind(
             reboundBundleKey: "b",
@@ -457,14 +746,6 @@ final class QuickAppShelfTests: XCTestCase {
         )
         XCTAssertEqual(decodedShelf.dropDownAppSessions?["com.example.a"], sessionA)
         XCTAssertEqual(decodedShelf.dropDownAppSessions?["com.example.b"], sessionB)
-    }
-
-    func testUnsetCycleShortcutDoesNotEnableRegistration() {
-        let configuration = HotKeyConfiguration()
-        XCTAssertFalse(configuration.isEnabled(.cycleQuickApp))
-        var configured = configuration
-        configured.setChord(HotKeyChord(keyCode: 18, modifiers: 256), for: .cycleQuickApp)
-        XCTAssertTrue(configured.isEnabled(.cycleQuickApp))
     }
 
     @MainActor

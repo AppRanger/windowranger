@@ -95,16 +95,22 @@ final class SettingsStore: ObservableObject {
         static let radialMenuEnabled = "radialMenuEnabled.v1"
         // Read once to preserve the pre-recorder three-choice command-wheel shortcut.
         static let radialMenuShortcut = "radialMenuShortcut.v1"
+        // Removed private-install inputs. Keep their names only so initialization can delete stale
+        // local and iCloud values instead of silently carrying dead behavior forever.
         static let radialMenuActivationStyle = "radialMenuActivationStyle.v1"
         static let radialMenuHoldDelay = "radialMenuHoldDelay.v1"
-        // Hardware trigger preference is intentionally local to this Mac, not profile-backed or
-        // iCloud-synced. Its meaning depends on this Mac's keyboard and Globe configuration.
-        static let radialMenuGlobeFnHoldEnabled = "radialMenuGlobeFnHoldEnabled.v1"
+        static let radialMenuGlobeFnHold = "radialMenuGlobeFnHoldEnabled.v1"
         // Trackpad finger count and activation are hardware preferences for this Mac. They are
         // deliberately excluded from profiles and iCloud so one Mac cannot silently install a
         // global input monitor on another.
         static let workspaceSwipeEnabled = "workspaceSwipeEnabled.v1"
         static let workspaceSwipeFingerCount = "workspaceSwipeFingerCount.v1"
+        // The guide installs a passive modifier monitor and covers part of a physical display.
+        // Keep its activation and geometry local so one Mac cannot silently enable or reposition
+        // that surface on another.
+        static let shortcutGuideEnabled = "shortcutGuideEnabled.v1"
+        static let shortcutGuideSize = "shortcutGuideSize.v1"
+        static let shortcutGuidePosition = "shortcutGuidePosition.v1"
         static let radialWheelDefinition = "radialWheelDefinition.v1"
         static let hotKeyConfiguration = "hotKeyConfiguration.v1"
         static let menuBarPresentationMode = "menuBarPresentationMode.v1"
@@ -195,28 +201,6 @@ final class SettingsStore: ObservableObject {
         didSet { persistRadialMenuSettings() }
     }
 
-    @Published var radialMenuActivationStyle: RadialMenuActivationStyle {
-        didSet { persistRadialMenuSettings() }
-    }
-
-    @Published var radialMenuHoldDelay: TimeInterval {
-        didSet {
-            let clamped = RadialMenuHoldDelay.clamped(radialMenuHoldDelay)
-            if radialMenuHoldDelay != clamped {
-                radialMenuHoldDelay = clamped
-            } else {
-                persistRadialMenuSettings()
-            }
-        }
-    }
-
-    @Published var radialMenuGlobeFnHoldEnabled: Bool {
-        didSet {
-            guard !isApplyingRemoteChange else { return }
-            defaults.set(radialMenuGlobeFnHoldEnabled, forKey: Keys.radialMenuGlobeFnHoldEnabled)
-        }
-    }
-
     @Published var workspaceSwipeEnabled: Bool {
         didSet {
             guard !isApplyingRemoteChange else { return }
@@ -231,6 +215,21 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    @Published var shortcutGuideEnabled: Bool {
+        didSet { persistShortcutGuideSettings() }
+    }
+
+    @Published var shortcutGuideSize: ShortcutGuideSize {
+        didSet { persistShortcutGuideSettings() }
+    }
+
+    @Published var shortcutGuidePosition: ShortcutGuidePosition {
+        didSet { persistShortcutGuideSettings() }
+    }
+
+    /// Runtime-only availability of this Mac's passive modifier monitor.
+    @Published private(set) var shortcutGuideRuntimeIssue: String?
+
     @Published var radialWheelDefinition: RadialWheelDefinition {
         didSet { persistRadialMenuSettings() }
     }
@@ -244,9 +243,6 @@ final class SettingsStore: ObservableObject {
     @Published private(set) var hotKeyRuntimeIssues: [HotKeyRuntimeIssue] = []
     @Published private(set) var directionalMoveGestureRuntimeIssue: String?
 
-    /// Runtime-only monitor availability for the current process and Mac. It is never persisted or
-    /// synchronized, just like Carbon registration failures.
-    @Published private(set) var globeFnRuntimeIssue: String?
     @Published private(set) var workspaceSwipeRuntimeIssue: String?
 
     @Published var menuBarPresentationMode: MenuBarPresentationMode {
@@ -329,6 +325,22 @@ final class SettingsStore: ObservableObject {
         self.isPortableMacProvider = isPortableMacProvider
         self.diagnostics = diagnostics
 
+        let removedInputKeys = [
+            Keys.radialMenuActivationStyle,
+            Keys.radialMenuHoldDelay,
+            Keys.radialMenuGlobeFnHold,
+        ]
+        var removedCloudInput = false
+        for key in removedInputKeys {
+            defaults.removeObject(forKey: key)
+            if defaults.bool(forKey: Keys.iCloudSync),
+               ubiquitousStore?.object(forKey: key) != nil {
+                ubiquitousStore?.removeObject(forKey: key)
+                removedCloudInput = true
+            }
+        }
+        if removedCloudInput { ubiquitousStore?.synchronize() }
+
         let initialDisplays = connectedDisplaysProvider()
         let bootstrap = Self.bootstrapProfiles(defaults: defaults, displays: initialDisplays)
         let initialProfiles = bootstrap.library.profiles
@@ -372,32 +384,29 @@ final class SettingsStore: ObservableObject {
         iCloudSyncEnabled = defaults.object(forKey: Keys.iCloudSync) as? Bool ?? false
         iCloudProfileLibraryIssue = nil
         radialMenuEnabled = defaults.object(forKey: Keys.radialMenuEnabled) as? Bool ?? true
-        radialMenuActivationStyle = defaults.string(forKey: Keys.radialMenuActivationStyle)
-            .flatMap(RadialMenuActivationStyle.init(rawValue:)) ?? .pressToToggle
-        radialMenuHoldDelay = RadialMenuHoldDelay.clamped(
-            defaults.object(forKey: Keys.radialMenuHoldDelay) as? TimeInterval
-                ?? RadialMenuHoldDelay.defaultValue
-        )
-        radialMenuGlobeFnHoldEnabled = defaults.object(
-            forKey: Keys.radialMenuGlobeFnHoldEnabled
-        ) as? Bool ?? false
-        globeFnRuntimeIssue = nil
         workspaceSwipeEnabled = defaults.object(forKey: Keys.workspaceSwipeEnabled) as? Bool ?? false
         workspaceSwipeFingerCount = WorkspaceSwipeFingerCount(
             rawValue: defaults.integer(forKey: Keys.workspaceSwipeFingerCount)
         ) ?? .three
         workspaceSwipeRuntimeIssue = nil
+        shortcutGuideEnabled = defaults.object(forKey: Keys.shortcutGuideEnabled) as? Bool ?? false
+        shortcutGuideSize = defaults.string(forKey: Keys.shortcutGuideSize)
+            .flatMap(ShortcutGuideSize.init(rawValue:)) ?? .medium
+        shortcutGuidePosition = defaults.string(forKey: Keys.shortcutGuidePosition)
+            .flatMap(ShortcutGuidePosition.init(rawValue:)) ?? .bottomCenter
+        shortcutGuideRuntimeIssue = nil
         radialWheelDefinition = defaults.data(forKey: Keys.radialWheelDefinition)
             .flatMap { try? JSONDecoder().decode(RadialWheelDefinition.self, from: $0) }
             ?? .builtInDefault
         var initialHotKeyConfiguration = defaults.data(forKey: Keys.hotKeyConfiguration)
             .flatMap { try? JSONDecoder().decode(HotKeyConfiguration.self, from: $0) }
             ?? HotKeyConfiguration()
-        if !initialHotKeyConfiguration.hasExplicitChord(for: .commandWheel),
-           let legacy = defaults.string(forKey: Keys.radialMenuShortcut)
-            .flatMap(LegacyRadialMenuShortcut.init(rawValue:)) {
-            initialHotKeyConfiguration.setChord(legacy.chord, for: .commandWheel)
-        }
+        initialHotKeyConfiguration = Self.reconciledHotKeyConfiguration(
+            initialHotKeyConfiguration,
+            profiles: initialProfiles
+        )
+        // The first public family map replaces the private complete-chord Command Palette setting.
+        // Retaining its prefix would make the new Navigate family internally inconsistent.
         hotKeyConfiguration = initialHotKeyConfiguration
         if let data = try? JSONEncoder().encode(initialHotKeyConfiguration) {
             defaults.set(data, forKey: Keys.hotKeyConfiguration)
@@ -662,11 +671,16 @@ final class SettingsStore: ObservableObject {
             return .invalidPlan
         }
 
+        let previousHotKeyConfiguration = hotKeyConfiguration
         profiles += plan.importedProfiles
+        reconcileHotKeyConfigurationWithWorkspaceReservations()
         persistProfileLibrary()
         let importedProfiles = plan.importedProfiles
         undoManager?.registerUndo(withTarget: self) { store in
-            store.removeImportedProfilesIfSafe(importedProfiles)
+            store.removeImportedProfilesIfSafe(
+                importedProfiles,
+                restoring: previousHotKeyConfiguration
+            )
         }
         undoManager?.setActionName(
             importedProfiles.count == 1 ? "Import Profile" : "Import Profiles"
@@ -934,7 +948,7 @@ final class SettingsStore: ObservableObject {
             "New Workspace",
             existing: profile.workspaces.map(\.name)
         )
-        let key = WorkspaceIdentityPolicy.uniqueKey(
+        let key = uniqueWorkspaceKey(
             preferred: name,
             name: name,
             existing: profile.workspaces.map(\.key)
@@ -960,7 +974,7 @@ final class SettingsStore: ObservableObject {
             source.name,
             existing: profile.workspaces.map(\.name)
         )
-        let key = WorkspaceIdentityPolicy.uniqueKey(
+        let key = uniqueWorkspaceKey(
             preferred: source.key,
             name: name,
             existing: profile.workspaces.map(\.key)
@@ -1061,6 +1075,7 @@ final class SettingsStore: ObservableObject {
         guard key.isEmpty || !settingsProfile.workspaces.contains(where: {
             $0.id != workspaceID && $0.key.caseInsensitiveCompare(key) == .orderedSame
         }) else { return }
+        guard key.isEmpty || !workspaceKeyConflictsWithGlobalAction(key) else { return }
         mutateSettingsProfile { $0.workspaces[index].key = key }
     }
 
@@ -1465,7 +1480,7 @@ final class SettingsStore: ObservableObject {
             "New Workspace",
             existing: workspaces.map(\.name)
         )
-        let key = WorkspaceIdentityPolicy.uniqueKey(
+        let key = uniqueWorkspaceKey(
             preferred: name,
             name: name,
             existing: workspaces.map(\.key)
@@ -1486,7 +1501,7 @@ final class SettingsStore: ObservableObject {
             source.name,
             existing: workspaces.map(\.name)
         )
-        let key = WorkspaceIdentityPolicy.uniqueKey(
+        let key = uniqueWorkspaceKey(
             preferred: source.key,
             name: name,
             existing: workspaces.map(\.key)
@@ -1577,6 +1592,7 @@ final class SettingsStore: ObservableObject {
         guard key.isEmpty || !workspaces.contains(where: {
             $0.id != workspaceID && $0.key.caseInsensitiveCompare(key) == .orderedSame
         }) else { return }
+        guard key.isEmpty || !workspaceKeyConflictsWithGlobalAction(key) else { return }
         workspaces[index].key = key
     }
 
@@ -1872,16 +1888,39 @@ final class SettingsStore: ObservableObject {
         appRules[index] = updatedRule
     }
 
-    func setShortcut(_ chord: HotKeyChord, for action: ConfigurableHotKeyAction) {
+    /// Assigns only the suffix; the action's Navigate or Arrange prefix is resolved globally.
+    /// Workspace suffixes are reserved across every saved profile because each owns both families.
+    func setShortcutKey(_ keyCode: UInt32?, for action: ConfigurableHotKeyAction) -> String? {
+        if let keyCode,
+           let conflict = globalWorkspaceKeyConflict(keyCode: keyCode) {
+            return "\(HotKeyChord.keyLabel(for: keyCode)) is used by workspace \(conflict.workspaceName) in profile \(conflict.profileName). Change that workspace key first."
+        }
         var updated = hotKeyConfiguration
-        updated.setChord(chord, for: action)
+        updated.setKeyCode(keyCode, for: action)
+        let report = ShortcutConflictModel.evaluate(configuration: updated, workspaces: workspaces)
+        if let issue = report.issues(for: action).first {
+            return issue.message
+        }
         hotKeyConfiguration = updated
+        return nil
     }
 
-    func resetShortcut(_ action: ConfigurableHotKeyAction) {
+    func setShortcutFamilyModifiers(_ modifiers: UInt32, for family: ShortcutFamily) -> String? {
         var updated = hotKeyConfiguration
-        updated.reset(action)
+        if let message = updated.setModifierMask(modifiers, for: family) { return message }
         hotKeyConfiguration = updated
+        return nil
+    }
+
+    func resetShortcutFamilyModifiers(_ family: ShortcutFamily) -> String? {
+        var updated = hotKeyConfiguration
+        if let message = updated.resetModifierMask(for: family) { return message }
+        hotKeyConfiguration = updated
+        return nil
+    }
+
+    func resetShortcut(_ action: ConfigurableHotKeyAction) -> String? {
+        setShortcutKey(action.defaultKeyCode, for: action)
     }
 
     func resetShortcuts(_ actions: Set<ConfigurableHotKeyAction>) {
@@ -1890,6 +1929,67 @@ final class SettingsStore: ObservableObject {
         for action in actions { updated.reset(action) }
         guard updated != hotKeyConfiguration else { return }
         hotKeyConfiguration = updated
+    }
+
+    private func globalWorkspaceKeyConflict(
+        keyCode: UInt32
+    ) -> (profileName: String, workspaceName: String)? {
+        for profile in profiles {
+            if let workspace = profile.workspaces.first(where: {
+                HotKeyManager.keyCodes[$0.key.lowercased()] == keyCode
+            }) {
+                return (profile.name, workspace.name)
+            }
+        }
+        return nil
+    }
+
+    private func workspaceKeyConflictsWithGlobalAction(_ key: String) -> Bool {
+        guard let keyCode = HotKeyManager.keyCodes[key.lowercased()] else { return false }
+        return ConfigurableHotKeyAction.allCases.contains {
+            hotKeyConfiguration.keyCode(for: $0) == keyCode
+        }
+    }
+
+    /// Profile workspace suffixes are durable user content. When older or remote data introduces
+    /// a reservation collision, preserve that workspace and leave the global action palette-only.
+    private static func reconciledHotKeyConfiguration(
+        _ configuration: HotKeyConfiguration,
+        profiles: [WindowManagerProfile]
+    ) -> HotKeyConfiguration {
+        let reservedKeyCodes = Set(profiles.flatMap(\.workspaces).compactMap {
+            HotKeyManager.keyCodes[$0.key.lowercased()]
+        })
+        var reconciled = configuration
+        for action in ConfigurableHotKeyAction.allCases {
+            guard let keyCode = reconciled.keyCode(for: action),
+                  reservedKeyCodes.contains(keyCode)
+            else { continue }
+            reconciled.setKeyCode(nil, for: action)
+        }
+        return reconciled
+    }
+
+    private func reconcileHotKeyConfigurationWithWorkspaceReservations() {
+        let reconciled = Self.reconciledHotKeyConfiguration(
+            hotKeyConfiguration,
+            profiles: profiles
+        )
+        guard reconciled != hotKeyConfiguration else { return }
+        hotKeyConfiguration = reconciled
+    }
+
+    private func uniqueWorkspaceKey(preferred: String, name: String, existing: [String]) -> String {
+        let used = Set(existing.map { $0.lowercased() }.filter { !$0.isEmpty })
+        let candidates = [WorkspaceIdentityPolicy.sanitizedKey(preferred)]
+            + name.lowercased().map(String.init)
+            + WorkspaceIdentityPolicy.keyCandidates
+        return candidates.first { candidate in
+            !candidate.isEmpty &&
+                HotKeyManager.keyCodes[candidate] != nil &&
+                !used.contains(candidate) &&
+                !workspaceKeyConflictsWithGlobalAction(candidate)
+        } ?? ""
     }
 
     func updateRadialWheelDefinition(
@@ -1936,10 +2036,16 @@ final class SettingsStore: ObservableObject {
         )
     }
 
-    func resetAllShortcuts() {
-        var updated = hotKeyConfiguration
-        updated.resetAll()
-        hotKeyConfiguration = updated
+    func resetAllShortcuts() -> String? {
+        let defaults = HotKeyConfiguration()
+        for action in ConfigurableHotKeyAction.allCases {
+            guard let keyCode = defaults.keyCode(for: action),
+                  let conflict = globalWorkspaceKeyConflict(keyCode: keyCode)
+            else { continue }
+            return "Defaults use \(HotKeyChord.keyLabel(for: keyCode)), which is assigned to workspace \(conflict.workspaceName) in profile \(conflict.profileName). Change that workspace key first."
+        }
+        hotKeyConfiguration = defaults
+        return nil
     }
 
     func setHotKeyRuntimeIssues(_ issues: [HotKeyRuntimeIssue]) {
@@ -1952,14 +2058,14 @@ final class SettingsStore: ObservableObject {
         directionalMoveGestureRuntimeIssue = issue
     }
 
-    func setGlobeFnRuntimeIssue(_ issue: String?) {
-        guard globeFnRuntimeIssue != issue else { return }
-        globeFnRuntimeIssue = issue
-    }
-
     func setWorkspaceSwipeRuntimeIssue(_ issue: String?) {
         guard workspaceSwipeRuntimeIssue != issue else { return }
         workspaceSwipeRuntimeIssue = issue
+    }
+
+    func setShortcutGuideRuntimeIssue(_ issue: String?) {
+        guard shortcutGuideRuntimeIssue != issue else { return }
+        shortcutGuideRuntimeIssue = issue
     }
 
     func recordActiveWorkspaceState(_ state: WorkspaceEngineState) {
@@ -2066,7 +2172,10 @@ final class SettingsStore: ObservableObject {
         settingsProfileID = profile.id
     }
 
-    private func removeImportedProfilesIfSafe(_ importedProfiles: [WindowManagerProfile]) {
+    private func removeImportedProfilesIfSafe(
+        _ importedProfiles: [WindowManagerProfile],
+        restoring hotKeyConfigurationBeforeImport: HotKeyConfiguration
+    ) {
         let importedProfileIDs = Set(importedProfiles.map(\.id))
         let importedRoleIDs = Set(importedProfiles.flatMap { $0.displayRoles.map(\.id) })
         guard !importedProfileIDs.contains(activeProfileID),
@@ -2090,6 +2199,10 @@ final class SettingsStore: ObservableObject {
         }
 
         profiles.removeAll { importedProfileIDs.contains($0.id) }
+        hotKeyConfiguration = Self.reconciledHotKeyConfiguration(
+            hotKeyConfigurationBeforeImport,
+            profiles: profiles
+        )
         if importedProfileIDs.contains(settingsProfileID) {
             settingsProfileID = activeProfileID
         }
@@ -2323,14 +2436,19 @@ final class SettingsStore: ObservableObject {
 
     private func pushToICloud() {
         guard let ubiquitousStore else { return }
+        for key in [
+            Keys.radialMenuActivationStyle,
+            Keys.radialMenuHoldDelay,
+            Keys.radialMenuGlobeFnHold,
+        ] {
+            ubiquitousStore.removeObject(forKey: key)
+        }
         if let data = try? JSONEncoder().encode(ProfileLibrary(profiles: profiles)) {
             if validateLocalLibraryForSync(data) {
                 ubiquitousStore.set(data, forKey: Keys.profileLibrary)
             }
         }
         ubiquitousStore.set(radialMenuEnabled, forKey: Keys.radialMenuEnabled)
-        ubiquitousStore.set(radialMenuActivationStyle.rawValue, forKey: Keys.radialMenuActivationStyle)
-        ubiquitousStore.set(radialMenuHoldDelay, forKey: Keys.radialMenuHoldDelay)
         if let wheelData = try? JSONEncoder().encode(radialWheelDefinition) {
             ubiquitousStore.set(wheelData, forKey: Keys.radialWheelDefinition)
         }
@@ -2380,9 +2498,6 @@ final class SettingsStore: ObservableObject {
             )
         }
         let remoteRadialEnabled = ubiquitousStore.object(forKey: Keys.radialMenuEnabled) as? Bool
-        let remoteRadialActivationStyle = ubiquitousStore.string(forKey: Keys.radialMenuActivationStyle)
-            .flatMap(RadialMenuActivationStyle.init(rawValue:))
-        let remoteRadialHoldDelay = ubiquitousStore.object(forKey: Keys.radialMenuHoldDelay) as? TimeInterval
         let remoteWheelData = ubiquitousStore.data(forKey: Keys.radialWheelDefinition)
         let remoteWheelDefinition = remoteWheelData.flatMap {
             try? JSONDecoder().decode(RadialWheelDefinition.self, from: $0)
@@ -2421,12 +2536,6 @@ final class SettingsStore: ObservableObject {
         if remoteLibraryData == nil { pushToICloud() }
         if ubiquitousStore.object(forKey: Keys.radialMenuEnabled) == nil {
             ubiquitousStore.set(radialMenuEnabled, forKey: Keys.radialMenuEnabled)
-        }
-        if ubiquitousStore.string(forKey: Keys.radialMenuActivationStyle) == nil {
-            ubiquitousStore.set(radialMenuActivationStyle.rawValue, forKey: Keys.radialMenuActivationStyle)
-        }
-        if ubiquitousStore.object(forKey: Keys.radialMenuHoldDelay) == nil {
-            ubiquitousStore.set(radialMenuHoldDelay, forKey: Keys.radialMenuHoldDelay)
         }
         if remoteWheelData == nil,
            let data = try? JSONEncoder().encode(radialWheelDefinition) {
@@ -2489,18 +2598,6 @@ final class SettingsStore: ObservableObject {
             radialMenuEnabled = remoteRadialEnabled
             defaults.set(remoteRadialEnabled, forKey: Keys.radialMenuEnabled)
         }
-        if let remoteRadialActivationStyle,
-           remoteRadialActivationStyle != radialMenuActivationStyle {
-            radialMenuActivationStyle = remoteRadialActivationStyle
-            defaults.set(remoteRadialActivationStyle.rawValue, forKey: Keys.radialMenuActivationStyle)
-        }
-        if let remoteRadialHoldDelay {
-            let clamped = RadialMenuHoldDelay.clamped(remoteRadialHoldDelay)
-            if clamped != radialMenuHoldDelay {
-                radialMenuHoldDelay = clamped
-                defaults.set(clamped, forKey: Keys.radialMenuHoldDelay)
-            }
-        }
         if let remoteWheelDefinition {
             let normalizedData = try? JSONEncoder().encode(remoteWheelDefinition)
             if remoteWheelDefinition != radialWheelDefinition {
@@ -2513,20 +2610,39 @@ final class SettingsStore: ObservableObject {
                 }
             }
         }
-        if let remoteHotKeyData, let remoteHotKeyConfiguration,
-           remoteHotKeyConfiguration != hotKeyConfiguration {
-            hotKeyConfiguration = remoteHotKeyConfiguration
-            defaults.set(remoteHotKeyData, forKey: Keys.hotKeyConfiguration)
-        } else if remoteHotKeyData == nil, let remoteLegacyRadialShortcut,
-                  !hotKeyConfiguration.hasExplicitChord(for: .commandWheel) {
-            var migrated = hotKeyConfiguration
-            migrated.setChord(remoteLegacyRadialShortcut.chord, for: .commandWheel)
-            hotKeyConfiguration = migrated
-            if let migratedData = try? JSONEncoder().encode(migrated) {
+        if let remoteHotKeyData, let remoteHotKeyConfiguration {
+            let reconciled = Self.reconciledHotKeyConfiguration(
+                remoteHotKeyConfiguration,
+                profiles: profiles
+            )
+            if reconciled != hotKeyConfiguration {
+                hotKeyConfiguration = reconciled
+            }
+            if let reconciledData = try? JSONEncoder().encode(reconciled) {
+                defaults.set(reconciledData, forKey: Keys.hotKeyConfiguration)
+                if reconciledData != remoteHotKeyData {
+                    ubiquitousStore.set(reconciledData, forKey: Keys.hotKeyConfiguration)
+                }
+            }
+        } else if remoteHotKeyData == nil, remoteLegacyRadialShortcut != nil,
+                  !hotKeyConfiguration.hasExplicitKeyAssignment(for: .commandWheel) {
+            // The legacy private full chord intentionally does not migrate into a family prefix.
+            if let migratedData = try? JSONEncoder().encode(hotKeyConfiguration) {
                 defaults.set(migratedData, forKey: Keys.hotKeyConfiguration)
                 ubiquitousStore.set(migratedData, forKey: Keys.hotKeyConfiguration)
             }
             ubiquitousStore.removeObject(forKey: Keys.radialMenuShortcut)
+        }
+        let reconciledCurrentHotKeys = Self.reconciledHotKeyConfiguration(
+            hotKeyConfiguration,
+            profiles: profiles
+        )
+        if reconciledCurrentHotKeys != hotKeyConfiguration {
+            hotKeyConfiguration = reconciledCurrentHotKeys
+            if let reconciledData = try? JSONEncoder().encode(reconciledCurrentHotKeys) {
+                defaults.set(reconciledData, forKey: Keys.hotKeyConfiguration)
+                ubiquitousStore.set(reconciledData, forKey: Keys.hotKeyConfiguration)
+            }
         }
         if let remoteMenuBarPresentationMode,
            remoteMenuBarPresentationMode != menuBarPresentationMode {
@@ -2645,17 +2761,20 @@ final class SettingsStore: ObservableObject {
     private func persistRadialMenuSettings() {
         guard !isApplyingRemoteChange else { return }
         defaults.set(radialMenuEnabled, forKey: Keys.radialMenuEnabled)
-        defaults.set(radialMenuActivationStyle.rawValue, forKey: Keys.radialMenuActivationStyle)
-        defaults.set(radialMenuHoldDelay, forKey: Keys.radialMenuHoldDelay)
         let wheelData = try? JSONEncoder().encode(radialWheelDefinition)
         if let wheelData { defaults.set(wheelData, forKey: Keys.radialWheelDefinition) }
         if iCloudSyncEnabled, let ubiquitousStore {
             ubiquitousStore.set(radialMenuEnabled, forKey: Keys.radialMenuEnabled)
-            ubiquitousStore.set(radialMenuActivationStyle.rawValue, forKey: Keys.radialMenuActivationStyle)
-            ubiquitousStore.set(radialMenuHoldDelay, forKey: Keys.radialMenuHoldDelay)
             if let wheelData { ubiquitousStore.set(wheelData, forKey: Keys.radialWheelDefinition) }
             ubiquitousStore.synchronize()
         }
+    }
+
+    private func persistShortcutGuideSettings() {
+        guard !isApplyingRemoteChange else { return }
+        defaults.set(shortcutGuideEnabled, forKey: Keys.shortcutGuideEnabled)
+        defaults.set(shortcutGuideSize.rawValue, forKey: Keys.shortcutGuideSize)
+        defaults.set(shortcutGuidePosition.rawValue, forKey: Keys.shortcutGuidePosition)
     }
 
     private func persistMenuBarPresentationMode() {

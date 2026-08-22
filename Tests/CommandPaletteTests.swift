@@ -30,6 +30,20 @@ final class CommandPaletteTests: XCTestCase {
         )
     }
 
+    func testPaletteDoesNotInventAChordForAnUnassignedCommand() {
+        var configuration = HotKeyConfiguration()
+        configuration.setKeyCode(nil, for: .nextWindow)
+
+        let entry = CommandPaletteIndex.entries(
+            context: context(),
+            query: "",
+            hotKeyConfiguration: configuration
+        ).first { $0.destination == .command(.cycleWindow(1)) }
+
+        XCTAssertNotNil(entry)
+        XCTAssertNil(entry?.shortcut)
+    }
+
     func testSearchMatchesMultipleTermsAndRanksTheTitleMatchFirst() {
         let entries = CommandPaletteIndex.entries(
             context: context(),
@@ -368,14 +382,6 @@ final class CommandPaletteTests: XCTestCase {
             "Next Quick App"
         )
         XCTAssertFalse(defaults.contains { $0.destination == .command(.cycleQuickApp(1)) && $0.shortcut != nil })
-
-        var configured = HotKeyConfiguration()
-        configured.setChord(HotKeyChord(keyCode: 18, modifiers: UInt32(controlKey | optionKey)), for: .cycleQuickApp)
-        XCTAssertEqual(
-            CommandPaletteIndex.entries(context: value, query: "", hotKeyConfiguration: configured)
-                .first { $0.destination == .command(.cycleQuickApp(1)) }?.shortcut,
-            configured.chord(for: .cycleQuickApp).title
-        )
     }
 
     private func context(

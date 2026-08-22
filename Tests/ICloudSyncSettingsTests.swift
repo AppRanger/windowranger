@@ -42,6 +42,48 @@ final class ICloudSyncSettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testRemoteWorkspaceSuffixWinsOverConflictingGlobalActionDefault() throws {
+        let (defaults, suite) = isolatedDefaults("RemoteShortcutReservation")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+
+        let workspace = WorkspaceDefinition(name: "Floating Work", key: "f")
+        let role = ProfileDisplayRole(name: "Main")
+        let remoteProfile = WindowManagerProfile(
+            name: "Remote",
+            workspaces: [workspace],
+            displayMode: .unified,
+            displayRoles: [role],
+            workspaceRoleAssignments: [workspace.id: role.id],
+            appRules: []
+        )
+        let cloud = InspectableUbiquitousStore()
+        cloud.seed(
+            try JSONEncoder().encode(ProfileLibrary(profiles: [remoteProfile])),
+            forKey: "profileLibrary.v1"
+        )
+        cloud.seed(
+            try JSONEncoder().encode(HotKeyConfiguration()),
+            forKey: "hotKeyConfiguration.v1"
+        )
+
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+
+        XCTAssertEqual(store.profiles.first?.workspaces.first?.key, "f")
+        XCTAssertNil(store.hotKeyConfiguration.optionalChord(for: .toggleFloating))
+        let normalizedCloudData = try XCTUnwrap(cloud.peekData(forKey: "hotKeyConfiguration.v1"))
+        let normalizedCloud = try JSONDecoder().decode(
+            HotKeyConfiguration.self,
+            from: normalizedCloudData
+        )
+        XCTAssertNil(normalizedCloud.optionalChord(for: .toggleFloating))
+    }
+
+    @MainActor
     func testDisablingSyncImmediatelyIsolatesCloudAndKeepsLocalPersistence() {
         let (defaults, suite) = isolatedDefaults("Disable")
         defer { defaults.removePersistentDomain(forName: suite) }

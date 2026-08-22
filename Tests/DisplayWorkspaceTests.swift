@@ -193,10 +193,10 @@ final class DisplayWorkspaceTests: XCTestCase {
         ))
     }
 
-    func testMoveWorkspaceDisplayShortcutMatchesUserAeroSpaceConfig() {
+    func testMoveWorkspaceDisplayShortcutUsesApprovedArrangeDDefault() {
         XCTAssertEqual(
-            HotKeyManager.moveWorkspaceDisplayChord,
-            HotKeyChord(keyCode: 48, modifiers: UInt32(optionKey | shiftKey))
+            HotKeyConfiguration().chord(for: .moveWorkspaceToNextDisplay),
+            HotKeyChord(keyCode: 2, modifiers: UInt32(optionKey | cmdKey))
         )
     }
 
@@ -809,10 +809,8 @@ final class ProfileTests: XCTestCase {
         let workspaceID = store.workspaces[1].id
         store.menuBarPresentationMode = .medium
         store.focusFollowsMovedWindow = true
-        store.setShortcut(
-            HotKeyChord(keyCode: 0, modifiers: UInt32(cmdKey | optionKey)),
-            for: .nextWindow
-        )
+        XCTAssertNil(store.setShortcutFamilyModifiers(UInt32(controlKey | shiftKey), for: .navigate))
+        XCTAssertNil(store.setShortcutKey(6, for: .nextWindow))
         store.recordActiveWorkspaceState(WorkspaceEngineState(
             currentWorkspaceID: workspaceID,
             activeWorkspaceIDs: [workspaceID],
@@ -834,7 +832,7 @@ final class ProfileTests: XCTestCase {
         XCTAssertTrue(store.focusFollowsMovedWindow)
         XCTAssertEqual(
             store.hotKeyConfiguration.chord(for: .nextWindow),
-            HotKeyChord(keyCode: 0, modifiers: UInt32(cmdKey | optionKey))
+            HotKeyChord(keyCode: 6, modifiers: UInt32(controlKey | shiftKey))
         )
 
         let localData = try XCTUnwrap(defaults.data(forKey: "profileLocalState.v1"))

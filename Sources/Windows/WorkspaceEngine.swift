@@ -729,6 +729,26 @@ enum QuickAppInteractionPolicy {
         shelfIsPresented && configuredAppCount > 0
     }
 
+    static func routesDirectionalFocusToShelf(
+        shelfIsPresented: Bool,
+        presentedWindowCount: Int,
+        transitionInProgress: Bool
+    ) -> Bool {
+        (shelfIsPresented && presentedWindowCount > 0) || transitionInProgress
+    }
+
+    static func directionalFocusUsesShelfAxis(
+        _ direction: WindowDirection,
+        shelfDirection: DropDownAppDirection
+    ) -> Bool {
+        switch shelfDirection {
+        case .top, .bottom:
+            direction == .left || direction == .right
+        case .left, .right:
+            direction == .up || direction == .down
+        }
+    }
+
     static func restoresPresentedShelfFocus(
         shelfProcessIdentifier: pid_t,
         precedingProcessIdentifier: pid_t?
@@ -4005,6 +4025,17 @@ final class WorkspaceEngine {
             guard let self else { return }
             let rawFocusedBefore = self.focusedWindowSnapshot()
             self.refreshWindows(correlationID: correlationID)
+            let presentedShelfWindowCount = self.quickAppSessions.values.reduce(into: 0) {
+                if $1.isPresented { $0 += 1 }
+            }
+            if QuickAppInteractionPolicy.routesDirectionalFocusToShelf(
+                shelfIsPresented: self.isQuickAppShelfPresented,
+                presentedWindowCount: presentedShelfWindowCount,
+                transitionInProgress: self.quickAppTransition != .idle
+            ) {
+                self.focusPresentedQuickAppWindow(direction, correlationID: correlationID)
+                return
+            }
             guard let focused = self.interactionFocusedWindowSnapshot(rawFocusedBefore),
                   let sourceFrame = focused.frame ?? self.windows[focused.key].flatMap({
                       AccessibilityWindow.frame(of: $0.element)
@@ -4025,11 +4056,12 @@ final class WorkspaceEngine {
                 displays: displays,
                 correlationID: correlationID
             )
-            let order = Self.directionalCandidateOrder(
+            let focusOrder = Self.wrappingDirectionalCandidateOrder(
                 from: CGRect(origin: sourceFrame.position, size: sourceFrame.size),
                 direction: direction,
                 candidates: candidates.filter { $0.key != focused.key }
             )
+            let order = focusOrder.candidates
             guard let target = order.first else {
                 self.diagnostics.log(
                     category: "directional-focus",
@@ -4058,6 +4090,7 @@ final class WorkspaceEngine {
                     "source-window": Self.diagnosticWindowKey(focused.key),
                     "target-window": Self.diagnosticWindowKey(target),
                     "ordered-candidates": order.map(Self.diagnosticWindowKey).joined(separator: ","),
+                    "wrapped": String(focusOrder.didWrap),
                     "workspace": Self.shortIdentifier(workspaceID.uuidString),
                     "display": Self.shortIdentifier(interactionDisplay.identifier),
                 ]
@@ -4072,6 +4105,153 @@ final class WorkspaceEngine {
                 displays: displays,
                 correlationID: correlationID,
                 token: token
+            )
+        }
+    }
+
+    /// While the Shelf is open it owns Navigate-arrow focus, just as an active workspace owns
+    /// directional focus. Its layout-axis arrows wrap inside the visible group; perpendicular
+    /// arrows remain contained instead of falling through to a managed window behind the Shelf.
+    private func focusPresentedQuickAppWindow(
+        _ direction: WindowDirection,
+        correlationID: String
+    ) {
+        guard quickAppTransition == .idle else {
+            diagnostics.log(
+                category: "directional-focus",
+                event: "shelf-contained",
+                correlation: correlationID,
+                fields: [
+                    "direction": direction.rawValue,
+                    "reason": "transition-in-progress",
+                ]
+            )
+            return
+        }
+        guard QuickAppInteractionPolicy.directionalFocusUsesShelfAxis(
+            direction,
+            shelfDirection: quickAppShelfPresentation.direction
+        ) else {
+            diagnostics.log(
+                category: "directional-focus",
+                event: "shelf-contained",
+                correlation: correlationID,
+                fields: [
+                    "direction": direction.rawValue,
+                    "reason": "perpendicular-to-shelf-axis",
+                ]
+            )
+            return
+        }
+        guard let selected = dropDownAppConfiguration else {
+            diagnostics.log(
+                category: "directional-focus",
+                event: "shelf-contained",
+                correlation: correlationID,
+                fields: [
+                    "direction": direction.rawValue,
+                    "reason": "selection-unavailable",
+                ]
+            )
+            return
+        }
+        let selectedBundleKey = Self.normalizedBundleIdentifier(selected.bundleIdentifier)
+        guard let sourceSession = quickAppSessions[selectedBundleKey],
+              sourceSession.isPresented,
+              let sourceTarget = windows[sourceSession.windowKey],
+              let sourceFrame = AccessibilityWindow.frame(of: sourceTarget.element)
+        else {
+            diagnostics.log(
+                category: "directional-focus",
+                event: "shelf-contained",
+                correlation: correlationID,
+                fields: [
+                    "direction": direction.rawValue,
+                    "reason": "selected-window-unavailable",
+                ]
+            )
+            return
+        }
+
+        let presented = quickAppSessions.compactMap {
+            bundleKey,
+            session -> (bundleKey: String, session: DropDownAppSession, candidate: DirectionalWindowCandidate<WindowKey>)? in
+            guard session.isPresented,
+                  session.windowKey != sourceSession.windowKey,
+                  let target = windows[session.windowKey],
+                  let frame = AccessibilityWindow.frame(of: target.element)
+            else { return nil }
+            return (
+                bundleKey,
+                session,
+                DirectionalWindowCandidate(
+                    key: session.windowKey,
+                    frame: CGRect(origin: frame.position, size: frame.size)
+                )
+            )
+        }.sorted { lhs, rhs in
+            let leftOrder = quickAppConfigurations.firstIndex {
+                Self.normalizedBundleIdentifier($0.bundleIdentifier) == lhs.bundleKey
+            } ?? Int.max
+            let rightOrder = quickAppConfigurations.firstIndex {
+                Self.normalizedBundleIdentifier($0.bundleIdentifier) == rhs.bundleKey
+            } ?? Int.max
+            return leftOrder < rightOrder
+        }
+        let focusOrder = Self.wrappingDirectionalCandidateOrder(
+            from: CGRect(origin: sourceFrame.position, size: sourceFrame.size),
+            direction: direction,
+            candidates: presented.map(\.candidate)
+        )
+        let order = focusOrder.candidates
+        guard let targetKey = order.first,
+              let targetSession = presented.first(where: {
+                  $0.session.windowKey == targetKey
+              })?.session,
+              let targetConfiguration = quickAppConfigurations.first(where: {
+                  $0.bundleIdentifier.caseInsensitiveCompare(targetSession.bundleIdentifier) == .orderedSame
+              })
+        else {
+            diagnostics.log(
+                category: "directional-focus",
+                event: "shelf-contained",
+                correlation: correlationID,
+                fields: [
+                    "direction": direction.rawValue,
+                    "reason": "no-shelf-target",
+                    "source-window": Self.diagnosticWindowKey(sourceSession.windowKey),
+                ]
+            )
+            return
+        }
+
+        dropDownAppConfiguration = targetConfiguration
+        onQuickAppSelectionChanged?(targetConfiguration.bundleIdentifier)
+        diagnostics.log(
+            category: "directional-focus",
+            event: "routed-to-quick-app-shelf",
+            correlation: correlationID,
+            fields: [
+                "direction": direction.rawValue,
+                "source-window": Self.diagnosticWindowKey(sourceSession.windowKey),
+                "target-window": Self.diagnosticWindowKey(targetKey),
+                "wrapped": String(focusOrder.didWrap),
+            ]
+        )
+        // Directional focus promotes a window that is already in the visible Shelf. Reconciliation
+        // would rebuild the selected-centred group and move that target back to the first/centre
+        // slot, making the reverse arrow impossible (most visibly with two windows). Keep the
+        // current membership and frames fixed; ordered cycling remains responsible for rotating an
+        // off-group app into view.
+        guard let target = windows[targetKey] else { return }
+        _ = AXUIElementPerformAction(target.element, kAXRaiseAction as CFString)
+        if QuickAppInteractionPolicy.focusesQuickAppAfterShow(
+            commandPalettePresented: commandPalettePresented
+        ) {
+            focusManagedWindow(
+                targetKey,
+                tracked: target,
+                correlationID: correlationID
             )
         }
     }
@@ -5656,7 +5836,8 @@ final class WorkspaceEngine {
     static func directionalCandidateOrder<Key: Hashable>(
         from source: CGRect,
         direction: WindowDirection,
-        candidates: [DirectionalWindowCandidate<Key>]
+        candidates: [DirectionalWindowCandidate<Key>],
+        prefersFarthestPrimaryDistance: Bool = false
     ) -> [Key] {
         let sourceCenter = CGPoint(x: source.midX, y: source.midY)
         return candidates.enumerated().compactMap { index, candidate -> (Key, Int, CGFloat, CGFloat, Int)? in
@@ -5690,10 +5871,57 @@ final class WorkspaceEngine {
             return (candidate.key, orthogonalGap > 0 ? 1 : 0, primaryDistance, orthogonalDistance, index)
         }.sorted { lhs, rhs in
             if lhs.1 != rhs.1 { return lhs.1 < rhs.1 }
-            if lhs.2 != rhs.2 { return lhs.2 < rhs.2 }
+            if lhs.2 != rhs.2 {
+                return prefersFarthestPrimaryDistance ? lhs.2 > rhs.2 : lhs.2 < rhs.2
+            }
             if lhs.3 != rhs.3 { return lhs.3 < rhs.3 }
             return lhs.4 < rhs.4
         }.map(\.0)
+    }
+
+    /// Uses the nearest spatial neighbour normally. At an outer edge, continue from the opposite
+    /// edge while retaining perpendicular-axis alignment as the first ranking criterion.
+    static func wrappingDirectionalCandidateOrder<Key: Hashable>(
+        from source: CGRect,
+        direction: WindowDirection,
+        candidates: [DirectionalWindowCandidate<Key>]
+    ) -> (candidates: [Key], didWrap: Bool) {
+        let direct = directionalCandidateOrder(
+            from: source,
+            direction: direction,
+            candidates: candidates
+        )
+        guard direct.isEmpty else { return (direct, false) }
+        let oppositeDirection: WindowDirection = switch direction {
+        case .left: .right
+        case .right: .left
+        case .up: .down
+        case .down: .up
+        }
+        let wrapped = directionalCandidateOrder(
+            from: source,
+            direction: oppositeDirection,
+            candidates: candidates,
+            prefersFarthestPrimaryDistance: true
+        )
+        return (wrapped, !wrapped.isEmpty)
+    }
+
+    static func availableShelfFocusDirections<Key: Hashable>(
+        from source: CGRect,
+        candidates: [DirectionalWindowCandidate<Key>],
+        shelfDirection: DropDownAppDirection
+    ) -> Set<WindowDirection> {
+        Set(WindowDirection.allCases.filter { direction in
+            QuickAppInteractionPolicy.directionalFocusUsesShelfAxis(
+                direction,
+                shelfDirection: shelfDirection
+            ) && !wrappingDirectionalCandidateOrder(
+                from: source,
+                direction: direction,
+                candidates: candidates
+            ).candidates.isEmpty
+        })
     }
 
     /// Changes only the focused leaf's nearest split. This keeps a nested top/bottom placement from
@@ -6524,23 +6752,58 @@ final class WorkspaceEngine {
                     isMain: true,
                     name: "Display"
                 )
-            let focusCandidates = self.directionalFocusCandidates(
-                workspaceID: workspace.id,
-                interactionDisplayIdentifier: interactionDisplay.identifier,
-                displays: displays,
-                correlationID: nil
-            )
             let focusedKey = focused.map(\.key)
-            let focusedFrame = focusedWindow?.frame.map { CGRect(origin: $0.position, size: $0.size) }
-            let availableFocusDirections: Set<WindowDirection> = focusedFrame.map { sourceFrame in
-                Set(WindowDirection.allCases.filter { direction in
-                    !Self.directionalCandidateOrder(
-                        from: sourceFrame,
-                        direction: direction,
-                        candidates: focusCandidates.filter { Optional($0.key) != focusedKey }
-                    ).isEmpty
-                })
-            } ?? []
+            let availableFocusDirections: Set<WindowDirection>
+            if self.isQuickAppShelfPresented || self.quickAppTransition != .idle {
+                let selectedBundleKey = self.dropDownAppConfiguration.map {
+                    Self.normalizedBundleIdentifier($0.bundleIdentifier)
+                }
+                if self.quickAppTransition == .idle,
+                   let selectedBundleKey,
+                   let selectedSession = self.quickAppSessions[selectedBundleKey],
+                   selectedSession.isPresented,
+                   let selectedTarget = self.windows[selectedSession.windowKey],
+                   let selectedFrame = AccessibilityWindow.frame(of: selectedTarget.element) {
+                    let shelfCandidates = self.quickAppSessions.values.compactMap {
+                        session -> DirectionalWindowCandidate<WindowKey>? in
+                        guard session.isPresented,
+                              session.windowKey != selectedSession.windowKey,
+                              let target = self.windows[session.windowKey],
+                              let frame = AccessibilityWindow.frame(of: target.element)
+                        else { return nil }
+                        return DirectionalWindowCandidate(
+                            key: session.windowKey,
+                            frame: CGRect(origin: frame.position, size: frame.size)
+                        )
+                    }
+                    availableFocusDirections = Self.availableShelfFocusDirections(
+                        from: CGRect(origin: selectedFrame.position, size: selectedFrame.size),
+                        candidates: shelfCandidates,
+                        shelfDirection: self.quickAppShelfPresentation.direction
+                    )
+                } else {
+                    availableFocusDirections = []
+                }
+            } else {
+                let focusCandidates = self.directionalFocusCandidates(
+                    workspaceID: workspace.id,
+                    interactionDisplayIdentifier: interactionDisplay.identifier,
+                    displays: displays,
+                    correlationID: nil
+                )
+                let focusedFrame = focusedWindow?.frame.map {
+                    CGRect(origin: $0.position, size: $0.size)
+                }
+                availableFocusDirections = focusedFrame.map { sourceFrame in
+                    Set(WindowDirection.allCases.filter { direction in
+                        !Self.wrappingDirectionalCandidateOrder(
+                            from: sourceFrame,
+                            direction: direction,
+                            candidates: focusCandidates.filter { Optional($0.key) != focusedKey }
+                        ).candidates.isEmpty
+                    })
+                } ?? []
+            }
             let layoutParticipants = self.orderedLayoutParticipants(
                 workspaceID: workspace.id,
                 displayIdentifier: interactionDisplay.identifier,
@@ -9981,6 +10244,16 @@ final class WorkspaceEngine {
                 : nil,
             displays: displays
         )
+    }
+
+    /// Resolves the same display that the next keyboard command will act upon. Passive overlays
+    /// use this instead of the pointer display so their location never contradicts command scope.
+    func currentInteractionDisplayIdentifier() -> String {
+        let displays = Self.activeDisplays()
+        return interactionDisplayResolution(
+            focused: interactionFocusedWindowSnapshot(),
+            displays: displays
+        ).identifier
     }
 
     static func interactionDisplaySelection(

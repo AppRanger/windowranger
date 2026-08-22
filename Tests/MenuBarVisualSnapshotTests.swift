@@ -356,6 +356,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             .appRules,
             .quickAppShelf,
             .shortcuts,
+            .shortcutGuide,
             .radialMenu,
             .diagnostics,
         ] {
@@ -474,6 +475,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             .appRules,
             .quickAppShelf,
             .shortcuts,
+            .shortcutGuide,
             .radialMenu,
             .diagnostics,
         ] {

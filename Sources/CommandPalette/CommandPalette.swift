@@ -115,8 +115,6 @@ enum CommandPaletteIndex {
 
         for action in ConfigurableHotKeyAction.allCases {
             guard action != .commandWheel,
-                  action != .cycleQuickApp,
-                  hotKeyConfiguration.isEnabled(action),
                   let command = action.command,
                   !includedCommands.contains(command),
                   isAvailable(action, context: context)
@@ -125,7 +123,7 @@ enum CommandPaletteIndex {
                 id: "shortcut:\(action.rawValue)",
                 title: action.title,
                 detail: detail(for: action, context: context),
-                shortcut: hotKeyConfiguration.chord(for: action).title,
+                shortcut: hotKeyConfiguration.optionalChord(for: action)?.title,
                 systemImage: systemImage(for: action),
                 section: section(for: action),
                 destination: .command(command),
@@ -161,7 +159,7 @@ enum CommandPaletteIndex {
                         id: "quick-app-cycle:\(offset)",
                         title: title,
                         detail: "Quick App Shelf",
-                        shortcut: offset > 0 ? hotKeyConfiguration.optionalChord(for: .cycleQuickApp)?.title : nil,
+                        shortcut: nil,
                         systemImage: offset < 0 ? "chevron.left" : "chevron.right",
                         section: .application,
                         destination: .command(command),
@@ -317,7 +315,7 @@ enum CommandPaletteIndex {
         hotKeyConfiguration: HotKeyConfiguration
     ) -> String? {
         if let action = ConfigurableHotKeyAction.allCases.first(where: { $0.command == command }) {
-            return hotKeyConfiguration.chord(for: action).title
+            return hotKeyConfiguration.optionalChord(for: action)?.title
         }
         switch command {
         case let .setLayout(layout):
@@ -326,14 +324,20 @@ enum CommandPaletteIndex {
             case .tiled: .selectTiled
             case .none: nil
             }
-            return action.map { hotKeyConfiguration.chord(for: $0).title }
+            return action.flatMap { hotKeyConfiguration.optionalChord(for: $0)?.title }
         case let .switchWorkspace(id):
             return context.workspaces.first(where: { $0.id == id }).flatMap {
-                workspaceShortcut($0.key, modifiers: UInt32(controlKey | optionKey))
+                workspaceShortcut(
+                    $0.key,
+                    modifiers: hotKeyConfiguration.modifierMask(for: .navigate)
+                )
             }
         case let .moveFocusedWindow(id):
             return context.workspaces.first(where: { $0.id == id }).flatMap {
-                workspaceShortcut($0.key, modifiers: UInt32(optionKey | cmdKey))
+                workspaceShortcut(
+                    $0.key,
+                    modifiers: hotKeyConfiguration.modifierMask(for: .arrange)
+                )
             }
         default: return nil
         }
@@ -402,7 +406,6 @@ enum CommandPaletteIndex {
         case .selectTiled: WorkspaceLayout.tiled.systemImage
         case .toggleFloating: "macwindow"
         case .toggleDropDownApp: "rectangle.bottomthird.inset.filled"
-        case .cycleQuickApp: "arrow.triangle.2.circlepath"
         case .focusLeft: "arrow.left.to.line"
         case .focusDown: "arrow.down.to.line"
         case .focusUp: "arrow.up.to.line"
@@ -421,7 +424,6 @@ enum CommandPaletteIndex {
     private static func searchTerms(for action: ConfigurableHotKeyAction) -> [String] {
         switch action {
         case .toggleDropDownApp: ["quick app", "dropdown", "quake"]
-        case .cycleQuickApp: ["quick app", "shelf", "cycle", "next", "previous"]
         case .previousWindow, .nextWindow: ["cycle", "focus"]
         case .focusLeft, .focusDown, .focusUp, .focusRight: ["navigate", "direction"]
         case .moveLeft, .moveDown, .moveUp, .moveRight: ["reorder", "position"]

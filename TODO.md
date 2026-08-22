@@ -171,6 +171,165 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-069 — Wrap directional focus at workspace and Shelf edges
+
+- **Type:** Navigation consistency improvement
+- **Priority:** P1
+- **Status:** Done — automated, signed installed-app, and maintainer interaction validation complete.
+- **Requested:** 22 August 2026.
+- **User-observed context:** After making Navigate arrows work inside the Quick App Shelf, edge
+  containment felt inconsistent with cycling through an ordered set of applications. The expected
+  rule applies to the other workspace layouts too: reaching the start or end should continue from
+  the opposite edge.
+- **Smallest useful outcome:** Preserve nearest-neighbour spatial focus when a target exists in the
+  requested direction. At an outer edge, wrap to the opposite spatial edge within the same active
+  workspace and interaction display, preferring candidates aligned on the perpendicular axis. In
+  an open Shelf, wrap only along its visible layout axis; perpendicular arrows remain contained.
+- **Acceptance:** Freeform, Tiled, Accordion, and both Shelf styles wrap in all applicable
+  directions without crossing display/workspace admission boundaries. Direct neighbours remain
+  preferred over wrap targets, Shelf arrow promotion does not relayout membership, and diagnostics
+  distinguish a wrapped choice. Focused navigation/Shelf tests, the complete isolated suite, an
+  unsigned universal build, skeptical review, and signed installed-app validation are required.
+- **Result:** Navigate-arrow focus now keeps its nearest spatial neighbour first and, only at an
+  outer edge, chooses the opposite edge of the same workspace and display. Shelf navigation uses
+  the same fallback along its presentation axis while perpendicular arrows remain contained; the
+  Command Palette advertises exactly those available Shelf directions. Arrange-arrow reordering is
+  deliberately unchanged and does not wrap.
+- **Automated evidence:** 22 August 2026 — 25 focused keyboard-navigation tests and 25 focused Shelf
+  tests passed; the complete isolated suite passed all 683 tests; `git diff --check` passed; and the
+  unsigned Debug app built successfully as universal `x86_64 arm64`. Skeptical rereview reported no
+  P0-P2 finding. Live Accessibility focus behavior in the signed installed app remains unverified.
+- **Installed evidence:** 22 August 2026 — the signed universal daily build
+  `29117f974de9-dirty` was installed at `/Applications/WindowRanger.app`, its executable and debug
+  dylib matched the built candidate, the Apple Development signature and Team ID `44NAD22AK6` were
+  verified, and it resumed from the installed path. The maintainer then confirmed edge wrapping
+  works in the installed app.
+
+### WR-068 — Unify global shortcuts into configurable Navigate and Arrange families
+
+- **Type:** Shortcut architecture and usability change
+- **Priority:** P1
+- **Status:** Live validation — implementation, cleanup, automated verification, and skeptical
+  review complete; the cleaned signed app still needs interaction validation.
+- **Requested:** 22 August 2026.
+- **User-observed context:** Nearly every frequent WindowRanger command should begin with one of two
+  learnable modifier prefixes. The current defaults are spread across Control-Option,
+  Option-Command, Option-only and Option-Shift, while the Shortcut Guide exposes only the first two
+  families. Numbered workspaces are the expected default; lettered workspace keys remain supported
+  when they do not conflict with a family action key.
+- **Smallest useful outcome:** Store one configurable **Navigate** modifier family and one
+  configurable **Arrange** modifier family, then assign commands and workspaces a key suffix rather
+  than independently recorded complete chords. Changing a family prefix updates every command in
+  that family and the passive guide. A workspace owns one suffix: Navigate plus that key switches to
+  it, while Arrange plus that key sends the focused window to it.
+- **Approved defaults:** Navigate is Control-Option; Arrange is Option-Command. Preserve the direct
+  workspace pair, Control-Option bracket workspace traversal, Control-Option Tab back-and-forth,
+  Control-Option Space palette and Control-Option backtick Quick App. Use Navigate arrows for
+  directional focus and Arrange arrows for reorder/corner placement; Navigate comma/period for
+  previous/next window (and open-Shelf traversal); Arrange comma/period for Accordion/Tiled;
+  Arrange minus/equal for resize; Arrange F for Floating; and Arrange D for moving the current
+  workspace to the next display. There is no dedicated Cycle Quick Apps binding because
+  Previous/Next Window already routes through an open Shelf and the palette exposes explicit
+  Previous/Next Quick App commands. No Full Screen command is introduced by this remap.
+- **Conflict boundary:** Family modifiers must be distinct exact combinations with at least two
+  supported modifiers and no Fn/Globe. Key suffixes are unique within a family but may intentionally
+  repeat across families. A workspace suffix reserves both of its derived family chords, so a
+  conflicting action key must be remapped or unassigned before that workspace key can be used.
+  Validate global action keys against every saved profile, not only the active one, and retain the
+  existing fail-closed duplicate and macOS-registration handling.
+- **Settings boundary:** Shortcuts owns the two global modifier families and key-only action map;
+  Workspaces continues to own each profile workspace's one suffix and shows both resolved chords.
+  These global shortcut choices retain the existing iCloud/global preference ownership and do not
+  become profile content. Standard macOS Command-comma/Command-Q and contextual palette keys remain
+  outside the families.
+- **Acceptance:** Existing private-install full-chord data decodes safely into the approved map;
+  changing either family regenerates all derived action/workspace chords, conflict reporting,
+  Command Palette labels and Shortcut Guide observation/content without stale registrations.
+  Focused persistence/conflict/registration/guide/Settings tests, the complete isolated suite and a
+  universal unsigned app build must pass before signed live validation.
+- **Result:** Shortcuts now stores configurable Navigate and Arrange modifier prefixes plus key-only
+  action suffixes. Workspace suffixes derive both switch and move chords, inactive profiles
+  participate in conflict validation, and legacy/private or remotely synced conflicts preserve the
+  workspace while leaving the colliding action available from the Command Palette. Settings, the
+  Command Palette, Carbon registration and the passive Shortcut Guide all resolve the same map. The
+  redundant standalone Cycle Quick Apps binding has been removed while open-Shelf window traversal
+  and explicit palette cycling remain. Decoding drops its retired saved assignments. The unused
+  H/J/K/L shortcut tables, Globe/Fn input monitor and preference, obsolete command-wheel press/hold
+  preferences, and stale user-facing wording have also been removed; stale local values are
+  discarded without contacting iCloud, and their cloud copies are removed only during enabled sync.
+- **Automated evidence:** On 22 August 2026, the two focused preference-migration/cloud-isolation
+  regressions passed; test isolation passed; the complete suite passed with 666 tests and zero
+  failures; `git diff --check` passed; and the unsigned universal Debug app built with both arm64
+  and x86_64 slices. Skeptical rereview reported no P0-P2 finding.
+- **Installed candidate:** After the shortcut cleanup, the signed universal Debug daily build
+  `29117f974de9-dirty` was installed at `/Applications/WindowRanger.app` on 22 August 2026. Its
+  executable and debug dylib matched the built candidate, its Apple Development signature and Team
+  ID `44NAD22AK6` were verified, both `x86_64` and `arm64` slices were present, and the installed path
+  was running. Interaction acceptance remains pending.
+- **Live validation needed:** In the signed daily app, change each family prefix and a few action
+  suffixes, confirm registrations and guide content update immediately, verify workspace conflict
+  messages across active and inactive profiles, and exercise mouse and keyboard editing in
+  Settings. Confirm an unassigned action stays searchable and runnable in the Command Palette, the
+  Shelf still cycles through Previous/Next Window and its explicit palette commands, and no retired
+  Cycle Quick Apps or Globe/Fn setting remains visible.
+
+### WR-067 — Show a passive shortcut guide while navigation modifiers are held
+
+- **Type:** Shortcut discoverability and usability feature
+- **Priority:** P1
+- **Status:** Done — selected option 3, corrected navigation-row spacing, and both modifier-family
+  presentations were accepted in the signed installed app on 22 August 2026. WR-068 now owns the
+  follow-up work to make those families configurable.
+- **Requested:** 22 August 2026.
+- **User-observed context:** Most WindowRanger use follows two related shortcut families:
+  Control-Option for navigation and Option-Command for sending the focused window. Numbered
+  workspaces are the common default, while arbitrary single-letter workspace keys must remain a
+  first-class supported configuration.
+- **Smallest useful outcome:** When either exact modifier family is held, show a passive,
+  click-through, nonactivating Liquid Glass shortcut guide on the interaction display. Use the
+  selected low, wide key-map direction: workspace destinations are the visual anchor and every
+  other valid action using that modifier family is shown compactly. Derive content from the actual
+  conflict-checked shortcut registry and current profile rather than maintaining a second command
+  list. Releasing either required modifier, adding an incompatible modifier, recording shortcuts,
+  entering a protected full-screen session, sleeping, resigning the session, or terminating must
+  dismiss the guide without consuming input or changing focus.
+- **Settings boundary:** Add a dedicated **Shortcut Guide** destination with local enablement, Small,
+  Medium, or Large size, and a nine-position screen anchor. These screen-covering and passive-input
+  preferences stay on this Mac; they do not belong to a reusable profile or iCloud sync payload.
+- **Acceptance:** Control-Option and Option-Command each show only actions that can actually dispatch,
+  numbered and lettered workspaces fit the same visual grammar, and conflicts/runtime registration
+  failures are omitted. The panel never becomes key/main, activates WindowRanger, participates in
+  window cycling, intercepts pointer/keyboard input, or remains stuck after a missed lifecycle
+  transition. Geometry clamps safely on every connected display and at supported sizes/positions.
+  Deterministic modifier/content/geometry/lifecycle tests, native Light/Dark visual comparisons,
+  Settings search/navigation/persistence coverage, the complete non-hosted suite, and a universal
+  app build are required before a signed live modifier/input check.
+- **Automated evidence:** On 22 August 2026, the isolated non-hosted suite passed all 663 tests. The
+  focused guide suite covers exact modifier families, conflicts and registration failures, lettered
+  workspaces, mixed custom directional families, all geometry anchors, stale-session generations,
+  the real passive panel policy, monitor start/stop and local Settings persistence. A follow-up
+  skeptical review added exact Globe/Fn rejection, interaction-display precedence over a pointer on
+  another monitor, and adaptive rows for every supported workspace key plus dense custom actions.
+  The unsigned Debug app built as a universal arm64/x86_64 binary.
+- **Visual evidence:** Native Light/Dark navigation and movement renders were compared beside the
+  selected 1,487 x 1,058 option-3 target at matched state and placement. The final Large view is
+  1,200 x 286 points; the production structure uses real system material/SF Symbols and ships no
+  generated bitmap. `design-qa.md` records the focused and full-view evidence with a passed result.
+- **Remaining boundary:** The diagnostic signed candidate now presents both modifier families and
+  preserves input/focus in live use. The navigation guide's nine-workspace primary row was observed
+  collapsing to its intrinsic width and bunching its keycaps at the left edge; the source candidate
+  now makes that grid consume the available primary band. Install and live-check the corrected
+  spacing, real Liquid Glass, press/release feel and interaction-display placement across the
+  maintainer's multi-monitor layout.
+- **User-observed live defect:** After installing the hardened candidate and enabling the guide on
+  22 August 2026, holding either advertised modifier family showed no visible panel. Preferences
+  confirmed enablement, size and position persisted; the process was running the expected signed
+  dirty universal build and no monitor-start failure was recorded. The diagnostic candidate records
+  only the resolved modifier family, truthful action counts, shortened display identifier and final
+  panel visibility without recording keystrokes. Its logs confirmed both presentation paths and the
+  maintainer subsequently confirmed the guide was visible; the initial absence was not reproduced
+  again, so no unsupported root cause is claimed.
+
 ### WR-066 — Split overloaded Settings into clearer destinations
 
 - **Type:** Settings information-architecture improvement
@@ -551,13 +710,41 @@ smallest useful outcome and acceptance boundary.
   windows, gives each member exact session and confirmed Hide/Unhide ownership, lays the group out
   within focus-border-aware bounds, and keeps the selected window raised. Choosing or cycling to an
   already visible member promotes it without collapsing the shelf; moving outside the visible group
-  safely transitions to the new selection. Legacy profiles default to the existing one-window
+  safely transitions to the new selection. Navigate-arrow focus treats the presented group as a
+  contained temporary workspace, promotes the nearest visible member in that direction, and wraps
+  to the opposite visible edge without falling through to a managed window. Perpendicular arrows
+  remain contained. Comma/period retains ordered wrapping. Legacy
+  profiles default to the existing one-window
   Carousel behavior, and profile clone/export/import/iCloud paths preserve and validate both fields.
 - **Automated evidence:** The complete 633-test non-hosted suite passes alongside test-isolation,
   project-regeneration, shell-syntax, and diff checks. Focused coverage exercises group membership,
   both geometries, Settings persistence/search, legacy defaults, transfer round-trip, and invalid
   synced/imported counts. The unsigned Debug app builds successfully as a universal `x86_64 arm64`
   binary. Signed multi-app interaction and lifecycle validation remain pending.
+- **Directional-focus automated evidence:** Focused Shelf and keyboard coverage passes 45 tests,
+  including spatial selection and edge containment for Carousel and Accordion on all four Shelf
+  edges, one-window containment, and zero-presented transition containment. The complete isolated
+  suite passes 678 tests with zero failures, the unsigned universal Debug build succeeds for
+  `x86_64 arm64`, diff checks pass, and the post-fix review reports no remaining P0-P2 finding.
+- **Directional-focus installed candidate:** With explicit maintainer approval, signed universal
+  Debug candidate `29117f974de9-dirty` is installed and running from
+  `/Applications/WindowRanger.app` as process `77182`. The built and installed executable and debug
+  dylib match exactly; the Apple Development signature, Team ID `44NAD22AK6`, canonical bundle
+  identifier, both architectures, running path, and CDHash
+  `7cf259ed82964e757aef0558ad7174e07d521fe4` were verified. This installed candidate includes the
+  in-place Left-arrow correction. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous`.
+- **Directional-focus live defect:** The installed two-window Accordion Shelf accepted Right but
+  every Left press was contained as `no-shelf-target`. Diagnostics confirmed shortcut dispatch was
+  correct: directional promotion unnecessarily reconciled the selected-centred visible group after
+  every selection, moving the new target back to the first slot. The source now raises and focuses
+  an already-presented arrow target in place without changing Shelf membership or frames. Focused
+  regression coverage verifies Right followed by Left against fixed two-window Carousel and
+  Accordion geometry; ordered comma/period cycling still owns off-group rotation.
+- **Post-defect automated evidence:** Test isolation and diff checks pass; the complete non-hosted
+  suite passes 679 tests with zero failures; the unsigned universal Debug app builds successfully
+  for `x86_64 arm64`; and skeptical review reports no remaining P0-P2 finding. The corrected signed
+  candidate is now installed; the Left-arrow interaction remains in live validation.
 - **Installed evidence:** With explicit maintainer approval, the signed universal Debug candidate
   `9828628787b7-dirty` is installed and running from `/Applications/WindowRanger.app`. The built and
   installed executable and debug dylib match exactly; the Apple Development signature, Team ID
@@ -565,9 +752,10 @@ smallest useful outcome and acceptance boundary.
   path, and CDHash `c28d7a9b89ad18ce0f29d3786d50dd897f4946fe` were verified. The previous
   daily copy remains recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
 - **Live validation remaining:** Exercise both styles at all four edges with two to four shelf apps;
-  verify visible and off-group cycling, palette focus retention, ambiguous neighbours, a closed
-  selected app, focus loss, style/count changes while open, profile changes, native-tab replacement,
-  sleep/wake, focus-border toggling, and safe restoration before moving this item to Done.
+  verify visible and off-group cycling, spatial arrow focus and edge wrapping with the palette
+  both open and closed, palette focus retention, ambiguous neighbours, a closed selected app, focus
+  loss, style/count changes while open, profile changes, native-tab replacement, sleep/wake,
+  focus-border toggling, and safe restoration before moving this item to Done.
 
 ### WR-057 — Preserve each window through partial post-login recovery
 

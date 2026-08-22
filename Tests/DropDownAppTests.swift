@@ -322,7 +322,7 @@ final class DropDownAppTests: XCTestCase {
 
     func testDropDownShortcutDefaultIsControlOptionBacktick() {
         XCTAssertEqual(
-            ConfigurableHotKeyAction.toggleDropDownApp.defaultChord,
+            HotKeyConfiguration().chord(for: .toggleDropDownApp),
             HotKeyChord(keyCode: 50, modifiers: UInt32(controlKey | optionKey))
         )
         XCTAssertEqual(

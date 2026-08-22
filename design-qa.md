@@ -451,3 +451,80 @@ inline name commit behavior, and activation against a signed running app remain 
 boundaries.
 
 final result: blocked
+
+---
+
+# Modifier-held Shortcut Guide Design QA
+
+## Scope and evidence
+
+- **Selected visual truth:**
+  `/Users/chris/.codex/generated_images/01a01e25-3f66-7ef1-b715-6d393aedeeaf/exec-d7e0739e-4d74-4a50-92da-f74495587ea9.png`
+  (1,487 x 1,058 pixels). The selected option is the low, wide bottom key map; its illustrative
+  Settings/sidebar background is context rather than a product asset.
+- **Production renders:**
+  `.build/shortcut-guide-design-qa/implementation/windowranger-shortcut-guide-navigation-dark.png`
+  (2,400 x 572 pixels for the 1,200 x 286-point Large production view at 2x Retina scale) and
+  `.build/shortcut-guide-design-qa/implementation/windowranger-shortcut-guide-movement-dark.png`
+  (2,400 x 436 pixels for the compact movement state).
+- **Focused comparison:**
+  `.build/shortcut-guide-design-qa/comparisons/focused-side-by-side.png`
+  (2,464 x 294 pixels). The reference HUD crop and implementation are normalized to the same
+  1,232 x 294-pixel region and the same Control-Option navigation state.
+- **Full comparison:**
+  `.build/shortcut-guide-design-qa/comparisons/full-side-by-side.png`
+  (2,974 x 1,058 pixels). It compares the complete reference viewport with the production HUD at
+  the same bottom-centre screen anchor on a neutral dark desktop canvas.
+- **Rendering boundary:** AppKit's public `NSGlassEffectView` does not rasterize in a detached
+  `ImageRenderer`. The comparison therefore replaces only the offscreen surface with SwiftUI's
+  native system material; the live production panel still uses Liquid Glass on macOS 26 and the
+  system HUD material on older supported macOS releases.
+
+## Comparison history
+
+1. **P1 resolved — first pass was too small and toolbar-like:** the initial implementation used
+   compact workspace cards in a 570-point panel. The selected direction instead needs a low,
+   screen-spanning keyboard map. Small, Medium and Large now use 680, 920 and 1,200-point widths.
+2. **P2 resolved — workspaces lacked the selected visual hierarchy:** workspace destinations now
+   use prominent keycaps with their names below. Numbered names become explicit **Workspace 1**
+   copy; lettered or named workspaces retain their real profile names.
+3. **P2 resolved — arrow commands competed with the action row:** one truthful focus or reorder
+   family becomes the selected compact arrow cluster beside the workspaces. A mixed customized
+   focus/reorder family remains in the labelled action row so no registered action disappears.
+4. **P2 resolved — unnecessary movement-state height:** Option-Command has no default secondary
+   row, so its panel removes that row's reserved height rather than leaving a large empty strip.
+5. **Final comparison:** the implementation preserves the reference's modifier header, five-key
+   workspace anchor, separated arrow cluster, lower action divider and bottom-centre placement. It
+   is deliberately a little denser and includes the real configured Quick App command.
+6. **Post-install hardening:** the ordinary key map retains the selected one-row proportions, while
+   dense supported configurations add grid rows instead of clipping valid actions. A fresh Light
+   and Dark render confirmed square workspace keycaps, single-line compact key labels and the same
+   horizontal hierarchy after that adaptive-layout change.
+
+## Fidelity surfaces
+
+- **Typography:** native San Francisco weights provide one clear modifier-family header, prominent
+  key labels, quiet workspace names and compact action labels. Long custom names scale and truncate
+  inside their equal destination slots rather than pushing the panel off-screen.
+- **Spacing and geometry:** the selected horizontal rhythm and two-row structure are retained. The
+  nine anchors clamp to the resolved interaction display's visible frame with a 24-point safe
+  margin; a state without secondary actions contracts vertically and dense valid configurations
+  add only the rows required to keep every action visible.
+- **Colour and material:** semantic primary/secondary colours and the user's control accent sit on
+  public Liquid Glass or system HUD material. Light and Dark offscreen renders were inspected; no
+  reference gradient or wallpaper is copied.
+- **Image quality and assets:** every key, arrow and label is native text/SF-symbol output at Retina
+  scale. The generated bitmap is not embedded or shipped.
+- **Content and state:** content is derived from the same conflict-checked binding registry Carbon
+  registers. Numbered and lettered workspaces, disabled Command Palette state, conflicts and runtime
+  registration failures therefore remain truthful rather than becoming a second hard-coded list.
+- **Interaction and accessibility:** the panel is nonactivating, non-key, non-main, click-through,
+  excluded from window cycling and hidden from accessibility because modifier holding alone must not
+  steal focus or produce VoiceOver chatter. Release, incompatible modifiers and lifecycle stops
+  dismiss it; generation checks reject stale callbacks from a previous monitor session.
+
+No scoped P0, P1 or P2 visual mismatch remains. Live Liquid Glass compositing over varied desktop
+content, multi-monitor interaction-display placement and modifier feel remain signed-app validation
+boundaries.
+
+final result: passed

@@ -18,6 +18,7 @@ parking them at a recoverable screen edge.
 | Reusable models | `Sources/Model` | Workspaces, layouts, profiles, display identity, app rules, window manipulation and radial-menu preferences. |
 | Settings | `Sources/Settings` | Profile/iCloud-backed configuration, machine-local state, searchable native UI and app-owned Settings-window routing. |
 | Command surfaces | `Sources/CommandPalette`, `Sources/MenuBar`, `Sources/RadialMenu` | Searchable and contextual presentation through the same typed command layer used by hotkeys. |
+| Shortcut guide | `Sources/ShortcutGuide` | Passive modifier observation, conflict-checked key-map content, screen geometry and a nonactivating glass HUD. |
 | Diagnostics | `Sources/Diagnostics` | Structured privacy-filtered Debug traces with bounded rotation and no-op/test sinks. |
 
 The non-hosted `WindowRangerTests` target compiles shared sources directly and excludes
@@ -120,10 +121,17 @@ App Shelf of up to four bundle identifier/display name entries plus one shared s
 Legacy per-entry presentation migrates deterministically from the first configured entry. Normalization
 removes duplicates, preserves configured order, and makes Quick App ownership mutually exclusive
 with an App Rule for the same bundle identifier. Global preferences
-such as menu-bar presentation, general command shortcuts and Command Palette configuration use their
+such as menu-bar presentation, the Navigate/Arrange modifier families and key-suffix action map,
+and Command Palette configuration use their
 existing global settings path and are not profile content, but are included in the supported iCloud
 sync payload when syncing is enabled. Focus-following moves and automatic application-unhide use the
 same global sync path.
+
+Workspace suffixes are durable profile content and reserve their key in both shortcut families.
+When private-install migration, profile import, or iCloud data introduces a collision, the workspace
+key wins and the conflicting global action becomes unassigned but remains available in the Command
+Palette. Interactive editors prevent the collision before persistence; runtime registration remains
+fail-closed if independently corrupted data still contains a duplicate.
 
 `SyncedProfileLibraryPolicy` validates the atomic encoded byte size before decoding, then validates
 the schema version, collection counts, user-facing name lengths and normalized structure. A remote
@@ -136,8 +144,8 @@ action and never occurs as a side effect of a failed pull.
 
 The active/manual profile selection, automatic trigger mappings, runtime active-workspace state,
 the selected Quick App identity for each profile, monitor fingerprints, role-to-physical-monitor
-bindings, trackpad preferences, focused-window border preferences and per-application radius
-overrides, Accessibility state, login-item state, diagnostics, and live window
+bindings, trackpad preferences, Shortcut Guide enablement/size/position, focused-window border
+preferences and per-application radius overrides, Accessibility state, login-item state, diagnostics, and live window
 session remain local. `WorkspaceStateStore` writes the current WindowServer-bound session beneath
 the user's cache directory using an atomic replacement. This includes exact hidden Quick App
 identities only when WindowRanger hid those windows' applications. A changed WindowServer session
@@ -211,11 +219,22 @@ neighbours fit the new group. Ambiguous neighbours fail closed without disturbin
 Command Palette presentation is an explicit shelf-focus lease. Activating WindowRanger for that
 panel does not count as external focus loss, palette-owned launches do not activate the target app,
 and completed shelf previews retain palette keyboard focus. While an entry is presented, the normal
-Previous Window and Next Window commands route through the shelf's ordered selection path. Closing
-the palette restores exact focus to a presented shelf window only when that Shelf application was
+Previous Window and Next Window commands route through the shelf's ordered selection path.
+Navigate-arrow commands use the presented group geometry to choose the nearest visible Shelf window
+in that direction. Arrow promotion raises and focuses that already-presented window in place without
+rotating membership or relaying out the group, so reversing direction returns to the window just
+left. At the end of the Shelf's layout axis it wraps to the opposite visible edge; perpendicular
+arrows remain contained rather than falling through to a managed workspace window. Closing the
+palette restores exact focus to a
+presented shelf window only when that Shelf application was
 frontmost before the palette opened. A merely retained Shelf session stays in its existing
 visibility state while focus returns to the application that actually preceded the palette.
 Activating any unrelated application still ends ordinary shelf presentation.
+
+Managed workspace Navigate-arrow focus uses the nearest eligible spatial neighbour on the current
+workspace and interaction display. When that direction has no neighbour, it wraps to the far edge
+in the opposite direction, preferring perpendicular-axis overlap before distance. The fallback
+never broadens candidate admission or crosses a workspace or display boundary.
 
 Each entry resolves only one unambiguous admitted standard window for the configured bundle. The
 group targets the pointer/interaction display's usable bounds. Its optional Top, Bottom, Left, or
@@ -320,7 +339,21 @@ Command feedback
 is a nonactivating click-through overlay. On macOS 26 and later its content is embedded in AppKit's
 public static Liquid Glass view; older supported releases use the system HUD material. Both
 surfaces use a capsule radius derived from the live overlay height. The surface choice never changes
-its panel, focus, input, timing, or accessibility boundary. The optional focused-window highlight
+its panel, focus, input, timing, or accessibility boundary.
+
+The optional Shortcut Guide separately observes
+paired global and local `flagsChanged` events without consuming them. The exact configured Navigate
+and Arrange families select content from the same conflict-checked registry Carbon uses; changing a
+family refreshes both Carbon registration and passive observation. Incompatible extra modifiers, conflicts and registration
+failures produce no misleading entries. Its panel never becomes key or main, never activates the
+app, follows the engine's resolved interaction display, and uses macOS 26 Liquid Glass with the
+system HUD material as the older-system fallback. The normal presentation remains one low, wide
+key map; unusually dense valid configurations add rows rather than clipping actions. Enablement,
+Small/Medium/Large density and the nine screen anchors are local to one Mac. Shortcut recording,
+protected game sessions, sleep, inactive login sessions, display changes and termination stop the
+passive monitor and clear the panel so a missed modifier release cannot leave it visible.
+
+The optional focused-window highlight
 uses the same nonactivating, click-through boundary, polls only while enabled on this Mac, and excludes
 WindowRanger-owned windows, apps identified as games through the same public bundle metadata used by
 full-screen safety, and full-screen windows. Its local white-by-default colour is independent of the
@@ -354,8 +387,9 @@ on the placement row opens the inline Placement Halo in a separate
 palette-owned keyboard mode whose arrows traverse only validated position previews. The placement
 row is omitted when that provider is empty. Escape collapses the halo or restores command-result
 handling. A nonempty query hides Quick Actions and collapses the Halo until search is cleared.
-Legacy standalone-wheel and Globe/Fn preferences remain decodable for compatibility, but AppDelegate
-does not construct their controllers or install their event monitor.
+Legacy standalone-wheel preferences remain decodable for compatibility. The superseded Globe/Fn
+preference, gesture state and event-monitor implementation are absent; Command Palette activation
+uses the same Navigate-family registry as every other global shortcut.
 
 Settings is an explicit app-owned floating utility: it may activate and focus, but it is excluded
 from third-party discovery, layout and persistence. Every explicit open captures the engine's

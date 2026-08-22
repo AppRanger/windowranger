@@ -16,6 +16,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
     case appRules
     case quickAppShelf
     case shortcuts
+    case shortcutGuide
     case radialMenu
     case diagnostics
 
@@ -37,6 +38,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
         case .appRules: "Applications"
         case .quickAppShelf: "Quick App Shelf"
         case .shortcuts: "Shortcuts"
+        case .shortcutGuide: "Shortcut Guide"
         case .radialMenu: "Command Palette"
         case .diagnostics: "Diagnostics"
         }
@@ -58,6 +60,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
         case .appRules: "app.badge.checkmark"
         case .quickAppShelf: "rectangle.stack.badge.play"
         case .shortcuts: "keyboard"
+        case .shortcutGuide: "command"
         case .radialMenu: "magnifyingglass"
         case .diagnostics: "waveform.path.ecg"
         }
@@ -162,10 +165,11 @@ enum SettingsCatalog {
         SettingsSearchEntry(id: "quick-app-shelf-style", category: .quickAppShelf, title: "Quick App Shelf style and visible count", description: "Show available shelf windows as an overlapping Accordion or a non-overlapping Carousel.", synonyms: ["show at once", "multiple apps", "cards", "overlap", "maximum windows"]),
         SettingsSearchEntry(id: "workspace-shortcuts", category: .workspaces, title: "Workspace shortcuts", description: "Edit each workspace key and review its derived switching and window-moving key bindings.", synonyms: ["hotkeys", "keyboard", "switch to", "move window to"]),
         SettingsSearchEntry(id: "shortcut-recorder", category: .shortcuts, title: "Record and reset shortcuts", description: "Rebind global WindowRanger commands with conflict feedback or restore their defaults.", synonyms: ["customize hotkeys", "keyboard recorder", "key binding", "BST-UX-02"]),
+        SettingsSearchEntry(id: "shortcut-guide", category: .shortcutGuide, title: "Modifier-held shortcut guide", description: "Show a passive key map while holding the configured Navigate or Arrange prefix, and choose its size and screen position.", synonyms: ["overlay", "HUD", "cheat sheet", "help", "discover shortcuts", "workspace numbers", "lettered workspaces", "workspace letters", "alphabetic", "alphanumeric", "keyboard guide"]),
         SettingsSearchEntry(id: "shortcut-conflicts", category: .shortcuts, title: "Repair shortcut conflicts", description: "Identify every command sharing a shortcut or failing macOS registration, then record a replacement or safely reset custom bindings.", synonyms: ["registration failed", "hotkey unavailable", "duplicate shortcut", "REL-01"]),
         SettingsSearchEntry(id: "focus-shortcuts", category: .shortcuts, title: "Focus shortcuts", description: "Review previous and next window bindings.", synonyms: ["cycle windows"]),
-        SettingsSearchEntry(id: "directional-focus", category: .shortcuts, title: "Directional window focus", description: "Focus the nearest eligible window left, down, up, or right on the interaction display.", synonyms: ["Option H J K L", "KEY-06"]),
-        SettingsSearchEntry(id: "directional-move", category: .shortcuts, title: "Directional layout reorder", description: "Use one direction to reorder, or two perpendicular directions within 200 ms to place a Tiled window at that corner.", synonyms: ["Control Option arrows", "two arrow", "corner placement", "top right", "BSP", "KEY-07", "LAY-16"]),
+        SettingsSearchEntry(id: "directional-focus", category: .shortcuts, title: "Directional window focus", description: "Use Navigate plus an arrow to focus the nearest eligible window on the interaction display.", synonyms: ["Navigate arrows", "focus left", "focus right", "KEY-06"]),
+        SettingsSearchEntry(id: "directional-move", category: .shortcuts, title: "Directional layout reorder", description: "Use Arrange plus one arrow to reorder, or two perpendicular arrows within 200 ms to place a Tiled window at that corner.", synonyms: ["Arrange arrows", "two arrow", "corner placement", "top right", "BSP", "KEY-07", "LAY-16"]),
         SettingsSearchEntry(id: "smart-resize", category: .shortcuts, title: "Smart layout resize", description: "Adjust the focused Tiled share or the current Accordion padding in safe 50-point steps.", synonyms: ["Control Option minus equal", "KEY-08"]),
         SettingsSearchEntry(id: "move-workspace-display", category: .shortcuts, title: "Move workspace to another display", description: "Reassign the active Independent Displays workspace and keep both displays in a valid active state.", synonyms: ["Option Shift Tab", "monitor", "KEY-09", "MON-05"]),
         SettingsSearchEntry(id: "layout-shortcuts", category: .shortcuts, title: "Layout shortcuts", description: "Review Tiled, Accordion, Freeform, and per-window Floating commands.", synonyms: ["none", "manual frames", "tile", "float", "cycle layout"]),

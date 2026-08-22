@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon
 import SwiftUI
 
 enum SettingsWindowMetrics {
@@ -161,6 +162,7 @@ struct SettingsView: View {
                         }
                         Section("Controls") {
                             sidebarRow(.shortcuts)
+                            sidebarRow(.shortcutGuide)
                             sidebarRow(.radialMenu)
                         }
                         #if DEBUG
@@ -257,6 +259,8 @@ struct SettingsView: View {
                         store: store,
                         recordingStateChanged: shortcutRecordingStateChanged
                     )
+                case .shortcutGuide:
+                    ShortcutGuideSettingsView(store: store)
                 case .radialMenu:
                     RadialMenuSettingsView(
                         store: store,
@@ -611,7 +615,7 @@ private struct GeneralSettingsView: View {
 
                 Section("Always Stays on This Mac") {
                     Label("Active profile, automatic selection rules, and display bindings", systemImage: "display.2")
-                    Label("Trackpad gestures and Focus Border settings", systemImage: "hand.draw")
+                    Label("Trackpad gestures, Shortcut Guide, and Focus Border settings", systemImage: "hand.draw")
                     Label("Permissions, Open at Login, live windows, and diagnostics", systemImage: "lock.macwindow")
                 }
             }
@@ -2083,10 +2087,22 @@ struct WorkspaceSettingsView: View {
                 }
 
                 LabeledContent("Switch to \(workspace.name)") {
-                    WorkspaceShortcutCaps(keys: ["⌃", "⌥", workspace.key.uppercased()])
+                    if let keyCode = HotKeyManager.keyCodes[workspace.key.lowercased()] {
+                        WorkspaceShortcutCaps(keys: store.hotKeyConfiguration
+                            .chord(forWorkspaceKeyCode: keyCode, family: .navigate)
+                            .keyCaps)
+                    } else {
+                        Text("Not set").foregroundStyle(.secondary)
+                    }
                 }
                 LabeledContent("Move Window to \(workspace.name)") {
-                    WorkspaceShortcutCaps(keys: ["⌥", "⌘", workspace.key.uppercased()])
+                    if let keyCode = HotKeyManager.keyCodes[workspace.key.lowercased()] {
+                        WorkspaceShortcutCaps(keys: store.hotKeyConfiguration
+                            .chord(forWorkspaceKeyCode: keyCode, family: .arrange)
+                            .keyCaps)
+                    } else {
+                        Text("Not set").foregroundStyle(.secondary)
+                    }
                 }
                 Text("Workspace keys are synced with this profile. These two shortcuts are derived from the key; global command shortcuts remain in Shortcuts.")
                     .font(.caption)
@@ -2284,9 +2300,13 @@ struct WorkspaceSettingsView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 6)
-            Text("⌃⌥\(workspace.key.uppercased())")
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
+            if let keyCode = HotKeyManager.keyCodes[workspace.key.lowercased()] {
+                Text(store.hotKeyConfiguration
+                    .chord(forWorkspaceKeyCode: keyCode, family: .navigate)
+                    .title)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
             if showsDisclosure {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
@@ -2637,12 +2657,16 @@ private struct QuickAppShelfSettingsView: View {
                         .textCase(nil)
                 }
             } footer: {
-                Text("The regular shortcut toggles the most recently used app. The cycle shortcuts follow this order while the shelf is open.")
+                Text("The regular shortcut toggles the most recently used app. Previous and Next Window follow this order while the shelf is open.")
             }
 
                 Section("Global Shortcut") {
                     LabeledContent("Show or hide shelf") {
-                        ShortcutCaps(keys: store.hotKeyConfiguration.chord(for: .toggleDropDownApp).keyCaps)
+                        if let chord = store.hotKeyConfiguration.optionalChord(for: .toggleDropDownApp) {
+                            ShortcutCaps(keys: chord.keyCaps)
+                        } else {
+                            Text("Not set").foregroundStyle(.secondary)
+                        }
                     }
                     Text("This shortcut is shared by every profile. Change it in Shortcuts.")
                         .font(.caption)
@@ -3218,6 +3242,60 @@ private struct InstalledApplicationPicker: View {
     }
 }
 
+private struct ShortcutGuideSettingsView: View {
+    @ObservedObject var store: SettingsStore
+
+    var body: some View {
+        Form {
+            Section("Shortcut Guide") {
+                Toggle("Show while shortcut modifiers are held", isOn: $store.shortcutGuideEnabled)
+                Text("Hold either configured Navigate or Arrange modifier family to see the matching actions. Releasing a modifier hides the guide without changing focus.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let issue = store.shortcutGuideRuntimeIssue {
+                    Label(issue, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            Section("Appearance") {
+                LabeledContent("Size") {
+                    Picker("Size", selection: $store.shortcutGuideSize) {
+                        ForEach(ShortcutGuideSize.allCases) { size in
+                            Text(size.title).tag(size)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                LabeledContent("Position") {
+                    Picker("Position", selection: $store.shortcutGuidePosition) {
+                        ForEach(ShortcutGuidePosition.allCases) { position in
+                            Text(position.title).tag(position)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                Text("The guide follows the interaction display used by the focused window and stays within that screen's usable area. These preferences stay on this Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("What Appears") {
+                Label("Workspace keys and names from the active profile", systemImage: "square.grid.3x3")
+                Label("Only conflict-free shortcuts using the held modifier family", systemImage: "checkmark.circle")
+                Text("Numbered workspaces use the same key-map layout as lettered workspaces. Unavailable or conflicting actions are left out rather than shown disabled.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
 private struct ShortcutSettingsView: View {
     @ObservedObject var store: SettingsStore
     let recordingStateChanged: (Bool) -> Void
@@ -3265,22 +3343,51 @@ private struct ShortcutSettingsView: View {
         }
     }
 
-    private let workspaceActions: [ConfigurableHotKeyAction] = [
-        .previousWorkspace, .nextWorkspace, .backAndForthWorkspace, .moveWorkspaceToNextDisplay,
-        .toggleDropDownApp, .cycleQuickApp,
-    ]
-    private let focusActions: [ConfigurableHotKeyAction] = [
-        .previousWindow, .nextWindow, .focusLeft, .focusDown, .focusUp, .focusRight,
-    ]
-    private let layoutActions: [ConfigurableHotKeyAction] = [
-        .selectAccordion, .selectTiled, .toggleFloating,
-        .moveLeft, .moveDown, .moveUp, .moveRight, .resizeSmaller, .resizeLarger,
+    private var navigateActions: [ConfigurableHotKeyAction] {
+        ConfigurableHotKeyAction.allCases.filter { $0.family == .navigate }
+    }
+
+    private var arrangeActions: [ConfigurableHotKeyAction] {
+        ConfigurableHotKeyAction.allCases.filter { $0.family == .arrange }
+    }
+
+    private let shortcutFamilyModifierChoices: [UInt32] = [
+        UInt32(controlKey | optionKey), UInt32(controlKey | cmdKey), UInt32(optionKey | cmdKey),
+        UInt32(controlKey | shiftKey), UInt32(optionKey | shiftKey), UInt32(cmdKey | shiftKey),
+        UInt32(controlKey | optionKey | shiftKey), UInt32(controlKey | optionKey | cmdKey),
+        UInt32(controlKey | cmdKey | shiftKey), UInt32(optionKey | cmdKey | shiftKey),
+        UInt32(controlKey | optionKey | cmdKey | shiftKey),
     ]
 
     var body: some View {
         Form {
-            Section {
-                Text("Select a global command shortcut to record a replacement. Workspace keys and their derived switch/move shortcuts are configured in Workspaces.")
+            Section("Shortcut Families") {
+                Text("Choose the two prefixes once. Each command and workspace then owns only its key suffix.")
+                    .foregroundStyle(.secondary)
+                ForEach(ShortcutFamily.allCases) { family in
+                    LabeledContent(family.title) {
+                        HStack(spacing: 8) {
+                            Menu(HotKeyChord(keyCode: 0, modifiers: store.hotKeyConfiguration.modifierMask(for: family)).keyCaps.dropLast().joined(separator: " ")) {
+                                ForEach(shortcutFamilyModifierChoices, id: \.self) { modifiers in
+                                    Button(HotKeyChord(keyCode: 0, modifiers: modifiers).keyCaps.dropLast().joined(separator: " ")) {
+                                        if let message = store.setShortcutFamilyModifiers(modifiers, for: family) {
+                                            conflictMessage = message
+                                            NSSound.beep()
+                                        } else {
+                                            conflictMessage = nil
+                                        }
+                                    }
+                                }
+                            }
+                            Button { conflictMessage = store.resetShortcutFamilyModifiers(family) } label: {
+                                Image(systemName: "arrow.counterclockwise")
+                            }
+                            .disabled(store.hotKeyConfiguration.modifierMask(for: family) == family.defaultModifiers)
+                        }
+                    }
+                }
+                Text("Families must be distinct and neither can be a subset of the other.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
@@ -3305,17 +3412,13 @@ private struct ShortcutSettingsView: View {
                 }
             }
 
-            Section("Workspace Navigation") {
-                ForEach(workspaceActions) { action in shortcutRow(action) }
+            Section("Navigate") {
+                ForEach(navigateActions) { action in shortcutRow(action) }
             }
 
-            Section("Window Focus") {
-                ForEach(focusActions) { action in shortcutRow(action) }
-            }
-
-            Section("Layout and Placement") {
-                ForEach(layoutActions) { action in shortcutRow(action) }
-                LabeledContent("Select Freeform", value: "Command wheel or Settings")
+            Section("Arrange") {
+                ForEach(arrangeActions) { action in shortcutRow(action) }
+                LabeledContent("Select Freeform", value: "Command Palette or Layout selector")
                     .foregroundStyle(.secondary)
 
                 Label(
@@ -3346,10 +3449,9 @@ private struct ShortcutSettingsView: View {
             Section {
                 Button("Reset All Shortcuts") {
                     finishRecording()
-                    conflictMessage = nil
-                    store.resetAllShortcuts()
+                    conflictMessage = store.resetAllShortcuts()
                 }
-                Text("Escape cancels recording. A global shortcut must include Control, Option, or Command.")
+                Text("Escape cancels recording. Press a key to assign its suffix, or use Unassign for palette-only access.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text("App-level layout exclusions remain authoritative. Workspace-specific shortcuts stay with each workspace in Workspaces.")
@@ -3385,14 +3487,19 @@ private struct ShortcutSettingsView: View {
 
                 Button {
                     if recordingAction == action { finishRecording() }
-                    conflictMessage = nil
-                    store.resetShortcut(action)
+                    conflictMessage = store.resetShortcut(action)
                 } label: {
                     Image(systemName: "arrow.counterclockwise")
                 }
-                .disabled(!store.hotKeyConfiguration.hasExplicitChord(for: action))
+                .disabled(!store.hotKeyConfiguration.hasExplicitKeyAssignment(for: action))
                 .help("Reset \(action.title)")
                 .accessibilityLabel("Reset \(action.title)")
+
+                Button("Unassign") {
+                    if recordingAction == action { finishRecording() }
+                    conflictMessage = store.setShortcutKey(nil, for: action)
+                }
+                .disabled(chord == nil)
             }
         } label: {
             VStack(alignment: .leading, spacing: 3) {
@@ -3427,23 +3534,17 @@ private struct ShortcutSettingsView: View {
                 finishRecording()
                 return nil
             }
-            guard let chord = HotKeyManager.recordedChord(from: event) else {
-                conflictMessage = "Press a non-modifier key together with Control, Option, or Command."
+            guard !ShortcutConflictModel.modifierOnlyKeyCodes.contains(UInt32(event.keyCode)) else {
+                conflictMessage = "Press a supported non-modifier key."
                 NSSound.beep()
                 return nil
             }
             guard let recordingAction else { return event }
-            if let conflict = HotKeyManager.configurableShortcutConflict(
-                action: recordingAction,
-                chord: chord,
-                configuration: store.hotKeyConfiguration,
-                workspaces: store.workspaces
-            ) {
+            if let conflict = store.setShortcutKey(UInt32(event.keyCode), for: recordingAction) {
                 conflictMessage = conflict
                 NSSound.beep()
                 return nil
             }
-            store.setShortcut(chord, for: recordingAction)
             finishRecording()
             return nil
         }
@@ -3466,21 +3567,9 @@ private struct ShortcutSettingsView: View {
 private struct RadialMenuSettingsView: View {
     @ObservedObject var store: SettingsStore
     let recordingStateChanged: (Bool) -> Void
-    @State private var isRecordingShortcut = false
-    @State private var shortcutEventMonitor: Any?
-    @State private var conflictMessage: String?
 
-    private var paletteChord: HotKeyChord {
-        store.hotKeyConfiguration.chord(for: .commandWheel)
-    }
-
-    private var storedConflict: String? {
-        HotKeyManager.configurableShortcutConflict(
-            action: .commandWheel,
-            chord: paletteChord,
-            configuration: store.hotKeyConfiguration,
-            workspaces: store.workspaces
-        )
+    private var paletteChord: HotKeyChord? {
+        store.hotKeyConfiguration.optionalChord(for: .commandWheel)
     }
 
     private var runtimeIssue: HotKeyRuntimeIssue? {
@@ -3492,87 +3581,28 @@ private struct RadialMenuSettingsView: View {
             Section("Activation") {
                 Toggle("Enable Command Palette", isOn: $store.radialMenuEnabled)
                 LabeledContent("Global shortcut") {
-                    HStack(spacing: 8) {
-                        Button {
-                            beginShortcutRecording()
-                        } label: {
-                            if isRecordingShortcut {
-                                Text("Press shortcut…").frame(minWidth: 120)
-                            } else {
-                                ShortcutCaps(keys: paletteChord.keyCaps)
-                                    .frame(minWidth: 120)
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        Button {
-                            finishShortcutRecording()
-                            conflictMessage = nil
-                            store.resetShortcut(.commandWheel)
-                        } label: {
-                            Image(systemName: "arrow.counterclockwise")
-                        }
-                        .disabled(store.hotKeyConfiguration.isUsingDefault(for: .commandWheel))
-                        .help("Reset Command Palette shortcut")
-                        .accessibilityLabel("Reset Command Palette shortcut")
+                    if let paletteChord {
+                        ShortcutCaps(keys: paletteChord.keyCaps)
+                            .frame(minWidth: 120)
+                    } else {
+                        Text("Not set")
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 120)
                     }
                 }
                 .disabled(!store.radialMenuEnabled)
-                if let conflict = conflictMessage ?? storedConflict {
-                    Label(conflict, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                }
                 if let runtimeIssue {
                     Label(runtimeIssue.message, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .accessibilityLabel("Shortcut registration failed. \(runtimeIssue.message)")
                 }
-                Text("Press the global shortcut to open the searchable palette. Type to filter commands, use the arrow keys to select, press Return to run, and Escape to close.")
+                Text("Change the Navigate family or Command Palette suffix in Shortcuts. Press it to open the searchable palette; type to filter, use arrows to select, Return to run, and Escape to close.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .onDisappear { finishShortcutRecording() }
-    }
-
-    private func beginShortcutRecording() {
-        finishShortcutRecording()
-        isRecordingShortcut = true
-        conflictMessage = nil
-        recordingStateChanged(true)
-        shortcutEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            if event.keyCode == 53 {
-                finishShortcutRecording()
-                return nil
-            }
-            guard let chord = HotKeyManager.recordedChord(from: event) else {
-                conflictMessage = "Press a non-modifier key together with Control, Option, or Command."
-                NSSound.beep()
-                return nil
-            }
-            if let conflict = HotKeyManager.configurableShortcutConflict(
-                action: .commandWheel,
-                chord: chord,
-                configuration: store.hotKeyConfiguration,
-                workspaces: store.workspaces
-            ) {
-                conflictMessage = conflict
-                NSSound.beep()
-                return nil
-            }
-            store.setShortcut(chord, for: .commandWheel)
-            finishShortcutRecording()
-            return nil
-        }
-    }
-
-    private func finishShortcutRecording() {
-        let wasRecording = isRecordingShortcut || shortcutEventMonitor != nil
-        if let shortcutEventMonitor { NSEvent.removeMonitor(shortcutEventMonitor) }
-        shortcutEventMonitor = nil
-        isRecordingShortcut = false
-        if wasRecording { recordingStateChanged(false) }
     }
 }
 
