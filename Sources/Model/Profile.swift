@@ -1,6 +1,39 @@
 import Foundation
 import Darwin
 
+enum ProfileIconStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+    case profile
+    case desktop
+    case laptop
+    case home
+    case work
+    case travel
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .profile: "Profile"
+        case .desktop: "Desktop"
+        case .laptop: "Laptop"
+        case .home: "Home"
+        case .work: "Work"
+        case .travel: "Travel"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .profile: "person.crop.rectangle.stack"
+        case .desktop: "desktopcomputer"
+        case .laptop: "laptopcomputer"
+        case .home: "house"
+        case .work: "briefcase"
+        case .travel: "airplane"
+        }
+    }
+}
+
 enum MenuBarDisplayIconStyle: String, Codable, CaseIterable, Identifiable, Sendable {
     case automatic
     case horizontalMonitor
@@ -290,6 +323,7 @@ enum QuickAppShelfGroupPolicy {
 struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     var name: String
+    var iconStyle: ProfileIconStyle
     var workspaces: [WorkspaceDefinition]
     var displayMode: MultiDisplayMode
     var displayRoles: [ProfileDisplayRole]
@@ -302,6 +336,7 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
     init(
         id: UUID = UUID(),
         name: String,
+        iconStyle: ProfileIconStyle = .profile,
         workspaces: [WorkspaceDefinition],
         displayMode: MultiDisplayMode,
         displayRoles: [ProfileDisplayRole],
@@ -313,6 +348,7 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
     ) {
         self.id = id
         self.name = name
+        self.iconStyle = iconStyle
         self.workspaces = workspaces
         self.displayMode = displayMode
         self.displayRoles = displayRoles
@@ -330,7 +366,7 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, workspaces, displayMode, displayRoles, workspaceRoleAssignments, appRules
+        case id, name, iconStyle, workspaces, displayMode, displayRoles, workspaceRoleAssignments, appRules
         case dropDownApp, quickApps, quickAppShelfPresentation
     }
 
@@ -338,6 +374,10 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
+        iconStyle = try container.decodeIfPresent(
+            ProfileIconStyle.self,
+            forKey: .iconStyle
+        ) ?? .profile
         workspaces = try container.decode([WorkspaceDefinition].self, forKey: .workspaces)
         displayMode = try container.decode(MultiDisplayMode.self, forKey: .displayMode)
         displayRoles = try container.decode([ProfileDisplayRole].self, forKey: .displayRoles)
@@ -401,6 +441,7 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
         return WindowManagerProfile(
             id: newProfileID,
             name: newName,
+            iconStyle: iconStyle,
             workspaces: clonedWorkspaces,
             displayMode: displayMode,
             displayRoles: clonedRoles,
@@ -448,6 +489,7 @@ struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {
         return WindowManagerProfile(
             id: id,
             name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Profile" : name,
+            iconStyle: iconStyle,
             workspaces: uniqueWorkspaces,
             displayMode: displayMode,
             displayRoles: roles,

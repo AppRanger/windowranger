@@ -32,7 +32,7 @@ installing production hotkeys, asking for Accessibility permission or moving liv
    `ProfileLocalState`, then resolves abstract display roles against connected local displays.
 3. `WorkspaceEngine.start()` checks Accessibility trust, enumerates applications/windows and sends
    each candidate through the central admission classifier before it can enter any other subsystem.
-4. Hotkeys, the optional local workspace-swipe monitor, the menu bar, the Command Palette and the Placement Wheel emit
+4. Hotkeys, the optional local workspace-swipe monitor, the menu bar, and the Command Palette emit
    `WindowManagerCommand` values through one dispatcher. The engine validates current context again
    before applying a mutation.
 5. Engine state changes update the menu bar, Settings utility visibility and the persisted local
@@ -113,15 +113,17 @@ rule from ambiguous per-window state.
 
 ### Synced reusable definitions
 
-The profile library can sync through iCloud key-value storage. A profile contains workspace
-definitions/order/keys/layout geometry, Unified or Independent display mode, abstract display roles
-and their menu-bar icon styles, workspace-role assignments, typed app rules, and an ordered Quick
+The profile library can sync through iCloud key-value storage. A profile contains its user-selected
+Settings icon, workspace definitions/order/keys/layout geometry, Unified or Independent display mode,
+abstract display roles and their menu-bar icon styles, workspace-role assignments, typed app rules, and an ordered Quick
 App Shelf of up to four bundle identifier/display name entries plus one shared shelf presentation.
 Legacy per-entry presentation migrates deterministically from the first configured entry. Normalization
 removes duplicates, preserves configured order, and makes Quick App ownership mutually exclusive
 with an App Rule for the same bundle identifier. Global preferences
 such as menu-bar presentation, general command shortcuts and Command Palette configuration use their
-existing global settings path and are not profile content.
+existing global settings path and are not profile content, but are included in the supported iCloud
+sync payload when syncing is enabled. Focus-following moves and automatic application-unhide use the
+same global sync path.
 
 `SyncedProfileLibraryPolicy` validates the atomic encoded byte size before decoding, then validates
 the schema version, collection counts, user-facing name lengths and normalized structure. A remote
@@ -134,7 +136,8 @@ action and never occurs as a side effect of a failed pull.
 
 The active/manual profile selection, automatic trigger mappings, runtime active-workspace state,
 the selected Quick App identity for each profile, monitor fingerprints, role-to-physical-monitor
-bindings, Accessibility state and live window
+bindings, trackpad preferences, focused-window border preferences and per-application radius
+overrides, Accessibility state, login-item state, diagnostics, and live window
 session remain local. `WorkspaceStateStore` writes the current WindowServer-bound session beneath
 the user's cache directory using an atomic replacement. This includes exact hidden Quick App
 identities only when WindowRanger hid those windows' applications. A changed WindowServer session
@@ -145,6 +148,19 @@ Portable profile transfer serializes only reusable profile definitions into a se
 JSON transport document. Import validates the complete document, remaps every internal identity,
 previews deterministic additive names, and performs one profile-library mutation without activation.
 The transport file never becomes a second authoritative configuration source.
+
+Settings exposes this ownership boundary directly. Profiles owns the reusable library, inline
+profile name/icon editing, and explicit activation; Profile Switching owns this Mac's local selection rules; Displays owns the selected
+profile's display mode and role definitions alongside this Mac's physical display bindings.
+Workspaces, Displays, Applications, and Quick App Shelf share an explicit Settings edit target.
+Selecting, creating, or duplicating a library profile changes only that edit
+target; mutations are persisted into that reusable definition and do not publish live engine values
+unless the target is active. The full-row sidebar selector changes only that edit target; **Use
+Profile** remains in Profile Status as the explicit local manual-pin and engine activation boundary.
+Menu Bar exposes the separate profile-owned display-role icons alongside
+its global presentation controls, while Focus Border owns local application-specific appearance
+overrides. Removing an App Rule or converting it to a Quick App never deletes the independent local
+border override for that bundle identifier.
 
 ## Displays and recovery
 
@@ -317,7 +333,8 @@ optional normalized bundle-identifier override wins. AppKit, Accessibility, and 
 publish another app's rendered corner radius, so the generation table uses verified values only and
 keeps the macOS 27 baseline for later releases until a future design change is verified. Per-app
 overrides are local appearance state rather than synced App Rule actions because the correct
-rendering depends on this Mac and OS. The Command Palette captures its external target before
+rendering depends on this Mac and OS. Their lifetime is independent of profile App Rules and Quick
+Apps. The Command Palette captures its external target before
 becoming key, restores the previous application before dispatch, and rejects a selection if that
 window/workspace/display/profile token changed while the user typed. A top segmented control shows
 the captured workspace's Freeform, Tiled, or Accordion layout. It dispatches through the same typed
@@ -336,18 +353,9 @@ then Up and Down change rows, while Left and Right change layout only on the wor
 on the placement row opens the inline Placement Halo in a separate
 palette-owned keyboard mode whose arrows traverse only validated position previews. The placement
 row is omitted when that provider is empty. Escape collapses the halo or restores command-result
-handling. A nonempty query hides Quick Actions and collapses the Halo until search is cleared. The
-optional Globe/Fn path uses the same position-only
-provider in a nonactivating Placement Wheel.
-
-The optional Globe/Fn wheel trigger keeps observation and filtering on separate safety boundaries.
-A passive session tap observes modifier, keyboard, mouse-button, and system-defined competition and
-can never delay or divert those events. A dedicated user-interactive run loop owns the narrow active
-tap; its callback fast-passes every ordinary key and can discard only the synthetic native Globe
-action while an accepted hold has armed that one suppression. macOS timeout or user-input disablement
-stops the monitor and fails open rather than re-enabling it. Foreground applications identified as
-games through public bundle metadata suspend the Globe/Fn and workspace-swipe monitors even when
-their window is borderless; this does not broaden the native-fullscreen geometry guard.
+handling. A nonempty query hides Quick Actions and collapses the Halo until search is cleared.
+Legacy standalone-wheel and Globe/Fn preferences remain decodable for compatibility, but AppDelegate
+does not construct their controllers or install their event monitor.
 
 Settings is an explicit app-owned floating utility: it may activate and focus, but it is excluded
 from third-party discovery, layout and persistence. Every explicit open captures the engine's

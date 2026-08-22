@@ -39,15 +39,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor [weak self] in self?.settingsStore.resumeAutomaticProfileSelection() }
         }
     )
-    private lazy var radialMenuController = RadialMenuController(
-        engine: engine,
-        dispatcher: commandDispatcher,
-        diagnostics: diagnostics,
-        definitionProvider: { .spatial },
-        contextEnricher: { [weak self] context in
-            self?.enrichedCommandContext(context) ?? context
-        }
-    )
     private lazy var commandPaletteController = CommandPaletteController(
         engine: engine,
         dispatcher: commandDispatcher,
@@ -66,20 +57,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     )
-    private lazy var radialMenuTriggerController = RadialMenuTriggerController(
-        menuController: radialMenuController,
-        diagnostics: diagnostics
-    )
-    private lazy var globeFnHoldActivationController: GlobeFnHoldActivationController = {
-        let controller = GlobeFnHoldActivationController(
-            radialTrigger: radialMenuTriggerController,
-            diagnostics: diagnostics
-        )
-        controller.runtimeIssueChanged = { [weak self] issue in
-            self?.settingsStore.setGlobeFnRuntimeIssue(issue)
-        }
-        return controller
-    }()
     private lazy var workspaceSwipeController: WorkspaceSwipeController = {
         let controller = WorkspaceSwipeController(
             dispatcher: commandDispatcher,
@@ -102,9 +79,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 switch event {
                 case .pressed:
-                    self.globeFnHoldActivationController.ordinaryShortcutWillBegin()
-                    self.radialMenuTriggerController.cancel(reason: "palette-shortcut")
-                    self.radialMenuController.dismiss(reason: "palette-shortcut")
                     self.commandPaletteController.toggle()
                 case .released:
                     break
@@ -149,7 +123,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             self.workspaceStatusBarController?.rebuild()
             self.settingsWindowCoordinator.workspaceStateDidChange(state)
-            self.radialMenuController.contextDidPossiblyChange()
             self.commandPaletteController.contextDidPossiblyChange()
             self.settingsStore.recordActiveWorkspaceState(state)
             self.focusedWindowHighlightPresenter.updateWorkspaceContexts(
@@ -204,13 +177,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             if session != nil {
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "fullscreen-game-session")
-                self.globeFnHoldActivationController.cancel(reason: "fullscreen-game-session")
-                self.radialMenuTriggerController.cancel(reason: "fullscreen-game-session")
                 self.commandPaletteController.dismiss(reason: "fullscreen-game-session")
                 self.commandFeedbackPresenter.dismiss(reason: "fullscreen-game-session")
             }
             self.registerHotKeys()
-            self.updateGlobeFnHoldActivation()
         }
         engine.onWorkspaceDisplayAssignmentsChanged = { [weak self] assignments in
             self?.settingsStore.assignWorkspaces(assignments)
@@ -219,7 +189,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             updateForegroundDeclaredGameInputProtection(for: frontmostApplication)
         }
         registerHotKeys()
-        updateGlobeFnHoldActivation()
         updateWorkspaceSwipeActivation()
         engine.start()
         updateMenuBarPresentation()
@@ -264,13 +233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "application-activated")
                 self.workspaceSwipeController.cancel(reason: "application-activated")
                 self.workspaceStatusBarController?.applicationActivated()
-                self.engine.applicationActivated(
-                    processIdentifier: application.processIdentifier
-                ) { [weak self] shouldCancelRadialInteraction in
-                    guard let self, shouldCancelRadialInteraction else { return }
-                    self.globeFnHoldActivationController.cancel(reason: "application-activated")
-                    self.radialMenuTriggerController.cancel(reason: "application-activated")
-                }
+                self.engine.applicationActivated(processIdentifier: application.processIdentifier)
             }
             .store(in: &cancellables)
 
@@ -281,9 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.clearTiledPlacementHistory()
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "system-will-sleep")
-                self.globeFnHoldActivationController.cancel(reason: "system-will-sleep")
                 self.workspaceSwipeController.setSuppressed(true, reason: "system-sleep")
-                self.radialMenuTriggerController.cancel(reason: "system-will-sleep")
                 self.commandPaletteController.dismiss(reason: "system-will-sleep")
                 self.commandFeedbackPresenter.dismiss(reason: "system-will-sleep")
                 self.focusedWindowHighlightPresenter.setSuppressed(
@@ -306,9 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "screens-did-sleep")
-                self.globeFnHoldActivationController.cancel(reason: "screens-did-sleep")
                 self.workspaceSwipeController.setSuppressed(true, reason: "screen-sleep")
-                self.radialMenuTriggerController.cancel(reason: "screens-did-sleep")
                 self.commandPaletteController.dismiss(reason: "screens-did-sleep")
                 self.commandFeedbackPresenter.dismiss(reason: "screens-did-sleep")
                 self.focusedWindowHighlightPresenter.setSuppressed(
@@ -337,9 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.hotKeyManager.cancelDirectionalMoveGesture(reason: "session-resigned-active")
-                self?.globeFnHoldActivationController.cancel(reason: "session-resigned-active")
                 self?.workspaceSwipeController.setSuppressed(true, reason: "session-inactive")
-                self?.radialMenuTriggerController.cancel(reason: "session-resigned-active")
                 self?.commandPaletteController.dismiss(reason: "session-resigned-active")
                 self?.focusedWindowHighlightPresenter.setSuppressed(
                     true,
@@ -416,12 +373,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .sink { [weak self] enabled in
             guard let self else { return }
             if !enabled {
-                self.globeFnHoldActivationController.cancel(reason: "wheel-disabled")
-                self.radialMenuTriggerController.cancel(reason: "wheel-disabled")
                 self.commandPaletteController.dismiss(reason: "palette-disabled")
             }
             self.registerHotKeys()
-            self.updateGlobeFnHoldActivation(radialMenuEnabled: enabled)
         }
         .store(in: &cancellables)
 
@@ -443,17 +397,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        settingsStore.$radialMenuGlobeFnHoldEnabled
-            .dropFirst()
-            .removeDuplicates()
-            .sink { [weak self] enabled in
-                // @Published delivers in willSet. Use the emitted value rather than rereading the
-                // store synchronously, otherwise switching this option on observes the old false
-                // value and never installs the event monitor.
-                self?.updateGlobeFnHoldActivation(globeFnEnabled: enabled)
-            }
-            .store(in: &cancellables)
-
         Publishers.CombineLatest(
             settingsStore.$workspaceSwipeEnabled.removeDuplicates(),
             settingsStore.$workspaceSwipeFingerCount.removeDuplicates()
@@ -466,35 +409,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
         .store(in: &cancellables)
-
-        settingsStore.$radialMenuHoldDelay
-            .dropFirst()
-            .removeDuplicates()
-            .sink { [weak self] delay in
-                guard let self else { return }
-                self.globeFnHoldActivationController.cancel(reason: "hold-delay-changed")
-                self.radialMenuTriggerController.cancel(reason: "hold-delay-changed")
-                self.updateGlobeFnHoldActivation(holdDelay: delay)
-            }
-            .store(in: &cancellables)
-
-        settingsStore.$radialWheelDefinition
-            .dropFirst()
-            .removeDuplicates()
-            .sink { [weak self] _ in
-                self?.globeFnHoldActivationController.cancel(reason: "wheel-definition-changed")
-                self?.radialMenuTriggerController.cancel(reason: "wheel-definition-changed")
-            }
-            .store(in: &cancellables)
-
-        settingsStore.$radialMenuActivationStyle
-            .dropFirst()
-            .removeDuplicates()
-            .sink { [weak self] _ in
-                self?.globeFnHoldActivationController.cancel(reason: "wheel-activation-style-changed")
-                self?.radialMenuTriggerController.cancel(reason: "wheel-activation-style-changed")
-            }
-            .store(in: &cancellables)
 
         settingsStore.$focusFollowsMovedWindow
             .dropFirst()
@@ -599,8 +513,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .debounce(for: .milliseconds(100), scheduler: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
-                self.globeFnHoldActivationController.cancel(reason: "shortcut-configuration-changed")
-                self.radialMenuTriggerController.cancel(reason: "shortcut-configuration-changed")
                 self.commandPaletteController.dismiss(reason: "shortcut-configuration-changed")
                 self.registerHotKeys()
             }
@@ -613,9 +525,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.clearTiledPlacementHistory()
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "profile-transition")
-                self.globeFnHoldActivationController.cancel(reason: "profile-transition")
                 self.workspaceSwipeController.cancel(reason: "profile-transition")
-                self.radialMenuTriggerController.cancel(reason: "profile-transition")
                 self.commandPaletteController.dismiss(reason: "profile-transition")
                 self.commandFeedbackPresenter.dismiss(reason: "profile-transition")
                 self.engine.transitionToProfile(request)
@@ -653,9 +563,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingMenuBarHighlightUpdate = nil
         tiledPlacementUndoManager.removeAllActions()
         hotKeyManager.cancelDirectionalMoveGesture(reason: "application-terminating")
-        globeFnHoldActivationController.shutdown()
         workspaceSwipeController.shutdown()
-        radialMenuTriggerController.cancel(reason: "application-terminating")
         commandPaletteController.shutdown()
         commandFeedbackPresenter.shutdown()
         focusedWindowHighlightPresenter.shutdown()
@@ -699,9 +607,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isShortcutRecording = isRecording
         if isRecording {
             hotKeyManager.cancelDirectionalMoveGesture(reason: "shortcut-recording-began")
-            globeFnHoldActivationController.cancel(reason: "shortcut-recording-began")
             workspaceSwipeController.setSuppressed(true, reason: "shortcut-recording")
-            radialMenuTriggerController.cancel(reason: "shortcut-recording-began")
             commandPaletteController.dismiss(reason: "shortcut-recording-began")
             hotKeyManager.suspendRegistration()
             settingsStore.setHotKeyRuntimeIssues([])
@@ -709,12 +615,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             registerHotKeys()
             workspaceSwipeController.setSuppressed(false, reason: "shortcut-recording")
         }
-        updateGlobeFnHoldActivation()
     }
 
     private func reconcileAfterWake(source: WakeReconciliationSource) {
         hotKeyManager.cancelDirectionalMoveGesture(reason: source.rawValue)
-        globeFnHoldActivationController.resumeAfterLifecycle(reason: source.rawValue)
         switch source {
         case .systemWake, .screensWake:
             workspaceSwipeController.setSuppressed(false, reason: "system-sleep")
@@ -725,7 +629,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .displayConfigurationChanged:
             workspaceSwipeController.cancel(reason: source.rawValue)
         }
-        radialMenuTriggerController.cancel(reason: source.rawValue)
         commandPaletteController.dismiss(reason: source.rawValue)
         commandFeedbackPresenter.dismiss(reason: source.rawValue)
         focusedWindowHighlightPresenter.setSuppressed(
@@ -737,28 +640,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         engine.requestWakeReconciliation(
             source: source,
             workspaceDisplayAssignments: settingsStore.workspaceDisplayHomesForEngine
-        )
-    }
-
-    private func updateGlobeFnHoldActivation(
-        radialMenuEnabled: Bool? = nil,
-        globeFnEnabled: Bool? = nil,
-        holdDelay: TimeInterval? = nil
-    ) {
-        let runtimeSettings = GlobeFnRuntimeSettings(
-            radialMenuEnabled: radialMenuEnabled ?? settingsStore.radialMenuEnabled,
-            globeFnEnabled: globeFnEnabled ?? settingsStore.radialMenuGlobeFnHoldEnabled,
-            isShortcutRecording: isShortcutRecording,
-            holdDelay: holdDelay ?? settingsStore.radialMenuHoldDelay
-        )
-        let inputMonitoringSuppressed = ForegroundGameInputProtectionPolicy
-            .shouldSuppressOptionalInputMonitors(
-                isDeclaredGameApplicationActive: isForegroundDeclaredGameApplication,
-                hasNativeFullscreenGameSession: fullscreenGameSession != nil
-            )
-        globeFnHoldActivationController.update(
-            enabled: runtimeSettings.isEnabled && !inputMonitoringSuppressed,
-            holdDelay: runtimeSettings.holdDelay
         )
     }
 
@@ -802,12 +683,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ]
         )
         if isDeclaredGame {
-            globeFnHoldActivationController.cancel(reason: reason)
-            radialMenuTriggerController.cancel(reason: reason)
             commandPaletteController.dismiss(reason: reason)
             commandFeedbackPresenter.dismiss(reason: reason)
         }
-        updateGlobeFnHoldActivation()
         updateWorkspaceSwipeActivation()
     }
 

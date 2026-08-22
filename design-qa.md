@@ -370,3 +370,84 @@ final result: passed
 - These corrections are implemented and automated; the updated signed live render remains pending.
 
 visual result: passed; signed-app interaction result: pending
+
+---
+
+# Settings Sidebar Profile Context Design QA
+
+## Scope and evidence
+
+- **Selected visual direction:**
+  `/Users/chris/.codex/generated_images/01a01e25-3f66-7ef1-b715-6d393aedeeaf/exec-9ee48805-1f2f-4007-adda-769816578aa6.png`
+  (1,487 x 1,058 pixels).
+- **Latest signed-app reference:**
+  `/var/folders/2m/r4qlm8w914x16pc440r40nr00000gn/T/codex-clipboard-273cef50-a099-49dd-92ef-c66eb3cfe420.png`
+  (283 x 119 pixels in Dark appearance). This live crop is the visual truth for selector alignment.
+- **Latest open-menu reference:**
+  `/var/folders/2m/r4qlm8w914x16pc440r40nr00000gn/T/codex-clipboard-13921e8d-caac-40d0-90fa-0354282f586a.png`
+  (453 x 191 pixels in Dark appearance). This signed-app crop is the interaction truth: the profile
+  choices must appear directly rather than behind the visible **Editing Profile** submenu.
+- **Production implementation:**
+  `.build/settings-redesign-previews/windowranger-settings-quickAppShelf-dark.png`
+  (2,880 x 2,048 pixels for the 1,440 x 1,024 point native Settings view at 2x Retina scale).
+- **Combined comparison input:**
+  `.build/settings-redesign-previews/profile-selector-live-alignment-comparison.png`. The 2x
+  production sidebar is cropped and normalized to 119 pixels high beside the live 283 x 119 crop;
+  both show the same Dark appearance, closed selector, and destination-row state.
+- **Additional states:** active-profile Workspaces, inactive-profile Quick App Shelf, Menu Bar,
+  and minimum-size Quick App Shelf renders were inspected from the same production snapshot pass.
+
+## Comparison history
+
+1. **P1 resolved — duplicated profile ownership:** the first implementation left a second profile
+   picker and activation action inside Menu Bar. The sidebar is now the only place that changes the
+   Settings edit target; Profile Status owns explicit activation.
+2. **P2 resolved — missing compact evidence:** Quick App Shelf was absent from the minimum-window
+   snapshot loop. It is now rendered with the other Settings destinations, exercising the sidebar
+   context and the shelf form together at the supported compact size.
+3. **P2 resolved — intrinsic menu width:** the first sidebar menu remained only as wide as its text.
+   The production button now occupies the same 220-point row width as Displays, includes the chosen
+   profile icon and name, and has a trailing menu indicator in Light, Dark, wide, and compact states.
+4. **Final review:** the repeated full-width context strip has been removed from Displays,
+   Workspaces, Applications, and Quick App Shelf. Each page begins directly with its own content,
+   while the selector remains stable beside the four profile-owned destinations. The former sidebar
+   **Use Profile** row is absent.
+5. **P2 resolved — signed-app row alignment:** the installed candidate exposed the fixed-width
+   selector 16 points to the right of the destination-row bounds, clipping its trailing edge. The
+   menu now compensates for the sidebar section's custom-row inset. The revised native Dark render
+   shows the selector and Displays row sharing the same outer bounds and aligned label content.
+6. **P2 implemented, live capture pending — nested picker submenu:** the aligned signed candidate
+   opens an intermediate **Editing Profile** submenu. The nested picker now uses its native inline
+   style so the profile choices occupy the outer menu while retaining selection checkmarks and
+   profile icons. The corrected open state cannot be captured until a new signed candidate is
+   installed, so interaction fidelity remains blocked rather than inferred from the closed render.
+
+## Fidelity surfaces
+
+- **Typography:** native macOS section labels, menu-picker text, caption status, and destination
+  rows preserve the existing Settings hierarchy and remain readable in Light and Dark appearances.
+- **Spacing and geometry:** the profile control fills the established 220-point destination-row
+  width inside the 240-point sidebar. Its custom row compensates for SwiftUI's 16-point section
+  inset, so the control no longer shifts or clips at the sidebar edge. Its placement directly above
+  the four owned destinations makes the relationship clear without increasing the window width.
+- **Colour and material:** semantic sidebar materials, secondary status colour, and the system
+  control accent carry through native appearance and accessibility settings.
+- **Image quality and assets:** all icons are real SF Symbols and all controls are native; no
+  generated bitmap or recreated visual asset is shipped in the app.
+- **Copy and state:** **Editing Profile**, **Active on This Mac**, and the Profile Status activation
+  action keep editing and activation distinct. Profile Status edits icon and name directly; the
+  selector has a VoiceOver label and an explicit hint that selection does not activate the desktop.
+
+## Final findings
+
+No closed-state P0, P1, or P2 mismatch remains in the scoped sidebar-profile-context pass. The latest
+live-reference comparison confirms the selector and destination-row bounds are aligned. A revised
+signed open-menu capture is still required to close the intermediate-submenu finding. The
+reference omits WindowRanger's real Displays destination and uses a wider illustrative sidebar;
+production intentionally retains both the real destination and the established native window
+proportions. The production profile library and status render also confirm the selected profile icon
+in the list, selector, and icon editor. Pointer use, long profile names, VoiceOver menu interaction,
+inline name commit behavior, and activation against a signed running app remain live-validation
+boundaries.
+
+final result: blocked

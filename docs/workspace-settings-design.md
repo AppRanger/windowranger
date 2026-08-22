@@ -23,24 +23,35 @@ typography, and SF Symbols; the bitmap is not shipped.
 
 The Settings window has three visible regions while Workspaces is selected:
 
-1. **Settings sidebar:** General, Profiles, Workspaces, App Rules, Shortcuts, Command Wheel, and
-   Debug-only Diagnostics. Displays and Layouts are retained only as legacy destination aliases and
-   resolve to Workspaces.
-2. **Workspace master column:** Unified/Independent Displays control and explanation, ordered
-   workspace list, Add/Duplicate/Delete controls, and Restore WindowRanger Defaults.
-3. **Workspace inspector:** editable identity, home display role, workspace key and derived shortcut
+1. **Settings sidebar:** General, Sync, Behavior, Profiles, Profile Switching, Menu Bar, Focus Border,
+   Displays, Workspaces, Applications, Quick App Shelf, Shortcuts, Command Palette, and Debug-only
+   Diagnostics. Appearance and Layouts are retained only as legacy destination aliases and resolve
+   to their current owners.
+2. **Editing-profile context:** a full-row icon-and-name selector sits in the sidebar above the four
+   profile-owned destinations. Selecting a profile changes the Settings edit target without affecting
+   the desktop; Profile Status owns name/icon editing and the separate **Use Profile** action that
+   activates and pins it on this Mac until automatic selection resumes.
+3. **Workspace master column:** ordered workspace list, Add/Duplicate/Delete controls, and Restore
+   WindowRanger Defaults. The selected profile's Unified/Independent mode lives in Displays.
+4. **Workspace inspector:** editable identity, home display role, workspace key and derived shortcut
    summaries, layout-specific controls, reusable-setting reset, and active-workspace window repair.
 
-Profiles remains separate because it owns profile management, automatic profile selection, and this
-Mac's local abstract-role-to-physical-monitor bindings. Shortcuts remains separate for global,
-non-workspace commands. App Rules and Command Wheel retain their existing destinations.
+General owns permissions and startup. Sync owns iCloud scope and status. Profiles owns the reusable
+library and explicit activation, while Profile Switching owns this Mac's automatic selection rules.
+Displays owns the selected profile's display mode and role names plus this Mac's physical bindings.
+Menu Bar owns global
+presentation plus the editing profile's display-role icon choices. Focus Border owns local border
+presentation and application-specific radius overrides. Behavior owns recovery, focus-following moves, trackpad
+workspace switching, and application-unhide compatibility.
+Shortcuts remains separate for global, non-workspace commands. Applications, Quick App Shelf, and
+Command Palette retain their existing destinations.
 
 ## Existing-control mapping
 
 | Existing location | New Workspaces location |
 | --- | --- |
 | Workspace names, keys, ordering, add/remove, built-in reset | Master list and selected-workspace identity |
-| Unified / Independent Displays | Master-column page control |
+| Unified / Independent Displays | Displays page control |
 | Workspace display role | Inspector General section |
 | Freeform / Tiled / Accordion | Inspector Layout section |
 | Automatic / Horizontal / Vertical orientation | Tiled and Accordion inspector state |
@@ -76,7 +87,7 @@ intentionally omitted.
 ### General
 
 - Home Display edits the profile's synced abstract display-role assignment. Physical monitor binding
-  remains local and is edited in Profiles.
+  remains local and is edited in Displays.
 - Workspace Key accepts one supported character and warns clearly about duplicates or unsupported
   values.
 - Switch to and Move Window to are read-only derived keycaps, not independent shortcut recorders.
@@ -103,23 +114,29 @@ intentionally omitted.
 
 ## Persistence boundaries
 
-- Synced profile content: workspace definitions/order, key, layout/geometry, display mode, abstract
-  display roles, workspace-to-role assignments, and app rules.
+- Synced profile content: profile name/icon, workspace definitions/order, key, layout/geometry,
+  display mode, abstract display roles and menu-bar icons, workspace-to-role assignments, app rules, and the ordered Quick
+  App Shelf plus its shared presentation.
+- Synced global content: Menu Bar presentation/labels/highlight, global shortcuts and Command
+  Palette activation, focus-following moves, and automatic application-unhide behavior.
 - Local per Mac: active profile/manual pin, automatic trigger mappings, physical monitor
-  fingerprints and role bindings, current focus, active runtime workspace state, and open-window
-  membership.
-- Settings category and currently inspected workspace are local UI state. They do not enter profile
-  or iCloud data.
+  fingerprints and role bindings, current focus, active runtime workspace state, selected Quick App,
+  open-window membership, trackpad preferences, Focus Border preferences and application overrides,
+  permissions, login-item state, and diagnostics.
+- Settings category, independently selected profile edit target, and currently inspected workspace
+  are local UI state. They do not enter profile or iCloud data.
 
 No profile/storage format migration is needed for this redesign. Existing profile-backed values stay
-authoritative. The only Settings-navigation migration maps saved or deep-linked Displays/Layouts
-destinations to Workspaces.
+authoritative. The Settings-navigation migration keeps Displays as a current destination and maps
+only saved or deep-linked Layouts destinations to Workspaces.
 
 ## Search and deep links
 
-Search routes workspace names/keys, display mode, home display, layout type, orientation, gaps,
-padding, and workspace reset to Workspaces. A dynamic workspace-name result selects that exact UUID.
-Physical display bindings route to Profiles; global commands route to Shortcuts. Release search never
+Search routes workspace names/keys, home display, layout type, orientation, gaps, padding, and
+workspace reset to Workspaces. Display mode, role definitions, and physical bindings route to
+Displays; profile name/icon and activation route to Profiles; profile display-role menu-bar icons
+route to Menu Bar; and automatic selection routes to Profile Switching. A dynamic workspace-name
+result selects that exact UUID. Global commands route to Shortcuts. Release search never
 exposes Debug-only Diagnostics.
 
 ## Extension points and intentional omissions
@@ -130,7 +147,7 @@ master-list structure. This pass intentionally omits:
 - illustrative window-behavior toggles that the current product does not implement;
 - arbitrary workspace colours/icons without an established persisted model;
 - separate per-workspace shortcut objects;
-- physical monitor fingerprint editing outside Profiles;
+- physical monitor fingerprint editing outside Displays;
 - live open-window identities or transient AX/CG state in profile definitions.
 
 ## Accessibility and sizing

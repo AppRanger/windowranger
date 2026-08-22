@@ -12,11 +12,12 @@ never activates a profile or moves a window.
 
 The versioned document contains an ordered collection of `WindowManagerProfile` definitions:
 
-- profile name and reusable identity relationships;
+- profile name, Settings icon, and reusable identity relationships;
 - ordered workspace definitions, keys, layouts and geometry;
 - Unified or Independent Displays mode;
-- abstract display roles and workspace-to-role assignments;
-- complete typed application rules, including enabled/paused state.
+- abstract display roles, their menu-bar icon choices, and workspace-to-role assignments;
+- complete typed application rules, including enabled/paused state;
+- the ordered Quick App Shelf of up to four apps and its shared presentation.
 
 It deliberately excludes the active or manually pinned profile, automatic trigger mappings,
 runtime active-workspace state, physical display identifiers/fingerprints and role bindings, live
@@ -41,7 +42,8 @@ The entire document is decoded and validated before any mutation. Validation rej
 - unsupported workspace keys, duplicate enabled workspace keys, invalid names, non-finite or
   out-of-range geometry, or contradictory duplicate rule actions;
 - documents over 2 MiB, more than 64 profiles, 128 workspaces per profile, 32 display roles per
-  profile, 256 app rules per profile, or the documented bounded string lengths.
+  profile, 256 app rules per profile, more than four Quick Apps per profile, invalid shared shelf
+  presentation, or the documented bounded string lengths.
 
 The bounds are defensive file-input limits, not targets for the user interface.
 
@@ -84,7 +86,8 @@ monitor identities, or window data. Release keeps the existing quiet diagnostics
 
 ## Acceptance tests
 
-- deterministic round trip of all reusable definition fields;
+- deterministic round trip of all reusable definition fields, including the ordered Quick App Shelf
+  and shared presentation;
 - rejection of legacy/future/malformed/oversize/invalid-reference/duplicate-identity input;
 - complete fresh-ID relationship remapping and deterministic name uniqueness;
 - cancel and stale-preview paths cause no mutation;

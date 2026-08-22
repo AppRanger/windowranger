@@ -127,6 +127,9 @@ smallest useful outcome and acceptance boundary.
   palette and its query alive; WR-065 later superseded that entry surface with a conditional stacked
   Quick Action. Settings no longer exposes the obsolete broad-wheel activation style or catalogue
   editor; legacy values remain decodable.
+- **Current-state update:** WR-066 removes the superseded standalone Globe/Fn trigger and Placement
+  Wheel settings/runtime wiring. Window placement remains available through the palette's inline
+  Placement Halo; the old saved values stay decodable for compatibility.
 - **Automated evidence:** Test isolation, six focused Command Palette tests, the owned-focus-anchor
   regression, the production Placement Halo offscreen render, and all 610 non-hosted tests pass.
   Coverage includes contextual/global command composition, stable grouped search order,
@@ -167,6 +170,197 @@ smallest useful outcome and acceptance boundary.
   accepted flow keeps the palette open while the halo expands and returns Escape focus to search.
 
 ## Inbox
+
+### WR-066 — Split overloaded Settings into clearer destinations
+
+- **Type:** Settings information-architecture improvement
+- **Priority:** P1
+- **Status:** Live validation — the ownership pass is implemented and verified in isolation; a
+  signed install still needs the maintainer's interaction check.
+- **Requested:** 21 August 2026.
+- **Smallest useful outcome:** Keep General focused on permissions and startup; give Sync, Menu Bar,
+  and Focus Border their own destinations; and move recovery, focus-following moves, trackpad
+  switching, and application-unhide compatibility into Behavior. Keep Profiles,
+  Workspaces, Applications, Quick App Shelf, Shortcuts, Command Palette, and Diagnostics as their
+  existing destinations.
+- **Acceptance:** The sidebar and Settings search route every retained control to its clearer
+  destination at wide and compact sizes without changing persistence, syncing, profile ownership,
+  or legacy destination routing. Obsolete standalone Globe/Fn and placement settings are absent and
+  cannot leave an input monitor running from a saved preference. Automated navigation/search coverage, the
+  full non-hosted suite, and the universal app build must pass before signed live validation.
+- **Profile boundary:** This first pass changes navigation and presentation only. A separate follow-
+  up will make profile-owned versus Mac-local settings more visible after this structure is
+  validated.
+- **Profile-ownership follow-up:** Preserve the accepted top-level destinations, but identify the
+  active profile consistently in Workspaces, Applications, and Quick App Shelf; separate reusable
+  profile definitions from this Mac's selection, triggers, and physical display bindings; disclose
+  the exact iCloud boundary; and move local application-specific Focus Border overrides out of the
+  profile-owned Applications editor. Removing or converting a profile App Rule must not delete a
+  Mac-local Focus Border override for the same bundle identifier.
+- **User-observed follow-up:** The first installed split was still too coarse. Sync, Menu Bar, and
+  Focus Border should each stand alone, while the former Globe/Fn and standalone placement settings
+  no longer describe the current Command Palette experience.
+- **Second user-observed follow-up:** Selecting a profile in Settings currently activates it and can
+  rearrange the live desktop merely to inspect or edit its reusable definition. Settings needs an
+  independent edit target. Selecting, creating, or duplicating a library profile must not activate
+  it; activation remains an explicit **Use Profile** action. Editing an inactive profile must update
+  only that reusable definition and its local display bindings, without publishing active engine
+  configuration or changing this Mac's manual/automatic selection state.
+- **Third user-observed follow-up:** Once inactive profiles can be edited safely, Profiles no longer
+  needs to contain every setting related to profiles. Keep it as the reusable library and explicit
+  activation surface; move this Mac's automatic selection rules into **Profile Switching**, and move
+  the selected profile's display roles plus this Mac's physical bindings into **Displays**. Move the
+  selected profile's Unified/Independent mode from Workspaces to Displays, while keeping each
+  workspace's Home Display assignment in Workspaces. Menu-bar icon choices remain in Menu Bar.
+- **Fourth user-observed follow-up:** The ownership and behaviour now feel correct, but the
+  full-width **Editing Profile** strip above Displays, Workspaces, Applications, and Quick App Shelf
+  reads as an awkward second toolbar. Use the selected sidebar-owned visual direction: put the
+  editing-profile selector and active/inactive action in the sidebar immediately above those four
+  destinations, and let every profile-owned page begin directly with its own content.
+- **Fifth user-observed follow-up:** The sidebar direction is accepted, with one final refinement.
+  Make the profile selector the same full-row width as its destination rows; give each reusable
+  profile a selectable icon; show that icon with its name in the selector and profile library; and
+  edit both icon and name directly in Profile Status instead of through a profile-list pencil.
+  Remove the sidebar **Use Profile** row so activation remains a Profile Status action rather than
+  looking like another destination.
+- **Sixth user-observed follow-up:** The signed candidate is functionally correct, but its fixed-
+  width profile selector starts 16 points to the right of the destination-row bounds and is clipped
+  at the sidebar edge. Compensate for the sidebar section's custom-row inset so the selector shares
+  the exact left and right edges used by Displays and the other profile-owned destinations.
+- **Seventh user-observed follow-up:** The aligned signed selector opens an **Editing Profile**
+  submenu before showing the profiles, so it does not behave like a direct drop-down. Keep native
+  picker selection and checkmarks, but render its choices inline in the outer menu so one click
+  exposes the profile list without an intermediate navigation level.
+- **Implemented:** Added General, Sync, Behavior, Menu Bar, and Focus Border destinations; collected
+  reusable feature configuration beneath Configuration and global input surfaces beneath Controls.
+  Settings search opens the owning destination. Saved Appearance selections resolve to Menu Bar,
+  while the legacy Layouts destination resolves to Workspaces. Displays is now a current destination.
+  The Command Palette page now contains only
+  enablement and its shortcut. Legacy wheel preferences remain readable for compatibility, but the
+  app no longer constructs the Globe/Fn controller or installs its event monitor.
+- **Profile-ownership implementation:** The sidebar and Workspaces, Applications, and Quick App
+  Shelf identify the profile being edited. Selecting, creating, or duplicating a library profile now
+  changes only the Settings edit target; **Use Profile** remains the explicit manual activation.
+  The selector is a full-row icon-and-name menu without a second activation row. Profile Status
+  edits the reusable icon and name directly and retains the explicit activation action. Profile
+  icons follow cloning, iCloud persistence, and portable transfer; older documents default safely
+  to the generic profile symbol. Inactive edits persist reusable profile identity, workspaces,
+  applications, shelf, display-role definitions/icons, and local role bindings without changing the
+  live engine or selection state. Profiles is now the reusable library and explicit activation
+  surface; Profile Switching owns this Mac's automatic
+  rules; Displays owns the editing profile's display mode and role definitions plus this Mac's
+  physical bindings. Menu Bar remains the only editor for the editing profile's display-role icon
+  choices. Sync lists the supported synced and always-local
+  categories and explains why a reliable synced-device list is unavailable. Focus Border owns
+  local per-application corner-radius overrides independently of profile App Rules and Quick Apps;
+  removing or converting an App Rule no longer erases that local correction.
+- **Automated evidence:** The revised Settings/navigation selection passes 131 focused tests. The
+  final profile-icon refinement passes 46 focused profile, transfer, and rendering tests, and the
+  complete non-hosted suite passes 649 tests, including inactive-profile editing across workspaces,
+  display mode, App Rules, Quick App Shelf, display roles/icons, and explicit activation. Search and
+  migration coverage includes General, Sync, Behavior, Menu Bar, Focus Border, removal of obsolete
+  controls, and legacy destinations. Production Settings renders pass across 40 wide, compact,
+  Light, Dark, and accessibility-text snapshots; the
+  inactive Profiles render visibly separates the selected **Travel** edit target from the active
+  **Current Setup** profile. The unsigned Debug app builds successfully as a universal
+  `x86_64 arm64` binary.
+- **Profile-ownership automated evidence:** The complete isolated suite passes 644 tests. Coverage
+  includes the new Settings search routes and preservation of a local Focus Border override when an
+  App Rule is removed or converted into a Quick App. The production Settings render passes and
+  captures 34 wide, compact, Light, Dark, and accessibility-text reference screens, including the
+  profile context, split profile ownership, Sync inventory, Menu Bar role icons, Focus Border
+  overrides, and Quick App Shelf. The unsigned Debug app builds successfully as a universal
+  `x86_64 arm64` binary.
+- **Ownership-redistribution automated evidence:** Profiles is limited to the reusable library and
+  explicit activation; Profile Switching owns this Mac's automatic rules; Displays owns the edited
+  profile's Unified/Independent mode and role definitions plus local physical bindings; Workspaces
+  retains workspace definitions, layouts, and Home Display assignments. Settings search and legacy
+  routing follow those owners. The complete isolated suite passes 647 tests, including a 24-test
+  profile selection run proving that automatic rule edits and Resume Automatic can change the live
+  profile without replacing an inactive Settings edit target. Production Settings renders pass for
+  Profiles, Profile Switching, Displays, and Workspaces, and the unsigned Debug app builds as a
+  universal `x86_64 arm64` binary.
+- **Sidebar profile-context implementation:** The full-row editing-profile selector now lives once
+  in the sidebar immediately above Displays, Workspaces, Applications, and Quick App Shelf. It shows
+  the profile icon and name without an activation-like row beneath it. The four destinations begin
+  directly with their own content, and Menu Bar derives its profile-owned display-role icon section
+  from the same edit target without duplicating the selector or activation action.
+- **Sidebar profile-context automated evidence:** The complete isolated suite passes 649 tests.
+  Production Settings renders pass in Light, Dark, active-profile, inactive-profile, and minimum-
+  window states, including compact Quick App Shelf and Profile Status icon/name coverage; the final
+  attached-reference comparison found no actionable P0-P2 issue. The unsigned Debug app builds
+  successfully as a universal `x86_64 arm64` binary.
+- **Superseded sidebar profile-context installed evidence:** With explicit maintainer approval, signed
+  universal Debug candidate `ba41222bb796-dirty` is installed and running from
+  `/Applications/WindowRanger.app` as process `32198`. The installed executable, debug dylib, and
+  preview dylib match the built candidate exactly; strict signature validation, Apple Development
+  authority, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source marker,
+  `x86_64 arm64` architectures, running path, and CDHash
+  `818e149c8a267a090cf17b0668dffbfbaa5137d9` were verified. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Selector-alignment automated evidence:** The custom menu now compensates for the sidebar
+  section's 16-point content inset while retaining the established 220-point destination-row
+  width. The native production Settings snapshot passes, and the live-reference/corrected-render
+  comparison confirms matching left and right bounds with Displays in Dark appearance.
+- **Superseded selector-alignment installed evidence:** With explicit maintainer approval, the corrected signed
+  universal Debug candidate `ba41222bb796-dirty` is installed and running from
+  `/Applications/WindowRanger.app` as process `39349`. The installed executable, debug dylib, and
+  preview dylib match the built candidate exactly; strict signature validation, Apple Development
+  authority, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source marker,
+  `x86_64 arm64` architectures, running path, and CDHash
+  `f1ddff740409b22095cf3259b54d2781e0006ef9` were verified. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Direct-menu automated evidence:** The selector's nested picker now uses SwiftUI's inline picker
+  style, retaining native selection/checkmark semantics while placing its profile choices directly
+  in the outer menu. Test isolation, the native closed-state production snapshot, and the unsigned
+  universal Debug build pass. The open-menu interaction remains signed live validation.
+- **Direct-menu installed evidence:** With explicit maintainer approval, signed universal Debug
+  candidate `ba41222bb796-dirty` is installed and running from `/Applications/WindowRanger.app` as
+  process `43117`. The installed executable, debug dylib, and preview dylib match the built candidate
+  exactly; strict signature validation, Apple Development authority, Team ID `44NAD22AK6`, canonical
+  bundle identifier, embedded source marker, `x86_64 arm64` architectures, running path, and CDHash
+  `06d672dcd4d6e4d059171ade742b49e7dd18767f` were verified. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Profile-ownership installed evidence:** With explicit maintainer approval, signed universal
+  Debug candidate `ba41222bb796-dirty` is installed and running from
+  `/Applications/WindowRanger.app` as process `43469`. The installed executable and Debug/preview
+  dylibs match the built candidate exactly; strict signature validation, Apple Development
+  authority, Team ID `44NAD22AK6`, canonical bundle identifier, embedded revision, `x86_64 arm64`
+  architectures, running path, and CDHash `e8f601032e717b69b9ad1057e83a05f07c882515`
+  were verified. The previous daily build remains recoverable at
+  `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Superseded installed evidence:** With explicit maintainer approval, the first signed universal Debug candidate
+  `ba41222bb796-dirty` is installed and running from `/Applications/WindowRanger.app` as process
+  `97787`. The built and installed executable, debug dylib, and preview dylib match exactly; the
+  Apple Development signature, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source
+  marker, `x86_64 arm64` architectures, running path, and CDHash
+  `420c4839e826912b9ec17833c4a2a44320773439` were verified. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Revised installed evidence:** With explicit maintainer approval, signed universal Debug candidate
+  `ba41222bb796-dirty` is installed and running from `/Applications/WindowRanger.app` as process
+  `13055`. The built and installed executable, debug dylib, and preview dylib match exactly; the
+  Apple Development signature, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source
+  marker, `x86_64 arm64` architectures, running path, and CDHash
+  `3347c05a2273770b3eba321bf1d9b9ec3e93f99d` were verified. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Ownership-redistribution installed evidence:** With explicit maintainer approval, signed
+  universal Debug candidate `ba41222bb796-dirty` is installed and running from
+  `/Applications/WindowRanger.app` as process `51209`. The installed executable, debug dylib, and
+  preview dylib match the built candidate exactly; strict signature validation, Apple Development
+  authority, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source marker,
+  `x86_64 arm64` architectures, running path, and CDHash
+  `1b3fdad193559f32972fb6303440132c00e89e38` were verified. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Live evidence:** On 21 August 2026, the maintainer accepted the revised section structure as
+  better and easier to navigate in the signed installed app.
+- **Live validation remaining:** Confirm in the installed direct-menu candidate that the aligned
+  full-row selector opens profile choices immediately and changes only the edit target; profile
+  icon/name editing and the Profile Status **Use
+  Profile** action work as expected; long profile names and the supported minimum window remain
+  usable; and pointer/keyboard/VoiceOver interaction opens the native menu reliably. Recheck that
+  Profiles stays a quiet library and that Menu Bar role icons, Displays,
+  Workspaces, Applications, and Quick App Shelf all follow the selected edit target without
+  restoring the removed page-level context strip.
 
 ### WR-065 — Put the current workspace layout at the top of Command Palette
 

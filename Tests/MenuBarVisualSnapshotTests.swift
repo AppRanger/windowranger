@@ -316,8 +316,15 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
 
         let currentProfileID = store.activeProfileID
         store.renameProfile(currentProfileID, to: "Current Setup")
+        store.setSettingsProfileIconStyle(.desktop)
         _ = store.createProfile(named: "Travel", source: .scratch)
+        store.setSettingsProfileIconStyle(.travel)
         store.selectProfile(currentProfileID)
+        store.setFocusedWindowHighlightCornerRadiusOverride(
+            14,
+            for: "com.apple.Terminal",
+            undoManager: nil
+        )
         navigation.select(.profiles)
         let profilesData = try renderRetinaPNG(view, size: Self.snapshotSize)
         XCTAssertGreaterThan(profilesData.count, 25_000)
@@ -340,7 +347,14 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
 
         for category in [
             SettingsCategory.general,
+            .sync,
+            .behavior,
+            .profileSwitching,
+            .menuBar,
+            .focusBorder,
+            .displays,
             .appRules,
+            .quickAppShelf,
             .shortcuts,
             .radialMenu,
             .diagnostics,
@@ -451,7 +465,14 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
 
         for category in [
             SettingsCategory.general,
+            .sync,
+            .behavior,
+            .profileSwitching,
+            .menuBar,
+            .focusBorder,
+            .displays,
             .appRules,
+            .quickAppShelf,
             .shortcuts,
             .radialMenu,
             .diagnostics,

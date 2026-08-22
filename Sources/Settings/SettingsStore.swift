@@ -124,6 +124,9 @@ final class SettingsStore: ObservableObject {
     @Published private(set) var profiles: [WindowManagerProfile]
     @Published private(set) var localProfileState: ProfileLocalState
     @Published private(set) var activeProfileID: UUID
+    /// The reusable profile currently shown in Settings. This is deliberately independent of the
+    /// profile controlling the live desktop; only `selectProfile` changes the active profile.
+    @Published private(set) var settingsProfileID: UUID
     @Published private(set) var activeProfileSelectionReason: ProfileSelectionReason
     @Published private(set) var profileActivationRequest: ProfileActivationRequest?
 
@@ -341,6 +344,7 @@ final class SettingsStore: ObservableObject {
         initialLocalState.activeProfileID = selection.profileID
         localProfileState = initialLocalState
         activeProfileID = selection.profileID
+        settingsProfileID = selection.profileID
         activeProfileSelectionReason = selection.reason
         profileActivationRequest = nil
         let active = initialProfiles.first(where: { $0.id == selection.profileID }) ?? initialProfiles[0]
@@ -493,6 +497,19 @@ final class SettingsStore: ObservableObject {
         profiles.first(where: { $0.id == activeProfileID }) ?? profiles[0]
     }
 
+    var settingsProfile: WindowManagerProfile {
+        profiles.first(where: { $0.id == settingsProfileID }) ?? activeProfile
+    }
+
+    var settingsWorkspaces: [WorkspaceDefinition] { settingsProfile.workspaces }
+    var settingsMultiDisplayMode: MultiDisplayMode { settingsProfile.displayMode }
+    var settingsAppRules: [AppRule] { settingsProfile.appRules }
+    var settingsQuickApps: [DropDownAppConfiguration] { settingsProfile.quickApps }
+    var settingsQuickAppShelfPresentation: QuickAppShelfPresentation {
+        settingsProfile.quickAppShelfPresentation
+    }
+    var isEditingActiveProfile: Bool { settingsProfileID == activeProfileID }
+
     var manualPinnedProfileID: UUID? { localProfileState.manualPinnedProfileID }
     var defaultProfileID: UUID { localProfileState.defaultProfileID }
     var dockedProfileID: UUID? { localProfileState.dockedProfileID }
@@ -521,6 +538,15 @@ final class SettingsStore: ObservableObject {
 
     // MARK: - Profile selection and management
 
+    func selectProfileForEditing(_ profileID: UUID) {
+        guard profiles.contains(where: { $0.id == profileID }) else { return }
+        settingsProfileID = profileID
+    }
+
+    func activateSettingsProfile() {
+        selectProfile(settingsProfileID)
+    }
+
     func selectProfile(_ profileID: UUID) {
         guard profiles.contains(where: { $0.id == profileID }) else { return }
         var local = localProfileState
@@ -537,12 +563,12 @@ final class SettingsStore: ObservableObject {
         local.manualPinnedProfileID = nil
         localProfileState = local
         persistLocalProfileState()
-        evaluateAutomaticProfileSelection(source: "resume-automatic")
+        evaluateAutomaticProfileSelectionPreservingSettingsTarget(source: "resume-automatic")
     }
 
     @discardableResult
     func createProfileFromCurrentConfiguration(name: String = "New Profile") -> UUID {
-        cloneProfile(activeProfile, proposedName: name)
+        cloneProfile(settingsProfile, proposedName: name)
     }
 
     @discardableResult
@@ -551,7 +577,7 @@ final class SettingsStore: ObservableObject {
         guard !name.isEmpty else { return nil }
         switch source {
         case .currentProfile:
-            return cloneProfile(activeProfile, proposedName: name)
+            return cloneProfile(settingsProfile, proposedName: name)
         case .scratch:
             return createProfileFromScratch(proposedName: name)
         }
@@ -573,6 +599,10 @@ final class SettingsStore: ObservableObject {
         persistProfileLibrary()
     }
 
+    func setSettingsProfileIconStyle(_ iconStyle: ProfileIconStyle) {
+        mutateSettingsProfile { $0.iconStyle = iconStyle }
+    }
+
     @discardableResult
     func deleteProfile(_ profileID: UUID) -> Bool {
         guard profiles.count > 1,
@@ -592,6 +622,9 @@ final class SettingsStore: ObservableObject {
         persistLocalProfileState()
         if activeProfileID == profileID {
             evaluateAutomaticProfileSelection(source: "profile-deleted")
+        }
+        if settingsProfileID == profileID {
+            settingsProfileID = activeProfileID
         }
         return true
     }
@@ -656,7 +689,9 @@ final class SettingsStore: ObservableObject {
         local.defaultProfileID = profileID
         localProfileState = local
         persistLocalProfileState()
-        if manualPinnedProfileID == nil { evaluateAutomaticProfileSelection(source: "default-changed") }
+        if manualPinnedProfileID == nil {
+            evaluateAutomaticProfileSelectionPreservingSettingsTarget(source: "default-changed")
+        }
     }
 
     func setDockedProfile(_ profileID: UUID?) {
@@ -686,7 +721,9 @@ final class SettingsStore: ObservableObject {
         local.exactTriggers.append(trigger)
         localProfileState = local
         persistLocalProfileState()
-        if manualPinnedProfileID == nil { evaluateAutomaticProfileSelection(source: "exact-trigger-added") }
+        if manualPinnedProfileID == nil {
+            evaluateAutomaticProfileSelectionPreservingSettingsTarget(source: "exact-trigger-added")
+        }
         return trigger.id
     }
 
@@ -698,7 +735,9 @@ final class SettingsStore: ObservableObject {
         local.exactTriggers[index].profileID = profileID
         localProfileState = local
         persistLocalProfileState()
-        if manualPinnedProfileID == nil { evaluateAutomaticProfileSelection(source: "exact-trigger-edited") }
+        if manualPinnedProfileID == nil {
+            evaluateAutomaticProfileSelectionPreservingSettingsTarget(source: "exact-trigger-edited")
+        }
     }
 
     func removeExactTrigger(_ triggerID: UUID) {
@@ -708,7 +747,525 @@ final class SettingsStore: ObservableObject {
         guard local.exactTriggers.count != previousCount else { return }
         localProfileState = local
         persistLocalProfileState()
-        if manualPinnedProfileID == nil { evaluateAutomaticProfileSelection(source: "exact-trigger-removed") }
+        if manualPinnedProfileID == nil {
+            evaluateAutomaticProfileSelectionPreservingSettingsTarget(source: "exact-trigger-removed")
+        }
+    }
+
+    // MARK: - Settings profile editing
+
+    /// Replaces the reusable definition selected in Settings. Inactive profiles are persisted
+    /// without touching the live engine-facing values. Active-profile edits continue through the
+    /// established published values so the running desktop updates exactly as before.
+    private func replaceSettingsProfile(_ proposed: WindowManagerProfile) {
+        guard proposed.id == settingsProfileID,
+              let normalized = proposed.normalized(),
+              let index = profiles.firstIndex(where: { $0.id == proposed.id })
+        else { return }
+        let previous = profiles[index]
+        guard previous != normalized else { return }
+
+        var updated = profiles
+        updated[index] = normalized
+        profiles = updated
+        persistProfileLibrary()
+
+        guard proposed.id == activeProfileID else { return }
+        isApplyingProfileActivation = true
+        defer { isApplyingProfileActivation = false }
+        if workspaces != normalized.workspaces { workspaces = normalized.workspaces }
+        if multiDisplayMode != normalized.displayMode { multiDisplayMode = normalized.displayMode }
+        if appRules != normalized.appRules { appRules = normalized.appRules }
+        if quickAppShelfPresentation != normalized.quickAppShelfPresentation {
+            quickAppShelfPresentation = normalized.quickAppShelfPresentation
+        }
+        let normalizedQuickApps = QuickAppShelfPolicy.normalized(normalized.quickApps)
+            .map(normalized.quickAppShelfPresentation.applying)
+        if quickApps != normalizedQuickApps { quickApps = normalizedQuickApps }
+        if dropDownApp != normalizedQuickApps.first { dropDownApp = normalizedQuickApps.first }
+        refreshResolvedWorkspaceDisplayAssignments()
+    }
+
+    private func mutateSettingsProfile(_ mutation: (inout WindowManagerProfile) -> Void) {
+        var profile = settingsProfile
+        mutation(&profile)
+        replaceSettingsProfile(profile)
+    }
+
+    private func replaceProfile(_ proposed: WindowManagerProfile, identifiedBy profileID: UUID) {
+        guard proposed.id == profileID,
+              let normalized = proposed.normalized(),
+              let index = profiles.firstIndex(where: { $0.id == profileID })
+        else { return }
+        guard profileID != settingsProfileID else {
+            replaceSettingsProfile(normalized)
+            return
+        }
+        var updated = profiles
+        updated[index] = normalized
+        profiles = updated
+        persistProfileLibrary()
+        guard profileID == activeProfileID else { return }
+        isApplyingProfileActivation = true
+        defer { isApplyingProfileActivation = false }
+        if workspaces != normalized.workspaces { workspaces = normalized.workspaces }
+        if multiDisplayMode != normalized.displayMode { multiDisplayMode = normalized.displayMode }
+        if appRules != normalized.appRules { appRules = normalized.appRules }
+        if quickAppShelfPresentation != normalized.quickAppShelfPresentation {
+            quickAppShelfPresentation = normalized.quickAppShelfPresentation
+        }
+        let normalizedQuickApps = QuickAppShelfPolicy.normalized(normalized.quickApps)
+            .map(normalized.quickAppShelfPresentation.applying)
+        if quickApps != normalizedQuickApps { quickApps = normalizedQuickApps }
+        if dropDownApp != normalizedQuickApps.first { dropDownApp = normalizedQuickApps.first }
+        refreshResolvedWorkspaceDisplayAssignments()
+    }
+
+    @discardableResult
+    func addSettingsDisplayRole(name: String = "Display Role") -> UUID {
+        let existing = Set(settingsProfile.displayRoles.map { $0.name.lowercased() })
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = trimmed.isEmpty ? "Display Role" : trimmed
+        var uniqueName = base
+        var suffix = 2
+        while existing.contains(uniqueName.lowercased()) {
+            uniqueName = "\(base) \(suffix)"
+            suffix += 1
+        }
+        let role = ProfileDisplayRole(name: uniqueName)
+        mutateSettingsProfile { $0.displayRoles.append(role) }
+        return role.id
+    }
+
+    func renameSettingsDisplayRole(_ roleID: UUID, to proposedName: String) {
+        let trimmed = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        mutateSettingsProfile { profile in
+            guard let index = profile.displayRoles.firstIndex(where: { $0.id == roleID }) else {
+                return
+            }
+            profile.displayRoles[index].name = trimmed
+        }
+    }
+
+    @discardableResult
+    func deleteSettingsDisplayRole(_ roleID: UUID) -> Bool {
+        let profileID = settingsProfileID
+        let profile = settingsProfile
+        guard profile.displayRoles.count > 1,
+              profile.displayRoles.contains(where: { $0.id == roleID }),
+              let fallbackRoleID = profile.displayRoles.first(where: { $0.id != roleID })?.id
+        else { return false }
+        mutateSettingsProfile { profile in
+            profile.displayRoles.removeAll { $0.id == roleID }
+            for (workspaceID, assignedRoleID) in profile.workspaceRoleAssignments
+            where assignedRoleID == roleID {
+                profile.workspaceRoleAssignments[workspaceID] = fallbackRoleID
+            }
+        }
+        var local = localProfileState
+        local.roleBindings.removeValue(forKey: roleID)
+        if var runtime = local.runtimeWorkspaceStates[profileID] {
+            runtime.activeWorkspaceIDByRole.removeValue(forKey: roleID)
+            local.runtimeWorkspaceStates[profileID] = runtime
+        }
+        localProfileState = local
+        persistLocalProfileState()
+        if profileID == activeProfileID { refreshResolvedWorkspaceDisplayAssignments() }
+        return true
+    }
+
+    func assignSettingsWorkspace(_ workspaceID: UUID, toRole roleID: UUID) {
+        guard settingsProfile.workspaces.contains(where: { $0.id == workspaceID }),
+              settingsProfile.displayRoles.contains(where: { $0.id == roleID })
+        else { return }
+        mutateSettingsProfile { $0.workspaceRoleAssignments[workspaceID] = roleID }
+    }
+
+    func settingsRoleID(for workspaceID: UUID) -> UUID? {
+        settingsProfile.workspaceRoleAssignments[workspaceID]
+    }
+
+    func bindSettingsDisplayRole(_ roleID: UUID, to displayIdentifier: String?) {
+        guard settingsProfile.displayRoles.contains(where: { $0.id == roleID }) else { return }
+        var local = localProfileState
+        if let displayIdentifier,
+           let display = connectedDisplays.first(where: { $0.identifier == displayIdentifier }) {
+            local.roleBindings[roleID] = WorkspaceDisplayPin(
+                lastKnownIdentifier: displayIdentifier,
+                fingerprint: display.fingerprint
+            )
+        } else {
+            local.roleBindings.removeValue(forKey: roleID)
+        }
+        localProfileState = local
+        persistLocalProfileState()
+        if settingsProfileID == activeProfileID {
+            refreshResolvedWorkspaceDisplayAssignments()
+            logRoleResolutions(for: activeProfile, source: "role-binding-changed")
+        }
+    }
+
+    func settingsMenuBarDisplayIconStyle(forRole roleID: UUID) -> MenuBarDisplayIconStyle {
+        settingsProfile.displayRoles.first(where: { $0.id == roleID })?.menuBarIconStyle
+            ?? .automatic
+    }
+
+    func setSettingsMenuBarDisplayIconStyle(
+        _ style: MenuBarDisplayIconStyle,
+        forRole roleID: UUID
+    ) {
+        mutateSettingsProfile { profile in
+            guard let index = profile.displayRoles.firstIndex(where: { $0.id == roleID }) else {
+                return
+            }
+            profile.displayRoles[index].menuBarIconStyle = style
+        }
+    }
+
+    func setSettingsMultiDisplayMode(_ mode: MultiDisplayMode) {
+        mutateSettingsProfile { $0.displayMode = mode }
+    }
+
+    @discardableResult
+    func addSettingsWorkspace() -> UUID {
+        let profile = settingsProfile
+        let name = WorkspaceIdentityPolicy.uniqueName(
+            "New Workspace",
+            existing: profile.workspaces.map(\.name)
+        )
+        let key = WorkspaceIdentityPolicy.uniqueKey(
+            preferred: name,
+            name: name,
+            existing: profile.workspaces.map(\.key)
+        )
+        let workspace = WorkspaceDefinition(name: name, key: key)
+        mutateSettingsProfile { profile in
+            profile.workspaces.append(workspace)
+            if let roleID = profile.displayRoles.first?.id {
+                profile.workspaceRoleAssignments[workspace.id] = roleID
+            }
+        }
+        return workspace.id
+    }
+
+    @discardableResult
+    func duplicateSettingsWorkspace(id: UUID) -> UUID? {
+        let profile = settingsProfile
+        guard let sourceIndex = profile.workspaces.firstIndex(where: { $0.id == id }) else {
+            return nil
+        }
+        let source = profile.workspaces[sourceIndex]
+        let name = WorkspaceIdentityPolicy.uniqueName(
+            source.name,
+            existing: profile.workspaces.map(\.name)
+        )
+        let key = WorkspaceIdentityPolicy.uniqueKey(
+            preferred: source.key,
+            name: name,
+            existing: profile.workspaces.map(\.key)
+        )
+        let duplicate = WorkspaceDefinition(
+            name: name,
+            key: key,
+            layout: source.layout,
+            layoutConfiguration: source.layoutConfiguration
+        )
+        mutateSettingsProfile { profile in
+            profile.workspaces.insert(duplicate, at: sourceIndex + 1)
+            if let roleID = profile.workspaceRoleAssignments[source.id]
+                ?? profile.displayRoles.first?.id {
+                profile.workspaceRoleAssignments[duplicate.id] = roleID
+            }
+        }
+        return duplicate.id
+    }
+
+    func removeSettingsWorkspace(id: UUID) {
+        let profileID = settingsProfileID
+        guard settingsProfile.workspaces.count > 1 else { return }
+        mutateSettingsProfile { profile in
+            profile.workspaces.removeAll { $0.id == id }
+            profile.workspaceRoleAssignments.removeValue(forKey: id)
+            for index in profile.appRules.indices
+            where profile.appRules[index].assignedWorkspaceID == id {
+                profile.appRules[index].assignedWorkspaceID = nil
+            }
+        }
+        var local = localProfileState
+        if var runtime = local.runtimeWorkspaceStates[profileID],
+           let fallbackWorkspaceID = settingsProfile.workspaces.first?.id {
+            if runtime.currentWorkspaceID == id { runtime.currentWorkspaceID = fallbackWorkspaceID }
+            runtime.activeWorkspaceIDByRole = runtime.activeWorkspaceIDByRole.filter {
+                $0.value != id
+            }
+            local.runtimeWorkspaceStates[profileID] = runtime
+            localProfileState = local
+            persistLocalProfileState()
+        }
+    }
+
+    func moveSettingsWorkspace(id: UUID, offset: Int) {
+        guard let index = settingsProfile.workspaces.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        let destination = index + offset
+        guard settingsProfile.workspaces.indices.contains(destination) else { return }
+        mutateSettingsProfile { $0.workspaces.swapAt(index, destination) }
+    }
+
+    func moveSettingsWorkspace(id: UUID, before targetID: UUID) {
+        guard id != targetID,
+              let sourceIndex = settingsProfile.workspaces.firstIndex(where: { $0.id == id }),
+              settingsProfile.workspaces.contains(where: { $0.id == targetID })
+        else { return }
+        mutateSettingsProfile { profile in
+            let moving = profile.workspaces.remove(at: sourceIndex)
+            guard let targetIndex = profile.workspaces.firstIndex(where: { $0.id == targetID }) else {
+                return
+            }
+            profile.workspaces.insert(moving, at: targetIndex)
+        }
+    }
+
+    func moveSettingsWorkspaces(fromOffsets source: IndexSet, toOffset destination: Int) {
+        let current = settingsProfile.workspaces
+        let indices = source.sorted().filter { current.indices.contains($0) }
+        guard !indices.isEmpty else { return }
+        let moving = indices.map { current[$0] }
+        var remaining = current.enumerated().filter { !source.contains($0.offset) }.map(\.element)
+        let removedBeforeDestination = indices.filter { $0 < destination }.count
+        let insertion = min(max(0, destination - removedBeforeDestination), remaining.count)
+        remaining.insert(contentsOf: moving, at: insertion)
+        guard remaining != current else { return }
+        mutateSettingsProfile { $0.workspaces = remaining }
+    }
+
+    func setSettingsWorkspaceName(_ proposedName: String, for workspaceID: UUID) {
+        guard let index = settingsProfile.workspaces.firstIndex(where: { $0.id == workspaceID }) else {
+            return
+        }
+        let normalizedName = proposedName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalizedName.isEmpty || !settingsProfile.workspaces.contains(where: {
+            $0.id != workspaceID &&
+                $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedName
+        }) else { return }
+        mutateSettingsProfile { $0.workspaces[index].name = proposedName }
+    }
+
+    func setSettingsWorkspaceKey(_ proposedKey: String, for workspaceID: UUID) {
+        guard let index = settingsProfile.workspaces.firstIndex(where: { $0.id == workspaceID }) else {
+            return
+        }
+        let key = WorkspaceIdentityPolicy.sanitizedKey(proposedKey)
+        guard key.isEmpty || !settingsProfile.workspaces.contains(where: {
+            $0.id != workspaceID && $0.key.caseInsensitiveCompare(key) == .orderedSame
+        }) else { return }
+        mutateSettingsProfile { $0.workspaces[index].key = key }
+    }
+
+    func resetSettingsWorkspace(_ workspaceID: UUID, undoManager: UndoManager?) {
+        guard let workspace = settingsProfile.workspaces.first(where: { $0.id == workspaceID }) else {
+            return
+        }
+        var reset = workspace
+        reset.layout = .none
+        reset.layoutConfiguration = .aeroSpaceUserDefaults
+        setSettingsWorkspaceDefinition(
+            reset,
+            profileID: settingsProfileID,
+            actionName: "Reset Workspace",
+            undoManager: undoManager
+        )
+    }
+
+    private func setSettingsWorkspaceDefinition(
+        _ definition: WorkspaceDefinition,
+        profileID: UUID,
+        actionName: String,
+        undoManager: UndoManager?
+    ) {
+        guard let profile = profiles.first(where: { $0.id == profileID }),
+              let index = profile.workspaces.firstIndex(where: { $0.id == definition.id })
+        else { return }
+        let previous = profile.workspaces[index]
+        guard previous != definition else { return }
+        undoManager?.registerUndo(withTarget: self) { [weak undoManager] store in
+            store.setSettingsWorkspaceDefinition(
+                previous,
+                profileID: profileID,
+                actionName: actionName,
+                undoManager: undoManager
+            )
+        }
+        undoManager?.setActionName(actionName)
+        var updated = profile
+        updated.workspaces[index] = definition
+        replaceProfile(updated, identifiedBy: profileID)
+    }
+
+    func resetSettingsWorkspacesToDefaults() {
+        let replacements = WorkspaceDefinition.defaults.map {
+            WorkspaceDefinition(
+                id: $0.id,
+                name: $0.name,
+                key: $0.key,
+                layout: $0.layout,
+                layoutConfiguration: $0.layoutConfiguration
+            )
+        }
+        mutateSettingsProfile { profile in
+            profile.workspaces = replacements
+            if let roleID = profile.displayRoles.first?.id {
+                profile.workspaceRoleAssignments = Dictionary(
+                    uniqueKeysWithValues: replacements.map { ($0.id, roleID) }
+                )
+            }
+        }
+    }
+
+    func setSettingsLayout(_ layout: WorkspaceLayout, for workspaceID: UUID) {
+        guard let index = settingsProfile.workspaces.firstIndex(where: { $0.id == workspaceID }) else {
+            return
+        }
+        mutateSettingsProfile { profile in
+            if profile.workspaces[index].layoutConfiguration == nil {
+                profile.workspaces[index].layoutConfiguration = .aeroSpaceUserDefaults
+            }
+            profile.workspaces[index].layout = layout
+        }
+    }
+
+    func settingsLayoutConfiguration(for workspaceID: UUID) -> WorkspaceLayoutConfiguration {
+        settingsProfile.workspaces.first(where: { $0.id == workspaceID })?.layoutConfiguration
+            ?? .aeroSpaceUserDefaults
+    }
+
+    func settingsUsesLegacyLayoutGeometry(for workspaceID: UUID) -> Bool {
+        settingsProfile.workspaces.first(where: { $0.id == workspaceID })?.layoutConfiguration == nil
+    }
+
+    func setSettingsLayoutConfiguration(
+        _ configuration: WorkspaceLayoutConfiguration,
+        for workspaceID: UUID
+    ) {
+        guard let index = settingsProfile.workspaces.firstIndex(where: { $0.id == workspaceID }) else {
+            return
+        }
+        let clamped = configuration.clamped()
+        mutateSettingsProfile { $0.workspaces[index].layoutConfiguration = clamped }
+    }
+
+    func addSettingsAppRule(
+        for application: InstalledApplication,
+        defaultWorkspaceID: UUID? = nil
+    ) {
+        guard !settingsProfile.appRules.contains(where: { $0.id == application.id }) else { return }
+        mutateSettingsProfile { profile in
+            profile.quickApps.removeAll {
+                $0.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame
+            }
+            var rule = AppRule(
+                bundleIdentifier: application.bundleIdentifier,
+                displayName: application.displayName
+            )
+            if application.isRunning,
+               let defaultWorkspaceID,
+               profile.workspaces.contains(where: { $0.id == defaultWorkspaceID }) {
+                rule.assignedWorkspaceID = defaultWorkspaceID
+            }
+            profile.appRules.append(rule)
+        }
+    }
+
+    func removeSettingsAppRule(bundleIdentifier: String) {
+        mutateSettingsProfile { profile in
+            profile.appRules.removeAll {
+                $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+            }
+        }
+    }
+
+    func updateSettingsAppRule(_ updatedRule: AppRule, undoManager: UndoManager?) {
+        updateAppRule(
+            updatedRule,
+            in: settingsProfileID,
+            undoManager: undoManager
+        )
+    }
+
+    private func updateAppRule(
+        _ updatedRule: AppRule,
+        in profileID: UUID,
+        undoManager: UndoManager?
+    ) {
+        guard var profile = profiles.first(where: { $0.id == profileID }),
+              let index = profile.appRules.firstIndex(where: { $0.id == updatedRule.id })
+        else { return }
+        let previousRule = profile.appRules[index]
+        guard previousRule != updatedRule else { return }
+        undoManager?.registerUndo(withTarget: self) { [weak undoManager] target in
+            target.updateAppRule(previousRule, in: profileID, undoManager: undoManager)
+        }
+        undoManager?.setActionName("Change Application Rule")
+        profile.appRules[index] = updatedRule
+        replaceProfile(profile, identifiedBy: profileID)
+    }
+
+    func convertSettingsAppRuleToQuickApp(bundleIdentifier: String) {
+        guard let rule = settingsProfile.appRules.first(where: {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }) else { return }
+        setSettingsQuickApp(InstalledApplication(
+            bundleIdentifier: rule.bundleIdentifier,
+            displayName: rule.displayName,
+            bundleURL: NSWorkspace.shared.urlForApplication(withBundleIdentifier: rule.bundleIdentifier),
+            isRunning: NSRunningApplication.runningApplications(
+                withBundleIdentifier: rule.bundleIdentifier
+            ).contains(where: { !$0.isTerminated })
+        ))
+    }
+
+    func setSettingsQuickApp(_ application: InstalledApplication) {
+        mutateSettingsProfile { profile in
+            profile.appRules.removeAll {
+                $0.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame
+            }
+            let presentation = profile.quickAppShelfPresentation
+            let configuration = DropDownAppConfiguration(
+                bundleIdentifier: application.bundleIdentifier,
+                displayName: application.displayName,
+                heightFraction: presentation.heightFraction,
+                isAnimationEnabled: presentation.isAnimationEnabled,
+                direction: presentation.direction
+            )
+            profile.quickApps = QuickAppShelfPolicy.replacing(profile.quickApps, with: configuration)
+            profile.dropDownApp = profile.quickApps.first
+        }
+    }
+
+    func setSettingsQuickAppShelfPresentation(_ presentation: QuickAppShelfPresentation) {
+        mutateSettingsProfile { profile in
+            profile.quickAppShelfPresentation = presentation
+            profile.quickApps = QuickAppShelfPolicy.normalized(profile.quickApps)
+                .map(presentation.applying)
+            profile.dropDownApp = profile.quickApps.first
+        }
+    }
+
+    func removeSettingsQuickApp(at index: Int) {
+        guard settingsProfile.quickApps.indices.contains(index) else { return }
+        mutateSettingsProfile { profile in
+            profile.quickApps.remove(at: index)
+            profile.dropDownApp = profile.quickApps.first
+        }
+    }
+
+    func moveSettingsQuickApps(from source: IndexSet, to destination: Int) {
+        mutateSettingsProfile { profile in
+            profile.quickApps.move(fromOffsets: source, toOffset: destination)
+            profile.dropDownApp = profile.quickApps.first
+        }
     }
 
     // MARK: - Abstract display roles and local bindings
@@ -1132,18 +1689,12 @@ final class SettingsStore: ObservableObject {
 
     func removeAppRule(bundleIdentifier: String) {
         appRules.removeAll { $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame }
-        setFocusedWindowHighlightCornerRadiusOverride(nil, for: bundleIdentifier, undoManager: nil)
     }
 
     func setDropDownApp(_ application: InstalledApplication) {
         appRules.removeAll {
             $0.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame
         }
-        setFocusedWindowHighlightCornerRadiusOverride(
-            nil,
-            for: application.bundleIdentifier,
-            undoManager: nil
-        )
         let configuration = DropDownAppConfiguration(
             bundleIdentifier: application.bundleIdentifier,
             displayName: application.displayName,
@@ -1509,12 +2060,10 @@ final class SettingsStore: ObservableObject {
         for (roleID, binding) in roleBindings {
             local.roleBindings[roleID] = binding
         }
-        local.manualPinnedProfileID = profile.id
-        local.activeProfileID = profile.id
         localProfileState = local
         persistProfileLibrary()
         persistLocalProfileState()
-        activateProfile(profile.id, reason: .manualPin, source: "profile-created")
+        settingsProfileID = profile.id
     }
 
     private func removeImportedProfilesIfSafe(_ importedProfiles: [WindowManagerProfile]) {
@@ -1541,6 +2090,9 @@ final class SettingsStore: ObservableObject {
         }
 
         profiles.removeAll { importedProfileIDs.contains($0.id) }
+        if importedProfileIDs.contains(settingsProfileID) {
+            settingsProfileID = activeProfileID
+        }
         persistProfileLibrary()
         diagnostics.log(
             category: "profile-transfer",
@@ -1556,7 +2108,20 @@ final class SettingsStore: ObservableObject {
         localProfileState = local
         persistLocalProfileState()
         if manualPinnedProfileID == nil {
-            evaluateAutomaticProfileSelection(source: docked ? "docked-rule-changed" : "undocked-rule-changed")
+            evaluateAutomaticProfileSelectionPreservingSettingsTarget(
+                source: docked ? "docked-rule-changed" : "undocked-rule-changed"
+            )
+        }
+    }
+
+    /// Editing this Mac's automatic rules may legitimately activate a different profile, but the
+    /// Profile Switching pane must not silently replace the reusable profile selected elsewhere in
+    /// Settings. External topology changes retain the established follow-active behavior.
+    private func evaluateAutomaticProfileSelectionPreservingSettingsTarget(source: String) {
+        let editingProfileID = settingsProfileID
+        evaluateAutomaticProfileSelection(source: source)
+        if profiles.contains(where: { $0.id == editingProfileID }) {
+            settingsProfileID = editingProfileID
         }
     }
 
@@ -1586,8 +2151,12 @@ final class SettingsStore: ObservableObject {
         source: String
     ) {
         guard let profile = profiles.first(where: { $0.id == profileID }) else { return }
+        let settingsFollowedActiveProfile = settingsProfileID == activeProfileID
         isApplyingProfileActivation = true
         activeProfileID = profileID
+        if settingsFollowedActiveProfile {
+            settingsProfileID = profileID
+        }
         activeProfileSelectionReason = reason
         var local = localProfileState
         local.activeProfileID = profileID
@@ -1901,6 +2470,9 @@ final class SettingsStore: ObservableObject {
                 displays: connectedDisplays,
                 isPortableMac: isPortableMacProvider()
             )
+            if !profiles.contains(where: { $0.id == settingsProfileID }) {
+                settingsProfileID = selection.profileID
+            }
             persistProfileLibrary(syncToCloud: false)
             persistLocalProfileState()
             activateProfile(selection.profileID, reason: selection.reason, source: "icloud-library-update")

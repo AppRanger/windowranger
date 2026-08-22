@@ -1856,8 +1856,8 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     @MainActor
-    func testLegacyDisplayAndLayoutDestinationsMigrateToWorkspaces() {
-        for legacy in [SettingsCategory.displays, .layouts] {
+    func testLegacySettingsDestinationsMigrateToTheirCurrentOwners() {
+        for legacy in [SettingsCategory.layouts] {
             let defaults = isolatedDefaults()
             defaults.set(legacy.rawValue, forKey: "settings.selectedCategory.v1")
             let model = SettingsNavigationModel(defaults: defaults, includeDebug: false)
@@ -1869,13 +1869,33 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         }
         let available = SettingsCatalog.availableCategories(includeDebug: false)
         XCTAssertTrue(available.contains(.workspaces))
-        XCTAssertFalse(available.contains(.displays))
+        XCTAssertTrue(available.contains(.displays))
         XCTAssertFalse(available.contains(.layouts))
+
+        let displayDefaults = isolatedDefaults()
+        displayDefaults.set("displays", forKey: "settings.selectedCategory.v1")
+        let displayModel = SettingsNavigationModel(defaults: displayDefaults, includeDebug: false)
+        XCTAssertEqual(displayModel.selectedCategory, .displays)
+        displayModel.select(.displays)
+        XCTAssertEqual(displayModel.selectedCategory, .displays)
+
+        let appearanceDefaults = isolatedDefaults()
+        appearanceDefaults.set("appearance", forKey: "settings.selectedCategory.v1")
+        let appearanceModel = SettingsNavigationModel(
+            defaults: appearanceDefaults,
+            includeDebug: false
+        )
+        XCTAssertEqual(appearanceModel.selectedCategory, .menuBar)
+        XCTAssertEqual(
+            appearanceDefaults.string(forKey: "settings.selectedCategory.v1"),
+            "menuBar"
+        )
+        XCTAssertFalse(available.contains(.appearance))
     }
 
     func testWorkspaceSearchRoutesConfigurationAndDynamicIdentityToWorkspaces() {
         for query in [
-            "Independent Displays", "home display", "orientation", "inner gaps",
+            "home display", "orientation", "inner gaps",
             "accordion padding", "reset this workspace", "workspace shortcuts",
         ] {
             XCTAssertEqual(
@@ -1893,6 +1913,72 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(dynamic?.title, "Writing")
         XCTAssertEqual(dynamic?.category, .workspaces)
         XCTAssertNotNil(dynamic?.workspaceID)
+    }
+
+    func testProfileSwitchingAndDisplaysSearchRouteToTheirOwnSections() {
+        for query in ["profile name", "profile icon", "editing profile identity"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .profiles,
+                "Expected Profiles routing for \(query)"
+            )
+        }
+        for query in ["manual profile pin", "docked topology", "automatic selection"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .profileSwitching,
+                "Expected Profile Switching routing for \(query)"
+            )
+        }
+        for query in ["Independent Displays", "monitor fingerprint role", "display workspace behavior"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .displays,
+                "Expected Displays routing for \(query)"
+            )
+        }
+    }
+
+    func testSettingsSearchRoutesTopLevelSectionsSeparately() {
+        for query in ["Accessibility permission", "Open at login"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .general,
+                "Expected General routing for \(query)"
+            )
+        }
+        XCTAssertEqual(
+            SettingsCatalog.search("iCloud settings sync", includeDebug: false).first?.category,
+            .sync
+        )
+        for query in ["Menu bar presentation", "workspace key label", "profile display role icons"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .menuBar,
+                "Expected Menu Bar routing for \(query)"
+            )
+        }
+        for query in ["focus ring border", "application corner radius overrides"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .focusBorder
+            )
+        }
+        for query in ["Bring windows back on screen", "four finger trackpad", "hidden compatibility"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .behavior,
+                "Expected Behavior routing for \(query)"
+            )
+        }
+
+        let available = SettingsCatalog.availableCategories(includeDebug: false)
+        XCTAssertTrue(available.contains(.general))
+        XCTAssertTrue(available.contains(.sync))
+        XCTAssertTrue(available.contains(.menuBar))
+        XCTAssertTrue(available.contains(.focusBorder))
+        XCTAssertTrue(available.contains(.behavior))
+        XCTAssertFalse(available.contains(.appearance))
     }
 
     func testQuickAppShelfSearchRoutesSharedPresentationAndMembership() {
@@ -2778,14 +2864,12 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
-    func testSettingsSearchRoutesGlobeHoldAndPlacementToCommandPalette() {
+    func testSettingsSearchDoesNotExposeRemovedGlobeHoldOrPlacementControls() {
+        XCTAssertTrue(SettingsCatalog.search("Globe function hold", includeDebug: false).isEmpty)
+        XCTAssertTrue(SettingsCatalog.search("pointer position snap", includeDebug: false).isEmpty)
         XCTAssertEqual(
-            SettingsCatalog.search("Globe function hold", includeDebug: false).first?.id,
-            "radial-globe-fn"
-        )
-        XCTAssertEqual(
-            SettingsCatalog.search("pointer position snap", includeDebug: false).first?.id,
-            "radial-item-resize"
+            SettingsCatalog.search("Command Palette shortcut", includeDebug: false).first?.id,
+            "radial-shortcut"
         )
     }
 
@@ -2831,7 +2915,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     @MainActor
-    func testGlobeFnHoldDefaultsOffStaysDeviceLocalAndIsSearchable() {
+    func testLegacyGlobeFnHoldPreferenceRemainsDeviceLocalButIsNotSearchable() {
         let defaults = isolatedDefaults()
         let cloud = RecordingUbiquitousStore()
         let store = SettingsStore(
@@ -2847,10 +2931,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             true
         )
         XCTAssertFalse(cloud.keys.contains("radialMenuGlobeFnHoldEnabled.v1"))
-        XCTAssertTrue(
-            SettingsCatalog.search("Globe Fn emoji", includeDebug: false)
-                .contains { $0.id == "radial-globe-fn" && $0.category == .radialMenu }
-        )
+        XCTAssertTrue(SettingsCatalog.search("Globe Fn emoji", includeDebug: false).isEmpty)
 
         let profileData = try! JSONEncoder().encode(store.profiles)
         let profileJSON = String(decoding: profileData, as: UTF8.self)

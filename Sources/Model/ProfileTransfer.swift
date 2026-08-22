@@ -25,6 +25,7 @@ struct PortableProfileArchive: Codable, Equatable, Sendable {
 struct PortableProfileDefinition: Codable, Equatable, Sendable {
     let id: UUID
     var name: String
+    var iconStyle: ProfileIconStyle
     var workspaces: [PortableWorkspaceDefinition]
     var displayMode: MultiDisplayMode
     var displayRoles: [ProfileDisplayRole]
@@ -35,13 +36,14 @@ struct PortableProfileDefinition: Codable, Equatable, Sendable {
     var quickAppShelfPresentation: QuickAppShelfPresentation
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, workspaces, displayMode, displayRoles, workspaceRoleAssignments, appRules
+        case id, name, iconStyle, workspaces, displayMode, displayRoles, workspaceRoleAssignments, appRules
         case dropDownApp, quickApps, quickAppShelfPresentation
     }
 
     init(profile: WindowManagerProfile) {
         id = profile.id
         name = profile.name
+        iconStyle = profile.iconStyle
         workspaces = profile.workspaces.map(PortableWorkspaceDefinition.init)
         displayMode = profile.displayMode
         displayRoles = profile.displayRoles
@@ -56,6 +58,10 @@ struct PortableProfileDefinition: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
+        iconStyle = try container.decodeIfPresent(
+            ProfileIconStyle.self,
+            forKey: .iconStyle
+        ) ?? .profile
         workspaces = try container.decode([PortableWorkspaceDefinition].self, forKey: .workspaces)
         displayMode = try container.decode(MultiDisplayMode.self, forKey: .displayMode)
         displayRoles = try container.decode([ProfileDisplayRole].self, forKey: .displayRoles)
@@ -466,6 +472,7 @@ enum ProfileTransferCodec {
             let profile = WindowManagerProfile(
                 id: profileID,
                 name: resultingName,
+                iconStyle: source.iconStyle,
                 workspaces: workspaces,
                 displayMode: source.displayMode,
                 displayRoles: roles,
