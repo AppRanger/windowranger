@@ -19,7 +19,7 @@ surfaces, and keyboard-first features remain discoverable and mouse-friendly.
 | Omarchy-inspired idea | Current WindowRanger foundation | Canonical status |
 | --- | --- | --- |
 | Searchable command surface and live shortcut guide | Shared command dispatch, contextual catalogue, configurable shortcuts, menus, Placement Halo/Wheel, and command feedback | [`WR-060`](../TODO.md#wr-060--searchable-command-surface) — Done |
-| Quick App Shelf | One profile-aware Quick App with exact-window presentation and recovery | [`WR-061`](../TODO.md#wr-061--quick-app-shelf) — Needs decision |
+| Quick App Shelf | Up to four ordered profile-aware Quick Apps with coordinated Accordion/Carousel exact-window presentation and recovery | [`WR-061`](../TODO.md#wr-061--quick-app-shelf) and [`WR-064`](../TODO.md#wr-064--multi-window-quick-app-shelf-presentation) — Live validation |
 | Workspace personalities | Persistent Freeform, Tiled, and Accordion behavior per workspace | [`WR-010`](../TODO.md#wr-010--reusable-layout-presets) — resolve as an extension of layouts/presets, not a parallel model |
 | Window groups | Workspace membership and app summaries, but no explicit activity group | [`WR-008`](../TODO.md#wr-008--named-whole-desk-arrangements) — begin as temporary groups within arrangement research |
 | Restore preview and history | Preview/Undo for selected layout commands, but no whole-desk restore transaction | [`WR-008`](../TODO.md#wr-008--named-whole-desk-arrangements) — required safety boundary for arrangements |
@@ -53,8 +53,11 @@ remain later consumers rather than part of this increment.
 
 ## 2. Quick App Shelf
 
-Evolve Quick App from one summoned application into a small profile-aware shelf of remembered
-windows, such as a terminal, notes window, music player, activity monitor, or AI-agent session.
+Quick App has evolved from one summoned application into a small profile-aware shelf of up to four
+ordered application configurations, such as a terminal, notes window, music player, activity
+monitor, or AI-agent session. The first increment established exact per-window ownership and the
+Command Palette selector. `WR-064` adds a coordinated overlapping Accordion or non-overlapping
+Carousel, bounded by a shelf-owned one-to-four visible maximum.
 
 The useful version remembers a specific window when macOS exposes enough identity evidence, because
 that preserves document, terminal, or browser context. It must retain the current conservative
@@ -62,11 +65,15 @@ behavior when identity is ambiguous.
 
 Possible interaction:
 
-- the existing shortcut summons the most recently used shelf window;
-- repeated presses cycle through shelf windows;
-- a related action opens a visual selector;
-- windows are added or removed explicitly;
-- launch and recovery reuse the existing Quick App safety boundaries.
+- the existing shortcut shows or hides the most recently used shelf entry;
+- Command Palette actions select an entry or cycle Next/Previous;
+- an optional cycle shortcut is configurable but unset by default;
+- Settings adds, removes, and reorders entries, capped at four with no duplicate applications;
+- legacy single-Quick-App profiles migrate their existing entry to the first shelf position;
+- launch and recovery reuse the existing Quick App safety boundaries, with exact ownership for each
+  presented entry and no ambiguous window guessing;
+- extra apps are never launched merely to fill the visible maximum; only already available,
+  unambiguous neighbours join the group.
 
 ## 3. Workspace personalities through the layout model
 
@@ -105,11 +112,11 @@ These remain research notes until a concrete product decision promotes one into 
 
 ## Suggested decision order
 
-1. Resolve `WR-060` and establish one searchable command architecture.
-2. Resolve `WR-061` and extend the now-stable single Quick App model carefully.
-3. Decide the layout/personality boundary in `WR-010`.
-4. Decide temporary groups, named arrangements, restore preview, and Undo together in `WR-008`.
-5. Revisit deferred experiments only after those foundations are settled.
+1. Live-validate the corrected `WR-061` and multi-window `WR-064` Quick App Shelf across real
+   profiles and lifecycle paths.
+2. Decide the layout/personality boundary in `WR-010`.
+3. Decide temporary groups, named arrangements, restore preview, and Undo together in `WR-008`.
+4. Revisit deferred experiments only after those foundations are settled.
 
 ## Original research sources
 

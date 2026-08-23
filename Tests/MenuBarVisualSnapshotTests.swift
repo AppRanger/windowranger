@@ -255,12 +255,20 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             displayProvider: { [] },
             applicationActivator: {}
         )
+        let updateController = UpdateController(
+            configuration: UpdateRuntimeConfiguration(
+                buildChannel: .development,
+                feedURL: nil,
+                publicKey: nil
+            )
+        )
         let view = SettingsView(
             store: store,
             engine: engine,
             navigation: navigation,
             windowCoordinator: coordinator,
             diagnostics: .disabled,
+            updateController: updateController,
             shortcutRecordingStateChanged: { _ in }
         )
         .frame(width: Self.snapshotSize.width, height: Self.snapshotSize.height)
@@ -297,6 +305,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             navigation: navigation,
             windowCoordinator: coordinator,
             diagnostics: .disabled,
+            updateController: updateController,
             shortcutRecordingStateChanged: { _ in }
         )
         .frame(width: Self.snapshotSize.width, height: Self.snapshotSize.height)
@@ -316,8 +325,15 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
 
         let currentProfileID = store.activeProfileID
         store.renameProfile(currentProfileID, to: "Current Setup")
+        store.setSettingsProfileIconStyle(.desktop)
         _ = store.createProfile(named: "Travel", source: .scratch)
+        store.setSettingsProfileIconStyle(.travel)
         store.selectProfile(currentProfileID)
+        store.setFocusedWindowHighlightCornerRadiusOverride(
+            14,
+            for: "com.apple.Terminal",
+            undoManager: nil
+        )
         navigation.select(.profiles)
         let profilesData = try renderRetinaPNG(view, size: Self.snapshotSize)
         XCTAssertGreaterThan(profilesData.count, 25_000)
@@ -340,8 +356,17 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
 
         for category in [
             SettingsCategory.general,
+            .updates,
+            .sync,
+            .behavior,
+            .profileSwitching,
+            .menuBar,
+            .focusBorder,
+            .displays,
             .appRules,
+            .quickAppShelf,
             .shortcuts,
+            .shortcutGuide,
             .radialMenu,
             .diagnostics,
         ] {
@@ -406,6 +431,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             navigation: navigation,
             windowCoordinator: coordinator,
             diagnostics: .disabled,
+            updateController: updateController,
             shortcutRecordingStateChanged: { _ in }
         )
         .frame(width: compactSize.width, height: compactSize.height)
@@ -431,6 +457,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             navigation: navigation,
             windowCoordinator: coordinator,
             diagnostics: .disabled,
+            updateController: updateController,
             shortcutRecordingStateChanged: { _ in }
         )
         .frame(width: compactSize.width, height: compactSize.height)
@@ -451,8 +478,16 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
 
         for category in [
             SettingsCategory.general,
+            .sync,
+            .behavior,
+            .profileSwitching,
+            .menuBar,
+            .focusBorder,
+            .displays,
             .appRules,
+            .quickAppShelf,
             .shortcuts,
+            .shortcutGuide,
             .radialMenu,
             .diagnostics,
         ] {
@@ -463,6 +498,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
                 navigation: navigation,
                 windowCoordinator: coordinator,
                 diagnostics: .disabled,
+                updateController: updateController,
                 shortcutRecordingStateChanged: { _ in }
             )
             .frame(width: compactSize.width, height: compactSize.height)
@@ -489,6 +525,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             navigation: navigation,
             windowCoordinator: coordinator,
             diagnostics: .disabled,
+            updateController: updateController,
             shortcutRecordingStateChanged: { _ in }
         )
         .frame(width: compactSize.width, height: compactSize.height)
@@ -514,6 +551,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             navigation: navigation,
             windowCoordinator: coordinator,
             diagnostics: .disabled,
+            updateController: updateController,
             shortcutRecordingStateChanged: { _ in }
         )
         .frame(

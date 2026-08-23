@@ -7,11 +7,12 @@ A small, native macOS virtual-workspace manager built around one workflow rather
 general-purpose command language.
 
 WindowRanger will use three release channels: Stable from `main`, Beta from release branches, and
-rolling Dev builds from `develop`. Stable and opt-in Beta updates will use Sparkle later; Dev builds
-will remain outside automatic updates.
+rolling Dev builds from `develop`. Stable and opt-in Beta builds contain Sparkle update support;
+Dev builds remain outside automatic updates. The public feed will be activated only after its first
+signed update archive passes the packaged-app upgrade checks.
 
 Download the signed and notarized
-[`v0.1.0-beta.2` GitHub prerelease](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.2)
+[`v0.1.0-beta.6` GitHub prerelease](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.6)
 as a DMG, with a notarized ZIP as a fallback. GitHub's automatically generated source archives are
 not an installable macOS app.
 
@@ -26,6 +27,11 @@ not an installable macOS app.
 - [Release channels and branching](docs/release-channels-and-branching.md)
 - [First GitHub release runbook](docs/first-github-release.md)
 - [Release notes template](docs/release-notes-template.md)
+- [Sparkle update design and release flow](docs/sparkle-updates.md)
+- [WindowRanger 0.1.0 Beta 6 release notes](docs/releases/v0.1.0-beta.6.md)
+- [WindowRanger 0.1.0 Beta 5 release notes](docs/releases/v0.1.0-beta.5.md)
+- [WindowRanger 0.1.0 Beta 4 release notes](docs/releases/v0.1.0-beta.4.md)
+- [WindowRanger 0.1.0 Beta 3 release notes](docs/releases/v0.1.0-beta.3.md)
 - [WindowRanger 0.1.0 Beta 2 release notes](docs/releases/v0.1.0-beta.2.md)
 - [WindowRanger 0.1.0 Beta 1 release notes](docs/releases/v0.1.0-beta.1.md)
 - [Daily use and local development](docs/daily-development-workflow.md)
@@ -42,27 +48,45 @@ not an installable macOS app.
 
 ## Current feature set
 
+- A resumable seven-stage first-run setup for iCloud, Navigate/Arrange shortcuts, Focus Border,
+  menu-bar presentation, the Quick App Shelf, and keyboard/trackpad workspace navigation. Every
+  choice edits the same setting used by the app; only the wizard's versioned progress remains local.
+  General Settings can close Settings and restart the walkthrough from Welcome without resetting
+  those choices.
 - Three native, display-aware menu-bar presentations: Compact by default, Medium chips, or a Full display-grouped workspace strip.
 - A standard menu from the primary app item with Settings and a graceful Quit command; the primary item never switches workspaces.
 - Virtual workspaces that remember window membership and the active workspace across app restarts.
-- Named reusable profiles with local manual/automatic selection, dock and exact-topology triggers, synced abstract display roles, and per-Mac monitor bindings.
+- Named reusable profiles with local manual/automatic selection, Game Mode, dock and exact-topology triggers, synced abstract display roles, and per-Mac monitor bindings.
 - Previewed portable JSON profile export/import that adds fresh reusable definitions without transferring or changing this Mac's active profile, triggers, monitor bindings, runtime workspaces, or open windows.
 - Switching parks windows from inactive workspaces at the edge of the desktop and restores their previous frames when returning.
 - Workspace switches restore the destination before parking the source, touch only those two workspaces, issue position-only Accessibility writes, and suppress participating apps' own move animation for the duration of each batch.
-- Global shortcuts matching the current AeroSpace configuration.
-- Native sidebar-based, searchable and resizable Settings with one consolidated Workspaces master
+- Two learnable, configurable global shortcut families: Navigate for finding workspaces and windows,
+  and Arrange for moving windows and changing layouts.
+- Native sidebar-based, searchable and resizable Settings gives General, Sync, Behavior, Menu Bar,
+  Shortcut Guide, and Focus Border their own destinations, separate from reusable configuration
+  and controls.
+  Workspaces retains one consolidated master
   list and inspector for workspace identity, display mode/home, layout geometry, derived shortcuts,
   reset, and recovery. Wide panes keep their multi-column hierarchy; at compact sizes they switch to
   explicit sections and stack dense controls instead of clipping them. Its sidebar footer identifies
   the running version, build, source commit, and Dev configuration when applicable.
 - Two multiple-display modes: unified switching across all displays, or independent active workspaces assigned per display.
-- Workspace-local window focus cycling with `Option-[` and `Option-]`, wrapping without selecting
+- Workspace-local window focus cycling with `Control-Option-,` and `Control-Option-.` by default, wrapping without selecting
   parked windows. A managed standard window that has not yet been activated after restart remains
   reachable when it exposes a writable exact-focus route, while overlays and ambiguous read-only
   surfaces stay excluded.
+- Spatial Navigate-arrow focus wraps from an outer workspace edge to the opposite edge without
+  crossing the active workspace or display. An open Quick App Shelf uses the same wrapping rule
+  along its layout axis and ignores perpendicular arrows.
 - Automatic workspace following when a managed window is focused through the Dock or another macOS route.
 - Per-workspace Freeform, Tiled, and Accordion layouts with migration-safe persistence, automatic or explicit orientation, gaps, outer padding, Accordion overlap, and stable ordering/weights.
-- A searchable global Command Palette with an inline Placement Halo and optional Globe/Fn Placement Wheel for pointer-driven window positioning.
+- A searchable global Command Palette with compact Quick Actions, an inline Placement Halo for window positioning, and a runtime Pause command.
+- An optional, Mac-local Shortcut Guide that appears while either configured shortcut family is held,
+  using a passive bottom key map by default and deriving every visible action from the active
+  profile's conflict-checked shortcuts. It follows the focused window's resolved interaction
+  display and adds rows only when a dense valid configuration would otherwise clip actions.
+- A profile-aware Quick App Shelf with up to four ordered entries, palette selection, Previous/Next
+  Window traversal while open, exact-window presentation, and conservative launch/recovery handling.
 - Extensible per-application rules for workspace routing, visibility on every workspace, layout exclusion, and conservative secondary-window floating.
 - Per-window floating overrides that retain workspace membership while opting out of Tiled and Accordion.
 - Directional focus/reorder, smart resize, workspace reset, and workspace-to-display commands.
@@ -84,19 +108,23 @@ Default shortcuts:
 | Move focused window | Option-Command-`workspace key` |
 | Previous / next workspace | Control-Option-`[` / `]` |
 | Switch back and forth | Control-Option-Tab |
-| Previous / next window | Option-`[` / `]` |
-| Select or rotate Accordion / Tiled | Option-`,` / `.` |
-| Toggle focused window floating | Control-Option-F |
-| Focus left / down / up / right | Option-H / J / K / L |
-| Reorder left / down / up / right | Control-Option-Left / Down / Up / Right |
-| Place at a Tiled corner | Control-Option plus two perpendicular arrows within 200 ms |
-| Smart resize smaller / larger | Control-Option-`-` / `=` |
-| Move current workspace to next display | Option-Shift-Tab |
-| Toggle Quick App | Control-Option-Backtick (configurable) |
-| Open Command Palette | Control-Option-Space (configurable) |
+| Previous / next window | Control-Option-`,` / `.` |
+| Focus left / down / up / right | Control-Option-Left / Down / Up / Right |
+| Toggle Quick App | Control-Option-Backtick |
+| Open Command Palette | Control-Option-Space |
+| Select or rotate Accordion / Tiled | Option-Command-`,` / `.` |
+| Toggle focused window floating | Option-Command-F |
+| Reorder left / down / up / right | Option-Command-Left / Down / Up / Right |
+| Place at a Tiled corner | Option-Command plus two perpendicular arrows within 200 ms |
+| Smart resize smaller / larger | Option-Command-`-` / `=` |
+| Move current workspace to next display | Option-Command-D |
 
-Shortcut validation has one shared model for global commands, the Command Palette trigger, and every
-derived workspace switch/move chord. Settings names all commands in a collision and leaves the
+Navigate and Arrange each have one configurable modifier prefix in Shortcuts Settings. Commands
+store only a key suffix, and each workspace stores one suffix that produces a Navigate switch chord
+and an Arrange move chord. A suffix must be unique within its family, while the same suffix can be
+used deliberately across the two families. Shortcut validation has one shared model for global
+commands, the Command Palette trigger, and every derived workspace switch/move chord across every
+saved profile. Settings names all commands in a collision and leaves the
 conflicting chord unowned until it is repaired; it never silently lets the first command win. If
 macOS rejects an otherwise unique global registration (for example because another app owns it),
 only that command is skipped and its recorder shows the failure. Other valid shortcuts remain
@@ -108,7 +136,7 @@ kept retryable while its old action is made inert immediately.
 The four configurable Reorder bindings also form one optional two-arrow family when they use the
 same modifiers, have distinct keys, and all register successfully. A first direction waits for its
 release or a perpendicular partner for at most 200 ms, so it never moves and then replays a corner
-placement. Up+Right, Up+Left, Down+Right, and Down+Left use the Placement Wheel's matching Tiled
+placement. Up+Right, Up+Left, Down+Right, and Down+Left use the matching Tiled compass
 placement transaction. Accordion and Freeform report an honest no-op. If the family is incompatible
 or macOS cannot observe the bounded gesture, Settings explains why and the ordinary single-arrow
 commands continue to work. A successful compass placement is registered with native Undo; the app
@@ -168,6 +196,12 @@ The selected three-column Workspaces Settings screen has the same isolated produ
 ./scripts/render-settings-preview.sh /path/to/output-directory
 ```
 
+The seven production onboarding stages can likewise be rendered without starting the app:
+
+```sh
+./scripts/render-onboarding-previews.sh /path/to/output-directory
+```
+
 The current selected-reference review and durable output paths are recorded in `design-qa.md`.
 
 The scheme runs as **Debug** from Xcode and archives as **Release**. Both configurations currently
@@ -204,16 +238,36 @@ after a relevant geometry input changes or the user explicitly requests the layo
 A profile is a reusable configuration, never a snapshot of open windows. Each profile contains its
 ordered workspace definitions and keys, per-workspace layout and geometry, Unified or Independent
 Displays mode, abstract display roles and workspace-role homes, the complete app-rule collection
-including paused rules, and one optional Quick App with its presentation settings. An application
-is either a Quick App or has normal App Rules within one profile, never both. Exact
+including paused rules, and an ordered shelf of up to four Quick Apps with presentation settings
+owned once by the shelf. Each Quick App entry contains only its application identity and position
+in that order. An application is either a Quick App or has normal App Rules within one profile, never
+both. Exact
 open-window IDs, workspace membership, frames, and focus remain local session state and are not
 copied into a profile.
 
-The profile Quick App is a Quake-style single-window overlay for a configured app. Its
-configurable shortcut defaults to Control-Option-Backtick. The one unambiguous standard window for
-that app optionally expands from a chosen screen edge, defaulting to a roll-down from the top at
+The profile Quick App Shelf presents one or more coordinated Quake-style exact-window overlays. It
+can use non-overlapping Carousel cards or an overlapping Accordion, with a configured maximum of one
+to four visible apps. That maximum applies only to configured apps that already expose one
+unambiguous available window; WindowRanger never launches extra apps merely to fill the shelf. The
+explicitly selected app retains the existing bounded launch behaviour.
+
+The regular shortcut defaults to Navigate-Backtick and toggles the currently selected entry.
+The Command Palette can show a specific entry or select the previous/next entry in the stable
+configured order. Selection is remembered locally
+for each profile without reordering its synced shelf. Opening the Command Palette keeps an already
+presented shelf visible. While the shelf is presented, the normal Previous Window and Next Window
+shortcuts temporarily cycle through shelf entries instead of the underlying workspace; moving to an
+already visible neighbour promotes it without closing the shelf. Navigate plus an arrow instead
+uses the visible Shelf geometry to focus the nearest entry in that direction, making the Shelf a
+contained temporary workspace. Reaching either end of the Shelf's visual axis wraps to its opposite
+edge; perpendicular arrows do nothing and never escape to a managed window behind it. The palette
+retains keyboard focus
+while entries are previewed, and closing it focuses the currently selected entry. The selected app
+optionally expands the shelf from a chosen screen edge, defaulting to a roll-down from the top at
 full usable width and 80 percent height. Left and right presentations use the same percentage as
-screen width. Every edge animation collapses within the selected display, so a neighbouring monitor
+screen width. Carousel divides the shelf across the other axis, while Accordion leaves a reachable
+edge of each overlapping neighbour and keeps the selected window foremost. Every edge animation
+collapses within the selected display, so a neighbouring monitor
 never becomes an off-screen travel path. With animation disabled, WindowRanger applies the final
 frame directly. Pressing the shortcut again or focusing another app uses macOS Hide for the Quick
 App's application, avoiding the Dock minimize animation; showing it prepares the final or collapsed
@@ -233,21 +287,29 @@ hidden. The hidden ownership marker is local to the current WindowServer session
 rather than applied to a different window identity. Legacy minimized-window markers do not grant
 permission to unhide an application. Multiple matching windows remain
 ordinary managed windows rather than being guessed between.
-If the configured app has no available window, pressing the Quick App shortcut opens and activates
-it so apps that create a window only when foregrounded receive their normal reopen request.
+If the configured app has no available window, pressing the Quick App shortcut normally opens and
+activates it so apps that create a window only when foregrounded receive their normal reopen request.
+Palette-owned shelf previews launch without taking keyboard focus from the palette.
 WindowRanger waits briefly for one eligible window, then claims and presents that window before
 ordinary layout can move it. A missing installation, launch failure, timeout, or
 multiple eligible windows produces clear feedback instead of guessing or retrying indefinitely.
-Profiles can choose different apps and heights, while the shortcut remains a global preference.
-WindowRanger still reports a clear no-op for multiple ambiguous windows rather than guessing.
+Profiles can choose different ordered shelves and shared shelf presentation. These are managed in
+the dedicated Quick App Shelf Settings section, while shortcuts remain global preferences. Existing
+profiles migrate the first configured Quick App's presentation to the shared shelf setting.
+WindowRanger omits ambiguous neighbours and still reports a clear no-op rather than guessing when
+the explicitly selected app has multiple eligible windows.
 
 Profile definitions are stored as one versioned value and sync atomically through iCloud when sync is
 enabled. New installations start local-only until **Sync settings with iCloud** is explicitly enabled.
 Turning sync off stops cloud reads and writes without deleting local settings or previously synced
-cloud data. This Mac always keeps its active profile, manual pin, automatic trigger mappings,
-per-profile active workspace state, conservative monitor fingerprints, and role-to-monitor bindings
-locally. A missing, disconnected, or ambiguous role safely falls back without rewriting the synced
-role assignment.
+cloud data. The Sync pane lists the complete boundary: the profile library, Menu Bar presentation,
+global shortcuts, Command Palette activation, focus-following moves, and automatic app unhide can
+sync. This Mac always keeps its active profile and manual pin, automatic trigger mappings,
+per-profile active workspace state and selected Quick App, conservative monitor fingerprints and
+role-to-monitor bindings, trackpad, Shortcut Guide and Focus Border appearance, permissions,
+login-item state, live-window state, and diagnostics locally. iCloud key-value storage does not expose a trustworthy
+participating-device list, so WindowRanger does not pretend to list synced Macs. A missing,
+disconnected, or ambiguous role safely falls back without rewriting the synced role assignment.
 
 The atomic synced profile-library value is limited to 750,000 encoded bytes, 128 profiles, 128
 workspaces and 64 display roles per profile, 512 app rules per profile, and 256 characters per
@@ -257,16 +319,24 @@ or remote library exceeds a limit, the local library remains authoritative and G
 shows the reason; when the local copy is valid, recovery requires the explicit **Replace iCloud
 Profile Library with This Mac** action.
 
-Automatic selection resolves in a fixed order: a manual pin; an exact known display topology; a
-generic docked or undocked rule on portable Macs; then this Mac's default profile. A manual selection
-cannot be cleared by wake, timers, or later display events—choose **Resume Automatic** in Profiles
-Settings or the app menu to release it. A portable Mac with only its built-in display is undocked; a
+Automatic selection resolves in a fixed order: a manual pin; this Mac's profile for a foreground
+full-screen declared-game session; an exact known display topology; a generic docked or undocked
+rule on portable Macs; then this Mac's default profile. A manual selection
+cannot be cleared by wake, timers, or later display events—choose **Resume Automatic** in Profile
+Switching Settings or the app menu to release it. A portable Mac with only its built-in display is undocked; a
 portable Mac with an external display is docked. Desktop Macs skip that generic distinction.
 
-The Profiles Settings pane can create a profile from the current reusable configuration, duplicate,
-rename, select, and safely delete profiles; it also manages this Mac's triggers and physical role
-bindings. At compact window widths, **Profiles** and **Selection & Displays** become explicit
-segments rather than two squeezed columns. Switching profiles first recovers eligible managed
+Profiles Settings is the reusable library: it can create a profile from the current reusable
+configuration, duplicate, edit its name and icon in Profile Status, safely delete, import, and
+export profiles. The icon follows the reusable profile into the Settings selector, cloning, sync,
+and portable transfer. Selecting, creating, or duplicating a library profile chooses it for editing
+without changing the live desktop. **Use Profile** remains in Profile Status as the explicit action
+that activates the edited profile and pins it on this Mac until automatic selection resumes. Profile
+Switching owns this Mac's Game Mode, default, docked, undocked, and exact
+display-setup rules. Displays owns the selected profile's Unified or Independent mode and abstract
+display-role names alongside this Mac's physical monitor bindings. Workspaces, Applications, Quick
+App Shelf, Displays, and profile-owned Menu Bar icons all follow the independent Settings edit
+selection. Switching profiles first recovers eligible managed
 windows to meaningful visible frames,
 then applies the destination workspaces, display state, and app rules. Still-open windows are routed
 by destination app rules or conservatively placed on an active destination workspace rather than
@@ -281,58 +351,74 @@ sole configuration authority.
 
 ## Workspace Settings
 
-Workspaces is the single place for workspace-specific configuration. The normal Settings sidebar
+Workspaces is the single place for workspace-specific configuration. A full-row profile selector in
+the Settings sidebar makes the owner explicit and provides the same non-activating selection used by
+Displays, Applications, and Quick App Shelf. Explicit activation remains in Profile Status rather
+than appearing as another sidebar row. The normal Settings sidebar
 stays on the left, a reorderable workspace master list sits in the centre, and the selected
 workspace's inspector fills the right. At compact widths the master list and selected inspector
 become switchable segments, and paired geometry controls stack when horizontal room runs out. The
-page owns Unified versus Independent Displays, workspace
-names/order/keys, abstract Home Display roles, Freeform/Tiled/Accordion choice, orientation, Tiled
+page owns workspace names/order/keys, abstract Home Display roles, Freeform/Tiled/Accordion choice, orientation, Tiled
 gaps and screen padding, Accordion visible-edge padding, and both reusable-setting reset and live
-window recovery. Profiles remains separate for reusable profile management and this Mac's physical
-monitor bindings; Shortcuts remains separate for global commands.
+window recovery. Profiles remains separate for reusable profile management, Displays owns the
+profile's display mode and this Mac's physical monitor bindings, and Shortcuts remains separate for
+global commands.
 
-Each workspace key produces read-only summaries of the exact derived commands: Control-Option-key
-switches to it and Option-Command-key sends the focused window there. Add and Duplicate resolve a
+Each workspace key produces read-only summaries of the exact derived commands: Navigate-key
+switches to it and Arrange-key sends the focused window there. Add and Duplicate resolve a
 unique name and supported key automatically. Drag reorder, context-menu and VoiceOver Move Up/Down,
 safe deletion, native Undo for **Reset This Workspace**, and **Restore WindowRanger Defaults** all
-use the same profile-backed storage path. Saved or deep-linked legacy Displays and Layouts panes now
-open the corresponding Workspaces inspector instead of leaving a stale destination.
+use the same profile-backed storage path. Displays is a current destination; saved or deep-linked
+legacy Layouts selections open Workspaces instead of leaving a stale destination.
 
 ## Command Palette and Window Placement
 
 The Command Palette is a global interaction preference, not part of a profile. Its shortcut uses
-the shared recorder and conflict model, retaining **Control-Option-Space** as the migration-safe
-default from the earlier Command Wheel. It opens a keyboard-focused search field containing the
+the shared key-suffix map and conflict model, using **Navigate-Space** by default. It opens a
+keyboard-focused search field containing the
 commands currently valid for the focused window, workspace, layout, profile, and interaction
-display. Results also show their configured shortcuts where one exists. Arrow keys move selection,
-Return runs it, and Escape or a second shortcut press closes the palette.
+display. A compact **Quick Actions** block directly below search keeps workspace-wide layout and
+focused-window placement visually separate from the command results. Its first row shows the
+current workspace's **Freeform**, **Tiled**, or **Accordion** layout and changes it without closing
+the palette. Its second row opens focused-window placement only when truthful placements exist.
+Results also show their configured shortcuts where one exists. Arrow keys move selection, Return
+runs it, and Escape or a second shortcut press closes the palette.
+
+**Pause WindowRanger** is a transient runtime state available from the palette and app menu. While
+paused, only the Command Palette shortcut remains registered; the palette offers only **Resume
+WindowRanger**. Workspace swipes, shortcut guidance, focus highlighting, automatic visibility and
+layout writes, and menu-bar workspace actions remain inactive. WindowRanger takes a read-only window
+snapshot on resume so Tiled and Accordion changes made while paused are not learned, then reconciles
+the current profile and layout once. Freeform windows remain user-positioned. Pause is never saved or
+synced and always starts off after relaunch.
 
 Opening a key window must not retarget a window-management command to WindowRanger itself. The
 palette therefore captures the external interaction context and frontmost application first. It
 restores that application before dispatch, then revalidates the exact window, workspace, display,
 layout, profile, and generated placement token. A changed or unavailable target cancels safely.
 
-The icon beside the search field expands a compact **Placement Halo** around itself without closing
-the palette. It contains only Loop-style positions that can be previewed truthfully for the focused
-window: Freeform halves and quarters or Tiled compass placement. Layout selection, Accordion
-resizing, and every other former wheel command remain searchable palette actions. When no position
-is available, the icon is omitted instead of showing a disabled or invented choice.
+The **Place focused window** Quick Action expands a compact **Placement Halo** from its row without
+closing the palette. It contains only Loop-style positions that can be previewed truthfully for the
+focused window: Freeform halves and quarters or Tiled compass placement. Layout selection,
+Accordion resizing, and every other former wheel command remain searchable palette actions, while
+the current workspace layout is always visible above them. When no position is available, the
+entire placement row is omitted instead of showing a disabled or invented choice.
 
-With an empty search field, Right Arrow enters the Placement Halo and begins on Right. The arrow
-keys move around the available positions, Return commits the highlighted placement, and Escape
-collapses the halo and returns keyboard control to palette search. Pointer use remains available at
-the same time. The expanded transparent panel disables its AppKit window shadow so macOS does not
-draw an outline around the halo; the halo retains its own bounded material shadow.
-
-**Hold Globe/Fn to show Placement Wheel** remains an optional per-Mac gesture. A deliberate hold
-opens the same position-only choices directly at the pointer; quick taps and Fn chords continue to
-macOS unchanged, and release commits the current selection. Foreground games suspend this optional
-monitor.
+Tab enters Quick Actions without moving focus away from search. Up from the first command result
+enters the visually adjacent bottom Quick Action, then Up and Down move through its stacked rows.
+Left and Right change layout only while the workspace-layout row is selected. Return on the
+placement row opens the Halo, whose arrow keys move around the available positions. Return commits
+the highlighted placement, and Escape collapses the Halo or returns from Quick Actions to command
+results. Typing hides Quick Actions and any open Halo so filtering becomes the only active mode;
+clearing the query shows them again. Pointer use remains available at the same time. The
+expanded transparent panel disables its AppKit window shadow so macOS does not draw an outline
+around the halo; the halo retains its own bounded material shadow.
 
 Legacy saved wheel ordering and press/hold preferences remain decodable so existing settings are
-not damaged, but the current UI no longer exposes the broad wheel catalogue. Command Palette
-Settings contains the global shortcut, optional Globe/Fn hold, delay, and a truthful Placement
-Wheel preview.
+not damaged, but the current UI and runtime no longer expose the broad wheel catalogue. The obsolete
+Globe/Fn preference and input-monitor implementation have been removed. Command Palette Settings now contains its enablement and a read-only resolved
+shortcut summary; the shared action assignment is edited in Shortcuts.
+window placement is offered contextually inside the palette itself.
 
 The spatial interaction/provider contract remains documented in
 [Contextual Radial Menu](docs/radial-menu-design.md). Its subordinate
@@ -374,10 +460,13 @@ Native macOS full-screen windows use an explicit fail-closed session. A true Acc
 observation enters immediately; failed or unsupported reads retain an existing session, and two
 consecutive authoritative false reads are required to leave it. During the session WindowRanger
 performs no position or size writes for that window. For apps declaring Game Mode support or a Games
-category, foreground sessions also suppress the Command Palette, Placement Wheel, and command-feedback panels, retain
+category, foreground sessions also suppress the Command Palette and command-feedback panels, retain
 only workspace-navigation hotkeys, reserve Command-Escape for macOS Game Overlay, and reduce broad
 window discovery while still checking promptly for full-screen exit. Returning to the workspace
 focuses the native full-screen window without restoring a frame or moving it between displays.
+The optional local Game Mode profile mapping requires a foreground full-screen game whose bundle
+explicitly declares `LSSupportsGameMode`. Public macOS APIs do not expose the user's live per-game Game Mode override, so WindowRanger
+does not claim to observe that private system state directly.
 
 Lifecycle wiring follows Apple's documented notification centers and boundaries:
 [NSWorkspace willSleep](https://developer.apple.com/documentation/appkit/nsworkspace/willsleepnotification),
@@ -396,18 +485,18 @@ edge to the full display boundary; this avoids retaining AppKit's transient Dock
 leaving a full-screen game. Changing Dock hiding or its bottom/left/right orientation is picked up by
 the normal display refresh and does not require relaunching WindowRanger.
 
-Option-comma selects Accordion and Option-period selects Tiled. Selecting a different layout keeps
+Arrange-comma selects Accordion and Arrange-period selects Tiled. Selecting a different layout keeps
 its saved orientation, or uses Automatic for an unconfigured workspace. Pressing the same direct
 shortcut again alternates the visible layout between horizontal and vertical; an Automatic
 orientation first resolves from the interaction display and then changes to the opposite concrete
 direction. Tiled orientation changes retain the session tree's window identities, topology and
 ratios rather than rebuilding membership or focus.
 
-Control-Option-F toggles only the focused managed window between Floating and the workspace layout, matching the existing AeroSpace binding. Enabling Floating captures the current frame and leaves the window in its workspace while the remaining windows reflow; disabling it immediately returns the window to Tiled or Accordion. The override is restored only when the exact window ID and bundle identifier still match within the same WindowServer session, and is discarded with other stale window state. An app-level layout-exclusion rule is authoritative: the shortcut makes no contradictory override and the menu-bar icon briefly explains why.
+Arrange-F toggles only the focused managed window between Floating and the workspace layout. Enabling Floating captures the current frame and leaves the window in its workspace while the remaining windows reflow; disabling it immediately returns the window to Tiled or Accordion. The override is restored only when the exact window ID and bundle identifier still match within the same WindowServer session, and is discarded with other stale window state. An app-level layout-exclusion rule is authoritative: the shortcut makes no contradictory override and the menu-bar icon briefly explains why.
 
 Dialogs use the same managed workspace membership, visibility, focus, display affinity, persistence, and quit recovery as normal windows, but high-confidence dialogs float automatically so they do not distort Tiled or Accordion. High-confidence signals are an Accessibility sheet role, a system-dialog subrole, a layer-0 dialog/floating-window subrole corroborated by reliable window-control metadata, or a layer-0 standard window that has a Close control, no Full Screen control, can move, and authoritatively cannot resize. The last case covers fixed-size update and confirmation alerts that otherwise accept a layout position while rejecting its size. A known nonzero-layer Accessibility dialog is left untouched until its live layer metadata settles, preventing transient prompts from entering a split; an unknown layer remains conservatively managed. A rejected size write also stops before position so a fixed-size surface cannot be displaced toward a layout frame it cannot occupy. Other ambiguous dialog-like windows remain in the layout, and a missing or failed Accessibility read is never treated as positive evidence. Verified nonzero-layer Codex transient panels remain ignored entirely.
 
-Layout precedence is explicit and deterministic: an app-level **Do not include in Tiled or Accordion** rule wins first; a per-window Control-Option-F choice wins over automatic behavior; verified dialog floating applies next; an opt-in per-app **Float detected dialogs and secondary windows** rule can also float conservatively ambiguous dialog-like metadata; otherwise a normal window participates in layout. The secondary-window rule never uses titles and never infers from size or non-resizability alone. Pressing Control-Option-F on an automatically floated window forces it into the current layout, and pressing it again makes it explicitly floating. Only the explicit per-window choice persists for the exact window ID within the current WindowServer session. Automatic classification is reevaluated from live metadata and is never copied onto a newly created window ID.
+Layout precedence is explicit and deterministic: an app-level **Do not include in Tiled or Accordion** rule wins first; a per-window Arrange-F choice wins over automatic behavior; verified dialog floating applies next; an opt-in per-app **Float detected dialogs and secondary windows** rule can also float conservatively ambiguous dialog-like metadata; otherwise a normal window participates in layout. The secondary-window rule never uses titles and never infers from size or non-resizability alone. Pressing Arrange-F on an automatically floated window forces it into the current layout, and pressing it again makes it explicitly floating. Only the explicit per-window choice persists for the exact window ID within the current WindowServer session. Automatic classification is reevaluated from live metadata and is never copied onto a newly created window ID.
 
 Application Rules are selected from installed or currently running apps and are stored by bundle identifier rather than file path. The picker groups open apps first. When an open app's managed windows all belong to one WindowRanger workspace, a newly created rule starts with that workspace assigned; windowless apps and apps split across multiple workspaces retain the conservative **Use current workspace** default. A workspace assignment routes newly discovered windows to that workspace; in Independent Displays mode it also follows that workspace's display home. You can still move an individual window elsewhere manually, and that override survives routine window refreshes. Moving it back to the assigned workspace clears the override; changing the App Rule or profile, resetting its workspace, reopening the window, or choosing Reset All Windows reapplies the rule. Keep on all workspaces takes precedence over assignment, prevents parking, and preserves the window's existing display affinity. Layout exclusion leaves the app's windows at their current frames while the remaining windows participate in Tiled or Accordion. Secondary-window floating is narrower and preserves ordinary document-window layout participation. No rules are created during migration, so existing behavior is unchanged until a rule is added.
 
@@ -424,11 +513,11 @@ raises SwiftUI's retained window immediately; if macOS has released it, WindowRa
 Settings scene. Returning to a workspace in the background still restores Settings without stealing
 focus.
 
-Existing global command shortcuts can be recorded and reset in Settings. The recorder temporarily suspends WindowRanger's Carbon registrations, rejects bare typing and conflicts with workspace, Command Palette, or other command bindings, and preserves every established default until the user explicitly changes it. Workspace-specific switch/move bindings remain configured with the workspace definitions; no default chord was invented for selecting Freeform.
+Shortcuts Settings owns the global Navigate and Arrange modifier prefixes and the key-only action map. Recording a key suffix temporarily suspends WindowRanger's Carbon registrations and rejects conflicts with workspace or other command bindings; actions can also be reset or left unassigned for palette-only use. Workspaces owns each profile workspace's one suffix and shows both derived family chords; no default chord is invented for selecting Freeform.
 
-Moving a focused window is send-only by default: the source workspace remains active and focus moves to the next eligible visible window on the same interaction display. **Focus follows moved window** is opt-in in General Settings, and the Command Palette always offers a one-shot **Move & Follow** action. If no local source window remains, internal focus state is cleared rather than selecting a parked or other-display fallback. General Settings can also opt this Mac into a click-through focused-window border with its own local colour, defaulting to white. Independent local filters can limit the border to Tiled workspaces, workspaces with multiple managed windows, or both. While enabled, Tiled and Accordion reserve four points at each screen edge for the border even when a filter currently hides it; Freeform frames remain user-controlled. The border uses a conservative default corner radius selected by macOS generation because public window metadata does not expose another app's rendered corner radius: macOS 27 and later use 16 points, while earlier releases retain the 10-point fallback. App Rules can override that radius for one bundle identifier on this Mac; the appearance override is local and does not sync with the rule's behavioral actions. The border also hides for WindowRanger-owned windows, apps identified as games through public bundle metadata, full-screen windows, and while the session is suspended.
+Moving a focused window is send-only by default: the source workspace remains active and focus moves to the next eligible visible window on the same interaction display. **Focus follows moved window** is opt-in in Behavior, and the Command Palette always offers a one-shot **Move & Follow** action. If no local source window remains, internal focus state is cleared rather than selecting a parked or other-display fallback. Focus Border can also opt this Mac into a click-through focused-window border with its own local colour, defaulting to white. Independent local filters can limit the border to Tiled workspaces, workspaces with multiple managed windows, or both. While enabled, Tiled and Accordion reserve four points at each screen edge for the border even when a filter currently hides it; Freeform frames remain user-controlled. The border uses a conservative default corner radius selected by macOS generation because public window metadata does not expose another app's rendered corner radius: macOS 27 and later use 16 points, while earlier releases retain the 10-point fallback. Focus Border owns optional application-specific radius overrides on this Mac. They are independent of profile-owned Application Rules and Quick Apps, so removing or converting either does not erase the local appearance correction. The border also hides for WindowRanger-owned windows, apps identified as games through public bundle metadata, full-screen windows, and while the session is suspended.
 
-Menu-bar presentation is selected in General Settings and syncs with other global settings through iCloud when enabled. **Compact** (the migration-safe default) adapts to the workspace-label choice for each connected logical display: a shortcut key sits in a symbol-specific safe area inside the horizontal-monitor, vertical-monitor, laptop, or combined-display symbol, while a compacted name appears as bare text beside a smaller symbol. It adds no status dot or enclosing badge. Name labels retain up to five characters rather than collapsing to the shortest pressure abbreviation. If that display role's icon is set to None, Compact keeps the workspace key or name as bare text. **Medium** uses an equal-height chip for every display's full active-workspace label. In both modes the interaction display receives a restrained accent, every indicator is informational, and every item opens the app menu. **Full** uses lightweight display groups containing explicit workspace actions; only a primary click on a workspace switches to it. A primary click on the app or display area where present, a secondary click anywhere, or the primary VoiceOver action opens the app menu. Independent Displays shows each connected display's own active workspace simultaneously, while Unified uses one combined-displays signal and one workspace set. Each profile display role has its own Automatic, Horizontal Monitor, Vertical Monitor, Laptop, or None icon choice beside that role's local physical-display binding. The choice follows profile cloning, transfer, and optional iCloud sync; the actual monitor binding remains local to each Mac. Automatic derives the display-aware symbol from the monitor currently bound to the role. None removes only that display block's icon and gap while retaining workspace labels, controls, menu ownership, and accessibility context. Unified keeps one Automatic combined-displays symbol because its block does not represent one physical display. General Settings renders these same production display groups in its macOS 27 preview; earlier macOS releases preview their single-item compatibility presentation.
+Menu-bar presentation is selected in Menu Bar Settings and syncs with other global settings through iCloud when enabled. **Compact** (the migration-safe default) adapts to the workspace-label choice for each connected logical display: a shortcut key sits in a symbol-specific safe area inside the horizontal-monitor, vertical-monitor, laptop, or combined-display symbol, while a compacted name appears as bare text beside a smaller symbol. It adds no status dot or enclosing badge. Name labels retain up to five characters rather than collapsing to the shortest pressure abbreviation. If that display role's icon is set to None, Compact keeps the workspace key or name as bare text. **Medium** uses an equal-height chip for every display's full active-workspace label. In both modes the interaction display receives a restrained accent, every indicator is informational, and every item opens the app menu. **Full** uses lightweight display groups containing explicit workspace actions; only a primary click on a workspace switches to it. A primary click on the app or display area where present, a secondary click anywhere, or the primary VoiceOver action opens the app menu. Independent Displays shows each connected display's own active workspace simultaneously, while Unified uses one combined-displays signal and one workspace set. Each profile display role has its own Automatic, Horizontal Monitor, Vertical Monitor, Laptop, or None icon choice in Menu Bar Settings. The choice follows profile cloning, transfer, and optional iCloud sync; the actual monitor binding remains local to each Mac and is edited in Displays. Automatic derives the display-aware symbol from the monitor currently bound to the role. None removes only that display block's icon and gap while retaining workspace labels, controls, menu ownership, and accessibility context. Unified keeps one Automatic combined-displays symbol because its block does not represent one physical display. Menu Bar Settings renders these same production display groups in its macOS 27 preview; earlier macOS releases preview their single-item compatibility presentation.
 
 Full workspace segments show an immediate restrained rollover so the pointer target is clear before clicking. After a short hover, a nonactivating Liquid Glass shelf lists the managed apps assigned directly to that workspace; selecting one switches to the workspace and focuses that app without allowing the shelf itself to take focus. Multiple managed windows from the same app appear as one row with a count, and an empty workspace is stated explicitly without an unnecessary scrollbar. Longer lists scroll only when they exceed the bounded eight-row viewport. macOS 14–25 use the system menu material where native Liquid Glass is unavailable. On macOS 27 the owning display-group button tracks those visual segment regions and resolves hover from the same public global pointer geometry used for clicks; returning from the shelf performs one bounded pointer re-check during its dismissal grace so the segment rollover is restored even when AppKit omits the enter event. The visual children remain noninteractive.
 
@@ -453,7 +542,7 @@ revalidates the active application and exact WindowServer window on every poll, 
 fullscreen and workspace filters, so it need not wait for the delayed focused-window attribute or
 perform another focus action.
 
-Physical display-role bindings are local to each Mac. The app first matches the stable runtime display UUID, then may use a portable vendor/model/serial fingerprint when reconnecting. If multiple identical displays match, it does not guess; the workspace's synced abstract home remains intact while its physical placement falls back safely until the user chooses a binding. Option-Shift-Tab swaps the current Independent Displays workspace onto the next connected role while keeping both displays' active-workspace invariants valid.
+Physical display-role bindings are local to each Mac. The app first matches the stable runtime display UUID, then may use a portable vendor/model/serial fingerprint when reconnecting. If multiple identical displays match, it does not guess; the workspace's synced abstract home remains intact while its physical placement falls back safely until the user chooses a binding. Arrange-D swaps the current Independent Displays workspace onto the next connected role while keeping both displays' active-workspace invariants valid.
 
 **Open at login** uses macOS's native login-item service and changes only after an explicit Settings toggle. **Automatically unhide applications when focusing their windows** is an opt-in compatibility setting, off by default, and throttles duplicate attempts to avoid activation loops. Automated tests inject substitutes and never alter the live login-item state.
 
@@ -463,8 +552,8 @@ Use the primary app menu's **Quit WindowRanger** command when testing quit recov
 
 1. Gracefully quit the old build with the primary app menu's **Quit WindowRanger**.
 2. In Xcode, keep the `WindowRanger` scheme on its normal Debug Run configuration and click Run.
-3. Focus a managed window on the second display, then use Option-`[` / Option-`]` to cycle windows.
-4. With the second-display window focused, use Option-`,` or Option-`.` to change its workspace layout.
+3. Focus a managed window on the second display, then use Navigate-`,` / Navigate-`.` to cycle windows.
+4. With the second-display window focused, use Arrange-`,` or Arrange-`.` to change its workspace layout.
 5. If focus jumps to the main display, stop after one occurrence, Option-click the status item, and choose **Copy Recent Diagnostics**. The log can instead be inspected directly with **Reveal Diagnostics File** from the same Option-revealed section.
 
 ## Retesting sleep/wake recovery

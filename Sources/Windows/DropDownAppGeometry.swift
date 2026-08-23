@@ -4,6 +4,8 @@ import Foundation
 enum DropDownAppGeometry {
     static let animationStepCount = 8
     static let animationDuration: TimeInterval = 0.18
+    static let carouselGap: CGFloat = 8
+    static let accordionVisibleEdge: CGFloat = 56
 
     static func presentationBounds(
         in usableBounds: CGRect,
@@ -73,6 +75,66 @@ enum DropDownAppGeometry {
                 position: CGPoint(x: usableBounds.maxX - 1, y: presentedFrame.position.y),
                 size: CGSize(width: 1, height: presentedFrame.size.height)
             )
+        }
+    }
+
+    static func groupFrames(
+        in container: WindowFrame,
+        count: Int,
+        style: QuickAppShelfPresentation.LayoutStyle,
+        direction: DropDownAppDirection
+    ) -> [WindowFrame] {
+        guard count > 0 else { return [] }
+        guard count > 1 else { return [container] }
+        let dividesHorizontally = direction == .top || direction == .bottom
+        let crossLength = dividesHorizontally ? container.size.width : container.size.height
+
+        switch style {
+        case .carousel:
+            let totalGap = carouselGap * CGFloat(count - 1)
+            let itemLength = max(1, (crossLength - totalGap) / CGFloat(count))
+            return (0..<count).map { index in
+                let offset = CGFloat(index) * (itemLength + carouselGap)
+                if dividesHorizontally {
+                    return WindowFrame(
+                        position: CGPoint(
+                            x: container.position.x + offset,
+                            y: container.position.y
+                        ),
+                        size: CGSize(width: itemLength, height: container.size.height)
+                    )
+                }
+                return WindowFrame(
+                    position: CGPoint(
+                        x: container.position.x,
+                        y: container.position.y + offset
+                    ),
+                    size: CGSize(width: container.size.width, height: itemLength)
+                )
+            }
+        case .accordion:
+            let maximumEdge = max(1, (crossLength - 1) / CGFloat(count - 1))
+            let visibleEdge = min(accordionVisibleEdge, maximumEdge)
+            let itemLength = max(1, crossLength - (visibleEdge * CGFloat(count - 1)))
+            return (0..<count).map { index in
+                let offset = CGFloat(index) * visibleEdge
+                if dividesHorizontally {
+                    return WindowFrame(
+                        position: CGPoint(
+                            x: container.position.x + offset,
+                            y: container.position.y
+                        ),
+                        size: CGSize(width: itemLength, height: container.size.height)
+                    )
+                }
+                return WindowFrame(
+                    position: CGPoint(
+                        x: container.position.x,
+                        y: container.position.y + offset
+                    ),
+                    size: CGSize(width: container.size.width, height: itemLength)
+                )
+            }
         }
     }
 

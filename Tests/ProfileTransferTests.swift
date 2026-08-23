@@ -17,6 +17,7 @@ final class ProfileTransferTests: XCTestCase {
         let imported = try XCTUnwrap(plan.importedProfiles.first)
         XCTAssertNotEqual(imported.id, source.id)
         XCTAssertEqual(imported.name, source.name)
+        XCTAssertEqual(imported.iconStyle, source.iconStyle)
         XCTAssertEqual(imported.displayMode, source.displayMode)
         XCTAssertEqual(imported.workspaces.map(\.name), source.workspaces.map(\.name))
         XCTAssertEqual(imported.workspaces.map(\.key), source.workspaces.map(\.key))
@@ -43,6 +44,25 @@ final class ProfileTransferTests: XCTestCase {
             imported.workspaceRoleAssignments[imported.workspaces[1].id],
             imported.displayRoles[1].id
         )
+    }
+
+    func testLegacyArchiveWithoutProfileIconUsesDefault() throws {
+        let source = profile(name: "Legacy")
+        let encoded = try ProfileTransferCodec.encode(profiles: [source])
+        var archive = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        var profiles = try XCTUnwrap(archive["profiles"] as? [[String: Any]])
+        profiles[0].removeValue(forKey: "iconStyle")
+        archive["profiles"] = profiles
+
+        let legacyData = try JSONSerialization.data(withJSONObject: archive)
+        let plan = try ProfileTransferCodec.decodeAndPlan(
+            legacyData,
+            existingProfiles: []
+        )
+
+        XCTAssertEqual(plan.importedProfiles.first?.iconStyle, .profile)
     }
 
     func testLegacyFutureMalformedAndOversizeDocumentsAreRejected() throws {
@@ -116,6 +136,43 @@ final class ProfileTransferTests: XCTestCase {
             XCTAssertEqual(
                 $0 as? ProfileTransferError,
                 .limitExceeded("more than \(ProfileTransferCodec.maximumProfiles) profiles")
+            )
+        }
+
+        portable = PortableProfileDefinition(profile: source)
+        portable.quickApps = (0...QuickAppShelfPolicy.maximumCount).map {
+            DropDownAppConfiguration(
+                bundleIdentifier: "com.example.quick\($0)",
+                displayName: "Quick \($0)"
+            )
+        }
+        XCTAssertThrowsError(try decode(PortableProfileArchive(profiles: [portable]))) {
+            XCTAssertEqual(
+                $0 as? ProfileTransferError,
+                .limitExceeded(
+                    "more than \(QuickAppShelfPolicy.maximumCount) Quick Apps in one profile"
+                )
+            )
+        }
+
+        portable = PortableProfileDefinition(profile: source)
+        portable.quickApps = [
+            DropDownAppConfiguration(bundleIdentifier: "com.example.quick", displayName: "One"),
+            DropDownAppConfiguration(bundleIdentifier: "COM.EXAMPLE.QUICK", displayName: "Two"),
+        ]
+        XCTAssertThrowsError(try decode(PortableProfileArchive(profiles: [portable]))) {
+            XCTAssertEqual(
+                $0 as? ProfileTransferError,
+                .invalidValue("Quick Apps must be distinct normalized configurations")
+            )
+        }
+
+        portable = PortableProfileDefinition(profile: source)
+        portable.quickAppShelfPresentation.visibleCount = QuickAppShelfPolicy.maximumCount + 1
+        XCTAssertThrowsError(try decode(PortableProfileArchive(profiles: [portable]))) {
+            XCTAssertEqual(
+                $0 as? ProfileTransferError,
+                .invalidValue("Quick App Shelf visible count")
             )
         }
     }
@@ -300,6 +357,7 @@ final class ProfileTransferTests: XCTestCase {
         )
         return WindowManagerProfile(
             name: name,
+            iconStyle: .work,
             workspaces: [writing, review],
             displayMode: .independent,
             displayRoles: [primary, studio],

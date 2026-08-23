@@ -99,13 +99,18 @@ promotion and versioning. It is a design authority, not evidence that the releas
 - [ ] Create and validate a Homebrew Cask for the signed, notarized Stable app, including immutable
       artifact/checksum provenance, Sparkle coexistence, install/upgrade/uninstall/zap behavior, and
       Accessibility permission guidance.
-- [x] Select Sparkle as the intended future Stable/Beta update framework; implementation remains
-      held.
-- [ ] Design and implement one signed Sparkle appcast with default Stable and opt-in `beta` channel,
-      including channel switching, monotonic build numbers, signatures, rollback, and failure UX.
+- [x] Integrate Sparkle 2.8.1 with a hard Dev-build exclusion, local Stable/Beta choice, manual
+      checking, opt-in automatic checking/downloading, and deterministic channel/configuration tests.
+- [x] Add the append-only public build-number ledger, reject unallocated/reused builds and an
+      initial-feed bypass, recheck the single central allocation before appcast generation, and
+      verify retained update URLs, stale-branch rejection and atomic local-feed failure.
+- [ ] Provision the release EdDSA key, generate and host one appcast containing signed Stable and
+      opt-in `beta` archives, and validate monotonic build numbers, signatures, rollback, and failure
+      UX with packaged apps.
 - [x] Choose and prove the local-first signing/notarization pipeline; keep credentials off ordinary
       GitHub Actions jobs.
-- [ ] Finalize the Stable/Beta rollback policy before automatic updates are implemented.
+- [ ] Finalize the Stable/Beta rollback policy before the public feed is activated or automatic
+      checking is enabled by default.
 - [x] Produce tracked release notes, SHA-256 checksums and a commit/toolchain provenance manifest;
       round-trip verify all five GitHub assets.
 - [x] Developer ID-sign, notarize, staple, Gatekeeper-check, and verify the exact Beta app and DMG.

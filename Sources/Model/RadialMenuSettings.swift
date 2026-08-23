@@ -37,6 +37,27 @@ struct HotKeyChord: Hashable, Codable, Sendable {
     }
 }
 
+enum ShortcutFamily: String, Codable, CaseIterable, Identifiable, Sendable {
+    case navigate
+    case arrange
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .navigate: "Navigate"
+        case .arrange: "Arrange"
+        }
+    }
+
+    var defaultModifiers: UInt32 {
+        switch self {
+        case .navigate: UInt32(controlKey | optionKey)
+        case .arrange: UInt32(optionKey | cmdKey)
+        }
+    }
+}
+
 enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Sendable {
     case previousWorkspace
     case nextWorkspace
@@ -114,62 +135,199 @@ enum ConfigurableHotKeyAction: String, Codable, CaseIterable, Identifiable, Send
         }
     }
 
-    var defaultChord: HotKeyChord {
+    /// The modifier family is deliberately owned by the action definition, rather than by an
+    /// independently-recorded complete chord. This keeps the two shortcut families learnable.
+    var family: ShortcutFamily {
         switch self {
-        case .previousWorkspace: .init(keyCode: 33, modifiers: UInt32(controlKey | optionKey))
-        case .nextWorkspace: .init(keyCode: 30, modifiers: UInt32(controlKey | optionKey))
-        case .backAndForthWorkspace: .init(keyCode: 48, modifiers: UInt32(controlKey | optionKey))
-        case .previousWindow: .init(keyCode: 33, modifiers: UInt32(optionKey))
-        case .nextWindow: .init(keyCode: 30, modifiers: UInt32(optionKey))
-        case .selectAccordion: .init(keyCode: 43, modifiers: UInt32(optionKey))
-        case .selectTiled: .init(keyCode: 47, modifiers: UInt32(optionKey))
-        case .toggleFloating: .init(keyCode: 3, modifiers: UInt32(controlKey | optionKey))
-        case .toggleDropDownApp: .init(keyCode: 50, modifiers: UInt32(controlKey | optionKey))
-        case .focusLeft: .init(keyCode: 4, modifiers: UInt32(optionKey))
-        case .focusDown: .init(keyCode: 38, modifiers: UInt32(optionKey))
-        case .focusUp: .init(keyCode: 40, modifiers: UInt32(optionKey))
-        case .focusRight: .init(keyCode: 37, modifiers: UInt32(optionKey))
-        case .moveLeft: .init(keyCode: 123, modifiers: UInt32(controlKey | optionKey))
-        case .moveDown: .init(keyCode: 125, modifiers: UInt32(controlKey | optionKey))
-        case .moveUp: .init(keyCode: 126, modifiers: UInt32(controlKey | optionKey))
-        case .moveRight: .init(keyCode: 124, modifiers: UInt32(controlKey | optionKey))
-        case .resizeSmaller: .init(keyCode: 27, modifiers: UInt32(controlKey | optionKey))
-        case .resizeLarger: .init(keyCode: 24, modifiers: UInt32(controlKey | optionKey))
-        case .moveWorkspaceToNextDisplay: .init(keyCode: 48, modifiers: UInt32(optionKey | shiftKey))
-        case .commandWheel: .init(keyCode: 49, modifiers: UInt32(controlKey | optionKey))
+        case .previousWorkspace, .nextWorkspace, .backAndForthWorkspace,
+             .previousWindow, .nextWindow, .toggleDropDownApp,
+             .focusLeft, .focusDown, .focusUp, .focusRight, .commandWheel:
+            .navigate
+        case .selectAccordion, .selectTiled, .toggleFloating,
+             .moveLeft, .moveDown, .moveUp, .moveRight,
+             .resizeSmaller, .resizeLarger, .moveWorkspaceToNextDisplay:
+            .arrange
         }
     }
+
+    /// `nil` is an intentionally unassigned command. It is still available through the palette.
+    var defaultKeyCode: UInt32? {
+        switch self {
+        case .previousWorkspace: 33 // [
+        case .nextWorkspace: 30 // ]
+        case .backAndForthWorkspace: 48 // Tab
+        case .previousWindow: 43 // ,
+        case .nextWindow: 47 // .
+        case .selectAccordion: 43 // ,
+        case .selectTiled: 47 // .
+        case .toggleFloating: 3 // F
+        case .toggleDropDownApp: 50 // `
+        case .focusLeft: 123
+        case .focusDown: 125
+        case .focusUp: 126
+        case .focusRight: 124
+        case .moveLeft: 123
+        case .moveDown: 125
+        case .moveUp: 126
+        case .moveRight: 124
+        case .resizeSmaller: 27 // -
+        case .resizeLarger: 24 // =
+        case .moveWorkspaceToNextDisplay: 2 // D
+        case .commandWheel: 49 // Space
+        }
+    }
+
 }
 
 struct HotKeyConfiguration: Codable, Equatable, Sendable {
-    private var overrides: [String: HotKeyChord] = [:]
+    private var familyModifiers: [String: UInt32]
+    private var keyOverrides: [String: UInt32]
+    private var disabledActions: Set<String>
+
+    init() {
+        familyModifiers = Dictionary(uniqueKeysWithValues: ShortcutFamily.allCases.map {
+            ($0.rawValue, $0.defaultModifiers)
+        })
+        keyOverrides = [:]
+        disabledActions = []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case familyModifiers
+        case keyOverrides
+        case disabledActions
+        // Private pre-release format: complete chords. Decode it safely, but deliberately adopt
+        // the approved family map instead of preserving a now-incoherent set of individual chords.
+        case overrides
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedFamilies = try container.decodeIfPresent([String: UInt32].self, forKey: .familyModifiers)
+        let decodedKeys = try container.decodeIfPresent([String: UInt32].self, forKey: .keyOverrides)
+        let decodedDisabled = try container.decodeIfPresent(Set<String>.self, forKey: .disabledActions)
+
+        // Absence of the new keys identifies both an empty private-install `{ "overrides": {} }`
+        // and older full-chord data. Both deterministically migrate to the approved defaults.
+        guard decodedFamilies != nil || decodedKeys != nil || decodedDisabled != nil else {
+            self.init()
+            return
+        }
+
+        self.init()
+        if let decodedFamilies,
+           Self.familyValidationMessage(navigate: decodedFamilies[ShortcutFamily.navigate.rawValue] ?? ShortcutFamily.navigate.defaultModifiers,
+                                        arrange: decodedFamilies[ShortcutFamily.arrange.rawValue] ?? ShortcutFamily.arrange.defaultModifiers) == nil {
+            familyModifiers[ShortcutFamily.navigate.rawValue] = decodedFamilies[ShortcutFamily.navigate.rawValue] ?? ShortcutFamily.navigate.defaultModifiers
+            familyModifiers[ShortcutFamily.arrange.rawValue] = decodedFamilies[ShortcutFamily.arrange.rawValue] ?? ShortcutFamily.arrange.defaultModifiers
+        }
+        let supportedActionNames = Set(ConfigurableHotKeyAction.allCases.map(\.rawValue))
+        keyOverrides = (decodedKeys ?? [:]).filter { supportedActionNames.contains($0.key) }
+        disabledActions = (decodedDisabled ?? []).intersection(supportedActionNames)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(familyModifiers, forKey: .familyModifiers)
+        try container.encode(keyOverrides, forKey: .keyOverrides)
+        try container.encode(disabledActions, forKey: .disabledActions)
+    }
+
+    func modifierMask(for family: ShortcutFamily) -> UInt32 {
+        familyModifiers[family.rawValue] ?? family.defaultModifiers
+    }
+
+    func keyCode(for action: ConfigurableHotKeyAction) -> UInt32? {
+        guard !disabledActions.contains(action.rawValue) else { return nil }
+        return keyOverrides[action.rawValue] ?? action.defaultKeyCode
+    }
 
     func chord(for action: ConfigurableHotKeyAction) -> HotKeyChord {
-        overrides[action.rawValue] ?? action.defaultChord
+        guard let chord = optionalChord(for: action) else {
+            preconditionFailure("Use optionalChord(for:) for an unassigned shortcut action.")
+        }
+        return chord
+    }
+
+    func optionalChord(for action: ConfigurableHotKeyAction) -> HotKeyChord? {
+        guard let keyCode = keyCode(for: action) else { return nil }
+        return HotKeyChord(keyCode: keyCode, modifiers: modifierMask(for: action.family))
+    }
+
+    func chord(forWorkspaceKeyCode keyCode: UInt32, family: ShortcutFamily) -> HotKeyChord {
+        HotKeyChord(keyCode: keyCode, modifiers: modifierMask(for: family))
+    }
+
+    func isEnabled(_ action: ConfigurableHotKeyAction) -> Bool {
+        optionalChord(for: action) != nil
     }
 
     func isUsingDefault(for action: ConfigurableHotKeyAction) -> Bool {
-        chord(for: action) == action.defaultChord
+        keyCode(for: action) == action.defaultKeyCode &&
+            modifierMask(for: action.family) == action.family.defaultModifiers
     }
 
-    func hasExplicitChord(for action: ConfigurableHotKeyAction) -> Bool {
-        overrides[action.rawValue] != nil
+    func hasExplicitKeyAssignment(for action: ConfigurableHotKeyAction) -> Bool {
+        keyOverrides[action.rawValue] != nil || disabledActions.contains(action.rawValue)
     }
 
-    mutating func setChord(_ chord: HotKeyChord, for action: ConfigurableHotKeyAction) {
-        if chord == action.defaultChord {
-            overrides.removeValue(forKey: action.rawValue)
+    mutating func setKeyCode(_ keyCode: UInt32?, for action: ConfigurableHotKeyAction) {
+        if keyCode == action.defaultKeyCode {
+            keyOverrides.removeValue(forKey: action.rawValue)
+            disabledActions.remove(action.rawValue)
+        } else if let keyCode {
+            keyOverrides[action.rawValue] = keyCode
+            disabledActions.remove(action.rawValue)
         } else {
-            overrides[action.rawValue] = chord
+            keyOverrides.removeValue(forKey: action.rawValue)
+            disabledActions.insert(action.rawValue)
         }
     }
 
+    @discardableResult
+    mutating func setModifierMask(_ modifiers: UInt32, for family: ShortcutFamily) -> String? {
+        let navigate = family == .navigate ? modifiers : modifierMask(for: .navigate)
+        let arrange = family == .arrange ? modifiers : modifierMask(for: .arrange)
+        guard let message = Self.familyValidationMessage(navigate: navigate, arrange: arrange) else {
+            familyModifiers[family.rawValue] = modifiers
+            return nil
+        }
+        return message
+    }
+
+    @discardableResult
+    mutating func resetModifierMask(for family: ShortcutFamily) -> String? {
+        setModifierMask(family.defaultModifiers, for: family)
+    }
+
+    static func familyValidationMessage(navigate: UInt32, arrange: UInt32) -> String? {
+        let supported = UInt32(controlKey | optionKey | shiftKey | cmdKey)
+        let required = UInt32(controlKey | optionKey | cmdKey)
+        func valid(_ modifiers: UInt32) -> Bool {
+            modifiers & ~supported == 0 &&
+                modifiers.nonzeroBitCount >= 2 &&
+                modifiers & required != 0
+        }
+        guard valid(navigate), valid(arrange) else {
+            return "Use at least two of Control, Option, Shift, and Command, including Control, Option, or Command."
+        }
+        guard navigate != arrange else {
+            return "Navigate and Arrange must use different modifier combinations."
+        }
+        let intersection = navigate & arrange
+        guard intersection != navigate, intersection != arrange else {
+            return "Navigate and Arrange cannot be subsets of one another."
+        }
+        return nil
+    }
+
     mutating func reset(_ action: ConfigurableHotKeyAction) {
-        overrides.removeValue(forKey: action.rawValue)
+        keyOverrides.removeValue(forKey: action.rawValue)
+        disabledActions.remove(action.rawValue)
     }
 
     mutating func resetAll() {
-        overrides.removeAll()
+        self = Self()
     }
 }
 
@@ -210,24 +368,6 @@ enum RadialMenuHoldDelay {
 
     static func clamped(_ value: TimeInterval) -> TimeInterval {
         min(max(value, permittedRange.lowerBound), permittedRange.upperBound)
-    }
-}
-
-/// Immutable runtime inputs for the optional device-local Globe/Fn trigger. Callers that receive
-/// an `@Published` value must pass that emitted value here instead of synchronously rereading its
-/// source object, because Combine publishes from `willSet`.
-struct GlobeFnRuntimeSettings: Equatable, Sendable {
-    let isEnabled: Bool
-    let holdDelay: TimeInterval
-
-    init(
-        radialMenuEnabled: Bool,
-        globeFnEnabled: Bool,
-        isShortcutRecording: Bool,
-        holdDelay: TimeInterval
-    ) {
-        isEnabled = radialMenuEnabled && globeFnEnabled && !isShortcutRecording
-        self.holdDelay = RadialMenuHoldDelay.clamped(holdDelay)
     }
 }
 
@@ -351,333 +491,5 @@ struct RadialMenuTriggerStateMachine: Equatable, Sendable {
             .cancelThreshold(reason: reason),
             .dismiss(reason: reason),
         ]
-    }
-}
-
-enum GlobeFnCompetingInput: String, Equatable, Sendable {
-    case modifier
-    case key
-    case escape
-    case mouseButton
-    case systemDefined
-}
-
-/// Public-event facts emitted by the runtime monitor. Keeping these facts free of `CGEvent`
-/// makes Fn/Globe gesture admission deterministic and prevents unit tests from installing a tap.
-enum GlobeFnObservedEvent: Equatable, Sendable {
-    case flagsChanged(functionDown: Bool, otherModifiersDown: Bool)
-    case keyChanged(isDown: Bool, keyCode: UInt16, isRepeat: Bool)
-    case mouseButtonDown
-    case systemDefined
-}
-
-/// The active Quartz filter exists only to discard the synthetic native Globe key after an
-/// accepted hold. Every ordinary key and mouse event must pass without consulting app state.
-enum GlobeFnNativeEventFilterPolicy {
-    static func shouldSuppress(
-        keyCode: UInt16,
-        nativeGlobeFilteringEnabled: Bool
-    ) -> Bool {
-        nativeGlobeFilteringEnabled &&
-            keyCode == GlobeFnEventNormalizer.nativeGlobeActionKeyCode
-    }
-}
-
-/// Input-monitor suspension is intentionally broader than native-fullscreen geometry protection.
-/// A borderless declared game still needs an unobstructed keyboard and mouse path even though its
-/// window remains an ordinary non-fullscreen Accessibility object.
-enum ForegroundGameInputProtectionPolicy {
-    static func shouldSuppressOptionalInputMonitors(
-        isDeclaredGameApplicationActive: Bool,
-        hasNativeFullscreenGameSession: Bool
-    ) -> Bool {
-        isDeclaredGameApplicationActive || hasNativeFullscreenGameSession
-    }
-}
-
-enum GlobeFnGestureInputEvent: Equatable, Sendable {
-    case functionChanged(isDown: Bool, otherModifiersDown: Bool)
-    case competingInput(GlobeFnCompetingInput)
-    case nativeGlobeKey(isDown: Bool)
-    case thresholdElapsed(generation: UInt64)
-    case suppressionExpired(generation: UInt64)
-    case cancel(reason: String)
-}
-
-/// Converts event-tap facts into gesture facts without exposing key content or device identity.
-/// Public Quartz events do not reliably distinguish the built-in Fn key from an external Globe
-/// key, so both intentionally share the same conservative state machine.
-struct GlobeFnEventNormalizer: Equatable, Sendable {
-    /// The public key code emitted for the native Globe/Emoji action after a Globe tap.
-    static let nativeGlobeActionKeyCode: UInt16 = 0xB3
-
-    private(set) var functionDown = false
-
-    mutating func normalize(_ event: GlobeFnObservedEvent) -> GlobeFnGestureInputEvent? {
-        switch event {
-        case let .flagsChanged(isFunctionDown, otherModifiersDown):
-            if isFunctionDown != functionDown {
-                functionDown = isFunctionDown
-                return .functionChanged(
-                    isDown: isFunctionDown,
-                    otherModifiersDown: otherModifiersDown
-                )
-            }
-            if functionDown, otherModifiersDown {
-                return .competingInput(.modifier)
-            }
-            return nil
-
-        case let .keyChanged(isDown, keyCode, _):
-            if keyCode == Self.nativeGlobeActionKeyCode {
-                return .nativeGlobeKey(isDown: isDown)
-            }
-            guard functionDown, isDown else { return nil }
-            return .competingInput(keyCode == 53 ? .escape : .key)
-
-        case .mouseButtonDown:
-            return functionDown ? .competingInput(.mouseButton) : nil
-
-        case .systemDefined:
-            return functionDown ? .competingInput(.systemDefined) : nil
-        }
-    }
-
-    mutating func reset() {
-        functionDown = false
-    }
-}
-
-enum GlobeFnGestureEffect: Equatable, Sendable {
-    case scheduleThreshold(generation: UInt64, delay: TimeInterval)
-    case cancelThreshold(reason: String)
-    case activateHold(generation: UInt64)
-    case releaseHold(generation: UInt64)
-    case cancelHold(reason: String)
-    case scheduleSuppressionExpiry(generation: UInt64, delay: TimeInterval)
-    case cancelSuppressionExpiry
-    case suppressCurrentEvent
-}
-
-/// Pure admission state for the optional Globe/Fn gesture. It never installs a tap, opens a menu,
-/// or synthesizes an event. A quick tap and every chorded sequence therefore remain untouched;
-/// only the native Globe action following an accepted hold can be filtered by the runtime adapter.
-struct GlobeFnGestureStateMachine: Equatable, Sendable {
-    private enum NativeEventProgress: Equatable, Sendable {
-        case none
-        case downSuppressed
-        case completed
-    }
-
-    private enum Phase: Equatable, Sendable {
-        case idle
-        case candidate(generation: UInt64)
-        case held(generation: UInt64, nativeEvent: NativeEventProgress)
-        case blockedAwaitingFunctionRelease
-        case awaitingNativeGlobe(generation: UInt64)
-        case suppressingNativeGlobeKeyUp(generation: UInt64)
-    }
-
-    static let nativeSuppressionWindow: TimeInterval = 0.5
-
-    private var phase: Phase = .idle
-    private(set) var latestGeneration: UInt64 = 0
-
-    var phaseName: String {
-        switch phase {
-        case .idle: "idle"
-        case .candidate: "candidate"
-        case .held: "held"
-        case .blockedAwaitingFunctionRelease: "blocked"
-        case .awaitingNativeGlobe: "awaiting-native-globe"
-        case .suppressingNativeGlobeKeyUp: "suppressing-native-globe-key-up"
-        }
-    }
-
-    mutating func handle(
-        _ event: GlobeFnGestureInputEvent,
-        holdDelay: TimeInterval
-    ) -> [GlobeFnGestureEffect] {
-        switch event {
-        case let .functionChanged(isDown, otherModifiersDown):
-            return functionChanged(
-                isDown: isDown,
-                otherModifiersDown: otherModifiersDown,
-                holdDelay: holdDelay
-            )
-
-        case let .competingInput(input):
-            return competingInput(input)
-
-        case let .nativeGlobeKey(isDown):
-            return nativeGlobeKey(isDown: isDown)
-
-        case let .thresholdElapsed(generation):
-            guard case let .candidate(current) = phase, current == generation else { return [] }
-            phase = .held(generation: generation, nativeEvent: .none)
-            return [.activateHold(generation: generation)]
-
-        case let .suppressionExpired(generation):
-            switch phase {
-            case .awaitingNativeGlobe(generation), .suppressingNativeGlobeKeyUp(generation):
-                phase = .idle
-                return []
-            default:
-                return []
-            }
-
-        case let .cancel(reason):
-            return cancel(reason: reason)
-        }
-    }
-
-    private mutating func functionChanged(
-        isDown: Bool,
-        otherModifiersDown: Bool,
-        holdDelay: TimeInterval
-    ) -> [GlobeFnGestureEffect] {
-        if isDown {
-            switch phase {
-            case .candidate, .held, .blockedAwaitingFunctionRelease:
-                return []
-            case .awaitingNativeGlobe, .suppressingNativeGlobeKeyUp:
-                phase = .idle
-                return [.cancelSuppressionExpiry] + startCandidate(
-                    otherModifiersDown: otherModifiersDown,
-                    holdDelay: holdDelay
-                )
-            case .idle:
-                return startCandidate(
-                    otherModifiersDown: otherModifiersDown,
-                    holdDelay: holdDelay
-                )
-            }
-        }
-
-        switch phase {
-        case .idle, .awaitingNativeGlobe, .suppressingNativeGlobeKeyUp:
-            return []
-        case .candidate:
-            phase = .idle
-            return [.cancelThreshold(reason: "quick-tap")]
-        case let .held(generation, nativeEvent):
-            let effects: [GlobeFnGestureEffect] = [.releaseHold(generation: generation)]
-            switch nativeEvent {
-            case .completed:
-                phase = .idle
-                return effects
-            case .none:
-                phase = .awaitingNativeGlobe(generation: generation)
-            case .downSuppressed:
-                phase = .suppressingNativeGlobeKeyUp(generation: generation)
-            }
-            return effects + [
-                .scheduleSuppressionExpiry(
-                    generation: generation,
-                    delay: Self.nativeSuppressionWindow
-                ),
-            ]
-        case .blockedAwaitingFunctionRelease:
-            phase = .idle
-            return []
-        }
-    }
-
-    private mutating func startCandidate(
-        otherModifiersDown: Bool,
-        holdDelay: TimeInterval
-    ) -> [GlobeFnGestureEffect] {
-        guard !otherModifiersDown else {
-            phase = .blockedAwaitingFunctionRelease
-            return []
-        }
-        latestGeneration &+= 1
-        let generation = latestGeneration
-        phase = .candidate(generation: generation)
-        return [
-            .scheduleThreshold(
-                generation: generation,
-                delay: RadialMenuHoldDelay.clamped(holdDelay)
-            ),
-        ]
-    }
-
-    private mutating func competingInput(
-        _ input: GlobeFnCompetingInput
-    ) -> [GlobeFnGestureEffect] {
-        switch phase {
-        case .idle, .blockedAwaitingFunctionRelease:
-            return []
-        case .candidate:
-            phase = .blockedAwaitingFunctionRelease
-            return [.cancelThreshold(reason: "competing-\(input.rawValue)")]
-        case .held where input == .mouseButton || input == .systemDefined:
-            // Once the deliberate hold has opened the wheel, pointer input belongs to the wheel.
-            // Some keyboards also emit a system-defined event beside a click while Fn remains
-            // down, so treating either event as a competing chord makes clickable wedges dismiss
-            // before SwiftUI receives the completed click. They remain disqualifying during the
-            // pre-threshold candidate phase, preserving quick Fn-click and native Globe behavior.
-            return []
-        case .held:
-            phase = .blockedAwaitingFunctionRelease
-            return [
-                .cancelThreshold(reason: "competing-\(input.rawValue)"),
-                .cancelHold(reason: "competing-\(input.rawValue)"),
-            ]
-        case .awaitingNativeGlobe, .suppressingNativeGlobeKeyUp:
-            phase = .idle
-            return [.cancelSuppressionExpiry]
-        }
-    }
-
-    private mutating func nativeGlobeKey(isDown: Bool) -> [GlobeFnGestureEffect] {
-        switch phase {
-        case let .held(generation, _):
-            let next: NativeEventProgress
-            if isDown {
-                next = .downSuppressed
-            } else {
-                next = .completed
-            }
-            phase = .held(generation: generation, nativeEvent: next)
-            return [.suppressCurrentEvent]
-
-        case let .awaitingNativeGlobe(generation):
-            if isDown {
-                phase = .suppressingNativeGlobeKeyUp(generation: generation)
-            } else {
-                phase = .idle
-            }
-            return [.suppressCurrentEvent]
-
-        case .suppressingNativeGlobeKeyUp:
-            if !isDown { phase = .idle }
-            return [.suppressCurrentEvent]
-
-        case .idle, .candidate, .blockedAwaitingFunctionRelease:
-            return []
-        }
-    }
-
-    private mutating func cancel(reason: String) -> [GlobeFnGestureEffect] {
-        switch phase {
-        case .idle:
-            return []
-        case .candidate:
-            phase = .idle
-            return [.cancelThreshold(reason: reason)]
-        case .held:
-            phase = .idle
-            return [
-                .cancelThreshold(reason: reason),
-                .cancelHold(reason: reason),
-            ]
-        case .blockedAwaitingFunctionRelease:
-            phase = .idle
-            return []
-        case .awaitingNativeGlobe, .suppressingNativeGlobeKeyUp:
-            phase = .idle
-            return [.cancelSuppressionExpiry]
-        }
     }
 }

@@ -312,8 +312,21 @@ final class UtilitySettingsTests: XCTestCase {
             isRunning: false
         ))
         restored.removeAppRule(bundleIdentifier: "com.example.Editor")
-        XCTAssertNil(
-            restored.focusedWindowHighlightCornerRadiusOverride(for: "com.example.Editor")
+        XCTAssertEqual(
+            restored.focusedWindowHighlightCornerRadiusOverride(for: "com.example.Editor"),
+            18
+        )
+
+        restored.addAppRule(for: InstalledApplication(
+            bundleIdentifier: "com.example.Editor",
+            displayName: "Editor",
+            bundleURL: nil,
+            isRunning: false
+        ))
+        restored.convertAppRuleToQuickApp(bundleIdentifier: "com.example.Editor")
+        XCTAssertEqual(
+            restored.focusedWindowHighlightCornerRadiusOverride(for: "com.example.Editor"),
+            18
         )
         defaults.removePersistentDomain(forName: suite)
     }

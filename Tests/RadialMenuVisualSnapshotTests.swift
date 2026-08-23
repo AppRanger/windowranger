@@ -111,6 +111,124 @@ final class RadialMenuVisualSnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testOffscreenCommandPaletteQuickActions() throws {
+        let contexts = representativeContexts()
+        let placementOnly = placementOnlyContext(from: contexts.freeform)
+        let snapshots: [(String, RadialCommandContext)] = [
+            ("available", contexts.freeform),
+            ("placement-unavailable", contexts.accordion),
+            ("placement-only", placementOnly),
+        ]
+        XCTAssertFalse(CommandPaletteIndex.spatialPlacementActions(in: contexts.freeform).isEmpty)
+        XCTAssertTrue(CommandPaletteIndex.spatialPlacementActions(in: contexts.accordion).isEmpty)
+        XCTAssertFalse(placementOnly.supportedCommands.contains(.setLayout))
+        XCTAssertFalse(CommandPaletteIndex.spatialPlacementActions(in: placementOnly).isEmpty)
+        guard let outputPath = ProcessInfo.processInfo.environment[
+            "WINDOWRANGER_RADIAL_SNAPSHOT_DIR"
+        ], !outputPath.isEmpty else {
+            return
+        }
+        let outputDirectory = URL(fileURLWithPath: outputPath, isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        let size = CommandPaletteController.panelSize
+        for (name, context) in snapshots {
+            let view = ZStack {
+                Color(nsColor: .windowBackgroundColor)
+                CommandPaletteView(
+                    context: context,
+                    hotKeyConfiguration: HotKeyConfiguration(),
+                    focusesSearchOnAppear: false,
+                    choose: { _ in },
+                    placementHaloPresentationChanged: { _ in },
+                    dismiss: {}
+                )
+            }
+            .frame(width: size.width, height: size.height)
+            .environment(\.colorScheme, .dark)
+            let data = try renderHostedRetinaPNG(view, size: size)
+            try data.write(
+                to: outputDirectory.appendingPathComponent(
+                    "windowranger-command-palette-quick-actions-\(name).png"
+                ),
+                options: .atomic
+            )
+            XCTAssertGreaterThan(data.count, 10_000)
+        }
+    }
+
+    @MainActor
+    func testOffscreenCommandPalettePlacementOnlyHalo() throws {
+        let context = placementOnlyContext(from: representativeContexts().freeform)
+        XCTAssertFalse(context.supportedCommands.contains(.setLayout))
+        XCTAssertFalse(CommandPaletteIndex.spatialPlacementActions(in: context).isEmpty)
+        guard let outputPath = ProcessInfo.processInfo.environment[
+            "WINDOWRANGER_RADIAL_SNAPSHOT_DIR"
+        ], !outputPath.isEmpty else {
+            return
+        }
+        let outputDirectory = URL(fileURLWithPath: outputPath, isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+        let size = CommandPaletteController.expandedPanelSize
+        let view = ZStack {
+            Color(nsColor: .windowBackgroundColor)
+            CommandPaletteView(
+                context: context,
+                hotKeyConfiguration: HotKeyConfiguration(),
+                initiallyShowsPlacementHalo: true,
+                initialPlacementHaloSelection: .right,
+                initiallyKeyboardFocusesPlacementHalo: true,
+                focusesSearchOnAppear: false,
+                choose: { _ in },
+                placementHaloPresentationChanged: { _ in },
+                dismiss: {}
+            )
+        }
+        .frame(width: size.width, height: size.height)
+        .environment(\.colorScheme, .dark)
+        let data = try renderHostedRetinaPNG(view, size: size)
+        try data.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-command-palette-placement-only-halo.png"
+            ),
+            options: .atomic
+        )
+        XCTAssertGreaterThan(data.count, 10_000)
+    }
+
+    private func placementOnlyContext(from context: RadialCommandContext) -> RadialCommandContext {
+        var supportedCommands = context.supportedCommands
+        supportedCommands.remove(.setLayout)
+        var result = RadialCommandContext(
+            focusedWindow: context.focusedWindow,
+            focusSource: context.focusSource,
+            workspaceID: context.workspaceID,
+            workspaceName: context.workspaceName,
+            layout: context.layout,
+            displayIdentifier: context.displayIdentifier,
+            displayName: context.displayName,
+            displayBounds: context.displayBounds,
+            displayMode: context.displayMode,
+            focusFollowsMovedWindow: context.focusFollowsMovedWindow,
+            connectedDisplayIdentifiers: context.connectedDisplayIdentifiers,
+            connectedDisplays: context.connectedDisplays,
+            availableFocusDirections: context.availableFocusDirections,
+            availableMoveDirections: context.availableMoveDirections,
+            canSmartResize: context.canSmartResize,
+            workspaces: context.workspaces,
+            supportedCommands: supportedCommands,
+            validationToken: context.validationToken
+        )
+        result.profiles = context.profiles
+        result.activeProfileID = context.activeProfileID
+        result.isProfileManuallyPinned = context.isProfileManuallyPinned
+        result.tiledPlacementPreviews = context.tiledPlacementPreviews
+        result.freeformPlacementPreviews = context.freeformPlacementPreviews
+        result.externalValidationToken = context.externalValidationToken
+        result.quickApps = context.quickApps
+        return result
+    }
+
+    @MainActor
     private func presentation(
         context: RadialCommandContext,
         selected itemID: RadialTopLevelItemID,

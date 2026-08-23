@@ -4,9 +4,9 @@
 > publishing, signing, notarisation, distribution, branch creation, repository-setting changes, or
 > Sparkle implementation. Those remain gated by the pre-release checklist.
 
-WindowRanger will use three release channels—Stable, Beta, and Dev—on a lightweight Gitflow-style
-branch model. Stable and Beta will use Sparkle later. Dev is a rolling development-build stream and
-will not be an auto-update channel.
+WindowRanger uses three release channels—Stable, Beta, and Dev—on a lightweight Gitflow-style
+branch model. Stable and Beta builds contain Sparkle support, with public-feed activation still a
+release gate. Dev is a rolling development-build stream and is not an auto-update channel.
 
 The initial pipeline is intentionally local-first. While the repository is private, an opt-in
 pre-push hook runs the non-hosted checkpoint against the exact pushed commit, and the maintainer can
@@ -137,24 +137,31 @@ No released tag or artifact may be replaced. A correction receives a new patch v
   short-version string rather than inventing an invalid bundle version.
 
 The distribution script is the enforcement boundary for version syntax, branch/channel agreement,
-and the build number embedded in an artifact. The maintainer still assigns the next monotonically
-increasing build number; that decision must be recorded as release work and must not be made casually
-on topic branches. Sparkle implementation must add an authoritative allocation/check before more
-than one builder can produce public artifacts.
+and the build number embedded in an artifact. The maintainer assigns the next monotonically
+increasing number by appending an `allocated` row to `config/release-builds.tsv` on `develop` and
+committing that reservation before the release branch is created or promoted. The ledger records
+published and superseded numbers permanently and permits only one active allocation. The release
+build must match that latest allocation and must also exceed every build already in the public
+appcast. Appcast generation rechecks the ledger from central `develop`, so a stale release branch
+cannot publish after a newer number is reserved, and rechecks the live appcast maximum immediately
+before staging. Mark the active row `published` after the feed is live, or `superseded` when
+abandoning it, before allocating another number.
 
-## Future Sparkle behaviour
+## Sparkle behaviour
 
-Sparkle is not implemented yet. When it is added:
+The app integrates Sparkle 2.8.1 behind a build-time channel boundary. Public-feed activation and
+packaged upgrade validation remain release gates:
 
-- use one signed appcast rather than independent stable and beta products;
+- use one appcast containing EdDSA-signed update archives rather than independent stable and beta
+  products;
 - publish Stable updates on Sparkle's default channel;
 - publish Beta updates with `<sparkle:channel>beta</sparkle:channel>`;
 - make Beta an explicit user choice and allow the updater's `beta` channel only while opted in;
 - remember that Sparkle channel clients always see the default channel too, so a Beta user may move
   forward to a newer Stable release;
 - keep Dev builds outside the appcast and update them manually or through CI artifacts;
-- sign update archives and the appcast, host release notes, and verify upgrade and rollback paths
-  before enabling automatic checks.
+- host release notes and verify signing, upgrade, cancellation, failure, and rollback paths before
+  enabling automatic checks by default.
 
 Opting out of Beta is not necessarily an immediate downgrade. If the installed Beta has a higher
 build number than the latest Stable release, the user remains on that build until a newer Stable is

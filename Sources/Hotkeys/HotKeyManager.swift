@@ -137,24 +137,19 @@ enum ShortcutConflictModel {
             }
             validBindings.append(ShortcutBindingDefinition(
                 owner: owners[0],
-                chord: HotKeyChord(
-                    keyCode: keyCode,
-                    modifiers: UInt32(controlKey | optionKey)
-                )
+                chord: configuration.chord(forWorkspaceKeyCode: keyCode, family: .navigate)
             ))
             validBindings.append(ShortcutBindingDefinition(
                 owner: owners[1],
-                chord: HotKeyChord(
-                    keyCode: keyCode,
-                    modifiers: UInt32(optionKey | cmdKey)
-                )
+                chord: configuration.chord(forWorkspaceKeyCode: keyCode, family: .arrange)
             ))
         }
 
-        for action in ConfigurableHotKeyAction.allCases where includeCommandWheel || action != .commandWheel {
+        for action in ConfigurableHotKeyAction.allCases
+        where (includeCommandWheel || action != .commandWheel) && configuration.isEnabled(action) {
             let binding = ShortcutBindingDefinition(
                 owner: .global(action),
-                chord: configuration.chord(for: action)
+                chord: configuration.optionalChord(for: action)!
             )
             if let reason = validationMessage(binding.chord) {
                 issues.append(ShortcutConfigurationIssue(
@@ -242,8 +237,11 @@ struct DirectionalMoveChordFamily: Equatable, Sendable {
            actionDirections.contains(where: { !report.issues(for: $0.0).isEmpty }) {
             return .failure(.shortcutConflict)
         }
-        let bindings = actionDirections.map { action, direction in
-            (configuration.chord(for: action), direction)
+        let bindings = actionDirections.compactMap { action, direction in
+            configuration.optionalChord(for: action).map { ($0, direction) }
+        }
+        guard bindings.count == actionDirections.count else {
+            return .failure(.shortcutConflict)
         }
         guard let modifiers = bindings.first?.0.modifiers,
               bindings.allSatisfy({ $0.0.modifiers == modifiers })
@@ -341,6 +339,7 @@ struct HotKeyRegistrationReport: Equatable, Sendable {
 enum HotKeyRegistrationScope: Equatable, Sendable {
     case all
     case workspaceNavigationOnly
+    case commandPaletteOnly
 
     func allows(_ binding: ShortcutBindingDefinition) -> Bool {
         switch self {
@@ -359,6 +358,8 @@ enum HotKeyRegistrationScope: Equatable, Sendable {
                     $0 == .nextWorkspace ||
                     $0 == .backAndForthWorkspace
             } == true
+        case .commandPaletteOnly:
+            return binding.owner.kind == .commandWheel
         }
     }
 }
@@ -523,7 +524,8 @@ final class HotKeyManager {
         workspaces: [WorkspaceDefinition],
         hotKeyConfiguration: HotKeyConfiguration = HotKeyConfiguration(),
         radialMenuEnabled: Bool = false,
-        scope: HotKeyRegistrationScope = .all
+        scope: HotKeyRegistrationScope = .all,
+        forceCommandPaletteEscapeHatch: Bool = false
     ) -> HotKeyRegistrationReport {
         cancelDirectionalMoveGesture(reason: "hotkeys-reconfigured", awaitRelease: false)
         unregisterAll()
@@ -532,7 +534,25 @@ final class HotKeyManager {
             workspaces: workspaces,
             includeCommandWheel: radialMenuEnabled
         )
-        let eligibleBindings = configuration.eligibleBindings.filter(scope.allows)
+        var eligibleBindings = configuration.eligibleBindings.filter(scope.allows)
+        if forceCommandPaletteEscapeHatch, scope == .commandPaletteOnly {
+            let configuredChord = hotKeyConfiguration.optionalChord(for: .commandWheel)
+            let familyFallbackChord = HotKeyChord(
+                keyCode: ConfigurableHotKeyAction.commandWheel.defaultKeyCode ?? 49,
+                modifiers: hotKeyConfiguration.modifierMask(for: .navigate)
+            )
+            let stockFallbackChord = HotKeyConfiguration().chord(for: .commandWheel)
+            let escapeChord = configuredChord.flatMap {
+                ShortcutConflictModel.validationMessage($0) == nil ? $0 : nil
+            } ?? (ShortcutConflictModel.validationMessage(familyFallbackChord) == nil
+                ? familyFallbackChord
+                : stockFallbackChord)
+            eligibleBindings.removeAll { $0.owner.kind == .commandWheel }
+            eligibleBindings.append(ShortcutBindingDefinition(
+                owner: .global(.commandWheel),
+                chord: escapeChord
+            ))
+        }
         for issue in configuration.issues {
             diagnostics.log(
                 category: "hotkey",
@@ -594,7 +614,7 @@ final class HotKeyManager {
         workspaces: [WorkspaceDefinition]
     ) -> String? {
         var proposed = configuration
-        proposed.setChord(chord, for: action)
+        proposed.setKeyCode(chord.keyCode, for: action)
         return ShortcutConflictModel.evaluate(
             configuration: proposed,
             workspaces: workspaces
@@ -961,22 +981,6 @@ final class HotKeyManager {
         if flags.contains(.command) { modifiers |= UInt32(cmdKey) }
         return modifiers
     }
-
-    static let toggleFloatingKeyCode: UInt32 = 3
-    static let toggleFloatingModifiers = UInt32(controlKey | optionKey)
-    static let accordionKeyCode: UInt32 = 43
-    static let tiledKeyCode: UInt32 = 47
-
-    static let directionalFocusKeyCodes: [(WindowDirection, UInt32)] = [
-        (.left, 4), (.down, 38), (.up, 40), (.right, 37),
-    ]
-    static let directionalMoveKeyCodes: [(WindowDirection, UInt32)] = [
-        (.left, 123), (.down, 125), (.up, 126), (.right, 124),
-    ]
-    static let moveWorkspaceDisplayChord = HotKeyChord(
-        keyCode: 48,
-        modifiers: UInt32(optionKey | shiftKey)
-    )
 
     static let keyCodes: [String: UInt32] = [
         "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7,
