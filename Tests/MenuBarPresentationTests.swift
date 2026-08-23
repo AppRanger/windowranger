@@ -260,6 +260,8 @@ final class MenuBarPresentationTests: XCTestCase {
         let travelProfileID = try XCTUnwrap(
             writer.createProfile(named: "Travel", source: .scratch)
         )
+        XCTAssertEqual(writer.activeProfileID, sourceProfileID)
+        writer.activateSettingsProfile()
         let travelRoleID = try XCTUnwrap(writer.activeProfile.displayRoles.first?.id)
         XCTAssertEqual(writer.menuBarDisplayIconStyle(forRole: travelRoleID), .automatic)
         writer.setMenuBarDisplayIconStyle(.none, forRole: travelRoleID)

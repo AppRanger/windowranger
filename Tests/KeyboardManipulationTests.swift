@@ -2,13 +2,6 @@ import Carbon
 import XCTest
 
 final class KeyboardManipulationTests: XCTestCase {
-    func testDirectionalBindingsMatchUserAeroSpaceConfig() {
-        XCTAssertEqual(HotKeyManager.directionalFocusKeyCodes.map(\.0), [.left, .down, .up, .right])
-        XCTAssertEqual(HotKeyManager.directionalFocusKeyCodes.map(\.1), [4, 38, 40, 37])
-        XCTAssertEqual(HotKeyManager.directionalMoveKeyCodes.map(\.0), [.left, .down, .up, .right])
-        XCTAssertEqual(HotKeyManager.directionalMoveKeyCodes.map(\.1), [123, 125, 126, 124])
-    }
-
     func testTwoArrowGestureMapsEveryCornerInEitherOrderWithoutFirstMove() {
         let cases: [(WindowDirection, WindowDirection, VisualPlacement)] = [
             (.up, .left, .topLeft),
@@ -93,22 +86,20 @@ final class KeyboardManipulationTests: XCTestCase {
             configuration: defaults,
             report: defaultReport
         ).get())
-        XCTAssertEqual(family.modifiers, UInt32(controlKey | optionKey))
+        XCTAssertEqual(family.modifiers, UInt32(optionKey | cmdKey))
         XCTAssertEqual(family.direction(for: 126), .up)
         XCTAssertEqual(family.direction(for: 124), .right)
 
-        var mismatched = defaults
-        mismatched.setChord(
-            HotKeyChord(keyCode: 124, modifiers: UInt32(controlKey | optionKey | shiftKey)),
-            for: .moveRight
-        )
-        XCTAssertEqual(
-            DirectionalMoveChordFamily.resolve(configuration: mismatched),
-            .failure(.modifierMismatch)
-        )
+        var remapped = defaults
+        XCTAssertNil(remapped.setModifierMask(UInt32(controlKey | shiftKey), for: .arrange))
+        let remappedFamily = try XCTUnwrap(try? DirectionalMoveChordFamily.resolve(
+            configuration: remapped,
+            report: ShortcutConflictModel.evaluate(configuration: remapped, workspaces: [])
+        ).get())
+        XCTAssertEqual(remappedFamily.modifiers, UInt32(controlKey | shiftKey))
 
         var duplicate = defaults
-        duplicate.setChord(defaults.chord(for: .moveLeft), for: .moveRight)
+        duplicate.setKeyCode(defaults.keyCode(for: .moveLeft), for: .moveRight)
         let duplicateReport = ShortcutConflictModel.evaluate(configuration: duplicate, workspaces: [])
         XCTAssertEqual(
             DirectionalMoveChordFamily.resolve(configuration: duplicate, report: duplicateReport),
@@ -270,6 +261,65 @@ final class KeyboardManipulationTests: XCTestCase {
             direction: .down,
             candidates: candidates
         ), ["down"])
+    }
+
+    func testDirectionalFocusWrapsToTheOppositeEdgeAfterDirectCandidatesEnd() {
+        let source = CGRect(x: 0, y: 400, width: 200, height: 200)
+        let candidates = [
+            DirectionalWindowCandidate(
+                key: "near-right",
+                frame: CGRect(x: 300, y: 420, width: 200, height: 200)
+            ),
+            DirectionalWindowCandidate(
+                key: "far-right-aligned",
+                frame: CGRect(x: 900, y: 410, width: 200, height: 200)
+            ),
+            DirectionalWindowCandidate(
+                key: "far-right-diagonal",
+                frame: CGRect(x: 1_100, y: 900, width: 200, height: 200)
+            ),
+        ]
+
+        let wrapped = WorkspaceEngine.wrappingDirectionalCandidateOrder(
+            from: source,
+            direction: .left,
+            candidates: candidates
+        )
+        XCTAssertTrue(wrapped.didWrap)
+        XCTAssertEqual(wrapped.candidates.first, "far-right-aligned")
+
+        let direct = WorkspaceEngine.wrappingDirectionalCandidateOrder(
+            from: source,
+            direction: .right,
+            candidates: candidates
+        )
+        XCTAssertFalse(direct.didWrap)
+        XCTAssertEqual(direct.candidates.first, "near-right")
+    }
+
+    func testDirectionalFocusWrapsVerticallyAndNotAcrossAnUnrelatedAxis() {
+        let source = CGRect(x: 400, y: 0, width: 200, height: 200)
+        let below = DirectionalWindowCandidate(
+            key: "bottom",
+            frame: CGRect(x: 420, y: 900, width: 200, height: 200)
+        )
+        let wrappedUp = WorkspaceEngine.wrappingDirectionalCandidateOrder(
+            from: source,
+            direction: .up,
+            candidates: [below]
+        )
+        XCTAssertTrue(wrappedUp.didWrap)
+        XCTAssertEqual(wrappedUp.candidates, ["bottom"])
+
+        let sameColumn = DirectionalWindowCandidate(
+            key: "below-only",
+            frame: CGRect(x: 400, y: 900, width: 200, height: 200)
+        )
+        XCTAssertTrue(WorkspaceEngine.wrappingDirectionalCandidateOrder(
+            from: source,
+            direction: .left,
+            candidates: [sameColumn]
+        ).candidates.isEmpty)
     }
 
     func testDirectionalFocusHasNoCrossDisplayFallback() {

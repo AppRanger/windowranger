@@ -112,20 +112,24 @@ smallest useful outcome and acceptance boundary.
   or retargets the external window merely because its search field became key. A command restores
   the prior application and revalidates the captured session before dispatch. The Placement Halo
   and Globe/Fn wheel expose only truthful Freeform or Tiled positions in stable compass order;
-  the halo control is omitted when none exist. With an empty query, Right Arrow enters the halo,
-  arrows traverse its available positions, Return commits, and Escape restores palette search.
-  Layout, Accordion resize, and all other actions remain searchable. Existing shortcut
-  persistence and legacy wheel preferences remain migration-safe. Focused tests, the complete
-  non-hosted suite, an unsigned app build, and signed live use with real windows are required.
+  the placement entry is omitted when none exist, arrows traverse available positions, Return
+  commits, and Escape restores palette search. Layout, Accordion resize, and all other actions
+  remain searchable. WR-065 owns the current compact Quick Actions entry and keyboard path. Existing
+  shortcut persistence and legacy wheel preferences remain migration-safe. Focused tests, the
+  complete non-hosted suite, an unsigned app build, and signed live use with real windows are
+  required.
 - **Implemented:** Added a searchable key panel backed by the established contextual catalogue,
   configurable shortcut registry, and shared typed dispatcher. The existing Control-Option-Space
   default now toggles the palette. It captures the external focus/workspace/display/profile token
   before activation, restores the previous application before selection, and rejects stale actions.
   The old renderer is retained as a one-level, position-only Placement Wheel for optional Globe/Fn
-  hold. The search-field control is now an icon-only Placement Halo anchored around that control;
-  opening or collapsing it keeps the key palette and its query alive. Settings describes this
-  hybrid and no longer exposes the obsolete broad-wheel activation style or catalogue editor;
-  legacy values remain decodable.
+  hold. The original icon-only search-field control expanded a Placement Halo while keeping the key
+  palette and its query alive; WR-065 later superseded that entry surface with a conditional stacked
+  Quick Action. Settings no longer exposes the obsolete broad-wheel activation style or catalogue
+  editor; legacy values remain decodable.
+- **Current-state update:** WR-066 removes the superseded standalone Globe/Fn trigger and Placement
+  Wheel settings/runtime wiring. Window placement remains available through the palette's inline
+  Placement Halo; the old saved values stay decodable for compatibility.
 - **Automated evidence:** Test isolation, six focused Command Palette tests, the owned-focus-anchor
   regression, the production Placement Halo offscreen render, and all 610 non-hosted tests pass.
   Coverage includes contextual/global command composition, stable grouped search order,
@@ -166,6 +170,746 @@ smallest useful outcome and acceptance boundary.
   accepted flow keeps the palette open while the halo expands and returns Escape focus to search.
 
 ## Inbox
+
+### WR-071 — Switch profiles for foreground full-screen Game Mode sessions
+
+- **Type:** Automatic profile selection
+- **Priority:** P1
+- **Status:** Automated implementation complete; signed-app and live-game validation remain.
+- **Requested:** 23 August 2026.
+- **User-observed context:** Games that activate macOS Game Mode need a purpose-built profile without
+  requiring a manual profile change on launch and another change on exit.
+- **Smallest useful outcome:** Let this Mac map one profile to a foreground full-screen game whose
+  bundle explicitly declares `LSSupportsGameMode`. Manual profile pins remain authoritative; otherwise the
+  Game Mode target takes priority over display and dock rules. Ending the session re-evaluates the
+  ordinary automatic rules rather than restoring a stale remembered profile.
+- **Detection boundary:** Public macOS APIs do not expose a direct, supported `isGameModeActive`
+  property. WindowRanger therefore requires both an explicit `LSSupportsGameMode` declaration and
+  a foreground full-screen window; a Games category or Game Controller declaration alone is not
+  enough. The UI and documentation must not claim it can
+  observe a user's per-game Game Mode override directly.
+- **Acceptance:** The mapping is local to this Mac, survives profile edits safely, does not replace
+  the profile being edited in Settings, switches through the normal generation-guarded profile
+  transition, and returns to the currently resolved ordinary profile when the session ends.
+- **Automated evidence:** On 23 August 2026, the isolated non-hosted suite passed 686 tests, including
+  explicit `LSSupportsGameMode` eligibility, category/controller-only exclusion, local mapping,
+  precedence, deletion, undo, and restart coverage. The unsigned arm64 Debug app also builds.
+
+### WR-072 — Pause WindowRanger without losing the Command Palette escape hatch
+
+- **Type:** Runtime control and safety
+- **Priority:** P1
+- **Status:** Automated implementation complete; signed-app and live-window validation remain.
+- **Requested:** 23 August 2026.
+- **Smallest useful outcome:** Add a transient Pause state, available from both the menu bar and
+  Command Palette. While paused, retain only the Command Palette global shortcut; disable all other
+  WindowRanger shortcuts, workspace swipes, shortcut-guide observation, and automatic window writes.
+  WindowRanger must ignore manual moves and resizes rather than learning them. Resuming performs one
+  fresh reconciliation so managed layouts snap windows back only where the active workspace rules
+  require it.
+- **Ownership boundary:** Pause is runtime-only and resets off at launch. It must not mutate profile
+  content, window membership, saved layout intent, or iCloud/local Settings state merely by being
+  toggled.
+- **Acceptance:** Menu bar and palette can pause and resume; the palette shortcut remains usable
+  while paused even if its normal assignment was disabled; stale registrations and queued Shelf
+  transitions cannot dispatch other commands or window actions; windows remain freely movable
+  and resizable without corrective writes until resume; resume respects the current profile,
+  workspace layout, full-screen-game shortcut scope, and any independently active suppression reason.
+- **Automated evidence:** On 23 August 2026, test isolation passed and all 686 non-hosted tests passed,
+  covering the pause-only palette catalogue, forced family-aware escape shortcut, command routing,
+  and runtime/local-state boundaries. The unsigned arm64 Debug app builds; signed live window,
+  Shelf, display-change, Game Mode, and resume reconciliation checks remain.
+
+### WR-070 — Add a branded, settings-backed first-run onboarding wizard
+
+- **Type:** First-run experience and feature education
+- **Priority:** P1
+- **Status:** Live validation — the signed daily walkthrough, repeat-setup Settings route, and
+  corrected mouse controls have maintainer interaction evidence. The remaining first-run,
+  permission, keyboard, picker, resume, and completion boundaries are listed below.
+- **Requested:** 22 August 2026.
+- **User-observed context:** WindowRanger now has a coherent core model, but a new user must discover
+  iCloud, Navigate/Arrange shortcut families, Focus Border, menu-bar presentation, the Quick App
+  Shelf, and workspace navigation independently in Settings. There is no first-run walkthrough.
+- **Smallest useful outcome:** Present a resumable seven-stage native wizard on first launch:
+  Welcome, iCloud, Shortcuts, Focus Border, Menu Bar, Quick App Shelf, and Workspaces. Use the
+  selected compact dark Mission Control shell, WindowRanger's canonical robot, and one purposeful
+  illustration per stage. Each configurable stage must read and mutate the same SettingsStore value
+  used by the running app; Settings remains the later editing surface.
+- **Ownership boundary:** Onboarding progress and completion are versioned, local-only application
+  state. They are not profile content and are never sent through iCloud. Setting choices retain
+  their existing global, profile, or machine-local ownership. A separate coordinator owns step
+  navigation and completion; the wizard must not duplicate engine or profile serialization.
+- **Acceptance:** A new install sees the wizard after runtime initialization; an incomplete wizard
+  resumes safely; completion does not reappear for the same version. Back/Continue flows work
+  with keyboard and mouse. The wizard can opt into iCloud, change both shortcut-family modifiers,
+  preview/toggle/change Focus Border, preview/select menu-bar presentation, choose ordered Shelf apps
+  or leave Shelf setup for later, and teach keyboard/swipe workspace navigation. Existing users with
+  no onboarding marker receive the wizard because there has not yet been a public release. Pure
+  state/action tests, the complete isolated suite, an unsigned universal build, signed installed-app
+  interaction, and visual
+  comparison against the selected mock are required before Done. General Settings exposes a
+  searchable repeat-setup action that closes Settings before restarting at Welcome, preserves every
+  existing configuration choice, and resumes normally if the repeated walkthrough is left incomplete.
+- **Result:** A dedicated fixed native window now presents the seven versioned, resumable stages
+  after runtime setup. Its controls mutate the existing SettingsStore owners directly. Onboarding
+  keeps only version-namespaced progress locally; completion of one version cannot suppress or
+  resume midway through a newer flow. The Shelf stage adds, removes, reorders, caps, and reports up
+  to four profile-owned apps. Seven canonical-Ranger ImageGen scenes are bundled behind native UI.
+- **Automated and visual evidence:** 22 August 2026 — all 673 isolated tests pass, including six
+  focused onboarding state/action tests and the opt-in seven-stage production renderer. The
+  unsigned Release app builds successfully for `arm64` and `x86_64`. All seven 1,960 x 1,320 dark
+  production renders were inspected against the selected Mission Control reference; `design-qa.md`
+  records the resolved asset-bundle, clipping, Shelf-order/capacity, and version-resume findings
+  with no remaining scoped P0/P1/P2 mismatch. A skeptical read-only review reported no P0 and its
+  three P1/P2 findings were corrected and reverified.
+- **Installed evidence:** 23 August 2026 — signed universal daily revision
+  `98d12d5fe02a-dirty` was installed at `/Applications/WindowRanger.app`, passed strict deep
+  signature verification, matched the tested build bundle exactly, and resumed as the running
+  application. The versioned first-run flow launched and persisted progress through step 5.
+- **First-trial feedback and correction:** 23 August 2026 — the maintainer accepted the imagery and
+  reported non-trailing iCloud/Focus switches, inert shortcut-family dropdown choices, a dead area
+  near menu-bar selection ticks, unnecessary Shelf Skip affordance/copy, and an overly artificial
+  thick left card accent. The corrected view uses explicit trailing switches, native menus containing
+  only modifier combinations valid against the other family, non-hittable decorative strokes over
+  full-row menu-bar buttons, clearer Shelf purpose/later-Settings copy without Skip, and a quiet
+  accent wash with a uniform hairline instead of a left stripe. All 674 isolated tests pass,
+  including valid onboarding shortcut-choice coverage, and all seven corrected production stages
+  were rendered and inspected at 1,960 x 1,320.
+- **Corrected install evidence:** 23 August 2026 — the refreshed signed universal daily revision
+  `98d12d5fe02a-dirty` (CDHash `3e7df86750881ad6a3c2847f2fb9450c8428e6ca`) passed strict deep
+  signature verification, matched the tested build bundle exactly, and resumed from
+  `/Applications/WindowRanger.app`. The completed-version marker was intentionally preserved rather
+  than silently resetting the maintainer's finished walkthrough.
+- **Repeat-setup route:** 23 August 2026 — after the completed first trial showed there was no route
+  back into the wizard, General Settings gained a searchable **Run Setup Again…** action. It closes
+  the coordinator-owned Settings window, resets only versioned local onboarding progress, and
+  presents Welcome on the next main-loop turn; profiles and current setting values remain intact.
+  All 678 isolated tests pass, including ordered Settings dismissal before presentation, exact
+  Settings-surface dismissal, search routing, preservation of global and profile-owned values, and
+  resume from an interrupted repeated walkthrough. The unsigned Release app builds successfully
+  for `arm64` and `x86_64`. Normal, dark, and compact production Settings renders show the new
+  Setup section without clipping.
+- **Repeat-route install evidence:** 23 August 2026 — signed universal Release daily revision
+  `98d12d5fe02a-dirty` (CDHash `3b8fe6bd8973d7e14c7c43ee51fce206b21b0d86`) passed strict deep
+  signature verification, matched the tested daily build bundle exactly, and resumed from
+  `/Applications/WindowRanger.app`.
+- **Repeat-route live finding:** The refreshed signed trial reopened at the correct saved stage, but
+  mouse interaction remained unreliable for the compact shortcut menus and Focus Border switch even
+  though footer navigation worked. Keyboard activation changed the live Focus Border setting, proving
+  the SettingsStore binding was intact and narrowing the fault to the wizard's mouse targets. The
+  corrective candidate gives switches their complete labelled row as a native hit target, gives each
+  shortcut menu a visible minimum-size target, and activates the app before making the wizard key and
+  main. All 678 isolated tests still pass, all seven production stages render without clipping, and
+  the unsigned Release app builds successfully for `arm64` and `x86_64`. Refreshed signed mouse
+  validation is required.
+- **Control-target install evidence:** 23 August 2026 — signed universal Release daily revision
+  `98d12d5fe02a-dirty` (CDHash `7619db47ae6e6582259716bd59ce067e86ad2717`) passed strict deep
+  signature verification, matched the tested daily build bundle exactly, and resumed from
+  `/Applications/WindowRanger.app`. The maintainer confirmed that this candidate still failed: only
+  the exposed left edge of each shortcut menu responded, while the trailing Focus Border switch and
+  colour well remained inert. Live accessibility geometry then identified the actual deterministic
+  fault: the unconstrained decorative artwork owned a 702-point hit surface beginning 101 points
+  inside the 480-point controls column. It covered every trailing body control but ended above the
+  footer, exactly matching the observed split. The next candidate constrains artwork to the remaining
+  right column, clips that column, makes the decorative surface pointer-transparent, and restores the
+  earlier native shortcut-menu appearance. All 678 isolated tests pass, all seven corrected stages
+  render cleanly, and the unsigned Release app builds successfully for `arm64` and `x86_64`.
+  Refreshed signed mouse validation is required.
+- **Artwork-boundary install evidence:** 23 August 2026 — signed universal Release daily revision
+  `98d12d5fe02a-dirty` (CDHash `fd7fa8f927043306bd5e391d621bb792cf6c3fc7`) passed strict deep
+  signature verification, matched the tested daily build bundle exactly, and resumed from
+  `/Applications/WindowRanger.app`. The maintainer confirmed the complete visible shortcut-menu
+  targets, Focus Border switch, and colour picker all respond correctly in this installed build.
+- **Live boundary:** The first-run gate, app activation/Space placement, Accessibility permission
+  handoff, keyboard traversal, application picker, resume after closing, and final completion still
+  require explicit maintainer validation before Done.
+
+### WR-069 — Wrap directional focus at workspace and Shelf edges
+
+- **Type:** Navigation consistency improvement
+- **Priority:** P1
+- **Status:** Done — automated, signed installed-app, and maintainer interaction validation complete.
+- **Requested:** 22 August 2026.
+- **User-observed context:** After making Navigate arrows work inside the Quick App Shelf, edge
+  containment felt inconsistent with cycling through an ordered set of applications. The expected
+  rule applies to the other workspace layouts too: reaching the start or end should continue from
+  the opposite edge.
+- **Smallest useful outcome:** Preserve nearest-neighbour spatial focus when a target exists in the
+  requested direction. At an outer edge, wrap to the opposite spatial edge within the same active
+  workspace and interaction display, preferring candidates aligned on the perpendicular axis. In
+  an open Shelf, wrap only along its visible layout axis; perpendicular arrows remain contained.
+- **Acceptance:** Freeform, Tiled, Accordion, and both Shelf styles wrap in all applicable
+  directions without crossing display/workspace admission boundaries. Direct neighbours remain
+  preferred over wrap targets, Shelf arrow promotion does not relayout membership, and diagnostics
+  distinguish a wrapped choice. Focused navigation/Shelf tests, the complete isolated suite, an
+  unsigned universal build, skeptical review, and signed installed-app validation are required.
+- **Result:** Navigate-arrow focus now keeps its nearest spatial neighbour first and, only at an
+  outer edge, chooses the opposite edge of the same workspace and display. Shelf navigation uses
+  the same fallback along its presentation axis while perpendicular arrows remain contained; the
+  Command Palette advertises exactly those available Shelf directions. Arrange-arrow reordering is
+  deliberately unchanged and does not wrap.
+- **Automated evidence:** 22 August 2026 — 25 focused keyboard-navigation tests and 25 focused Shelf
+  tests passed; the complete isolated suite passed all 683 tests; `git diff --check` passed; and the
+  unsigned Debug app built successfully as universal `x86_64 arm64`. Skeptical rereview reported no
+  P0-P2 finding. Live Accessibility focus behavior in the signed installed app remains unverified.
+- **Installed evidence:** 22 August 2026 — the signed universal daily build
+  `29117f974de9-dirty` was installed at `/Applications/WindowRanger.app`, its executable and debug
+  dylib matched the built candidate, the Apple Development signature and Team ID `44NAD22AK6` were
+  verified, and it resumed from the installed path. The maintainer then confirmed edge wrapping
+  works in the installed app.
+
+### WR-068 — Unify global shortcuts into configurable Navigate and Arrange families
+
+- **Type:** Shortcut architecture and usability change
+- **Priority:** P1
+- **Status:** Live validation — implementation, cleanup, automated verification, and skeptical
+  review complete; the cleaned signed app still needs interaction validation.
+- **Requested:** 22 August 2026.
+- **User-observed context:** Nearly every frequent WindowRanger command should begin with one of two
+  learnable modifier prefixes. The current defaults are spread across Control-Option,
+  Option-Command, Option-only and Option-Shift, while the Shortcut Guide exposes only the first two
+  families. Numbered workspaces are the expected default; lettered workspace keys remain supported
+  when they do not conflict with a family action key.
+- **Smallest useful outcome:** Store one configurable **Navigate** modifier family and one
+  configurable **Arrange** modifier family, then assign commands and workspaces a key suffix rather
+  than independently recorded complete chords. Changing a family prefix updates every command in
+  that family and the passive guide. A workspace owns one suffix: Navigate plus that key switches to
+  it, while Arrange plus that key sends the focused window to it.
+- **Approved defaults:** Navigate is Control-Option; Arrange is Option-Command. Preserve the direct
+  workspace pair, Control-Option bracket workspace traversal, Control-Option Tab back-and-forth,
+  Control-Option Space palette and Control-Option backtick Quick App. Use Navigate arrows for
+  directional focus and Arrange arrows for reorder/corner placement; Navigate comma/period for
+  previous/next window (and open-Shelf traversal); Arrange comma/period for Accordion/Tiled;
+  Arrange minus/equal for resize; Arrange F for Floating; and Arrange D for moving the current
+  workspace to the next display. There is no dedicated Cycle Quick Apps binding because
+  Previous/Next Window already routes through an open Shelf and the palette exposes explicit
+  Previous/Next Quick App commands. No Full Screen command is introduced by this remap.
+- **Conflict boundary:** Family modifiers must be distinct exact combinations with at least two
+  supported modifiers and no Fn/Globe. Key suffixes are unique within a family but may intentionally
+  repeat across families. A workspace suffix reserves both of its derived family chords, so a
+  conflicting action key must be remapped or unassigned before that workspace key can be used.
+  Validate global action keys against every saved profile, not only the active one, and retain the
+  existing fail-closed duplicate and macOS-registration handling.
+- **Settings boundary:** Shortcuts owns the two global modifier families and key-only action map;
+  Workspaces continues to own each profile workspace's one suffix and shows both resolved chords.
+  These global shortcut choices retain the existing iCloud/global preference ownership and do not
+  become profile content. Standard macOS Command-comma/Command-Q and contextual palette keys remain
+  outside the families.
+- **Acceptance:** Existing private-install full-chord data decodes safely into the approved map;
+  changing either family regenerates all derived action/workspace chords, conflict reporting,
+  Command Palette labels and Shortcut Guide observation/content without stale registrations.
+  Focused persistence/conflict/registration/guide/Settings tests, the complete isolated suite and a
+  universal unsigned app build must pass before signed live validation.
+- **Result:** Shortcuts now stores configurable Navigate and Arrange modifier prefixes plus key-only
+  action suffixes. Workspace suffixes derive both switch and move chords, inactive profiles
+  participate in conflict validation, and legacy/private or remotely synced conflicts preserve the
+  workspace while leaving the colliding action available from the Command Palette. Settings, the
+  Command Palette, Carbon registration and the passive Shortcut Guide all resolve the same map. The
+  redundant standalone Cycle Quick Apps binding has been removed while open-Shelf window traversal
+  and explicit palette cycling remain. Decoding drops its retired saved assignments. The unused
+  H/J/K/L shortcut tables, Globe/Fn input monitor and preference, obsolete command-wheel press/hold
+  preferences, and stale user-facing wording have also been removed; stale local values are
+  discarded without contacting iCloud, and their cloud copies are removed only during enabled sync.
+- **Automated evidence:** On 22 August 2026, the two focused preference-migration/cloud-isolation
+  regressions passed; test isolation passed; the complete suite passed with 666 tests and zero
+  failures; `git diff --check` passed; and the unsigned universal Debug app built with both arm64
+  and x86_64 slices. Skeptical rereview reported no P0-P2 finding.
+- **Installed candidate:** After the shortcut cleanup, the signed universal Debug daily build
+  `29117f974de9-dirty` was installed at `/Applications/WindowRanger.app` on 22 August 2026. Its
+  executable and debug dylib matched the built candidate, its Apple Development signature and Team
+  ID `44NAD22AK6` were verified, both `x86_64` and `arm64` slices were present, and the installed path
+  was running. Interaction acceptance remains pending.
+- **Live validation needed:** In the signed daily app, change each family prefix and a few action
+  suffixes, confirm registrations and guide content update immediately, verify workspace conflict
+  messages across active and inactive profiles, and exercise mouse and keyboard editing in
+  Settings. Confirm an unassigned action stays searchable and runnable in the Command Palette, the
+  Shelf still cycles through Previous/Next Window and its explicit palette commands, and no retired
+  Cycle Quick Apps or Globe/Fn setting remains visible.
+
+### WR-067 — Show a passive shortcut guide while navigation modifiers are held
+
+- **Type:** Shortcut discoverability and usability feature
+- **Priority:** P1
+- **Status:** Done — selected option 3, corrected navigation-row spacing, and both modifier-family
+  presentations were accepted in the signed installed app on 22 August 2026. WR-068 now owns the
+  follow-up work to make those families configurable.
+- **Requested:** 22 August 2026.
+- **User-observed context:** Most WindowRanger use follows two related shortcut families:
+  Control-Option for navigation and Option-Command for sending the focused window. Numbered
+  workspaces are the common default, while arbitrary single-letter workspace keys must remain a
+  first-class supported configuration.
+- **Smallest useful outcome:** When either exact modifier family is held, show a passive,
+  click-through, nonactivating Liquid Glass shortcut guide on the interaction display. Use the
+  selected low, wide key-map direction: workspace destinations are the visual anchor and every
+  other valid action using that modifier family is shown compactly. Derive content from the actual
+  conflict-checked shortcut registry and current profile rather than maintaining a second command
+  list. Releasing either required modifier, adding an incompatible modifier, recording shortcuts,
+  entering a protected full-screen session, sleeping, resigning the session, or terminating must
+  dismiss the guide without consuming input or changing focus.
+- **Settings boundary:** Add a dedicated **Shortcut Guide** destination with local enablement, Small,
+  Medium, or Large size, and a nine-position screen anchor. These screen-covering and passive-input
+  preferences stay on this Mac; they do not belong to a reusable profile or iCloud sync payload.
+- **Acceptance:** Control-Option and Option-Command each show only actions that can actually dispatch,
+  numbered and lettered workspaces fit the same visual grammar, and conflicts/runtime registration
+  failures are omitted. The panel never becomes key/main, activates WindowRanger, participates in
+  window cycling, intercepts pointer/keyboard input, or remains stuck after a missed lifecycle
+  transition. Geometry clamps safely on every connected display and at supported sizes/positions.
+  Deterministic modifier/content/geometry/lifecycle tests, native Light/Dark visual comparisons,
+  Settings search/navigation/persistence coverage, the complete non-hosted suite, and a universal
+  app build are required before a signed live modifier/input check.
+- **Automated evidence:** On 22 August 2026, the isolated non-hosted suite passed all 663 tests. The
+  focused guide suite covers exact modifier families, conflicts and registration failures, lettered
+  workspaces, mixed custom directional families, all geometry anchors, stale-session generations,
+  the real passive panel policy, monitor start/stop and local Settings persistence. A follow-up
+  skeptical review added exact Globe/Fn rejection, interaction-display precedence over a pointer on
+  another monitor, and adaptive rows for every supported workspace key plus dense custom actions.
+  The unsigned Debug app built as a universal arm64/x86_64 binary.
+- **Visual evidence:** Native Light/Dark navigation and movement renders were compared beside the
+  selected 1,487 x 1,058 option-3 target at matched state and placement. The final Large view is
+  1,200 x 286 points; the production structure uses real system material/SF Symbols and ships no
+  generated bitmap. `design-qa.md` records the focused and full-view evidence with a passed result.
+- **Remaining boundary:** The diagnostic signed candidate now presents both modifier families and
+  preserves input/focus in live use. The navigation guide's nine-workspace primary row was observed
+  collapsing to its intrinsic width and bunching its keycaps at the left edge; the source candidate
+  now makes that grid consume the available primary band. Install and live-check the corrected
+  spacing, real Liquid Glass, press/release feel and interaction-display placement across the
+  maintainer's multi-monitor layout.
+- **User-observed live defect:** After installing the hardened candidate and enabling the guide on
+  22 August 2026, holding either advertised modifier family showed no visible panel. Preferences
+  confirmed enablement, size and position persisted; the process was running the expected signed
+  dirty universal build and no monitor-start failure was recorded. The diagnostic candidate records
+  only the resolved modifier family, truthful action counts, shortened display identifier and final
+  panel visibility without recording keystrokes. Its logs confirmed both presentation paths and the
+  maintainer subsequently confirmed the guide was visible; the initial absence was not reproduced
+  again, so no unsupported root cause is claimed.
+
+### WR-066 — Split overloaded Settings into clearer destinations
+
+- **Type:** Settings information-architecture improvement
+- **Priority:** P1
+- **Status:** Live validation — the ownership pass is implemented and verified in isolation; a
+  signed install still needs the maintainer's interaction check.
+- **Requested:** 21 August 2026.
+- **Smallest useful outcome:** Keep General focused on permissions and startup; give Sync, Menu Bar,
+  and Focus Border their own destinations; and move recovery, focus-following moves, trackpad
+  switching, and application-unhide compatibility into Behavior. Keep Profiles,
+  Workspaces, Applications, Quick App Shelf, Shortcuts, Command Palette, and Diagnostics as their
+  existing destinations.
+- **Acceptance:** The sidebar and Settings search route every retained control to its clearer
+  destination at wide and compact sizes without changing persistence, syncing, profile ownership,
+  or legacy destination routing. Obsolete standalone Globe/Fn and placement settings are absent and
+  cannot leave an input monitor running from a saved preference. Automated navigation/search coverage, the
+  full non-hosted suite, and the universal app build must pass before signed live validation.
+- **Profile boundary:** This first pass changes navigation and presentation only. A separate follow-
+  up will make profile-owned versus Mac-local settings more visible after this structure is
+  validated.
+- **Profile-ownership follow-up:** Preserve the accepted top-level destinations, but identify the
+  active profile consistently in Workspaces, Applications, and Quick App Shelf; separate reusable
+  profile definitions from this Mac's selection, triggers, and physical display bindings; disclose
+  the exact iCloud boundary; and move local application-specific Focus Border overrides out of the
+  profile-owned Applications editor. Removing or converting a profile App Rule must not delete a
+  Mac-local Focus Border override for the same bundle identifier.
+- **User-observed follow-up:** The first installed split was still too coarse. Sync, Menu Bar, and
+  Focus Border should each stand alone, while the former Globe/Fn and standalone placement settings
+  no longer describe the current Command Palette experience.
+- **Second user-observed follow-up:** Selecting a profile in Settings currently activates it and can
+  rearrange the live desktop merely to inspect or edit its reusable definition. Settings needs an
+  independent edit target. Selecting, creating, or duplicating a library profile must not activate
+  it; activation remains an explicit **Use Profile** action. Editing an inactive profile must update
+  only that reusable definition and its local display bindings, without publishing active engine
+  configuration or changing this Mac's manual/automatic selection state.
+- **Third user-observed follow-up:** Once inactive profiles can be edited safely, Profiles no longer
+  needs to contain every setting related to profiles. Keep it as the reusable library and explicit
+  activation surface; move this Mac's automatic selection rules into **Profile Switching**, and move
+  the selected profile's display roles plus this Mac's physical bindings into **Displays**. Move the
+  selected profile's Unified/Independent mode from Workspaces to Displays, while keeping each
+  workspace's Home Display assignment in Workspaces. Menu-bar icon choices remain in Menu Bar.
+- **Fourth user-observed follow-up:** The ownership and behaviour now feel correct, but the
+  full-width **Editing Profile** strip above Displays, Workspaces, Applications, and Quick App Shelf
+  reads as an awkward second toolbar. Use the selected sidebar-owned visual direction: put the
+  editing-profile selector and active/inactive action in the sidebar immediately above those four
+  destinations, and let every profile-owned page begin directly with its own content.
+- **Fifth user-observed follow-up:** The sidebar direction is accepted, with one final refinement.
+  Make the profile selector the same full-row width as its destination rows; give each reusable
+  profile a selectable icon; show that icon with its name in the selector and profile library; and
+  edit both icon and name directly in Profile Status instead of through a profile-list pencil.
+  Remove the sidebar **Use Profile** row so activation remains a Profile Status action rather than
+  looking like another destination.
+- **Sixth user-observed follow-up:** The signed candidate is functionally correct, but its fixed-
+  width profile selector starts 16 points to the right of the destination-row bounds and is clipped
+  at the sidebar edge. Compensate for the sidebar section's custom-row inset so the selector shares
+  the exact left and right edges used by Displays and the other profile-owned destinations.
+- **Seventh user-observed follow-up:** The aligned signed selector opens an **Editing Profile**
+  submenu before showing the profiles, so it does not behave like a direct drop-down. Keep native
+  picker selection and checkmarks, but render its choices inline in the outer menu so one click
+  exposes the profile list without an intermediate navigation level.
+- **Implemented:** Added General, Sync, Behavior, Menu Bar, and Focus Border destinations; collected
+  reusable feature configuration beneath Configuration and global input surfaces beneath Controls.
+  Settings search opens the owning destination. Saved Appearance selections resolve to Menu Bar,
+  while the legacy Layouts destination resolves to Workspaces. Displays is now a current destination.
+  The Command Palette page now contains only
+  enablement and its shortcut. Legacy wheel preferences remain readable for compatibility, but the
+  app no longer constructs the Globe/Fn controller or installs its event monitor.
+- **Profile-ownership implementation:** The sidebar and Workspaces, Applications, and Quick App
+  Shelf identify the profile being edited. Selecting, creating, or duplicating a library profile now
+  changes only the Settings edit target; **Use Profile** remains the explicit manual activation.
+  The selector is a full-row icon-and-name menu without a second activation row. Profile Status
+  edits the reusable icon and name directly and retains the explicit activation action. Profile
+  icons follow cloning, iCloud persistence, and portable transfer; older documents default safely
+  to the generic profile symbol. Inactive edits persist reusable profile identity, workspaces,
+  applications, shelf, display-role definitions/icons, and local role bindings without changing the
+  live engine or selection state. Profiles is now the reusable library and explicit activation
+  surface; Profile Switching owns this Mac's automatic
+  rules; Displays owns the editing profile's display mode and role definitions plus this Mac's
+  physical bindings. Menu Bar remains the only editor for the editing profile's display-role icon
+  choices. Sync lists the supported synced and always-local
+  categories and explains why a reliable synced-device list is unavailable. Focus Border owns
+  local per-application corner-radius overrides independently of profile App Rules and Quick Apps;
+  removing or converting an App Rule no longer erases that local correction.
+- **Automated evidence:** The revised Settings/navigation selection passes 131 focused tests. The
+  final profile-icon refinement passes 46 focused profile, transfer, and rendering tests, and the
+  complete non-hosted suite passes 649 tests, including inactive-profile editing across workspaces,
+  display mode, App Rules, Quick App Shelf, display roles/icons, and explicit activation. Search and
+  migration coverage includes General, Sync, Behavior, Menu Bar, Focus Border, removal of obsolete
+  controls, and legacy destinations. Production Settings renders pass across 40 wide, compact,
+  Light, Dark, and accessibility-text snapshots; the
+  inactive Profiles render visibly separates the selected **Travel** edit target from the active
+  **Current Setup** profile. The unsigned Debug app builds successfully as a universal
+  `x86_64 arm64` binary.
+- **Profile-ownership automated evidence:** The complete isolated suite passes 644 tests. Coverage
+  includes the new Settings search routes and preservation of a local Focus Border override when an
+  App Rule is removed or converted into a Quick App. The production Settings render passes and
+  captures 34 wide, compact, Light, Dark, and accessibility-text reference screens, including the
+  profile context, split profile ownership, Sync inventory, Menu Bar role icons, Focus Border
+  overrides, and Quick App Shelf. The unsigned Debug app builds successfully as a universal
+  `x86_64 arm64` binary.
+- **Ownership-redistribution automated evidence:** Profiles is limited to the reusable library and
+  explicit activation; Profile Switching owns this Mac's automatic rules; Displays owns the edited
+  profile's Unified/Independent mode and role definitions plus local physical bindings; Workspaces
+  retains workspace definitions, layouts, and Home Display assignments. Settings search and legacy
+  routing follow those owners. The complete isolated suite passes 647 tests, including a 24-test
+  profile selection run proving that automatic rule edits and Resume Automatic can change the live
+  profile without replacing an inactive Settings edit target. Production Settings renders pass for
+  Profiles, Profile Switching, Displays, and Workspaces, and the unsigned Debug app builds as a
+  universal `x86_64 arm64` binary.
+- **Sidebar profile-context implementation:** The full-row editing-profile selector now lives once
+  in the sidebar immediately above Displays, Workspaces, Applications, and Quick App Shelf. It shows
+  the profile icon and name without an activation-like row beneath it. The four destinations begin
+  directly with their own content, and Menu Bar derives its profile-owned display-role icon section
+  from the same edit target without duplicating the selector or activation action.
+- **Sidebar profile-context automated evidence:** The complete isolated suite passes 649 tests.
+  Production Settings renders pass in Light, Dark, active-profile, inactive-profile, and minimum-
+  window states, including compact Quick App Shelf and Profile Status icon/name coverage; the final
+  attached-reference comparison found no actionable P0-P2 issue. The unsigned Debug app builds
+  successfully as a universal `x86_64 arm64` binary.
+- **Superseded sidebar profile-context installed evidence:** With explicit maintainer approval, signed
+  universal Debug candidate `ba41222bb796-dirty` is installed and running from
+  `/Applications/WindowRanger.app` as process `32198`. The installed executable, debug dylib, and
+  preview dylib match the built candidate exactly; strict signature validation, Apple Development
+  authority, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source marker,
+  `x86_64 arm64` architectures, running path, and CDHash
+  `818e149c8a267a090cf17b0668dffbfbaa5137d9` were verified. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Selector-alignment automated evidence:** The custom menu now compensates for the sidebar
+  section's 16-point content inset while retaining the established 220-point destination-row
+  width. The native production Settings snapshot passes, and the live-reference/corrected-render
+  comparison confirms matching left and right bounds with Displays in Dark appearance.
+- **Superseded selector-alignment installed evidence:** With explicit maintainer approval, the corrected signed
+  universal Debug candidate `ba41222bb796-dirty` is installed and running from
+  `/Applications/WindowRanger.app` as process `39349`. The installed executable, debug dylib, and
+  preview dylib match the built candidate exactly; strict signature validation, Apple Development
+  authority, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source marker,
+  `x86_64 arm64` architectures, running path, and CDHash
+  `f1ddff740409b22095cf3259b54d2781e0006ef9` were verified. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Direct-menu automated evidence:** The selector's nested picker now uses SwiftUI's inline picker
+  style, retaining native selection/checkmark semantics while placing its profile choices directly
+  in the outer menu. Test isolation, the native closed-state production snapshot, and the unsigned
+  universal Debug build pass. The open-menu interaction remains signed live validation.
+- **Direct-menu installed evidence:** With explicit maintainer approval, signed universal Debug
+  candidate `ba41222bb796-dirty` is installed and running from `/Applications/WindowRanger.app` as
+  process `43117`. The installed executable, debug dylib, and preview dylib match the built candidate
+  exactly; strict signature validation, Apple Development authority, Team ID `44NAD22AK6`, canonical
+  bundle identifier, embedded source marker, `x86_64 arm64` architectures, running path, and CDHash
+  `06d672dcd4d6e4d059171ade742b49e7dd18767f` were verified. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Profile-ownership installed evidence:** With explicit maintainer approval, signed universal
+  Debug candidate `ba41222bb796-dirty` is installed and running from
+  `/Applications/WindowRanger.app` as process `43469`. The installed executable and Debug/preview
+  dylibs match the built candidate exactly; strict signature validation, Apple Development
+  authority, Team ID `44NAD22AK6`, canonical bundle identifier, embedded revision, `x86_64 arm64`
+  architectures, running path, and CDHash `e8f601032e717b69b9ad1057e83a05f07c882515`
+  were verified. The previous daily build remains recoverable at
+  `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Superseded installed evidence:** With explicit maintainer approval, the first signed universal Debug candidate
+  `ba41222bb796-dirty` is installed and running from `/Applications/WindowRanger.app` as process
+  `97787`. The built and installed executable, debug dylib, and preview dylib match exactly; the
+  Apple Development signature, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source
+  marker, `x86_64 arm64` architectures, running path, and CDHash
+  `420c4839e826912b9ec17833c4a2a44320773439` were verified. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Revised installed evidence:** With explicit maintainer approval, signed universal Debug candidate
+  `ba41222bb796-dirty` is installed and running from `/Applications/WindowRanger.app` as process
+  `13055`. The built and installed executable, debug dylib, and preview dylib match exactly; the
+  Apple Development signature, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source
+  marker, `x86_64 arm64` architectures, running path, and CDHash
+  `3347c05a2273770b3eba321bf1d9b9ec3e93f99d` were verified. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Ownership-redistribution installed evidence:** With explicit maintainer approval, signed
+  universal Debug candidate `ba41222bb796-dirty` is installed and running from
+  `/Applications/WindowRanger.app` as process `51209`. The installed executable, debug dylib, and
+  preview dylib match the built candidate exactly; strict signature validation, Apple Development
+  authority, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source marker,
+  `x86_64 arm64` architectures, running path, and CDHash
+  `1b3fdad193559f32972fb6303440132c00e89e38` were verified. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Live evidence:** On 21 August 2026, the maintainer accepted the revised section structure as
+  better and easier to navigate in the signed installed app.
+- **Live validation remaining:** Confirm in the installed direct-menu candidate that the aligned
+  full-row selector opens profile choices immediately and changes only the edit target; profile
+  icon/name editing and the Profile Status **Use
+  Profile** action work as expected; long profile names and the supported minimum window remain
+  usable; and pointer/keyboard/VoiceOver interaction opens the native menu reliably. Recheck that
+  Profiles stays a quiet library and that Menu Bar role icons, Displays,
+  Workspaces, Applications, and Quick App Shelf all follow the selected edit target without
+  restoring the removed page-level context strip.
+
+### WR-065 — Put the current workspace layout at the top of Command Palette
+
+- **Type:** Command Palette interaction improvement
+- **Priority:** P1
+- **Status:** Up-to-Quick-Actions and search-hiding follow-up installed; signed live keyboard and
+  pointer validation pending.
+- **User-observed:** Removing the Command Wheel also removed the easiest discoverable way to switch
+  a workspace back to Freeform. Tiled and Accordion have default shortcuts, but Freeform does not.
+- **Installed regression observed:** The first signed candidate changes to Freeform and immediately
+  exposes its valid Placement Halo, but choosing a position does nothing until the palette is closed
+  and reopened. Diagnostics confirm the layout and halo succeed, then the placement is rejected as
+  `stale-context`; reopening captures the settled post-layout token and the same placement succeeds.
+- **Second installed regression observed:** The corrected candidate reaches placement dispatch, but
+  an open Quick App Shelf can restore its selected shelf window before the queued placement commits.
+  Diagnostics then show `freeform-placement-rejected` with `runtime-context-changed`. A rapid series
+  of layout choices can also leave the visible placement command carrying an older token even when
+  the controller's surrounding context has already settled.
+- **Third installed regression observed:** The second-correction candidate still rejects placement
+  as `stale-context`. Fresh diagnostics show palette dismissal briefly reports no focused AX window
+  before revalidation, so the validation request loses the preserved managed anchor before it can
+  dispatch. The same session also records a separate, genuine `toggle-drop-down-app` hotkey event
+  while the palette is open; the unexpected Shelf presentation did not originate from palette
+  selection or placement dispatch.
+- **Escape regression observed:** The latest installed candidate fixes immediate post-layout
+  placement, but Escape can bring a retained Shelf window to the foreground even when another app
+  preceded the palette. Diagnostics show `presented-shelf-focus-restored` selecting the startup-
+  retained Ghostty session. Shelf restoration must require the preceding application's PID to match
+  the presented Shelf window; otherwise dismissal returns to the actual preceding app.
+- **Smallest useful outcome:** Show a compact Quick Actions block directly beneath Command Palette
+  search. Stack the current workspace's Freeform/Tiled/Accordion control above a focused-window
+  placement row, keeping their different scopes explicit and the command list primary. Omit the
+  placement row when no truthful placement exists. Tab or Up from the first command enters Quick
+  Actions; Up/Down moves between rows, Left/Right changes layout only on the workspace row, Return
+  opens placement, and Escape returns to command search/results. Starting a search hides Quick
+  Actions and an open Halo until the query is cleared.
+- **Terminology boundary:** Use **Freeform**, not Floating. Freeform is the workspace layout;
+  Floating remains the separate per-window override.
+- **Acceptance:** Quick Actions target the palette's current interaction workspace and focused
+  window without conflating them. Pointer and keyboard paths remain available, command-result
+  Up/Down behavior remains unchanged, typing resumes filtering, and unavailable placement is absent
+  rather than disabled. Layout dispatches through the shared typed command path, remains usable
+  through repeated changes, refreshes palette context after each accepted change, and still rejects
+  or closes on an unrelated stale context. Accessibility labels, diagnostics, tests, the production
+  offscreen render, and the universal app build must pass before signed live validation.
+- **Implemented:** A compact Quick Actions block stacks the current interaction workspace's
+  Freeform/Tiled/Accordion control above a conditional Place focused window row. Tab or Up from the
+  first command enters the block at the appropriate edge; Up/Down moves between rows, Left/Right
+  changes layout only on the workspace row, and Return opens placement from its row. Escape restores
+  command handling. A nonempty query hides Quick Actions and collapses an open Halo until cleared.
+  Pointer selection and keyboard changes keep the palette open, while an unavailable placement row
+  is omitted. Accepted layout changes refresh the palette's
+  captured context, while unrelated workspace/context changes retain the existing fail-closed
+  dismissal behavior. A post-layout action is checked against a fresh engine context and placement
+  tokens are rebound only when the exact window, workspace, layout, display topology, and profile
+  remain unchanged. Placement commits are enqueued before palette dismissal restores Quick App or
+  fallback focus. The latest correction validates and queues placement while the palette's preserved
+  target is still authoritative, treats a transient nil AX focus as palette-owned, then dismisses
+  the palette and restores focus in serial order. Escape restores a presented Shelf window only
+  when its application genuinely preceded the palette, not merely because a Shelf session remains
+  retained.
+- **Automated evidence:** The complete 643-test non-hosted suite passes with focused Quick Action
+  availability/navigation, Up-from-first-result entry, nonempty-search hiding, layout-only
+  horizontal movement, settled/older-token rebinding,
+  changed-window/layout rejection, deferred placement focus restoration, palette-owned transient
+  nil-focus coverage, and preceding-app-gated Shelf
+  restoration, alongside test-isolation, project-regeneration, shell-syntax, and diff checks. The
+  production-view offscreen snapshots render available, omitted-placement, and placement-only Quick
+  Actions, and the expanded Placement Halo follows its row without obscuring the layout control. The
+  actual unsigned Debug app target builds successfully as a universal `x86_64 arm64` binary.
+- **Current installed evidence:** With explicit maintainer approval, the compact Quick Actions
+  signed universal Debug candidate `9828628787b7-dirty` is installed and running from
+  `/Applications/WindowRanger.app` as process `84435`. The built and installed executable, debug
+  dylib, and preview dylib match exactly; the Apple Development signature, Team ID `44NAD22AK6`,
+  canonical bundle identifier, embedded source marker, `x86_64 arm64` architectures, running path,
+  and CDHash `28f07ff8da7488d3266c086bc98352d3908a42f5` were verified. The immediately
+  preceding candidate remains recoverable at `/Applications/.WindowRanger.previous` without an
+  `.app` suffix. Live validation of Up-from-first-result and search-hiding behavior remains pending.
+- **Sixth superseded installed evidence:** With explicit maintainer approval, the first compact
+  Quick Actions signed universal Debug candidate `9828628787b7-dirty` was installed and running
+  from `/Applications/WindowRanger.app` as process `80874`. The built and installed executable,
+  debug dylib, and preview dylib matched exactly; the Apple Development signature, Team ID
+  `44NAD22AK6`, canonical bundle identifier, embedded source marker, `x86_64 arm64` architectures,
+  running path, and CDHash `a13376eadc3cf5d11ccfac1472177cff15b438b4` were verified. This
+  candidate predated the Up-to-Quick-Actions and search-hiding follow-up.
+- **Fifth superseded installed evidence:** With explicit maintainer approval, the Escape-correction signed
+  universal Debug candidate `9828628787b7-dirty` is installed and running from
+  `/Applications/WindowRanger.app`. The built and installed executable, debug dylib, and preview
+  dylib match exactly; the Apple Development signature, Team ID `44NAD22AK6`, canonical bundle
+  identifier, embedded source marker, both architectures, running path, and CDHash
+  `dabcc8d451bbadf7328d96d2a1879e307d3966d6` were verified. The immediately preceding candidate
+  remains recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Fourth superseded installed evidence:** With explicit maintainer approval, the placement-
+  correction signed universal Debug candidate `9828628787b7-dirty` is installed and running from
+  `/Applications/WindowRanger.app`. The built and installed executable, debug dylib, and preview
+  dylib match exactly; the Apple Development signature, Team ID `44NAD22AK6`, canonical bundle
+  identifier, embedded source marker, both architectures, running path, and CDHash
+  `a47a5af7464f99fc548a24c80195b3b09d002b1b` were verified. The immediately preceding candidate
+  remains recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix. Live use
+  accepts immediate post-layout placement but exposed the Escape Shelf restoration regression, so
+  this candidate is not acceptance evidence for the Escape correction.
+- **Third superseded installed evidence:** With explicit maintainer approval, the second-correction
+  signed universal Debug candidate `9828628787b7-dirty` is installed and running from
+  `/Applications/WindowRanger.app`. The built and installed executable, debug dylib, and preview
+  dylib match exactly; the Apple Development signature, Team ID `44NAD22AK6`, canonical bundle
+  identifier, embedded source marker, both architectures, running path, and CDHash
+  `041e8ad33b1c4cc96f9dbd200f1906c9cb0d5543` were verified. The immediately preceding candidate
+  remains recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix. Live use
+  exposed the transient nil-focus rejection described above, so this candidate is not acceptance
+  evidence for the latest correction.
+- **Second superseded installed evidence:** With explicit maintainer approval, the corrected signed
+  universal Debug candidate `9828628787b7-dirty` is installed and running from
+  `/Applications/WindowRanger.app`. The built and installed executable and debug dylib match exactly;
+  the Apple Development signature, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source
+  marker, both architectures, running path, and CDHash
+  `fd584316919bbb2760a2f8fbb2ce65bbbe257a43` were verified. The superseded signed candidate is
+  retained at `/Applications/.WindowRanger.previous` without an `.app` suffix. Live diagnostics show
+  that this candidate can dispatch placement and still lose its anchor when shelf focus is restored
+  first, so it is not acceptance evidence for the second correction.
+- **Superseded installed evidence:** With explicit maintainer approval, the first signed universal
+  Debug candidate `9828628787b7-dirty` is installed and running from
+  `/Applications/WindowRanger.app`. The built and installed executable and debug dylib match exactly;
+  the Apple Development signature, Team ID `44NAD22AK6`, canonical bundle identifier, embedded source
+  marker, both architectures, running path, and CDHash
+  `aec1bef572f7e3477526921aac988f515499c3a7` were verified. The previous daily copy remains
+  recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix. Live use exposed
+  the stale post-layout placement token described above, so this candidate is not acceptance
+  evidence for the correction.
+- **Live validation remaining:** In the signed installed app, verify pointer selection plus entry,
+  repeated changes, and exit with Up, Left/Right, Down, Return, and Escape across Freeform, Tiled,
+  and Accordion workspaces. Confirm the palette stays open, its selected segment follows accepted
+  engine state, an immediately selected Freeform/Tiled placement runs without reopening, results
+  remain usable, and an external workspace/context change still closes it.
+
+### WR-063 — Give Quick App Shelf its own shared Settings section
+
+- **Type:** Settings and profile-model change
+- **Priority:** P1
+- **Status:** Live validation
+- **Requested:** 21 August 2026.
+- **Smallest useful outcome:** Move Quick App Shelf out of the per-application inspector into its
+  own Settings sidebar destination. The shelf owns edge, size, and animation once per profile;
+  assigned apps retain only stable bundle identity, display name, and order.
+- **Migration boundary:** Existing profiles deterministically adopt the first configured entry's
+  presentation values as the shared shelf settings. Legacy single-Quick-App profiles retain their
+  exact behavior. Machine-local selected identity never influences synced migration.
+- **Acceptance:** Add, remove, and reorder shelf apps in the dedicated section; no app row exposes
+  contradictory presentation controls. Profile clone, export/import, iCloud validation, legacy
+  decoding, and Settings search preserve or discover the shared shelf configuration. Automated
+  tests and a universal app build pass before signed live validation.
+- **Implemented:** Quick App Shelf is now a dedicated Settings destination. Edge, size, and
+  animation are one profile-owned presentation applied uniformly to every ordered shelf entry;
+  Applications now lists only normal App Rules. Existing profiles migrate the first configured
+  entry's presentation, and portable transfer plus iCloud validation preserve the shared setting.
+- **Automated evidence:** The complete 630-test non-hosted suite, test-isolation check, project
+  regeneration, shell syntax checks, and an unsigned universal Debug app build pass. Signed-app
+  visual and interaction validation remains.
+- **Installed evidence:** With explicit maintainer approval, the signed universal Debug candidate
+  for `9828628787b7-dirty` is installed and running from `/Applications/WindowRanger.app`. The built
+  and installed executables match exactly, and the Apple Development signature, Team ID
+  `44NAD22AK6`, bundle identity, embedded revision, both architectures, running path, and CDHash
+  `3c4b90d922bd58d588cb00895a5607c1ada81218` were verified. Dedicated Settings layout and live
+  profile migration/interaction remain for maintainer validation.
+
+### WR-064 — Multi-window Quick App Shelf presentation
+
+- **Type:** Feature / interaction design
+- **Priority:** P1
+- **Status:** Implementation and automated verification complete; signed live validation pending.
+- **Requested:** 21 August 2026.
+- **Direction:** Add shelf-owned Accordion and Carousel presentation styles plus a bounded visible
+  app count. Cycling changes the selected entry while preserving the shelf as one coordinated
+  presentation group.
+- **Semantics:** Accordion overlaps the visible entries inside the shelf bounds with the
+  selected window foremost and a fixed reachable edge for its neighbours. Carousel lays the visible
+  entries out as non-overlapping cards along the edge's cross-axis, centred around the selected
+  entry. The visible count is capped by the four-entry shelf.
+- **Decision:** On 21 August 2026, the maintainer chose the non-launching option: visible count is a
+  maximum over configured apps that already expose one unambiguous available window. Opening or
+  cycling may still launch the explicitly selected app through the existing bounded path, but never
+  launches neighbours merely to fill the group. Proceed with the proposed Accordion overlap and
+  non-overlapping Carousel geometry.
+- **Acceptance boundary after decision:** Exact ownership remains per window; ambiguous apps fail
+  closed without disturbing valid neighbours; focus, palette cycling, application Hide ownership,
+  profile changes, native-tab replacement, sleep/wake, and removal restore every member safely.
+- **Implemented:** The dedicated shelf presentation now includes Carousel and Accordion styles plus
+  a one-to-four visible maximum. The engine resolves only already available, unambiguous neighbour
+  windows, gives each member exact session and confirmed Hide/Unhide ownership, lays the group out
+  within focus-border-aware bounds, and keeps the selected window raised. Choosing or cycling to an
+  already visible member promotes it without collapsing the shelf; moving outside the visible group
+  safely transitions to the new selection. Navigate-arrow focus treats the presented group as a
+  contained temporary workspace, promotes the nearest visible member in that direction, and wraps
+  to the opposite visible edge without falling through to a managed window. Perpendicular arrows
+  remain contained. Comma/period retains ordered wrapping. Legacy
+  profiles default to the existing one-window
+  Carousel behavior, and profile clone/export/import/iCloud paths preserve and validate both fields.
+- **Automated evidence:** The complete 633-test non-hosted suite passes alongside test-isolation,
+  project-regeneration, shell-syntax, and diff checks. Focused coverage exercises group membership,
+  both geometries, Settings persistence/search, legacy defaults, transfer round-trip, and invalid
+  synced/imported counts. The unsigned Debug app builds successfully as a universal `x86_64 arm64`
+  binary. Signed multi-app interaction and lifecycle validation remain pending.
+- **Directional-focus automated evidence:** Focused Shelf and keyboard coverage passes 45 tests,
+  including spatial selection and edge containment for Carousel and Accordion on all four Shelf
+  edges, one-window containment, and zero-presented transition containment. The complete isolated
+  suite passes 678 tests with zero failures, the unsigned universal Debug build succeeds for
+  `x86_64 arm64`, diff checks pass, and the post-fix review reports no remaining P0-P2 finding.
+- **Directional-focus installed candidate:** With explicit maintainer approval, signed universal
+  Debug candidate `29117f974de9-dirty` is installed and running from
+  `/Applications/WindowRanger.app` as process `77182`. The built and installed executable and debug
+  dylib match exactly; the Apple Development signature, Team ID `44NAD22AK6`, canonical bundle
+  identifier, both architectures, running path, and CDHash
+  `7cf259ed82964e757aef0558ad7174e07d521fe4` were verified. This installed candidate includes the
+  in-place Left-arrow correction. The previous daily build remains
+  recoverable at `/Applications/.WindowRanger.previous`.
+- **Directional-focus live defect:** The installed two-window Accordion Shelf accepted Right but
+  every Left press was contained as `no-shelf-target`. Diagnostics confirmed shortcut dispatch was
+  correct: directional promotion unnecessarily reconciled the selected-centred visible group after
+  every selection, moving the new target back to the first slot. The source now raises and focuses
+  an already-presented arrow target in place without changing Shelf membership or frames. Focused
+  regression coverage verifies Right followed by Left against fixed two-window Carousel and
+  Accordion geometry; ordered comma/period cycling still owns off-group rotation.
+- **Post-defect automated evidence:** Test isolation and diff checks pass; the complete non-hosted
+  suite passes 679 tests with zero failures; the unsigned universal Debug app builds successfully
+  for `x86_64 arm64`; and skeptical review reports no remaining P0-P2 finding. The corrected signed
+  candidate is now installed; the Left-arrow interaction remains in live validation.
+- **Installed evidence:** With explicit maintainer approval, the signed universal Debug candidate
+  `9828628787b7-dirty` is installed and running from `/Applications/WindowRanger.app`. The built and
+  installed executable and debug dylib match exactly; the Apple Development signature, Team ID
+  `44NAD22AK6`, canonical bundle identifier, embedded source marker, both architectures, running
+  path, and CDHash `c28d7a9b89ad18ce0f29d3786d50dd897f4946fe` were verified. The previous
+  daily copy remains recoverable at `/Applications/.WindowRanger.previous` without an `.app` suffix.
+- **Live validation remaining:** Exercise both styles at all four edges with two to four shelf apps;
+  verify visible and off-group cycling, spatial arrow focus and edge wrapping with the palette
+  both open and closed, palette focus retention, ambiguous neighbours, a closed selected app, focus
+  loss, style/count changes while open, profile changes, native-tab replacement, sleep/wake,
+  focus-border toggling, and safe restoration before moving this item to Done.
 
 ### WR-057 — Preserve each window through partial post-login recovery
 
@@ -294,7 +1038,8 @@ smallest useful outcome and acceptance boundary.
   complete non-hosted suite and universal Debug build pass; final behavior remains in Live validation
   until a signed build is exercised with a real assigned app on at least two profiles.
 - **Implemented:** Profile storage/clone/transfer, a unified Applications settings list where each
-  bundle has either normal App Rules or the one optional Quick App, explicit confirmed conversion
+  bundle has either normal App Rules or one entry in the ordered Quick App Shelf, explicit confirmed
+  conversion
   between modes, visible list summaries, an intent-led mode selector, shortcut and behavior context,
   a focused Quick App presentation editor, safer destructive actions, profile context, and a useful
   empty state. Application removal uses the one consistent delete control in the Applications list.
@@ -625,6 +1370,58 @@ smallest useful outcome and acceptance boundary.
   preview were working or visibly improved, then explicitly closed the pass for merge.
 
 ## Live validation
+
+### WR-061 — Quick App Shelf
+
+- **Type:** Feature / corrective overhaul
+- **Priority:** P1
+- **Status:** Implementation and automated verification complete; signed live validation pending.
+- **Source:** `docs/omarchy-inspired-ideas.md`
+- **User-observed:** The first signed shelf candidate exposed multiple Quick Apps in Settings and the
+  Command Palette, but the feature was only partly functional and did not behave as a coherent
+  shelf. In the corrected candidate, opening the Command Palette still closed a presented shelf
+  entry, and the established Previous/Next Window shortcuts did not traverse an open shelf.
+- **Review evidence:** The superseded implementation had two engine configuration publishers,
+  reordered configured entries to store runtime selection, canceled an unchanged secondary-app
+  launch on publication echo, made three/four-item cycling unstable, allowed transition generations
+  to strand exact sessions, and made palette actions labelled Show toggle. A final independent diff
+  review also found and prompted corrections for repeated cycling during one hide and an inactive
+  shelf entry's native-tab handoff invalidating another entry's active animation.
+- **Implemented:** One stable profile-owned ordered shelf now drives the engine. Per-profile selected
+  identity is machine-local and never reorders synced configuration. Direct palette selection is
+  idempotent Show; the established shortcut is Toggle selected; Previous/Next cycle from the latest
+  desired selection. Launch/show/hide/switch intents are serialized, focus loss during Show queues a
+  hide, screen suspension cancels transient intent while retaining exact recovery ownership, startup
+  ignores persisted non-shelf sessions, and native-tab rebind invalidates animation only for the
+  active or presented entry. Settings provides labelled add choices, visible reordering, per-entry
+  editing/removal, a four-entry cap, and shelf-aware copy. Palette activation now holds an explicit
+  focus lease so an open shelf remains visible; Previous/Next Window route through the shelf while
+  it is presented, palette-owned previews retain keyboard focus, and palette dismissal focuses the
+  currently presented entry.
+- **Safety boundary:** Existing exact-window ownership, launch watchdog, ambiguity rejection,
+  application hide/unhide confirmation, focus, placement, focus-border clearance, lifecycle
+  recovery, and fail-closed admission remain authoritative. The engine never guesses among multiple
+  windows or releases application-hidden ownership without confirmed recovery.
+- **Automated evidence:** Fifteen focused shelf tests cover stable three/four-entry cycling,
+  per-profile selection, legacy migration, persisted exact-session ownership, closed-secondary
+  launch echo, idempotent direct Show, rapid transition policy, repeated in-flight cycling, and
+  cross-entry native-tab handoff, plus palette focus preservation and open-shelf window-cycle
+  routing. Related transfer and iCloud tests reject oversized or duplicate
+  shelf data instead of silently trimming it. `./scripts/verify-local-ci.sh --quick` passes test
+  isolation, script checks, project regeneration, and all 626 non-hosted tests. The actual app target
+  also builds as an unsigned universal arm64/x86_64 Debug app. Final independent review reports no
+  remaining actionable issue in the combined diff.
+- **Live validation remaining:** Validate palette opening and Previous/Next Window shelf previews
+  alongside two profiles, a closed secondary app, repeated cycling/direct selection, focus-loss
+  hide, native-tab replacement, and lock/wake before moving this item to Done.
+- **Current installed candidate:** The signed universal Debug candidate `9828628787b7-dirty` was
+  installed and launched from `/Applications/WindowRanger.app` on 21 August 2026; its bundle
+  identifier, signature, source marker, architectures, and running executable path were verified.
+  After the palette focus-lease correction, a fresh approved install was matched byte-for-byte to
+  the just-built executable before live handoff. User interaction evidence remains pending.
+- **Previous candidate:** The superseded daily copy is retained at the repository-defined
+  non-launchable backup path. Its 619 passing tests did not exercise the failing interaction
+  sequences and are not acceptance evidence for this overhaul.
 
 ### WR-052 — Move the application identity under AppRanger
 
@@ -1074,20 +1871,6 @@ design notes, but every active candidate must map back to a work item here or be
   Grid/Columns are candidate Tiled presets, while Focus, Presentation, and Transient need explicit
   behavior and lifecycle boundaries rather than a parallel workspace-mode system.
 
-### WR-061 — Quick App Shelf
-
-- **Type:** Feature research
-- **Status:** Needs decision
-- **Source:** `docs/omarchy-inspired-ideas.md`
-- **Current foundation:** `WR-050` supplies one profile-aware Quick App with exact-window ownership,
-  launch, focus, placement, hiding, recovery, and ambiguity handling. The existing menu-bar workspace
-  application shelf is a separate workspace preview and not this feature.
-- **Smallest useful outcome:** A small explicit set of summonable Quick App windows, with the existing
-  shortcut opening the most recently used entry and a discoverable selector/cycle path.
-- **Decision:** Shelf size and profile ownership, exact window versus application fallback, MRU and
-  cycling behavior, add/remove interaction, launch policy, and how restart, tab replacement,
-  ambiguity, sleep, display changes, and focus-border clearance extend from the single Quick App.
-
 ### WR-019 — Separate the local Xcode development identity
 
 - **Type:** Development workflow / signing
@@ -1116,6 +1899,25 @@ design notes, but every active candidate must map back to a work item here or be
 
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
+
+### WR-073 — Publish WindowRanger 0.1.0 Beta 7 as the Sparkle upgrade baseline
+
+- **Type:** Beta release preparation
+- **Status:** Ready
+- **Requested:** 2026-08-23 after acceptance of the Shelf, Settings, shortcut, onboarding, Game Mode,
+  Pause Mode, and Sparkle integration work.
+- **Smallest useful outcome:** Publish signed, notarized universal Beta `0.1.0-beta.7` as public
+  build `8` with the Sparkle feed URL, Beta channel, and release public key embedded. Keep the live
+  appcast absent so the maintainer can install this exact GitHub artifact as the older side of the
+  first real updater test.
+- **Acceptance boundary:** Central `develop` owns the single build-8 allocation; the reviewed tree is
+  promoted without force-updating `release/0.1.0`; stable Xcode produces the Developer ID-signed,
+  notarized and stapled DMG/ZIP; the tag, five GitHub assets and round-trip provenance match exactly;
+  the GitHub release is a prerelease. Do not generate or deploy the appcast in this stage.
+- **Automated evidence:** The Sparkle implementation passes all 691 non-hosted tests, the release
+  ledger and two-release/stale-publication/atomic-failure checks, Release analysis, and a universal
+  app build. The exact release-commit verification, signing, notarization, packaging, public asset
+  checks, and maintainer installation remain pending.
 
 ### WR-012 — Clean build and package verification
 
@@ -1167,9 +1969,16 @@ second copy of that checklist.
   - keep Beta and Dev packaging out of the initial Homebrew acceptance boundary unless separately
     approved.
 - **Completed groundwork:** Public Beta distribution, local-first signing/notarization, release
-  provenance, protected integration/stable branches and protected release tags.
-- **Remaining scope:** Accessibility migration guidance, Sparkle, Homebrew Stable distribution, and
-  update/rollback failure handling.
+  provenance, protected integration/stable branches and protected release tags. Sparkle 2.8.1 is
+  integrated behind a hard Dev-build exclusion with local Stable/Beta selection, manual and opt-in
+  automatic checks, an append-only build-number ledger, signed-archive appcast tooling, guarded
+  initial-feed/monotonic-feed preflight, central allocation recheck, atomic feed staging, and
+  deterministic two-release/stale-publication/runtime tests (691-test full suite and universal app
+  build on 23 August 2026).
+- **Remaining scope:** Provision the release EdDSA key, create and host the first appcast, validate
+  older-to-newer packaged updates plus cancellation/failure/Beta-to-Stable/rollback behavior, then
+  decide when automatic checking can default on. Accessibility migration guidance, Homebrew Stable
+  distribution, and update/rollback failure handling also remain.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done

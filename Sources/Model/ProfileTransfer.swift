@@ -25,22 +25,61 @@ struct PortableProfileArchive: Codable, Equatable, Sendable {
 struct PortableProfileDefinition: Codable, Equatable, Sendable {
     let id: UUID
     var name: String
+    var iconStyle: ProfileIconStyle
     var workspaces: [PortableWorkspaceDefinition]
     var displayMode: MultiDisplayMode
     var displayRoles: [ProfileDisplayRole]
     var workspaceRoleAssignments: [UUID: UUID]
     var appRules: [AppRule]
     var dropDownApp: DropDownAppConfiguration?
+    var quickApps: [DropDownAppConfiguration]
+    var quickAppShelfPresentation: QuickAppShelfPresentation
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, iconStyle, workspaces, displayMode, displayRoles, workspaceRoleAssignments, appRules
+        case dropDownApp, quickApps, quickAppShelfPresentation
+    }
 
     init(profile: WindowManagerProfile) {
         id = profile.id
         name = profile.name
+        iconStyle = profile.iconStyle
         workspaces = profile.workspaces.map(PortableWorkspaceDefinition.init)
         displayMode = profile.displayMode
         displayRoles = profile.displayRoles
         workspaceRoleAssignments = profile.workspaceRoleAssignments
         appRules = profile.appRules
         dropDownApp = profile.dropDownApp
+        quickApps = profile.quickApps
+        quickAppShelfPresentation = profile.quickAppShelfPresentation
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        iconStyle = try container.decodeIfPresent(
+            ProfileIconStyle.self,
+            forKey: .iconStyle
+        ) ?? .profile
+        workspaces = try container.decode([PortableWorkspaceDefinition].self, forKey: .workspaces)
+        displayMode = try container.decode(MultiDisplayMode.self, forKey: .displayMode)
+        displayRoles = try container.decode([ProfileDisplayRole].self, forKey: .displayRoles)
+        workspaceRoleAssignments = try container.decode([UUID: UUID].self, forKey: .workspaceRoleAssignments)
+        appRules = try container.decode([AppRule].self, forKey: .appRules)
+        dropDownApp = try container.decodeIfPresent(DropDownAppConfiguration.self, forKey: .dropDownApp)
+        let decoded = try container.decodeIfPresent([DropDownAppConfiguration].self, forKey: .quickApps)
+        let decodedQuickApps = decoded ?? dropDownApp.map { [$0] } ?? []
+        quickAppShelfPresentation = if decoded == nil, let dropDownApp {
+            QuickAppShelfPresentation(dropDownApp)
+        } else {
+            try container.decodeIfPresent(
+                QuickAppShelfPresentation.self,
+                forKey: .quickAppShelfPresentation
+            ) ?? decodedQuickApps.first.map(QuickAppShelfPresentation.init) ?? QuickAppShelfPresentation()
+        }
+        quickApps = decodedQuickApps.map(quickAppShelfPresentation.applying)
+        dropDownApp = quickApps.first ?? dropDownApp
     }
 }
 
@@ -261,7 +300,40 @@ enum ProfileTransferCodec {
                     "more than \(maximumAppRulesPerProfile) application rules in one profile"
                 )
             }
-            if let dropDownApp = profile.dropDownApp {
+            guard profile.quickApps.count <= QuickAppShelfPolicy.maximumCount else {
+                throw ProfileTransferError.limitExceeded(
+                    "more than \(QuickAppShelfPolicy.maximumCount) Quick Apps in one profile"
+                )
+            }
+            guard QuickAppShelfPolicy.normalized(profile.quickApps) == profile.quickApps else {
+                throw ProfileTransferError.invalidValue(
+                    "Quick Apps must be distinct normalized configurations"
+                )
+            }
+            guard profile.quickApps.allSatisfy({
+                profile.quickAppShelfPresentation.applying(to: $0) == $0
+            }) else {
+                throw ProfileTransferError.invalidValue(
+                    "Quick Apps must use the shared shelf presentation"
+                )
+            }
+            let shelfHeightRange = ClosedRange(
+                uncheckedBounds: (
+                    DropDownAppConfiguration.minimumHeightFraction,
+                    DropDownAppConfiguration.maximumHeightFraction
+                )
+            )
+            guard profile.quickAppShelfPresentation.heightFraction.isFinite,
+                  shelfHeightRange.contains(profile.quickAppShelfPresentation.heightFraction)
+            else {
+                throw ProfileTransferError.invalidValue("Quick App Shelf size")
+            }
+            guard (1...QuickAppShelfPolicy.maximumCount).contains(
+                profile.quickAppShelfPresentation.visibleCount
+            ) else {
+                throw ProfileTransferError.invalidValue("Quick App Shelf visible count")
+            }
+            for dropDownApp in profile.quickApps {
                 let bundleIdentifier = dropDownApp.bundleIdentifier
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !bundleIdentifier.isEmpty,
@@ -269,14 +341,8 @@ enum ProfileTransferCodec {
                       bundleIdentifier.rangeOfCharacter(from: .newlines) == nil
                 else { throw ProfileTransferError.invalidValue("Quick App bundle identifier") }
                 try validateLabel(dropDownApp.displayName, field: "Quick App display name")
-                let heightRange = ClosedRange(
-                    uncheckedBounds: (
-                        DropDownAppConfiguration.minimumHeightFraction,
-                        DropDownAppConfiguration.maximumHeightFraction
-                    )
-                )
                 guard dropDownApp.heightFraction.isFinite,
-                      heightRange.contains(dropDownApp.heightFraction)
+                      shelfHeightRange.contains(dropDownApp.heightFraction)
                 else {
                     throw ProfileTransferError.invalidValue("Quick App size")
                 }
@@ -390,9 +456,9 @@ enum ProfileTransferCodec {
                     return (remappedWorkspaceID, remappedRoleID)
                 }
             )
-            let quickAppBundleIdentifier = source.dropDownApp?.bundleIdentifier.lowercased()
+            let quickAppBundleIdentifiers = Set(source.quickApps.map { $0.bundleIdentifier.lowercased() })
             let rules = try source.appRules.filter { rule in
-                rule.bundleIdentifier.lowercased() != quickAppBundleIdentifier
+                !quickAppBundleIdentifiers.contains(rule.bundleIdentifier.lowercased())
             }.map { rule -> AppRule in
                 var remapped = rule
                 if let workspaceID = rule.assignedWorkspaceID {
@@ -406,12 +472,15 @@ enum ProfileTransferCodec {
             let profile = WindowManagerProfile(
                 id: profileID,
                 name: resultingName,
+                iconStyle: source.iconStyle,
                 workspaces: workspaces,
                 displayMode: source.displayMode,
                 displayRoles: roles,
                 workspaceRoleAssignments: assignments,
                 appRules: rules,
-                dropDownApp: source.dropDownApp
+                dropDownApp: source.quickApps.first,
+                quickApps: source.quickApps,
+                quickAppShelfPresentation: source.quickAppShelfPresentation
             )
             guard profile.normalized() == profile else {
                 throw ProfileTransferError.invalidValue("profile normalization would discard data")

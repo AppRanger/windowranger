@@ -1046,8 +1046,11 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private let stateModel: MenuBarStateModel
     private let settingsStore: SettingsStore
     private let settingsCommandRequestRouter: SettingsCommandRequestRouter
+    private let updateController: UpdateController?
     private let diagnostics: DiagnosticLogger
     private let tiledPlacementUndoManager: UndoManager?
+    private let isPauseModeEnabled: () -> Bool
+    private let setPauseMode: (Bool) -> Void
     private var presentationMode: MenuBarPresentationMode
     private var workspaceLabelMode: MenuBarWorkspaceLabelMode
     private var displayIconConfiguration: MenuBarDisplayIconConfiguration
@@ -1063,6 +1066,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private var isInvalidated = false
     private var menuPresentationRequestGate = MenuBarMenuPresentationRequestGate()
     private var settingsStatusMenuOpenGate = SettingsStatusMenuOpenGate()
+    private var checkForUpdatesAfterMenuCloses = false
     private var shelfGeneration: UInt64 = 0
     private var pendingShelfTarget: MenuBarHitTarget?
     private var pendingShelfAnchorFrame: CGRect?
@@ -1086,19 +1090,25 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         stateModel: MenuBarStateModel,
         settingsStore: SettingsStore,
         settingsCommandRequestRouter: SettingsCommandRequestRouter,
+        updateController: UpdateController? = nil,
         diagnostics: DiagnosticLogger,
         tiledPlacementUndoManager: UndoManager? = nil,
         initialMode: MenuBarPresentationMode,
         initialWorkspaceLabelMode: MenuBarWorkspaceLabelMode = .name,
         initialDisplayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic,
-        initialHighlightColor: MenuBarHighlightColor = .default
+        initialHighlightColor: MenuBarHighlightColor = .default,
+        isPauseModeEnabled: @escaping () -> Bool = { false },
+        setPauseMode: @escaping (Bool) -> Void = { _ in }
     ) {
         self.engine = engine
         self.stateModel = stateModel
         self.settingsStore = settingsStore
         self.settingsCommandRequestRouter = settingsCommandRequestRouter
+        self.updateController = updateController
         self.diagnostics = diagnostics
         self.tiledPlacementUndoManager = tiledPlacementUndoManager
+        self.isPauseModeEnabled = isPauseModeEnabled
+        self.setPauseMode = setPauseMode
         presentationMode = initialMode
         workspaceLabelMode = initialWorkspaceLabelMode
         displayIconConfiguration = initialDisplayIconConfiguration
@@ -1390,6 +1400,11 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         _ target: MenuBarHitTarget?,
         anchorFrame: CGRect?
     ) {
+        guard !isPauseModeEnabled() else {
+            cancelPendingShelfPresentation()
+            dismissApplicationShelf()
+            return
+        }
         guard case let .workspace(workspaceID, _) = target,
               let target,
               let anchorFrame
@@ -1618,6 +1633,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         case .openMenu:
             requestMenuPresentation(relativeTo: menuAnchor)
         case let .switchWorkspace(workspaceID, _):
+            guard !isPauseModeEnabled() else { return }
             engine.switchToWorkspace(workspaceID)
         }
     }
@@ -1693,6 +1709,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         supportSectionVisibleForCurrentOpen = false
         focusedWindowDiagnosticReport = nil
         hostView?.setMenuPresented(false)
+        if checkForUpdatesAfterMenuCloses {
+            checkForUpdatesAfterMenuCloses = false
+            DispatchQueue.main.async { [weak self] in
+                self?.updateController?.checkForUpdates()
+            }
+        }
     }
 
     private func rebuildMenu() {
@@ -1717,6 +1739,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             profilesMenu.addItem(item)
         }
         switchProfile.submenu = profilesMenu
+        switchProfile.isEnabled = !isPauseModeEnabled()
         appMenu.addItem(switchProfile)
 
         if settingsStore.manualPinnedProfileID != nil {
@@ -1725,8 +1748,18 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
                 action: #selector(resumeAutomaticProfileSelection)
             )
             resume.image = symbol("arrow.triangle.2.circlepath")
+            resume.isEnabled = !isPauseModeEnabled()
             appMenu.addItem(resume)
         }
+
+        let paused = isPauseModeEnabled()
+        let pauseMode = actionMenuItem(
+            title: paused ? "Resume WindowRanger" : "Pause WindowRanger",
+            action: #selector(togglePauseMode)
+        )
+        pauseMode.image = symbol(paused ? "play.circle" : "pause.circle")
+        pauseMode.state = paused ? .on : .off
+        appMenu.addItem(pauseMode)
 
         if presentationMode == .full {
             let snapshot = stateModel.presentation(
@@ -1747,6 +1780,15 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         }
 
         appMenu.addItem(.separator())
+        if let updateController {
+            let updates = actionMenuItem(
+                title: "Check for Updates…",
+                action: #selector(checkForUpdatesFromStatusMenu)
+            )
+            updates.image = symbol("arrow.triangle.2.circlepath")
+            updates.isEnabled = updateController.canCheckForUpdates
+            appMenu.addItem(updates)
+        }
         let settings = actionMenuItem(
             title: "Settings…",
             action: #selector(openSettingsFromStatusMenu)
@@ -1853,6 +1895,10 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         )
     }
 
+    @objc private func checkForUpdatesFromStatusMenu() {
+        checkForUpdatesAfterMenuCloses = true
+    }
+
     private func performPendingSettingsCommandFromStatusMenu() {
         guard !isInvalidated else {
             settingsCommandRequestRouter.cancelPendingRequest()
@@ -1878,6 +1924,13 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func resumeAutomaticProfileSelection() {
         settingsStore.resumeAutomaticProfileSelection()
+    }
+
+    @objc private func togglePauseMode() {
+        let next = !isPauseModeEnabled()
+        DispatchQueue.main.async { [weak self] in
+            self?.setPauseMode(next)
+        }
     }
 
     @objc private func undoTiledPlacement() {

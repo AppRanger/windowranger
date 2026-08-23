@@ -1,6 +1,5 @@
 import AppKit
 import Carbon
-import Combine
 import SwiftUI
 import XCTest
 
@@ -275,7 +274,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertTrue(menu.omittedDefinitionItemIDs.contains(RadialTopLevelItemID.resize.rawValue))
     }
 
-    func testCurrentAeroSpaceDerivedBindingsLeaveDefaultWheelChordUnused() {
+    func testApprovedFamilyBindingsLeaveDefaultPaletteChordUnused() {
         let configuration = HotKeyConfiguration()
         XCTAssertEqual(
             configuration.chord(for: .commandWheel),
@@ -588,7 +587,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(hold.selectedItem?.command, .resetAllWindows)
         XCTAssertEqual(hold.selectedItemDetail, "Click or press Return to confirm")
         XCTAssertTrue(hold.highlightedItemRequiresExplicitActivation)
-        XCTAssertNil(hold.highlightedCommandItem(), "Globe/Fn release must not run the global reset")
+        XCTAssertNil(hold.highlightedCommandItem(), "Release must not run the global reset")
 
         hold.activate(try! XCTUnwrap(hold.selectedItem))
         XCTAssertEqual(commits, [.resetAllWindows], "An explicit click keeps the recovery command available")
@@ -702,550 +701,6 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             early.handle(.released, style: .holdToShow, holdDelay: 0.2),
             [.cancelThreshold(reason: "released-before-presentation")]
         )
-    }
-
-    func testGlobeFnQuickTapPassesThroughWithoutOpeningOrSuppressingNativeAction() {
-        var state = GlobeFnGestureStateMachine()
-        XCTAssertEqual(
-            state.handle(
-                .functionChanged(isDown: true, otherModifiersDown: false),
-                holdDelay: 0.2
-            ),
-            [.scheduleThreshold(generation: 1, delay: 0.2)]
-        )
-        XCTAssertEqual(
-            state.handle(
-                .functionChanged(isDown: false, otherModifiersDown: false),
-                holdDelay: 0.2
-            ),
-            [.cancelThreshold(reason: "quick-tap")]
-        )
-        XCTAssertEqual(
-            state.handle(.nativeGlobeKey(isDown: true), holdDelay: 0.2),
-            []
-        )
-        XCTAssertEqual(
-            state.handle(.nativeGlobeKey(isDown: false), holdDelay: 0.2),
-            []
-        )
-        XCTAssertEqual(state.phaseName, "idle")
-    }
-
-    func testGlobeFnThresholdOrderingAndReleaseCommitAreDeterministic() {
-        var below = GlobeFnGestureStateMachine()
-        _ = below.handle(
-            .functionChanged(isDown: true, otherModifiersDown: false),
-            holdDelay: 0.2
-        )
-        XCTAssertEqual(
-            below.handle(
-                .functionChanged(isDown: false, otherModifiersDown: false),
-                holdDelay: 0.2
-            ),
-            [.cancelThreshold(reason: "quick-tap")]
-        )
-        XCTAssertEqual(below.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2), [])
-
-        var exact = GlobeFnGestureStateMachine()
-        _ = exact.handle(
-            .functionChanged(isDown: true, otherModifiersDown: false),
-            holdDelay: 0.2
-        )
-        XCTAssertEqual(
-            exact.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2),
-            [.activateHold(generation: 1)]
-        )
-        XCTAssertEqual(
-            exact.handle(
-                .functionChanged(isDown: false, otherModifiersDown: false),
-                holdDelay: 0.2
-            ),
-            [
-                .releaseHold(generation: 1),
-                .scheduleSuppressionExpiry(
-                    generation: 1,
-                    delay: GlobeFnGestureStateMachine.nativeSuppressionWindow
-                ),
-            ]
-        )
-        XCTAssertEqual(
-            exact.handle(.nativeGlobeKey(isDown: true), holdDelay: 0.2),
-            [.suppressCurrentEvent]
-        )
-        XCTAssertEqual(
-            exact.handle(.nativeGlobeKey(isDown: false), holdDelay: 0.2),
-            [.suppressCurrentEvent]
-        )
-        XCTAssertEqual(exact.phaseName, "idle")
-    }
-
-    func testGlobeFnChordAndModifierOrderingNeverActivateTheWheel() {
-        for input in [
-            GlobeFnCompetingInput.key,
-            .escape,
-            .mouseButton,
-            .systemDefined,
-            .modifier,
-        ] {
-            var state = GlobeFnGestureStateMachine()
-            _ = state.handle(
-                .functionChanged(isDown: true, otherModifiersDown: false),
-                holdDelay: 0.2
-            )
-            XCTAssertEqual(
-                state.handle(.competingInput(input), holdDelay: 0.2),
-                [.cancelThreshold(reason: "competing-\(input.rawValue)")]
-            )
-            XCTAssertEqual(state.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2), [])
-            XCTAssertEqual(
-                state.handle(
-                    .functionChanged(isDown: false, otherModifiersDown: false),
-                    holdDelay: 0.2
-                ),
-                []
-            )
-        }
-
-        var modifierFirst = GlobeFnGestureStateMachine()
-        XCTAssertEqual(
-            modifierFirst.handle(
-                .functionChanged(isDown: true, otherModifiersDown: true),
-                holdDelay: 0.2
-            ),
-            []
-        )
-        XCTAssertEqual(
-            modifierFirst.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2),
-            []
-        )
-    }
-
-    func testGlobeFnCompetingInputAfterActivationCancelsWithoutCommit() {
-        var state = GlobeFnGestureStateMachine()
-        _ = state.handle(
-            .functionChanged(isDown: true, otherModifiersDown: false),
-            holdDelay: 0.2
-        )
-        _ = state.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2)
-        XCTAssertEqual(
-            state.handle(.competingInput(.key), holdDelay: 0.2),
-            [
-                .cancelThreshold(reason: "competing-key"),
-                .cancelHold(reason: "competing-key"),
-            ]
-        )
-        XCTAssertEqual(
-            state.handle(
-                .functionChanged(isDown: false, otherModifiersDown: false),
-                holdDelay: 0.2
-            ),
-            []
-        )
-        XCTAssertEqual(state.handle(.nativeGlobeKey(isDown: true), holdDelay: 0.2), [])
-    }
-
-    func testGlobeFnAcceptedHoldAllowsWheelPointerInputUntilRelease() {
-        var state = GlobeFnGestureStateMachine()
-        _ = state.handle(
-            .functionChanged(isDown: true, otherModifiersDown: false),
-            holdDelay: 0.2
-        )
-        XCTAssertEqual(
-            state.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2),
-            [.activateHold(generation: 1)]
-        )
-
-        XCTAssertEqual(state.handle(.competingInput(.mouseButton), holdDelay: 0.2), [])
-        XCTAssertEqual(state.handle(.competingInput(.systemDefined), holdDelay: 0.2), [])
-        XCTAssertEqual(state.phaseName, "held")
-        XCTAssertEqual(
-            state.handle(
-                .functionChanged(isDown: false, otherModifiersDown: false),
-                holdDelay: 0.2
-            ),
-            [
-                .releaseHold(generation: 1),
-                .scheduleSuppressionExpiry(
-                    generation: 1,
-                    delay: GlobeFnGestureStateMachine.nativeSuppressionWindow
-                ),
-            ]
-        )
-    }
-
-    func testGlobeFnNormalizerIgnoresDuplicateFlagsAndRecognizesEveryChordClass() {
-        var normalizer = GlobeFnEventNormalizer()
-        XCTAssertEqual(
-            normalizer.normalize(.flagsChanged(functionDown: true, otherModifiersDown: false)),
-            .functionChanged(isDown: true, otherModifiersDown: false)
-        )
-        XCTAssertNil(
-            normalizer.normalize(.flagsChanged(functionDown: true, otherModifiersDown: false))
-        )
-        XCTAssertEqual(
-            normalizer.normalize(.flagsChanged(functionDown: true, otherModifiersDown: true)),
-            .competingInput(.modifier)
-        )
-        XCTAssertEqual(
-            normalizer.normalize(.keyChanged(isDown: true, keyCode: 123, isRepeat: false)),
-            .competingInput(.key)
-        )
-        XCTAssertEqual(
-            normalizer.normalize(.keyChanged(isDown: true, keyCode: 53, isRepeat: false)),
-            .competingInput(.escape)
-        )
-        XCTAssertEqual(normalizer.normalize(.mouseButtonDown), .competingInput(.mouseButton))
-        XCTAssertEqual(normalizer.normalize(.systemDefined), .competingInput(.systemDefined))
-        XCTAssertEqual(
-            normalizer.normalize(.keyChanged(
-                isDown: true,
-                keyCode: GlobeFnEventNormalizer.nativeGlobeActionKeyCode,
-                isRepeat: false
-            )),
-            .nativeGlobeKey(isDown: true)
-        )
-    }
-
-    func testGlobeFnLifecycleCancellationAndRapidGesturesCannotCommitStaleGeneration() {
-        var state = GlobeFnGestureStateMachine()
-        _ = state.handle(
-            .functionChanged(isDown: true, otherModifiersDown: false),
-            holdDelay: 0.2
-        )
-        XCTAssertEqual(
-            state.handle(.cancel(reason: "system-will-sleep"), holdDelay: 0.2),
-            [.cancelThreshold(reason: "system-will-sleep")]
-        )
-        XCTAssertEqual(state.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2), [])
-
-        _ = state.handle(
-            .functionChanged(isDown: true, otherModifiersDown: false),
-            holdDelay: 0.2
-        )
-        XCTAssertEqual(state.latestGeneration, 2)
-        XCTAssertEqual(state.handle(.thresholdElapsed(generation: 1), holdDelay: 0.2), [])
-        XCTAssertEqual(
-            state.handle(.thresholdElapsed(generation: 2), holdDelay: 0.2),
-            [.activateHold(generation: 2)]
-        )
-        XCTAssertEqual(
-            state.handle(.cancel(reason: "profile-transition"), holdDelay: 0.2),
-            [
-                .cancelThreshold(reason: "profile-transition"),
-                .cancelHold(reason: "profile-transition"),
-            ]
-        )
-    }
-
-    @MainActor
-    func testGlobeFnRuntimeUsesInjectedSchedulerAndExistingHoldPipeline() {
-        let radial = TestGlobeFnRadialTrigger()
-        let scheduler = TestGlobeFnScheduler()
-        let monitor = TestGlobeFnEventMonitor()
-        let controller = GlobeFnHoldActivationController(
-            radialTrigger: radial,
-            scheduler: scheduler,
-            monitorFactory: { eventHandler, interruptionHandler in
-                monitor.eventHandler = eventHandler
-                monitor.interruptionHandler = interruptionHandler
-                return monitor
-            }
-        )
-
-        controller.update(enabled: true, holdDelay: 0.2)
-        XCTAssertEqual(monitor.startCount, 1)
-        XCTAssertFalse(monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false)))
-        XCTAssertEqual(scheduler.pendingCount, 1)
-        scheduler.runNext()
-        XCTAssertEqual(radial.beginRecognizedHoldCount, 1)
-        XCTAssertEqual(monitor.filteringChanges.last, true)
-
-        XCTAssertFalse(monitor.send(.flagsChanged(functionDown: false, otherModifiersDown: false)))
-        XCTAssertEqual(radial.events, [.released])
-        XCTAssertTrue(monitor.send(.keyChanged(
-            isDown: true,
-            keyCode: GlobeFnEventNormalizer.nativeGlobeActionKeyCode,
-            isRepeat: false
-        )))
-        XCTAssertTrue(monitor.send(.keyChanged(
-            isDown: false,
-            keyCode: GlobeFnEventNormalizer.nativeGlobeActionKeyCode,
-            isRepeat: false
-        )))
-        XCTAssertEqual(monitor.filteringChanges.last, false)
-        XCTAssertEqual(radial.cancelReasons, [])
-    }
-
-    @MainActor
-    func testPublishedGlobeFnEnableUsesEmittedWillSetValue() {
-        final class Probe: ObservableObject {
-            @Published var globeFnEnabled = false
-        }
-
-        let probe = Probe()
-        let radial = TestGlobeFnRadialTrigger()
-        let monitor = TestGlobeFnEventMonitor()
-        let controller = GlobeFnHoldActivationController(
-            radialTrigger: radial,
-            scheduler: TestGlobeFnScheduler(),
-            monitorFactory: { eventHandler, interruptionHandler in
-                monitor.eventHandler = eventHandler
-                monitor.interruptionHandler = interruptionHandler
-                return monitor
-            }
-        )
-        var resolved: [GlobeFnRuntimeSettings] = []
-        var cancellable: AnyCancellable? = probe.$globeFnEnabled
-            .dropFirst()
-            .sink { emittedValue in
-                // During this callback @Published's source property still contains its old value.
-                XCTAssertFalse(probe.globeFnEnabled)
-                let settings = GlobeFnRuntimeSettings(
-                    radialMenuEnabled: true,
-                    globeFnEnabled: emittedValue,
-                    isShortcutRecording: false,
-                    holdDelay: 0.2
-                )
-                resolved.append(settings)
-                controller.update(enabled: settings.isEnabled, holdDelay: settings.holdDelay)
-            }
-
-        probe.globeFnEnabled = true
-
-        XCTAssertEqual(resolved, [GlobeFnRuntimeSettings(
-            radialMenuEnabled: true,
-            globeFnEnabled: true,
-            isShortcutRecording: false,
-            holdDelay: 0.2
-        )])
-        XCTAssertEqual(monitor.startCount, 1, "The live enable transition must install the monitor")
-        withExtendedLifetime(cancellable) {}
-        cancellable = nil
-    }
-
-    @MainActor
-    func testGlobeFnRuntimeQuickTapChordAndOrdinaryShortcutNeverOpen() {
-        let radial = TestGlobeFnRadialTrigger()
-        let scheduler = TestGlobeFnScheduler()
-        let monitor = TestGlobeFnEventMonitor()
-        let controller = GlobeFnHoldActivationController(
-            radialTrigger: radial,
-            scheduler: scheduler,
-            monitorFactory: { eventHandler, interruptionHandler in
-                monitor.eventHandler = eventHandler
-                monitor.interruptionHandler = interruptionHandler
-                return monitor
-            }
-        )
-        controller.update(enabled: true, holdDelay: 0.2)
-
-        _ = monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
-        _ = monitor.send(.flagsChanged(functionDown: false, otherModifiersDown: false))
-        scheduler.runAll()
-        XCTAssertEqual(radial.beginRecognizedHoldCount, 0)
-        XCTAssertFalse(monitor.send(.keyChanged(
-            isDown: true,
-            keyCode: GlobeFnEventNormalizer.nativeGlobeActionKeyCode,
-            isRepeat: false
-        )))
-
-        _ = monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
-        _ = monitor.send(.keyChanged(isDown: true, keyCode: 123, isRepeat: false))
-        scheduler.runAll()
-        XCTAssertEqual(radial.beginRecognizedHoldCount, 0)
-        _ = monitor.send(.flagsChanged(functionDown: false, otherModifiersDown: false))
-
-        _ = monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
-        controller.ordinaryShortcutWillBegin()
-        scheduler.runAll()
-        XCTAssertEqual(radial.beginRecognizedHoldCount, 0)
-    }
-
-    @MainActor
-    func testGlobeFnRuntimeCancellationMonitorRetryAndDisabledSettingAreSafe() {
-        let radial = TestGlobeFnRadialTrigger()
-        let scheduler = TestGlobeFnScheduler()
-        let firstMonitor = TestGlobeFnEventMonitor(startResults: [false])
-        let secondMonitor = TestGlobeFnEventMonitor(startResults: [true])
-        let thirdMonitor = TestGlobeFnEventMonitor(startResults: [true])
-        var monitors = [firstMonitor, secondMonitor, thirdMonitor]
-        let controller = GlobeFnHoldActivationController(
-            radialTrigger: radial,
-            scheduler: scheduler,
-            monitorFactory: { eventHandler, interruptionHandler in
-                let monitor = monitors.removeFirst()
-                monitor.eventHandler = eventHandler
-                monitor.interruptionHandler = interruptionHandler
-                return monitor
-            }
-        )
-        var issues: [String?] = []
-        controller.runtimeIssueChanged = { issues.append($0) }
-
-        controller.update(enabled: true, holdDelay: 0.2)
-        XCTAssertNotNil(issues.last!)
-        controller.retryMonitor(reason: "wake")
-        XCTAssertNil(issues.last!)
-
-        _ = secondMonitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
-        scheduler.runNext()
-        XCTAssertEqual(radial.beginRecognizedHoldCount, 1)
-        controller.cancel(reason: "system-will-sleep")
-        XCTAssertEqual(radial.cancelReasons.last, "globe-fn-system-will-sleep")
-
-        secondMonitor.interrupt(.timedOut)
-        XCTAssertGreaterThanOrEqual(secondMonitor.stopCount, 1)
-        XCTAssertNotNil(issues.last!)
-        XCTAssertEqual(secondMonitor.filteringChanges.last, false)
-
-        controller.retryMonitor(reason: "explicit-toggle")
-        XCTAssertEqual(thirdMonitor.startCount, 1)
-        XCTAssertNil(issues.last!)
-
-        thirdMonitor.interrupt(.disabledByUserInput)
-        XCTAssertGreaterThanOrEqual(thirdMonitor.stopCount, 1)
-        XCTAssertNotNil(issues.last!)
-
-        controller.update(enabled: false, holdDelay: 0.2)
-        XCTAssertFalse(controller.receive(.flagsChanged(
-            functionDown: true,
-            otherModifiersDown: false
-        )))
-    }
-
-    func testGlobeFnNativeEventFilterOnlySuppressesSyntheticGlobeKeyWhenArmed() {
-        XCTAssertFalse(GlobeFnNativeEventFilterPolicy.shouldSuppress(
-            keyCode: 0,
-            nativeGlobeFilteringEnabled: true
-        ))
-        XCTAssertFalse(GlobeFnNativeEventFilterPolicy.shouldSuppress(
-            keyCode: GlobeFnEventNormalizer.nativeGlobeActionKeyCode,
-            nativeGlobeFilteringEnabled: false
-        ))
-        XCTAssertTrue(GlobeFnNativeEventFilterPolicy.shouldSuppress(
-            keyCode: GlobeFnEventNormalizer.nativeGlobeActionKeyCode,
-            nativeGlobeFilteringEnabled: true
-        ))
-    }
-
-    func testForegroundGameInputProtectionCoversBorderlessDeclaredGames() {
-        XCTAssertFalse(ForegroundGameInputProtectionPolicy.shouldSuppressOptionalInputMonitors(
-            isDeclaredGameApplicationActive: false,
-            hasNativeFullscreenGameSession: false
-        ))
-        XCTAssertTrue(ForegroundGameInputProtectionPolicy.shouldSuppressOptionalInputMonitors(
-            isDeclaredGameApplicationActive: true,
-            hasNativeFullscreenGameSession: false
-        ))
-        XCTAssertTrue(ForegroundGameInputProtectionPolicy.shouldSuppressOptionalInputMonitors(
-            isDeclaredGameApplicationActive: false,
-            hasNativeFullscreenGameSession: true
-        ))
-    }
-
-    @MainActor
-    func testGlobeFnRuntimeAcceptedHoldHasNoFixedDurationAndReleasesNormally() {
-        let radial = TestGlobeFnRadialTrigger()
-        let scheduler = TestGlobeFnScheduler()
-        let monitor = TestGlobeFnEventMonitor()
-        let controller = GlobeFnHoldActivationController(
-            radialTrigger: radial,
-            scheduler: scheduler,
-            monitorFactory: { handler, interruption in
-                monitor.eventHandler = handler
-                monitor.interruptionHandler = interruption
-                return monitor
-            }
-        )
-
-        controller.update(enabled: true, holdDelay: 0.2)
-        _ = monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
-        XCTAssertEqual(scheduler.pendingDelays, [0.2])
-
-        scheduler.runNext()
-        XCTAssertEqual(radial.beginRecognizedHoldCount, 1)
-        XCTAssertEqual(scheduler.pendingCount, 0)
-        scheduler.runAll()
-
-        XCTAssertEqual(radial.cancelReasons, [])
-        XCTAssertFalse(
-            monitor.send(.flagsChanged(functionDown: false, otherModifiersDown: false))
-        )
-        XCTAssertEqual(radial.events, [.released])
-    }
-
-    @MainActor
-    func testGlobeFnRuntimeAcceptedHoldKeepsWheelOpenForMouseClickEvents() {
-        let radial = TestGlobeFnRadialTrigger()
-        let scheduler = TestGlobeFnScheduler()
-        let monitor = TestGlobeFnEventMonitor()
-        let controller = GlobeFnHoldActivationController(
-            radialTrigger: radial,
-            scheduler: scheduler,
-            monitorFactory: { handler, interruption in
-                monitor.eventHandler = handler
-                monitor.interruptionHandler = interruption
-                return monitor
-            }
-        )
-
-        controller.update(enabled: true, holdDelay: 0.2)
-        _ = monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
-        scheduler.runNext()
-        XCTAssertEqual(radial.beginRecognizedHoldCount, 1)
-
-        XCTAssertFalse(monitor.send(.mouseButtonDown))
-        XCTAssertFalse(monitor.send(.systemDefined))
-        XCTAssertEqual(radial.cancelReasons, [])
-
-        XCTAssertFalse(monitor.send(.flagsChanged(
-            functionDown: false,
-            otherModifiersDown: false
-        )))
-        XCTAssertEqual(radial.events, [.released])
-    }
-
-    @MainActor
-    func testGlobeFnDiagnosticsRecordOnlyDeduplicatedSafeStateReasons() {
-        let radial = TestGlobeFnRadialTrigger()
-        let scheduler = TestGlobeFnScheduler()
-        let monitor = TestGlobeFnEventMonitor()
-        let sink = MemoryDiagnosticSink()
-        let controller = GlobeFnHoldActivationController(
-            radialTrigger: radial,
-            scheduler: scheduler,
-            diagnostics: DiagnosticLogger(
-                buildMode: .debug,
-                sink: sink,
-                sessionIdentifier: "fn-test"
-            ),
-            monitorFactory: { handler, interruption in
-                monitor.eventHandler = handler
-                monitor.interruptionHandler = interruption
-                return monitor
-            }
-        )
-
-        controller.cancel(reason: "idle-refresh")
-        XCTAssertTrue(sink.text.isEmpty)
-        controller.update(enabled: true, holdDelay: 0.2)
-        _ = monitor.send(.flagsChanged(functionDown: true, otherModifiersDown: false))
-        _ = monitor.send(.keyChanged(isDown: true, keyCode: 123, isRepeat: false))
-
-        XCTAssertTrue(sink.text.contains("globe-fn-trigger"))
-        XCTAssertTrue(sink.text.contains("configuration-updated"))
-        XCTAssertTrue(sink.text.contains("monitor-installed"))
-        XCTAssertTrue(sink.text.contains("monitor-awaiting-fn-transition"))
-        XCTAssertTrue(sink.text.contains("fn-transition-observed"))
-        XCTAssertTrue(sink.text.contains("hold-not-accepted"))
-        XCTAssertTrue(sink.text.contains("competing-key"))
-        XCTAssertFalse(sink.text.localizedCaseInsensitiveContains("keycode"))
-        XCTAssertFalse(sink.text.localizedCaseInsensitiveContains("key-code"))
-        XCTAssertFalse(sink.text.localizedCaseInsensitiveContains("window-title"))
-
-        monitor.interrupt(.timedOut)
-        XCTAssertTrue(sink.text.contains("monitor-stopped-fail-open"))
-        XCTAssertFalse(sink.text.contains("monitor-reenabled"))
     }
 
     func testCarbonPressReleaseRoutingDoesNotRunOrdinaryCommandsTwice() {
@@ -1477,6 +932,30 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         ), .resurfacedExistingWindow)
         XCTAssertEqual(surface.surfacedFrames.count, 2)
         XCTAssertEqual(coordinator.assignedContext, context)
+    }
+
+    @MainActor
+    func testSettingsExternalPresentationDismissesExactSurfaceAndClearsAssignment() {
+        let displays = settingsDisplays()
+        let coordinator = SettingsWindowCoordinator(displayProvider: { displays })
+        let surface = TestSettingsWindowSurface(
+            frame: CGRect(x: 100, y: 100, width: 900, height: 640)
+        )
+        coordinator.attach(surface: surface)
+        let context = SettingsSurfaceContext(
+            workspaceID: workspaceA.id,
+            displayIdentifier: "main",
+            displayMode: .unified,
+            resolutionReason: "test"
+        )
+        coordinator.requestOpen(context: context, openSettings: { true })
+
+        coordinator.dismissForExternalPresentation()
+
+        XCTAssertEqual(surface.externalDismissCount, 1)
+        XCTAssertFalse(surface.isVisible)
+        XCTAssertNil(coordinator.assignedContext)
+        XCTAssertFalse(coordinator.isHiddenForWorkspace)
     }
 
     @MainActor
@@ -1839,6 +1318,16 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(model.highlightedSettingID, "radial-shortcut")
     }
 
+    func testSettingsSearchFindsTheRepeatSetupAction() {
+        let result = SettingsCatalog.search(
+            "restart setup wizard",
+            includeDebug: false
+        ).first
+
+        XCTAssertEqual(result?.id, "run-setup-again")
+        XCTAssertEqual(result?.category, .general)
+    }
+
     @MainActor
     func testSettingsRepeatedSelectionDoesNotRepublishUnchangedNavigationState() {
         let model = SettingsNavigationModel(defaults: isolatedDefaults(), includeDebug: false)
@@ -1856,8 +1345,8 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     @MainActor
-    func testLegacyDisplayAndLayoutDestinationsMigrateToWorkspaces() {
-        for legacy in [SettingsCategory.displays, .layouts] {
+    func testLegacySettingsDestinationsMigrateToTheirCurrentOwners() {
+        for legacy in [SettingsCategory.layouts] {
             let defaults = isolatedDefaults()
             defaults.set(legacy.rawValue, forKey: "settings.selectedCategory.v1")
             let model = SettingsNavigationModel(defaults: defaults, includeDebug: false)
@@ -1869,13 +1358,33 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         }
         let available = SettingsCatalog.availableCategories(includeDebug: false)
         XCTAssertTrue(available.contains(.workspaces))
-        XCTAssertFalse(available.contains(.displays))
+        XCTAssertTrue(available.contains(.displays))
         XCTAssertFalse(available.contains(.layouts))
+
+        let displayDefaults = isolatedDefaults()
+        displayDefaults.set("displays", forKey: "settings.selectedCategory.v1")
+        let displayModel = SettingsNavigationModel(defaults: displayDefaults, includeDebug: false)
+        XCTAssertEqual(displayModel.selectedCategory, .displays)
+        displayModel.select(.displays)
+        XCTAssertEqual(displayModel.selectedCategory, .displays)
+
+        let appearanceDefaults = isolatedDefaults()
+        appearanceDefaults.set("appearance", forKey: "settings.selectedCategory.v1")
+        let appearanceModel = SettingsNavigationModel(
+            defaults: appearanceDefaults,
+            includeDebug: false
+        )
+        XCTAssertEqual(appearanceModel.selectedCategory, .menuBar)
+        XCTAssertEqual(
+            appearanceDefaults.string(forKey: "settings.selectedCategory.v1"),
+            "menuBar"
+        )
+        XCTAssertFalse(available.contains(.appearance))
     }
 
     func testWorkspaceSearchRoutesConfigurationAndDynamicIdentityToWorkspaces() {
         for query in [
-            "Independent Displays", "home display", "orientation", "inner gaps",
+            "home display", "orientation", "inner gaps",
             "accordion padding", "reset this workspace", "workspace shortcuts",
         ] {
             XCTAssertEqual(
@@ -1893,6 +1402,97 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(dynamic?.title, "Writing")
         XCTAssertEqual(dynamic?.category, .workspaces)
         XCTAssertNotNil(dynamic?.workspaceID)
+    }
+
+    func testProfileSwitchingAndDisplaysSearchRouteToTheirOwnSections() {
+        for query in ["profile name", "profile icon", "editing profile identity"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .profiles,
+                "Expected Profiles routing for \(query)"
+            )
+        }
+        for query in ["manual profile pin", "docked topology", "automatic selection"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .profileSwitching,
+                "Expected Profile Switching routing for \(query)"
+            )
+        }
+        for query in ["Independent Displays", "monitor fingerprint role", "display workspace behavior"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .displays,
+                "Expected Displays routing for \(query)"
+            )
+        }
+    }
+
+    func testSettingsSearchRoutesTopLevelSectionsSeparately() {
+        for query in ["Accessibility permission", "Open at login"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .general,
+                "Expected General routing for \(query)"
+            )
+        }
+        XCTAssertEqual(
+            SettingsCatalog.search("iCloud settings sync", includeDebug: false).first?.category,
+            .sync
+        )
+        XCTAssertEqual(
+            SettingsCatalog.search("modifier held cheat sheet", includeDebug: false).first?.category,
+            .shortcutGuide
+        )
+        XCTAssertEqual(
+            SettingsCatalog.search("lettered workspace guide", includeDebug: false).first?.category,
+            .shortcutGuide
+        )
+        for query in ["Menu bar presentation", "workspace key label", "profile display role icons"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .menuBar,
+                "Expected Menu Bar routing for \(query)"
+            )
+        }
+        for query in ["focus ring border", "application corner radius overrides"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .focusBorder
+            )
+        }
+        for query in ["Bring windows back on screen", "four finger trackpad", "hidden compatibility"] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .behavior,
+                "Expected Behavior routing for \(query)"
+            )
+        }
+
+        let available = SettingsCatalog.availableCategories(includeDebug: false)
+        XCTAssertTrue(available.contains(.general))
+        XCTAssertTrue(available.contains(.sync))
+        XCTAssertTrue(available.contains(.menuBar))
+        XCTAssertTrue(available.contains(.focusBorder))
+        XCTAssertTrue(available.contains(.behavior))
+        XCTAssertFalse(available.contains(.appearance))
+    }
+
+    func testQuickAppShelfSearchRoutesSharedPresentationAndMembership() {
+        for query in [
+            "Quick App Shelf applications",
+            "shelf presentation",
+            "dropdown launcher",
+            "Accordion cards",
+            "show at once",
+        ] {
+            XCTAssertEqual(
+                SettingsCatalog.search(query, includeDebug: false).first?.category,
+                .quickAppShelf,
+                "Expected Quick App Shelf routing for \(query)"
+            )
+        }
+        XCTAssertTrue(SettingsCatalog.availableCategories(includeDebug: false).contains(.quickAppShelf))
     }
 
     func testTwoArrowTiledPlacementSearchRoutesToShortcuts() {
@@ -2315,27 +1915,27 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
-    func testConfigurableShortcutDefaultsPreserveExistingBindings() {
+    func testConfigurableShortcutDefaultsUseApprovedFamilyMap() {
         let configuration = HotKeyConfiguration()
 
         XCTAssertEqual(
             configuration.chord(for: .selectAccordion),
-            HotKeyChord(keyCode: HotKeyManager.accordionKeyCode, modifiers: UInt32(optionKey))
+            HotKeyChord(keyCode: 43, modifiers: UInt32(optionKey | cmdKey))
         )
         XCTAssertEqual(
             configuration.chord(for: .selectTiled),
-            HotKeyChord(keyCode: HotKeyManager.tiledKeyCode, modifiers: UInt32(optionKey))
+            HotKeyChord(keyCode: 47, modifiers: UInt32(optionKey | cmdKey))
         )
         XCTAssertEqual(
             configuration.chord(for: .toggleFloating),
             HotKeyChord(
-                keyCode: HotKeyManager.toggleFloatingKeyCode,
-                modifiers: HotKeyManager.toggleFloatingModifiers
+                keyCode: 3,
+                modifiers: UInt32(optionKey | cmdKey)
             )
         )
         XCTAssertEqual(
             configuration.chord(for: .moveWorkspaceToNextDisplay),
-            HotKeyManager.moveWorkspaceDisplayChord
+            HotKeyChord(keyCode: 2, modifiers: UInt32(optionKey | cmdKey))
         )
         XCTAssertEqual(
             configuration.chord(for: .commandWheel),
@@ -2343,10 +1943,11 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
-    func testConfigurableShortcutOverrideRoundTripsAndResets() throws {
+    func testConfigurableShortcutFamilyAndSuffixRoundTripAndResetIndependently() throws {
         var configuration = HotKeyConfiguration()
         let replacement = HotKeyChord(keyCode: 6, modifiers: UInt32(controlKey | cmdKey))
-        configuration.setChord(replacement, for: .previousWindow)
+        XCTAssertNil(configuration.setModifierMask(replacement.modifiers, for: .navigate))
+        configuration.setKeyCode(replacement.keyCode, for: .previousWindow)
 
         let restored = try JSONDecoder().decode(
             HotKeyConfiguration.self,
@@ -2357,8 +1958,72 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 
         var reset = restored
         reset.reset(.previousWindow)
-        XCTAssertEqual(reset.chord(for: .previousWindow), ConfigurableHotKeyAction.previousWindow.defaultChord)
-        XCTAssertTrue(reset.isUsingDefault(for: .previousWindow))
+        XCTAssertEqual(
+            reset.chord(for: .previousWindow),
+            HotKeyChord(keyCode: 43, modifiers: UInt32(controlKey | cmdKey))
+        )
+        XCTAssertFalse(reset.isUsingDefault(for: .previousWindow))
+    }
+
+    @MainActor
+    func testGlobalSuffixValidationIncludesInactiveProfilesWithoutCrossProfileWorkspaceCollisions() throws {
+        let store = SettingsStore(
+            defaults: isolatedDefaults(),
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        let activeProfileID = store.activeProfileID
+        let inactiveProfileID = try XCTUnwrap(
+            store.createProfile(named: "Studio", source: .scratch)
+        )
+
+        // Repeated numbered workspace suffixes in separate profiles are intentionally valid.
+        XCTAssertNil(store.setShortcutFamilyModifiers(UInt32(controlKey | shiftKey), for: .navigate))
+
+        store.selectProfileForEditing(inactiveProfileID)
+        let workspace = try XCTUnwrap(store.settingsProfile.workspaces.first)
+        XCTAssertNil(store.setShortcutKey(nil, for: .toggleFloating))
+        store.setSettingsWorkspaceKey("f", for: workspace.id)
+        XCTAssertEqual(store.settingsProfile.workspaces.first?.key, "f")
+
+        store.selectProfileForEditing(activeProfileID)
+        let conflict = try XCTUnwrap(store.setShortcutKey(3, for: .toggleFloating))
+        XCTAssertTrue(conflict.contains("Studio"))
+        XCTAssertTrue(conflict.contains(workspace.name))
+        XCTAssertNil(store.hotKeyConfiguration.optionalChord(for: .toggleFloating))
+        XCTAssertNotNil(store.resetShortcut(.toggleFloating))
+        XCTAssertNotNil(store.resetAllShortcuts())
+
+        let activeWorkspace = try XCTUnwrap(store.settingsProfile.workspaces.first)
+        let originalKey = activeWorkspace.key
+        store.setSettingsWorkspaceKey("d", for: activeWorkspace.id)
+        XCTAssertEqual(store.settingsProfile.workspaces.first?.key, originalKey)
+    }
+
+    @MainActor
+    func testPrivateChordMigrationPreservesWorkspaceSuffixAndUnassignsConflictingAction() throws {
+        let defaults = isolatedDefaults()
+        do {
+            let writer = SettingsStore(
+                defaults: defaults,
+                ubiquitousStore: nil,
+                connectedDisplaysProvider: { [] }
+            )
+            XCTAssertNil(writer.setShortcutKey(nil, for: .toggleFloating))
+            let workspace = try XCTUnwrap(writer.settingsProfile.workspaces.first)
+            writer.setSettingsWorkspaceKey("f", for: workspace.id)
+            XCTAssertEqual(writer.settingsProfile.workspaces.first?.key, "f")
+        }
+        defaults.set(Data(#"{"overrides":{}}"#.utf8), forKey: "hotKeyConfiguration.v1")
+
+        let migrated = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+
+        XCTAssertEqual(migrated.profiles.first?.workspaces.first?.key, "f")
+        XCTAssertNil(migrated.hotKeyConfiguration.optionalChord(for: .toggleFloating))
     }
 
     func testShortcutConflictChecksCommandsWorkspacesAndCommandWheel() {
@@ -2388,10 +2053,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 
     func testAuthoritativeShortcutModelNamesEveryCollidingOwnerAndSkipsBoth() {
         var configuration = HotKeyConfiguration()
-        configuration.setChord(
-            configuration.chord(for: .nextWindow),
-            for: .previousWindow
-        )
+        configuration.setKeyCode(configuration.keyCode(for: .nextWindow), for: .previousWindow)
         let bracketWorkspace = WorkspaceDefinition(name: "Bracket", key: "[", layout: .none)
         let report = ShortcutConflictModel.evaluate(
             configuration: configuration,
@@ -2420,16 +2082,9 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         })
     }
 
-    func testShortcutModelRejectsUnsupportedSavedKeysAndModifierCombinations() {
+    func testShortcutModelRejectsUnsupportedSavedKeysAndWorkspaceKeys() {
         var configuration = HotKeyConfiguration()
-        configuration.setChord(
-            HotKeyChord(keyCode: 999, modifiers: UInt32(controlKey)),
-            for: .previousWindow
-        )
-        configuration.setChord(
-            HotKeyChord(keyCode: 8, modifiers: UInt32(shiftKey)),
-            for: .nextWindow
-        )
+        configuration.setKeyCode(999, for: .previousWindow)
         let report = ShortcutConflictModel.evaluate(
             configuration: configuration,
             workspaces: [WorkspaceDefinition(name: "Unsupported", key: "", layout: .none)]
@@ -2437,13 +2092,12 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 
         XCTAssertEqual(report.issues(for: .previousWindow).first?.kind, .invalid)
         XCTAssertTrue(report.issues(for: .previousWindow).first?.message.contains("not supported") == true)
-        XCTAssertEqual(report.issues(for: .nextWindow).first?.kind, .invalid)
         XCTAssertEqual(report.issues.filter { $0.chord == nil }.count, 2)
     }
 
     func testInjectedRegistrationFailureIsIsolatedAndReplacementUnregistersEveryOldToken() {
         let service = TestGlobalHotKeyRegistrationService()
-        let failingChord = ConfigurableHotKeyAction.nextWindow.defaultChord
+        let failingChord = HotKeyConfiguration().chord(for: .nextWindow)
         service.failures[failingChord] = -9_878
         let manager = HotKeyManager(
             dispatcher: WindowManagerCommandDispatcher { _, _ in },
@@ -2460,7 +2114,10 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertFalse(first.registeredOwners.contains { $0.configurableAction == .nextWindow })
         XCTAssertTrue(first.registeredOwners.contains { $0.configurableAction == .previousWindow })
         let firstTokens = Set(service.registrations.map(\.token))
-        XCTAssertEqual(firstTokens.count, ConfigurableHotKeyAction.allCases.count - 1)
+        let enabledActionCount = ConfigurableHotKeyAction.allCases.filter {
+            HotKeyConfiguration().isEnabled($0)
+        }.count
+        XCTAssertEqual(firstTokens.count, enabledActionCount - 1)
 
         service.failures.removeAll()
         let second = manager.register(
@@ -2470,7 +2127,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
         XCTAssertEqual(Set(service.unregistrations), firstTokens)
         XCTAssertTrue(second.runtimeIssues.isEmpty)
-        XCTAssertEqual(second.registeredOwners.count, ConfigurableHotKeyAction.allCases.count)
+        XCTAssertEqual(second.registeredOwners.count, enabledActionCount)
 
         let replacementTokens = Set(service.registrations.suffix(second.registeredOwners.count).map(\.token))
         manager.suspendRegistration()
@@ -2507,7 +2164,30 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertFalse(report.registeredOwners.contains { $0.kind == .commandWheel })
     }
 
-    func testFullscreenGameRegistrationScopeReservesCommandEscapeForGameOverlay() {
+    func testPauseRegistrationScopeKeepsOnlyCommandPaletteShortcut() {
+        let service = TestGlobalHotKeyRegistrationService()
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { _, _ in },
+            registrationService: service,
+            installsEventHandler: false
+        )
+        let workspace = WorkspaceDefinition(name: "Paused", key: "1", layout: .tiled)
+
+        let report = manager.register(
+            workspaces: [workspace],
+            hotKeyConfiguration: HotKeyConfiguration(),
+            radialMenuEnabled: true,
+            scope: .commandPaletteOnly
+        )
+
+        XCTAssertEqual(report.registeredOwners.count, 1)
+        XCTAssertEqual(report.registeredOwners.first?.kind, .commandWheel)
+        XCTAssertEqual(report.registeredOwners.first?.configurableAction, .commandWheel)
+        XCTAssertFalse(report.registeredOwners.contains { $0.kind == .workspaceSwitch })
+        XCTAssertFalse(report.registeredOwners.contains { $0.kind == .workspaceMove })
+    }
+
+    func testPauseRegistrationForcesCommandPaletteEscapeHatchWhenDisabled() {
         let service = TestGlobalHotKeyRegistrationService()
         let manager = HotKeyManager(
             dispatcher: WindowManagerCommandDispatcher { _, _ in },
@@ -2515,10 +2195,35 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             installsEventHandler: false
         )
         var configuration = HotKeyConfiguration()
-        configuration.setChord(
-            HotKeyChord(keyCode: 53, modifiers: UInt32(cmdKey)),
-            for: .previousWorkspace
+        XCTAssertNil(configuration.setModifierMask(
+            UInt32(controlKey | shiftKey),
+            for: .navigate
+        ))
+        configuration.setKeyCode(nil, for: .commandWheel)
+
+        let report = manager.register(
+            workspaces: [WorkspaceDefinition(name: "Paused", key: "1", layout: .tiled)],
+            hotKeyConfiguration: configuration,
+            radialMenuEnabled: true,
+            scope: .commandPaletteOnly,
+            forceCommandPaletteEscapeHatch: true
         )
+
+        XCTAssertEqual(report.registeredOwners.map(\.kind), [.commandWheel])
+        XCTAssertEqual(service.registrations.map(\.chord), [
+            HotKeyChord(keyCode: 49, modifiers: UInt32(controlKey | shiftKey)),
+        ])
+    }
+
+    func testFamilyModelCannotProduceReservedCommandEscapeGameOverlayChord() {
+        let service = TestGlobalHotKeyRegistrationService()
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { _, _ in },
+            registrationService: service,
+            installsEventHandler: false
+        )
+        var configuration = HotKeyConfiguration()
+        configuration.setKeyCode(53, for: .previousWorkspace)
 
         let report = manager.register(
             workspaces: [],
@@ -2526,7 +2231,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             scope: .workspaceNavigationOnly
         )
 
-        XCTAssertFalse(report.registeredOwners.contains {
+        XCTAssertTrue(report.registeredOwners.contains {
             $0.configurableAction == .previousWorkspace
         })
         XCTAssertFalse(service.registrations.contains {
@@ -2587,17 +2292,19 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 
         XCTAssertTrue(service.registrations.isEmpty)
         XCTAssertTrue(report.registeredOwners.isEmpty)
-        XCTAssertEqual(report.runtimeIssues.count, ConfigurableHotKeyAction.allCases.count - 1)
+        XCTAssertEqual(
+            report.runtimeIssues.count,
+            ConfigurableHotKeyAction.allCases.filter {
+                HotKeyConfiguration().isEnabled($0) && $0 != .commandWheel
+            }.count
+        )
         XCTAssertTrue(report.runtimeIssues.allSatisfy { $0.status == -9_876 })
         XCTAssertTrue(sink.text.contains("event-handler-installation-failed"))
     }
 
     func testRegistrationNeverLetsFirstDuplicateSilentlyOwnTheChord() {
         var configuration = HotKeyConfiguration()
-        configuration.setChord(
-            configuration.chord(for: .nextWindow),
-            for: .previousWindow
-        )
+        configuration.setKeyCode(configuration.keyCode(for: .nextWindow), for: .previousWindow)
         let service = TestGlobalHotKeyRegistrationService()
         let manager = HotKeyManager(
             dispatcher: WindowManagerCommandDispatcher { _, _ in },
@@ -2613,14 +2320,14 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 
         XCTAssertFalse(report.registeredOwners.contains { $0.configurableAction == .previousWindow })
         XCTAssertFalse(report.registeredOwners.contains { $0.configurableAction == .nextWindow })
-        XCTAssertFalse(service.registrations.contains { $0.chord == ConfigurableHotKeyAction.nextWindow.defaultChord })
+        XCTAssertFalse(service.registrations.contains { $0.chord == HotKeyConfiguration().chord(for: .nextWindow) })
     }
 
     func testShortcutRegistrationDiagnosticsUseSafeOwnerIDsAndStatus() {
         let sink = MemoryDiagnosticSink()
         let logger = DiagnosticLogger(buildMode: .debug, sink: sink)
         let service = TestGlobalHotKeyRegistrationService()
-        service.failures[ConfigurableHotKeyAction.nextWindow.defaultChord] = -9_878
+        service.failures[HotKeyConfiguration().chord(for: .nextWindow)] = -9_878
         let manager = HotKeyManager(
             dispatcher: WindowManagerCommandDispatcher { _, _ in },
             diagnostics: logger,
@@ -2705,14 +2412,15 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     func testShortcutConfigurationPersistsWithoutChangingDefaults() {
         let defaults = isolatedDefaults()
         defaults.set(false, forKey: "iCloudSyncEnabled")
-        let replacement = HotKeyChord(keyCode: 6, modifiers: UInt32(controlKey | cmdKey))
+        let replacement = HotKeyChord(keyCode: 6, modifiers: UInt32(controlKey | shiftKey))
         do {
             let writer = SettingsStore(
                 defaults: defaults,
                 ubiquitousStore: nil,
                 connectedDisplaysProvider: { [] }
             )
-            writer.setShortcut(replacement, for: .previousWindow)
+            XCTAssertNil(writer.setShortcutFamilyModifiers(replacement.modifiers, for: .navigate))
+            XCTAssertNil(writer.setShortcutKey(replacement.keyCode, for: .previousWindow))
         }
         let reader = SettingsStore(
             defaults: defaults,
@@ -2722,7 +2430,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(reader.hotKeyConfiguration.chord(for: .previousWindow), replacement)
         XCTAssertEqual(
             reader.hotKeyConfiguration.chord(for: .selectAccordion),
-            ConfigurableHotKeyAction.selectAccordion.defaultChord
+            HotKeyConfiguration().chord(for: .selectAccordion)
         )
     }
 
@@ -2753,14 +2461,12 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
-    func testSettingsSearchRoutesGlobeHoldAndPlacementToCommandPalette() {
+    func testSettingsSearchDoesNotExposeRemovedGlobeHoldOrPlacementControls() {
+        XCTAssertTrue(SettingsCatalog.search("Globe function hold", includeDebug: false).isEmpty)
+        XCTAssertTrue(SettingsCatalog.search("pointer position snap", includeDebug: false).isEmpty)
         XCTAssertEqual(
-            SettingsCatalog.search("Globe function hold", includeDebug: false).first?.id,
-            "radial-globe-fn"
-        )
-        XCTAssertEqual(
-            SettingsCatalog.search("pointer position snap", includeDebug: false).first?.id,
-            "radial-item-resize"
+            SettingsCatalog.search("Command Palette shortcut", includeDebug: false).first?.id,
+            "radial-shortcut"
         )
     }
 
@@ -2770,7 +2476,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     @MainActor
-    func testRadialSettingsPersistWithoutICloudOrSystemSideEffects() {
+    func testCommandPaletteSettingsPersistWithoutICloudOrSystemSideEffects() {
         let defaults = isolatedDefaults()
         defaults.set(false, forKey: "iCloudSyncEnabled")
         do {
@@ -2780,13 +2486,10 @@ final class RadialMenuAndSettingsTests: XCTestCase {
                 connectedDisplaysProvider: { [] }
             )
             writer.radialMenuEnabled = false
-            writer.radialMenuActivationStyle = .holdToShow
-            writer.radialMenuHoldDelay = 0.35
-            writer.radialMenuGlobeFnHoldEnabled = true
-            writer.setShortcut(
-                LegacyRadialMenuShortcut.controlOptionBackslash.chord,
+            XCTAssertNil(writer.setShortcutKey(
+                LegacyRadialMenuShortcut.controlOptionBackslash.chord.keyCode,
                 for: .commandWheel
-            )
+            ))
             writer.radialWheelDefinition = .minimalFallback
         }
         let reader = SettingsStore(
@@ -2795,9 +2498,6 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             connectedDisplaysProvider: { [] }
         )
         XCTAssertFalse(reader.radialMenuEnabled)
-        XCTAssertEqual(reader.radialMenuActivationStyle, .holdToShow)
-        XCTAssertEqual(reader.radialMenuHoldDelay, 0.35, accuracy: 0.001)
-        XCTAssertTrue(reader.radialMenuGlobeFnHoldEnabled)
         XCTAssertEqual(
             reader.hotKeyConfiguration.chord(for: .commandWheel),
             LegacyRadialMenuShortcut.controlOptionBackslash.chord
@@ -2806,7 +2506,37 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     @MainActor
-    func testGlobeFnHoldDefaultsOffStaysDeviceLocalAndIsSearchable() {
+    func testRemovedCommandWheelInputPreferencesAreDeletedLocallyAndFromICloud() {
+        let defaults = isolatedDefaults()
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+        let cloud = RecordingUbiquitousStore()
+        for key in [
+            "radialMenuActivationStyle.v1",
+            "radialMenuHoldDelay.v1",
+            "radialMenuGlobeFnHoldEnabled.v1",
+        ] {
+            defaults.set("obsolete", forKey: key)
+            cloud.set("obsolete", forKey: key)
+        }
+
+        _ = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+
+        for key in [
+            "radialMenuActivationStyle.v1",
+            "radialMenuHoldDelay.v1",
+            "radialMenuGlobeFnHoldEnabled.v1",
+        ] {
+            XCTAssertNil(defaults.object(forKey: key))
+            XCTAssertFalse(cloud.keys.contains(key))
+        }
+    }
+
+    @MainActor
+    func testShortcutGuidePreferencesAndRuntimeIssueStayOnThisMac() {
         let defaults = isolatedDefaults()
         let cloud = RecordingUbiquitousStore()
         let store = SettingsStore(
@@ -2814,23 +2544,28 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             ubiquitousStore: cloud,
             connectedDisplaysProvider: { [] }
         )
-        XCTAssertFalse(store.radialMenuGlobeFnHoldEnabled)
+        store.iCloudSyncEnabled = true
+        store.shortcutGuideEnabled = true
+        store.shortcutGuideSize = .large
+        store.shortcutGuidePosition = .topTrailing
+        store.setShortcutGuideRuntimeIssue("modifier monitor unavailable")
 
-        store.radialMenuGlobeFnHoldEnabled = true
-        XCTAssertEqual(
-            defaults.bool(forKey: "radialMenuGlobeFnHoldEnabled.v1"),
-            true
-        )
-        XCTAssertFalse(cloud.keys.contains("radialMenuGlobeFnHoldEnabled.v1"))
-        XCTAssertTrue(
-            SettingsCatalog.search("Globe Fn emoji", includeDebug: false)
-                .contains { $0.id == "radial-globe-fn" && $0.category == .radialMenu }
-        )
+        XCTAssertTrue(defaults.bool(forKey: "shortcutGuideEnabled.v1"))
+        XCTAssertEqual(defaults.string(forKey: "shortcutGuideSize.v1"), "large")
+        XCTAssertEqual(defaults.string(forKey: "shortcutGuidePosition.v1"), "topTrailing")
+        XCTAssertFalse(cloud.keys.contains("shortcutGuideEnabled.v1"))
+        XCTAssertFalse(cloud.keys.contains("shortcutGuideSize.v1"))
+        XCTAssertFalse(cloud.keys.contains("shortcutGuidePosition.v1"))
 
-        let profileData = try! JSONEncoder().encode(store.profiles)
-        let profileJSON = String(decoding: profileData, as: UTF8.self)
-        XCTAssertFalse(profileJSON.contains("GlobeFn"))
-        XCTAssertFalse(profileJSON.contains("radialMenuGlobeFnHoldEnabled"))
+        let restored = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertTrue(restored.shortcutGuideEnabled)
+        XCTAssertEqual(restored.shortcutGuideSize, .large)
+        XCTAssertEqual(restored.shortcutGuidePosition, .topTrailing)
+        XCTAssertNil(restored.shortcutGuideRuntimeIssue)
     }
 
     @MainActor
@@ -2860,7 +2595,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     @MainActor
-    func testLegacyWheelShortcutMigratesIntoSharedRecorderOnce() {
+    func testLegacyWheelShortcutIsRemovedAndApprovedFamilyDefaultWins() {
         let defaults = isolatedDefaults()
         defaults.set(false, forKey: "iCloudSyncEnabled")
         defaults.set(LegacyRadialMenuShortcut.controlOptionReturn.rawValue, forKey: "radialMenuShortcut.v1")
@@ -2873,7 +2608,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
 
         XCTAssertEqual(
             store.hotKeyConfiguration.chord(for: .commandWheel),
-            LegacyRadialMenuShortcut.controlOptionReturn.chord
+            HotKeyChord(keyCode: 49, modifiers: UInt32(controlKey | optionKey))
         )
         XCTAssertNil(defaults.string(forKey: "radialMenuShortcut.v1"))
     }
@@ -3031,6 +2766,7 @@ private final class TestSettingsWindowSurface: SettingsWindowSurface {
     private(set) var nonactivatingSurfaceFrames: [CGRect] = []
     private(set) var repositionedFrames: [CGRect] = []
     private(set) var hideCount = 0
+    private(set) var externalDismissCount = 0
     private(set) var restoreCount = 0
 
     init(frame: CGRect) {
@@ -3068,6 +2804,11 @@ private final class TestSettingsWindowSurface: SettingsWindowSurface {
     func hideForWorkspace() {
         isVisible = false
         hideCount += 1
+    }
+
+    func dismissForExternalPresentation() {
+        isVisible = false
+        externalDismissCount += 1
     }
 
     func restoreOrdinaryLifecycle() { restoreCount += 1 }
@@ -3114,119 +2855,6 @@ private final class RecordingUbiquitousStore: UbiquitousKeyValueStoring {
     func set(_ anObject: Any?, forKey aKey: String) { values[aKey] = anObject }
     func removeObject(forKey aKey: String) { values.removeValue(forKey: aKey) }
     func synchronize() -> Bool { true }
-}
-
-@MainActor
-private final class TestGlobeFnRadialTrigger: GlobeFnRadialTriggerHandling {
-    private(set) var beginRecognizedHoldCount = 0
-    private(set) var events: [RadialMenuTriggerInputEvent] = []
-    private(set) var cancelReasons: [String] = []
-
-    func beginRecognizedHold() {
-        beginRecognizedHoldCount += 1
-    }
-
-    func handle(
-        _ event: RadialMenuTriggerInputEvent,
-        style _: RadialMenuActivationStyle,
-        holdDelay _: TimeInterval
-    ) {
-        events.append(event)
-    }
-
-    func cancel(reason: String) {
-        cancelReasons.append(reason)
-    }
-}
-
-@MainActor
-private final class TestGlobeFnScheduledTask: GlobeFnScheduledTask {
-    private(set) var isCancelled = false
-    let delay: TimeInterval
-    let action: @MainActor () -> Void
-
-    init(delay: TimeInterval, action: @escaping @MainActor () -> Void) {
-        self.delay = delay
-        self.action = action
-    }
-
-    func cancel() {
-        isCancelled = true
-    }
-
-    func run() {
-        guard !isCancelled else { return }
-        action()
-    }
-}
-
-@MainActor
-private final class TestGlobeFnScheduler: GlobeFnScheduling {
-    private var tasks: [TestGlobeFnScheduledTask] = []
-
-    var pendingCount: Int { tasks.filter { !$0.isCancelled }.count }
-    var pendingDelays: [TimeInterval] {
-        tasks.filter { !$0.isCancelled }.map(\.delay)
-    }
-
-    func schedule(
-        after delay: TimeInterval,
-        _ action: @escaping @MainActor () -> Void
-    ) -> GlobeFnScheduledTask {
-        let task = TestGlobeFnScheduledTask(delay: delay, action: action)
-        tasks.append(task)
-        return task
-    }
-
-    func runNext() {
-        while !tasks.isEmpty {
-            let task = tasks.removeFirst()
-            if !task.isCancelled {
-                task.run()
-                return
-            }
-        }
-    }
-
-    func runAll() {
-        while !tasks.isEmpty { runNext() }
-    }
-}
-
-@MainActor
-private final class TestGlobeFnEventMonitor: GlobeFnEventMonitoring {
-    var eventHandler: CGGlobeFnEventMonitor.EventHandler?
-    var interruptionHandler: CGGlobeFnEventMonitor.InterruptionHandler?
-    private var startResults: [Bool]
-    private(set) var startCount = 0
-    private(set) var stopCount = 0
-    private(set) var filteringChanges: [Bool] = []
-
-    init(startResults: [Bool] = [true]) {
-        self.startResults = startResults
-    }
-
-    func start() -> Bool {
-        startCount += 1
-        return startResults.isEmpty ? true : startResults.removeFirst()
-    }
-
-    func stop() {
-        stopCount += 1
-        filteringChanges.append(false)
-    }
-
-    func setNativeGlobeFilteringEnabled(_ enabled: Bool) {
-        filteringChanges.append(enabled)
-    }
-
-    func send(_ event: GlobeFnObservedEvent) -> Bool {
-        eventHandler?(event) ?? false
-    }
-
-    func interrupt(_ interruption: GlobeFnEventMonitorInterruption) {
-        interruptionHandler?(interruption)
-    }
 }
 
 @MainActor

@@ -100,6 +100,7 @@ struct RadialCommandContext: Equatable, Sendable {
     /// activation state). It is deliberately separate from `validationToken`: tiled placement
     /// commits must continue passing the engine-owned token unchanged.
     var externalValidationToken = ""
+    var quickApps: [DropDownAppConfiguration] = []
 
     var sessionValidationToken: String {
         externalValidationToken.isEmpty

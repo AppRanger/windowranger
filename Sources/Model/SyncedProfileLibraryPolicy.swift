@@ -105,8 +105,29 @@ enum SyncedProfileLibraryPolicy {
             guard profile.appRules.allSatisfy({ isValidName($0.displayName) }) else {
                 return .rejected(.nameTooLong(kind: "application rule", maximumCharacters: maximumNameCharacters))
             }
-            if let dropDownApp = profile.dropDownApp,
-               !isValidName(dropDownApp.displayName) {
+            if profile.quickApps.count > QuickAppShelfPolicy.maximumCount {
+                return .rejected(.invalidLibrary)
+            }
+            if QuickAppShelfPolicy.normalized(profile.quickApps) != profile.quickApps {
+                return .rejected(.invalidLibrary)
+            }
+            let shelfSize = profile.quickAppShelfPresentation.heightFraction
+            if !shelfSize.isFinite
+                || !(DropDownAppConfiguration.minimumHeightFraction
+                    ... DropDownAppConfiguration.maximumHeightFraction).contains(shelfSize) {
+                return .rejected(.invalidLibrary)
+            }
+            if !(1...QuickAppShelfPolicy.maximumCount).contains(
+                profile.quickAppShelfPresentation.visibleCount
+            ) {
+                return .rejected(.invalidLibrary)
+            }
+            if !profile.quickApps.allSatisfy({
+                profile.quickAppShelfPresentation.applying(to: $0) == $0
+            }) {
+                return .rejected(.invalidLibrary)
+            }
+            if profile.quickApps.contains(where: { !isValidName($0.displayName) }) {
                 return .rejected(.nameTooLong(
                     kind: "Quick App",
                     maximumCharacters: maximumNameCharacters

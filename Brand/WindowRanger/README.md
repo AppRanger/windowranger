@@ -12,6 +12,9 @@ variants can reuse the same visual history instead of starting from scratch.
 - `characters/canonical/turnaround.png` records the front, side, back, and top
   views.
 - The other canonical images are consistency tests for poses and scenes.
+- `characters/onboarding/` contains the seven project-bound first-run illustrations. Each uses the
+  canonical Ranger inside the selected dark Mission Control direction; the app supplies all text,
+  controls, and progress indicators natively.
 
 The character invariants are a warm-ivory rounded-square body, one offset cobalt
 rear window panel, cobalt helmet dome, broad midnight ranger brim, black visor,
@@ -68,3 +71,8 @@ The DMG set explored a polished moonlit ranger scene for Stable and a playful co
 treatment for Beta; the approved sources are retained before deterministic text and layout
 rendering. See `icons/manifest.json` for the machine-readable icon inventory and production
 decision.
+
+The onboarding series was generated with the same built-in workflow on 22 August 2026 after the
+Mission Control wizard direction was selected. The sources are 1536 x 1024 project-bound scene
+illustrations; normalized dark backgrounds prevent a white matte in the native panel. Their asset
+catalog copies are build inputs, while this directory remains the durable source library.

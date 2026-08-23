@@ -28,7 +28,8 @@ application.
 ## Known limitations
 
 - List live-validation gaps and significant product limits honestly.
-- Sparkle automatic updates are not included yet; install newer builds manually.
+- State whether the public Sparkle feed is active for this build. If it is not, tell users to install
+  newer builds manually even though the updater UI is present.
 
 ## Feedback and security
 

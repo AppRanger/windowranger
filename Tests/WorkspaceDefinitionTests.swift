@@ -131,8 +131,8 @@ final class WorkspaceDefinitionTests: XCTestCase {
     }
 
     func testLayoutSelectionShortcutsKeepEstablishedDirectMappings() {
-        XCTAssertEqual(HotKeyManager.accordionKeyCode, 43)
-        XCTAssertEqual(HotKeyManager.tiledKeyCode, 47)
+        XCTAssertEqual(ConfigurableHotKeyAction.selectAccordion.defaultKeyCode, 43)
+        XCTAssertEqual(ConfigurableHotKeyAction.selectTiled.defaultKeyCode, 47)
         XCTAssertEqual(
             ConfigurableHotKeyAction.selectAccordion.command,
             .selectLayoutFromShortcut(.accordion)
@@ -306,11 +306,11 @@ final class WorkspaceDefinitionTests: XCTestCase {
         )
     }
 
-    func testFloatingShortcutMatchesAeroSpaceControlOptionF() {
-        XCTAssertEqual(HotKeyManager.toggleFloatingKeyCode, 3)
+    func testFloatingShortcutUsesApprovedArrangeFDefault() {
+        XCTAssertEqual(ConfigurableHotKeyAction.toggleFloating.defaultKeyCode, 3)
         XCTAssertEqual(
-            HotKeyManager.toggleFloatingModifiers,
-            UInt32(controlKey | optionKey)
+            ConfigurableHotKeyAction.toggleFloating.family.defaultModifiers,
+            UInt32(optionKey | cmdKey)
         )
     }
 
@@ -1325,6 +1325,12 @@ final class WorkspaceDefinitionTests: XCTestCase {
             focusedWindow: nil,
             ownProcessIdentifier: ownWindow.processIdentifier,
             ignoredWindowKeys: [ignoredPopup]
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldPreserveInteractionFocusAnchor(
+            focusedWindow: nil,
+            ownProcessIdentifier: ownWindow.processIdentifier,
+            ignoredWindowKeys: [ignoredPopup],
+            commandPalettePresented: true
         ))
     }
 
