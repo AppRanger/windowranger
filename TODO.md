@@ -171,6 +171,47 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-075 — Keep DesktopRanger-owned surfaces outside WindowRanger
+
+- **Type:** Window-admission compatibility and companion-app safety
+- **Priority:** P1
+- **Status:** Source implementation and refreshed automation pass; installed coexistence validation remains.
+- **Requested:** 23 August 2026.
+- **User-observed context:** DesktopRanger's persistent desktop, overlay, ordinary drawing, Recovery,
+  and interaction-island surfaces can otherwise look like ordinary application windows to
+  WindowRanger and enter workspace membership, layout, focus, or recovery state.
+- **Smallest useful outcome:** Ignore only host-owned DesktopRanger surfaces carrying the exact
+  Accessibility identifier `dev.appranger.desktopranger.surface.v1` from exact bundle identifier
+  `dev.appranger.DesktopRanger.SurfaceLab`. Untagged SurfaceLab manager windows remain eligible for
+  ordinary management. Do not invent or pre-admit a future production bundle identifier.
+- **Ownership boundary:** DesktopRanger's Swift host owns the marker and plugins cannot create or
+  retag native windows. WindowRanger treats the exact bundle-plus-marker pair as a local,
+  versioned compatibility fact at central admission; it does not add a whole-application exclusion,
+  trust arbitrary third-party markers, or expose arbitrary AX identifiers in diagnostics.
+- **Acceptance:** The exact SurfaceLab bundle with the exact marker is ignored using a persistent
+  companion-surface disposition across representative roles, subroles, and WindowServer layers.
+  Missing markers, prefix/suffix/near matches, and the marker on another bundle stay conservatively
+  admitted. A newly matching surface already in
+  WindowRanger state is evicted from membership, pending restoration, layout, and focus history
+  without an AX frame write. Any matching Quick App session is discarded, its application is made
+  visible through a bounded confirmation path, and no recovery frame is written. An unconfirmed
+  unhide retains visibility-only recovery debt with no window or geometry capability; a new Quick
+  App session supersedes older retry generations. Exact PID-and-bundle debt survives a
+  WindowRanger restart and receives an orderly-shutdown unhide attempt. A transient AX
+  identifier failure never re-admits a previously confirmed surface and fails closed until a first
+  classification can be completed. Focused admission, state-eviction, and Quick App tests plus the
+  complete non-hosted suite pass. A
+  signed installed check must still confirm that macOS exports the AppKit marker through AX and
+  that surfaces remain stable through one WindowRanger workspace, layout, and focus cycle while an
+  untagged DesktopRanger manager window remains manageable.
+- **Current candidate evidence (23 August 2026):** After the explicit persistent-surface disposition,
+  SurfaceLab-only identity correction, and late-marker transition coverage, 151 focused admission,
+  eviction, and Quick App tests passed. `./scripts/verify-local-ci.sh --full` passed the complete
+  isolated 698-test suite with no failures, static analysis, unsigned universal Release build, and
+  Stable/Beta DMG smoke verification. A separately packaged local candidate launched in the macOS
+  26.6.2 UTM guest and reached the expected Accessibility permission boundary; the permission grant
+  and visible two-app workspace/layout/focus coexistence sequence remain unverified.
+
 ### WR-071 — Switch profiles for foreground full-screen Game Mode sessions
 
 - **Type:** Automatic profile selection

@@ -32,6 +32,72 @@ final class WindowAdmissionFixtureTests: XCTestCase {
         )
     }
 
+    func testCompanionIdentifierReadIsRestrictedToExactKnownBundles() {
+        XCTAssertTrue(AccessibilityWindow.shouldReadAccessibilityIdentifierForCompatibility(
+            "DEV.APPRANGER.DESKTOPRANGER.SURFACELAB"
+        ))
+        XCTAssertFalse(AccessibilityWindow.shouldReadAccessibilityIdentifierForCompatibility(
+            "dev.appranger.DesktopRanger"
+        ))
+        XCTAssertFalse(AccessibilityWindow.shouldReadAccessibilityIdentifierForCompatibility(
+            "dev.appranger.DesktopRanger.Helper"
+        ))
+        XCTAssertFalse(AccessibilityWindow.shouldReadAccessibilityIdentifierForCompatibility(
+            "com.example.Editor"
+        ))
+        XCTAssertFalse(AccessibilityWindow.shouldReadAccessibilityIdentifierForCompatibility(nil))
+    }
+
+    func testTaggedCompanionSurfaceRemainsIgnoredAcrossTransientIdentifierFailure() {
+        let previous = fixtureMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifier: AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier,
+            subrole: kAXFloatingWindowSubrole as String,
+            windowLayer: 3
+        )
+        let transientRefresh = WindowAdmissionMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifierObservation: .unavailable,
+            role: kAXWindowRole as String,
+            subrole: kAXFloatingWindowSubrole as String,
+            windowLayer: 3,
+            isMinimized: false
+        )
+
+        let merged = transientRefresh.retainingSupportEvidence(from: previous)
+        let decision = AccessibilityWindow.admissionDecision(for: merged)
+
+        XCTAssertEqual(
+            merged.accessibilityIdentifier,
+            AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier
+        )
+        XCTAssertEqual(decision, WindowAdmissionDecision(
+            disposition: .ignoredCompanionSurface,
+            reason: .rangerCompanionSurface,
+            compatibilityProfileIdentifier: "desktopranger-owned-surface-v1"
+        ))
+    }
+
+    func testFirstCompanionIdentifierFailureIsTemporarilyIneligible() {
+        let metadata = WindowAdmissionMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifierObservation: .unavailable,
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false
+        )
+
+        let decision = AccessibilityWindow.admissionDecision(for: metadata)
+
+        XCTAssertEqual(decision, WindowAdmissionDecision(
+            disposition: .temporarilyIneligible,
+            reason: .rangerCompanionSurfaceIdentifierUnavailable
+        ))
+        XCTAssertFalse(decision.disposition.admitsNewWindow)
+        XCTAssertFalse(decision.disposition.evictsTrackedWindow)
+    }
+
     func testFixedSizeEvidenceCollectionRequiresTheNarrowStandardWindowShape() {
         let updaterCore = fixtureMetadata(
             bundleIdentifier: "com.openai.codex",
@@ -71,6 +137,7 @@ final class WindowAdmissionFixtureTests: XCTestCase {
         )
         let refreshedCore = WindowAdmissionMetadata(
             bundleIdentifier: "com.example.Editor",
+            accessibilityIdentifier: AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier,
             role: kAXWindowRole as String,
             subrole: kAXDialogSubrole as String,
             windowLayer: 0,
@@ -82,6 +149,10 @@ final class WindowAdmissionFixtureTests: XCTestCase {
         let merged = refreshedCore.retainingSupportEvidence(from: previous)
 
         XCTAssertEqual(merged.subrole, kAXDialogSubrole as String)
+        XCTAssertEqual(
+            merged.accessibilityIdentifier,
+            AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier
+        )
         XCTAssertEqual(merged.fullscreenButton, .absent)
         XCTAssertEqual(merged.modalObservation, .trueValue)
         XCTAssertEqual(merged.minimizeButton, .absent)
@@ -97,6 +168,110 @@ private struct WindowAdmissionFixture {
 }
 
 private let fixtures: [WindowAdmissionFixture] = [
+    WindowAdmissionFixture(
+        name: "SurfaceLab standard host surface is ignored",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifier: AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier,
+            subrole: kAXStandardWindowSubrole as String
+        ),
+        expected: decision(
+            .ignoredCompanionSurface,
+            .rangerCompanionSurface,
+            compatibilityProfileIdentifier: "desktopranger-owned-surface-v1"
+        )
+    ),
+    WindowAdmissionFixture(
+        name: "SurfaceLab non-normal dialog host surface is ignored",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifier: AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 8,
+            fullscreenButton: .absent
+        ),
+        expected: decision(
+            .ignoredCompanionSurface,
+            .rangerCompanionSurface,
+            compatibilityProfileIdentifier: "desktopranger-owned-surface-v1"
+        )
+    ),
+    WindowAdmissionFixture(
+        name: "SurfaceLab floating host surface is ignored",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifier: AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier,
+            subrole: kAXFloatingWindowSubrole as String,
+            windowLayer: 3
+        ),
+        expected: decision(
+            .ignoredCompanionSurface,
+            .rangerCompanionSurface,
+            compatibilityProfileIdentifier: "desktopranger-owned-surface-v1"
+        )
+    ),
+    WindowAdmissionFixture(
+        name: "untagged SurfaceLab standard window remains managed",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            subrole: kAXStandardWindowSubrole as String
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "SurfaceLab window with a nearby marker remains managed",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifier: "dev.appranger.desktopranger.surface.v2",
+            subrole: kAXStandardWindowSubrole as String
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "nearby SurfaceLab bundle suffix with the marker remains managed",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab.Helper",
+            accessibilityIdentifier: AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier,
+            subrole: kAXStandardWindowSubrole as String
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "nearby SurfaceLab bundle prefix with the marker remains managed",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "dev.appranger.PreDesktopRanger.SurfaceLab",
+            accessibilityIdentifier: AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier,
+            subrole: kAXStandardWindowSubrole as String
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "SurfaceLab window with a marker suffix remains managed",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifier: AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier + ".helper",
+            subrole: kAXStandardWindowSubrole as String
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "SurfaceLab window with a marker prefix remains managed",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifier: "prefix." + AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier,
+            subrole: kAXStandardWindowSubrole as String
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "unrelated bundle with the marker remains managed",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "com.example.Editor",
+            accessibilityIdentifier: AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier,
+            subrole: kAXStandardWindowSubrole as String
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
     WindowAdmissionFixture(
         name: "standard document window",
         metadata: fixtureMetadata(subrole: kAXStandardWindowSubrole as String),
@@ -257,6 +432,7 @@ private let fixtures: [WindowAdmissionFixture] = [
 
 private func fixtureMetadata(
     bundleIdentifier: String = "com.example.Editor",
+    accessibilityIdentifier: String? = nil,
     role: String = kAXWindowRole as String,
     subrole: String?,
     windowLayer: Int? = 0,
@@ -274,6 +450,7 @@ private func fixtureMetadata(
 ) -> WindowAdmissionMetadata {
     WindowAdmissionMetadata(
         bundleIdentifier: bundleIdentifier,
+        accessibilityIdentifier: accessibilityIdentifier,
         role: role,
         subrole: subrole,
         windowLayer: windowLayer,

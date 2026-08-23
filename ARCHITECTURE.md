@@ -61,19 +61,39 @@ Exact window identities are trusted only inside the same WindowServer session.
 
 ## Window admission and precedence
 
-`AccessibilityWindow.admissionDecision` is the sole discovery boundary. It produces one of four
+`AccessibilityWindow.admissionDecision` is the sole discovery boundary. It produces one of five
 dispositions: normal managed window, managed dialog (automatically floating), temporarily
-ineligible, or ignored transient/popup. Ignored objects never enter membership, layout, persistence,
-focus cycling or recovery. The verified non-normal-layer Codex pet/panels are excluded here rather
-than patched out later.
+ineligible, ignored persistent companion surface, or ignored transient/popup. Ignored objects never
+enter membership, layout, persistence, focus cycling or recovery. The explicit companion
+disposition keeps cooperative long-lived surfaces distinct from transient UI; verified
+non-normal-layer Codex pet/panels remain excluded as transient objects rather than patched out later.
 
 Built-in compatibility profiles are versioned, declarative corrections for verified application
 surfaces. A profile matches a normalized bundle identifier plus only the role, subrole, layer,
-modal, control-presence, or move/resize evidence needed to distinguish that surface. It produces an
-ordinary admission disposition and records the matched profile identifier in diagnostics. Profiles
-must be backed by a privacy-safe fixture and must not encode a user's workspace assignment or layout
-preference. The bundled registry is intentionally local to the signed app; there is no remotely
-updated exception list.
+modal, control-presence, move/resize evidence, or exact host-owned Accessibility identifier needed
+to distinguish that surface. It produces an ordinary admission disposition and records the matched
+profile identifier in diagnostics. Profiles must be backed by a privacy-safe fixture and must not
+encode a user's workspace assignment or layout preference. The bundled registry is intentionally
+local to the signed app; there is no remotely updated exception list.
+
+The DesktopRanger companion contract is deliberately surface-specific and currently scoped only to
+the proven SurfaceLab identity. WindowRanger reads the AX identifier only for exact bundle ID
+`dev.appranger.DesktopRanger.SurfaceLab` and ignores only its exact
+`dev.appranger.desktopranger.surface.v1` marker. Untagged SurfaceLab manager windows remain eligible
+for ordinary admission. A future production bundle must be added only after its identity is defined
+and independently evidenced. The raw identifier is classifier input, not diagnostic output; logs
+and support snapshots expose only the privacy-safe reason and bundled profile identifier. If a
+previously confirmed marker is temporarily unreadable, WindowRanger keeps the surface ignored; a
+first unavailable read is temporarily ineligible until classification can be completed, while a
+confirmed absent identifier remains an ordinary manageable window. An ignored
+surface that was already tracked is removed from membership, pending restoration, layout, focus,
+full-screen, and transient interaction state through the existing no-frame-write eviction path. If
+it had entered Quick App state, WindowRanger discards that session and restores application
+visibility through a bounded confirmation path without writing the companion surface's frame. An
+unconfirmed unhide leaves a visibility-only recovery record with no window key or geometry; later
+polls retry it, while a newly acquired Quick App session supersedes the old recovery generation.
+The exact PID-and-bundle debt is persisted without window or frame data, retried at startup, and
+receives one final unhide request during an orderly WindowRanger shutdown.
 
 Effective layout participation follows this order:
 

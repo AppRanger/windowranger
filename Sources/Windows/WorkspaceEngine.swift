@@ -134,9 +134,15 @@ struct IgnoredWindowRemovalResult: Equatable, Sendable {
     let removedTrackedWindow: Bool
     let removedPendingAssignment: Bool
     let clearedLastFocusedWorkspaceIDs: Set<UUID>
+    let removedTiledLayoutState: Bool
+    let removedFullscreenState: Bool
 
     var changedManagedState: Bool {
-        removedTrackedWindow || removedPendingAssignment || !clearedLastFocusedWorkspaceIDs.isEmpty
+        removedTrackedWindow ||
+            removedPendingAssignment ||
+            !clearedLastFocusedWorkspaceIDs.isEmpty ||
+            removedTiledLayoutState ||
+            removedFullscreenState
     }
 }
 
@@ -448,6 +454,21 @@ struct PostSleepWindowRecoveryState: Equatable, Sendable {
         lastWindowKeysByProcess.removeAll()
         stableSnapshotCountByProcess.removeAll()
     }
+
+    mutating func remove(_ key: WindowKey) {
+        guard protectedWindowKeys.remove(key) != nil else { return }
+        lastWindowKeysByProcess[key.processIdentifier]?.remove(key)
+        let protectedProcessIdentifiers = Set(protectedWindowKeys.map(\.processIdentifier))
+        lastWindowKeysByProcess = lastWindowKeysByProcess.filter {
+            protectedProcessIdentifiers.contains($0.key)
+        }
+        stableSnapshotCountByProcess = stableSnapshotCountByProcess.filter {
+            protectedProcessIdentifiers.contains($0.key)
+        }
+        if protectedWindowKeys.isEmpty {
+            wakeStartedAt = nil
+        }
+    }
 }
 
 struct DropDownAppWindowHandoffCandidate {
@@ -724,6 +745,71 @@ enum QuickAppTransitionPolicy {
     }
 }
 
+/// A window that becomes an ignored companion surface must leave Quick App ownership without ever
+/// receiving a recovery frame. Application visibility is separate from window geometry: if
+/// WindowRanger hid the application, discarding the session requests an unhide and confirms it on
+/// the existing bounded visibility path.
+enum IgnoredQuickAppDiscardPolicy {
+    static let performsFrameWrite = false
+
+    static func transitionAfterDiscard(
+        _ phase: QuickAppTransitionPhase,
+        bundleKey: String
+    ) -> QuickAppTransitionPhase {
+        switch phase {
+        case .idle:
+            return .idle
+        case let .launching(activeKey):
+            return activeKey == bundleKey ? .idle : phase
+        case let .showing(activeKey):
+            return activeKey == bundleKey ? .idle : phase
+        case let .hiding(activeKey):
+            return activeKey == bundleKey ? .idle : phase
+        }
+    }
+
+    static func shouldClearPendingSelection(
+        pendingBundleIdentifier: String?,
+        discardedBundleKey: String,
+        interruptedTransition: Bool
+    ) -> Bool {
+        interruptedTransition ||
+            pendingBundleIdentifier?.lowercased() == discardedBundleKey
+    }
+
+    static func shouldRequestApplicationUnhide(
+        wasHiddenByWindowRanger: Bool,
+        observedHidden: Bool?
+    ) -> Bool {
+        wasHiddenByWindowRanger || observedHidden == true
+    }
+}
+
+/// Visibility-only debt left when an ignored companion surface had been used as a Quick App.
+/// Deliberately carries no window key, frame, or restore geometry, so satisfying it cannot move the
+/// ignored surface. A generation prevents an older confirmation chain from acting after ownership
+/// has changed.
+struct IgnoredQuickAppVisibilityRecovery: Codable, Equatable, Sendable {
+    let generation: UInt64
+    let processIdentifier: pid_t
+    let bundleIdentifier: String
+    var confirmationInFlight: Bool
+
+    mutating func shouldRetain(
+        after disposition: DropDownAppVisibilityConfirmationDisposition
+    ) -> Bool {
+        switch disposition {
+        case .confirmed:
+            return false
+        case .retry:
+            return true
+        case .timedOut:
+            confirmationInFlight = false
+            return true
+        }
+    }
+}
+
 enum QuickAppInteractionPolicy {
     static func preservesPresentedShelfForActivation(
         activatedProcessIdentifier: pid_t,
@@ -903,6 +989,7 @@ struct PersistedWorkspaceState: Codable, Equatable, Sendable {
     let tiledTrees: [PersistedTiledTree]?
     let dropDownAppSession: PersistedDropDownAppSession?
     let dropDownAppSessions: [String: PersistedDropDownAppSession]?
+    let ignoredQuickAppVisibilityRecoveries: [String: IgnoredQuickAppVisibilityRecovery]?
 
     init(
         version: Int,
@@ -913,7 +1000,8 @@ struct PersistedWorkspaceState: Codable, Equatable, Sendable {
         profileID: UUID? = nil,
         tiledTrees: [PersistedTiledTree]? = nil,
         dropDownAppSession: PersistedDropDownAppSession? = nil,
-        dropDownAppSessions: [String: PersistedDropDownAppSession]? = nil
+        dropDownAppSessions: [String: PersistedDropDownAppSession]? = nil,
+        ignoredQuickAppVisibilityRecoveries: [String: IgnoredQuickAppVisibilityRecovery]? = nil
     ) {
         self.version = version
         self.windowServerSession = windowServerSession
@@ -924,6 +1012,7 @@ struct PersistedWorkspaceState: Codable, Equatable, Sendable {
         self.tiledTrees = tiledTrees
         self.dropDownAppSession = dropDownAppSession
         self.dropDownAppSessions = dropDownAppSessions
+        self.ignoredQuickAppVisibilityRecoveries = ignoredQuickAppVisibilityRecoveries
     }
 
     func assignment(
@@ -1469,6 +1558,8 @@ final class WorkspaceEngine {
     private var pendingQuickAppHideAfterPresentation = false
     private var quickAppTransition: QuickAppTransitionPhase = .idle
     private var quickAppNeighborVisibilityGeneration: [String: UInt64] = [:]
+    private var ignoredQuickAppVisibilityRecoveryGeneration: UInt64 = 0
+    private var ignoredQuickAppVisibilityRecoveries: [String: IgnoredQuickAppVisibilityRecovery] = [:]
     private var pendingPausedQuickAppConfigurationUpdate: PendingQuickAppConfigurationUpdate?
     private var quickAppTopologyChangedWhilePaused = false
     private var commandPalettePresented = false
@@ -1574,6 +1665,12 @@ final class WorkspaceEngine {
         self.stateStore = stateStore
         self.diagnostics = diagnostics
         let restoredState = stateStore.load()
+        ignoredQuickAppVisibilityRecoveries = Self.restoredIgnoredQuickAppVisibilityRecoveries(
+            restoredState?.ignoredQuickAppVisibilityRecoveries
+        )
+        ignoredQuickAppVisibilityRecoveryGeneration = ignoredQuickAppVisibilityRecoveries.values
+            .map(\.generation)
+            .max() ?? 0
         let restoredProfileMatches = restoredState.map {
             Self.persistedStateProfileMatches(
                 persistedProfileID: $0.profileID,
@@ -1960,6 +2057,7 @@ final class WorkspaceEngine {
                 reason: "application-stop",
                 allowWhilePaused: true
             )
+            attemptIgnoredQuickAppVisibilityRecoveryForShutdown()
             // Preserve workspace membership and original frames before the safety escape hatch
             // places every managed window on the main display.
             persistState(preservingPendingRestores: true, waitForCompletion: true)
@@ -3189,7 +3287,7 @@ final class WorkspaceEngine {
     ) -> Bool {
         guard !isTemporarilyDeferred, !isMinimized, !isFullscreen else { return false }
         switch disposition {
-        case .ignoredTransientPopup, .temporarilyIneligible:
+        case .ignoredCompanionSurface, .ignoredTransientPopup, .temporarilyIneligible:
             return false
         case .managedNormal, .managedDialog, nil:
             return true
@@ -3510,7 +3608,7 @@ final class WorkspaceEngine {
             targetStatus = "stale"
         } else if temporarilyDeferredWindowKeys.contains(key) {
             targetStatus = "deferred"
-        } else if ignoredWindowKeys.contains(key) || cachedDecision?.disposition == .ignoredTransientPopup {
+        } else if ignoredWindowKeys.contains(key) || cachedDecision?.disposition.evictsTrackedWindow == true {
             targetStatus = "ignored"
         } else if tracked != nil {
             targetStatus = "managed"
@@ -8509,6 +8607,7 @@ final class WorkspaceEngine {
     ) -> WindowRefreshReport {
         let performAXWrites = performAXWrites && !isWindowManagementPaused
         lastBroadWindowRefreshDate = Date()
+        reconcileIgnoredQuickAppVisibilityRecoveries(correlationID: correlationID)
         let displays = Self.activeDisplays()
         let topologySignature = Self.displayTopologySignature(displays)
         if wakeReconciliationState.isSleeping {
@@ -9485,16 +9584,23 @@ final class WorkspaceEngine {
         metadata: WindowAdmissionMetadata,
         correlationID: String?
     ) -> IgnoredWindowRemovalResult {
+        discardIgnoredQuickAppSessions(for: key, correlationID: correlationID)
         let removal = Self.removeIgnoredWindowState(
             key,
             bundleIdentifier: bundleIdentifier,
             trackedWindows: &windows,
             pendingRestoredWindows: &pendingRestoredWindows,
-            lastFocusedWindow: &lastFocusedWindow
+            lastFocusedWindow: &lastFocusedWindow,
+            tiledTrees: &tiledTrees,
+            fullscreenSessions: &fullscreenSessions,
+            fullscreenAuthoritativeFalseCounts: &fullscreenAuthoritativeFalseCounts
         )
 
         if lastObservedFocusedWindow == key {
             lastObservedFocusedWindow = nil
+        }
+        if lastDiagnosticFocusedWindow?.key == key {
+            lastDiagnosticFocusedWindow = nil
         }
         if programmaticFocusTarget == key {
             _ = advanceFocusActionGeneration()
@@ -9504,10 +9610,44 @@ final class WorkspaceEngine {
         }
         if recentInteractionFocusTarget == key {
             recentInteractionFocusTarget = nil
+            recentInteractionDisplayIdentifier = nil
+            recentInteractionDisplayDeadline = .distantPast
+        }
+        if preSleepFocusContext?.windowKey == key {
+            preSleepFocusContext = nil
+        }
+        if radialPlacementCommitContext.map({
+            $0.focusedWindow == key || $0.participantKeys.contains(key)
+        }) == true {
+            radialPlacementCommitContext = nil
+        }
+        if radialFreeformPlacementCommitContext?.focusedWindow == key {
+            radialFreeformPlacementCommitContext = nil
+        }
+        if let gestureContext = directionalMoveGestureContext,
+           gestureContext.focusedWindow == key ||
+            gestureContext.placement?.participantKeys.contains(key) == true {
+            directionalMoveGestureContext = nil
+        }
+        if let dragSession = manualTiledDragSession,
+           dragSession.focusedWindow == key || dragSession.candidateTarget == key {
+            manualTiledDragSession = nil
+        }
+        for bundleKey in Array(quickAppSessions.keys) {
+            guard var session = quickAppSessions[bundleKey] else { continue }
+            if session.previousFocusKey == key {
+                session.previousFocusKey = nil
+                quickAppSessions[bundleKey] = session
+            }
+        }
+        postSleepWindowRecoveryState.remove(key)
+        if foregroundFullscreenGameSessionKey == key {
+            foregroundFullscreenGameSessionKey = nil
         }
         focusCycleRejectedUntil.removeValue(forKey: key)
         staleParkedFocusSuppression.removeValue(forKey: key)
         lastSolvedTiledFrames.removeValue(forKey: key)
+        temporarilyDeferredWindowKeys.remove(key)
 
         if removal.changedManagedState {
             diagnostics.log(
@@ -9525,6 +9665,8 @@ final class WorkspaceEngine {
                     "tracked-removed": String(removal.removedTrackedWindow),
                     "pending-assignment-removed": String(removal.removedPendingAssignment),
                     "last-focused-workspaces-cleared": String(removal.clearedLastFocusedWorkspaceIDs.count),
+                    "tiled-layout-state-removed": String(removal.removedTiledLayoutState),
+                    "fullscreen-state-removed": String(removal.removedFullscreenState),
                     "frame-write": "false",
                 ]
             )
@@ -9532,12 +9674,15 @@ final class WorkspaceEngine {
         return removal
     }
 
-    static func removeIgnoredWindowState<Tracked>(
+    static func removeIgnoredWindowState<Tracked, FullscreenSession>(
         _ key: WindowKey,
         bundleIdentifier: String?,
         trackedWindows: inout [WindowKey: Tracked],
         pendingRestoredWindows: inout [String: PersistedWindowAssignment],
-        lastFocusedWindow: inout [UUID: WindowKey]
+        lastFocusedWindow: inout [UUID: WindowKey],
+        tiledTrees: inout [TiledLayoutPartitionKey: TiledNode],
+        fullscreenSessions: inout [WindowKey: FullscreenSession],
+        fullscreenAuthoritativeFalseCounts: inout [WindowKey: Int]
     ) -> IgnoredWindowRemovalResult {
         let removedTrackedWindow = trackedWindows.removeValue(forKey: key) != nil
         let persistedKey = String(key.windowIdentifier)
@@ -9554,10 +9699,20 @@ final class WorkspaceEngine {
             windowKey == key ? workspaceID : nil
         })
         lastFocusedWindow = lastFocusedWindow.filter { $0.value != key }
+        let prunedTiledTrees = WindowEnumerationLifecycle.pruning(
+            tiledTrees,
+            removedWindowKeys: [key]
+        )
+        let removedTiledLayoutState = prunedTiledTrees != tiledTrees
+        tiledTrees = prunedTiledTrees
+        let removedFullscreenSession = fullscreenSessions.removeValue(forKey: key) != nil
+        let removedFullscreenObservation = fullscreenAuthoritativeFalseCounts.removeValue(forKey: key) != nil
         return IgnoredWindowRemovalResult(
             removedTrackedWindow: removedTrackedWindow,
             removedPendingAssignment: removedPendingAssignment,
-            clearedLastFocusedWorkspaceIDs: clearedLastFocusedWorkspaceIDs
+            clearedLastFocusedWorkspaceIDs: clearedLastFocusedWorkspaceIDs,
+            removedTiledLayoutState: removedTiledLayoutState,
+            removedFullscreenState: removedFullscreenSession || removedFullscreenObservation
         )
     }
 
@@ -11282,6 +11437,270 @@ final class WorkspaceEngine {
         )
     }
 
+    /// Releases Quick App ownership for a newly ignored surface. This deliberately restores only
+    /// application visibility; it never calls the Quick App frame boundary for the companion
+    /// window that central admission has just rejected.
+    private func discardIgnoredQuickAppSessions(
+        for key: WindowKey,
+        correlationID: String?
+    ) {
+        let matchingBundleKeys = quickAppSessions.compactMap { bundleKey, session in
+            session.windowKey == key ? bundleKey : nil
+        }
+        guard !matchingBundleKeys.isEmpty else { return }
+
+        dropDownAnimationGeneration &+= 1
+        for bundleKey in matchingBundleKeys {
+            guard let session = quickAppSessions[bundleKey] else { continue }
+            let phaseBeforeDiscard = quickAppTransition
+            let transitionAfterDiscard = IgnoredQuickAppDiscardPolicy.transitionAfterDiscard(
+                phaseBeforeDiscard,
+                bundleKey: bundleKey
+            )
+            let interruptedTransition = transitionAfterDiscard != phaseBeforeDiscard
+            quickAppTransition = transitionAfterDiscard
+
+            if pendingDropDownAppLaunch.map({
+                Self.normalizedBundleIdentifier($0.bundleIdentifier) == bundleKey
+            }) == true {
+                cancelPendingDropDownAppLaunch()
+            }
+            if IgnoredQuickAppDiscardPolicy.shouldClearPendingSelection(
+                pendingBundleIdentifier: pendingQuickAppSelection.map {
+                    Self.normalizedBundleIdentifier($0.bundleIdentifier)
+                },
+                discardedBundleKey: bundleKey,
+                interruptedTransition: interruptedTransition
+            ) {
+                pendingQuickAppSelection = nil
+            }
+            pendingQuickAppHideAfterPresentation = false
+
+            _ = nextQuickAppNeighborVisibilityGeneration(bundleKey: bundleKey)
+            quickAppSessions.removeValue(forKey: bundleKey)
+            quickAppNeighborVisibilityGeneration.removeValue(forKey: bundleKey)
+
+            let observedHidden = isDropDownApplicationHidden(
+                processIdentifier: key.processIdentifier,
+                bundleIdentifier: session.bundleIdentifier
+            )
+            let shouldUnhide = IgnoredQuickAppDiscardPolicy.shouldRequestApplicationUnhide(
+                wasHiddenByWindowRanger: session.isApplicationHiddenByWindowRanger,
+                observedHidden: observedHidden
+            )
+            ignoredQuickAppVisibilityRecoveryGeneration &+= 1
+            let recoveryGeneration = ignoredQuickAppVisibilityRecoveryGeneration
+            if shouldUnhide {
+                ignoredQuickAppVisibilityRecoveries[bundleKey] = IgnoredQuickAppVisibilityRecovery(
+                    generation: recoveryGeneration,
+                    processIdentifier: key.processIdentifier,
+                    bundleIdentifier: session.bundleIdentifier,
+                    confirmationInFlight: true
+                )
+            } else {
+                ignoredQuickAppVisibilityRecoveries.removeValue(forKey: bundleKey)
+            }
+            let unhideRequested = shouldUnhide
+                ? requestDropDownApplicationHidden(
+                    false,
+                    processIdentifier: key.processIdentifier,
+                    bundleIdentifier: session.bundleIdentifier,
+                    allowWhilePaused: true
+                )
+                : nil
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "ignored-session-discarded",
+                correlation: correlationID,
+                fields: [
+                    "window": Self.diagnosticWindowKey(key),
+                    "bundle": bundleKey,
+                    "transition-reset": String(interruptedTransition),
+                    "application-unhide": unhideRequested.map(String.init) ?? "not-requested",
+                    "frame-write": "false",
+                ]
+            )
+            if shouldUnhide {
+                confirmIgnoredQuickAppApplicationVisible(
+                    bundleKey: bundleKey,
+                    generation: recoveryGeneration,
+                    processIdentifier: key.processIdentifier,
+                    bundleIdentifier: session.bundleIdentifier,
+                    correlationID: correlationID,
+                    attempt: 0
+                )
+            }
+        }
+    }
+
+    private func reconcileIgnoredQuickAppVisibilityRecoveries(correlationID: String?) {
+        for bundleKey in Array(ignoredQuickAppVisibilityRecoveries.keys) {
+            guard var recovery = ignoredQuickAppVisibilityRecoveries[bundleKey] else { continue }
+            if quickAppSessions[bundleKey] != nil {
+                ignoredQuickAppVisibilityRecoveries.removeValue(forKey: bundleKey)
+                diagnostics.log(
+                    category: "drop-down-app",
+                    event: "ignored-session-visibility-recovery-superseded",
+                    correlation: correlationID,
+                    fields: ["bundle": bundleKey, "frame-write": "false"]
+                )
+                continue
+            }
+            guard dropDownRunningApplication(
+                processIdentifier: recovery.processIdentifier,
+                bundleIdentifier: recovery.bundleIdentifier
+            ) != nil else {
+                ignoredQuickAppVisibilityRecoveries.removeValue(forKey: bundleKey)
+                continue
+            }
+            guard !recovery.confirmationInFlight else { continue }
+            recovery.confirmationInFlight = true
+            ignoredQuickAppVisibilityRecoveries[bundleKey] = recovery
+            confirmIgnoredQuickAppApplicationVisible(
+                bundleKey: bundleKey,
+                generation: recovery.generation,
+                processIdentifier: recovery.processIdentifier,
+                bundleIdentifier: recovery.bundleIdentifier,
+                correlationID: correlationID,
+                attempt: 0
+            )
+        }
+    }
+
+    static func restoredIgnoredQuickAppVisibilityRecoveries(
+        _ persisted: [String: IgnoredQuickAppVisibilityRecovery]?
+    ) -> [String: IgnoredQuickAppVisibilityRecovery] {
+        (persisted ?? [:]).reduce(into: [:]) { result, pair in
+            let bundleKey = normalizedBundleIdentifier(pair.value.bundleIdentifier)
+            guard pair.key == bundleKey,
+                  pair.value.processIdentifier > 0,
+                  AccessibilityWindow.shouldReadAccessibilityIdentifierForCompatibility(
+                    pair.value.bundleIdentifier
+                  )
+            else { return }
+            result[bundleKey] = IgnoredQuickAppVisibilityRecovery(
+                generation: pair.value.generation,
+                processIdentifier: pair.value.processIdentifier,
+                bundleIdentifier: pair.value.bundleIdentifier,
+                confirmationInFlight: false
+            )
+        }
+    }
+
+    private func attemptIgnoredQuickAppVisibilityRecoveryForShutdown() {
+        for bundleKey in Array(ignoredQuickAppVisibilityRecoveries.keys) {
+            guard var recovery = ignoredQuickAppVisibilityRecoveries[bundleKey] else { continue }
+            if quickAppSessions[bundleKey] != nil {
+                ignoredQuickAppVisibilityRecoveries.removeValue(forKey: bundleKey)
+                continue
+            }
+            guard dropDownRunningApplication(
+                processIdentifier: recovery.processIdentifier,
+                bundleIdentifier: recovery.bundleIdentifier
+            ) != nil else {
+                ignoredQuickAppVisibilityRecoveries.removeValue(forKey: bundleKey)
+                continue
+            }
+            _ = requestDropDownApplicationHidden(
+                false,
+                processIdentifier: recovery.processIdentifier,
+                bundleIdentifier: recovery.bundleIdentifier,
+                allowWhilePaused: true
+            )
+            if isDropDownApplicationHidden(
+                processIdentifier: recovery.processIdentifier,
+                bundleIdentifier: recovery.bundleIdentifier
+            ) == false {
+                ignoredQuickAppVisibilityRecoveries.removeValue(forKey: bundleKey)
+            } else {
+                recovery.confirmationInFlight = false
+                ignoredQuickAppVisibilityRecoveries[bundleKey] = recovery
+            }
+        }
+    }
+
+    private func confirmIgnoredQuickAppApplicationVisible(
+        bundleKey: String,
+        generation: UInt64,
+        processIdentifier: pid_t,
+        bundleIdentifier: String,
+        correlationID: String?,
+        attempt: Int
+    ) {
+        guard var recovery = ignoredQuickAppVisibilityRecoveries[bundleKey],
+              recovery.generation == generation,
+              recovery.processIdentifier == processIdentifier,
+              recovery.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        else { return }
+        guard quickAppSessions[bundleKey] == nil else {
+            ignoredQuickAppVisibilityRecoveries.removeValue(forKey: bundleKey)
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "ignored-session-visibility-recovery-superseded",
+                correlation: correlationID,
+                fields: ["bundle": bundleKey, "frame-write": "false"]
+            )
+            return
+        }
+        guard dropDownRunningApplication(
+            processIdentifier: processIdentifier,
+            bundleIdentifier: bundleIdentifier
+        ) != nil else {
+            ignoredQuickAppVisibilityRecoveries.removeValue(forKey: bundleKey)
+            return
+        }
+        let disposition = DropDownAppVisibilityConfirmationPolicy.disposition(
+            expectedHidden: false,
+            observedHidden: isDropDownApplicationHidden(
+                processIdentifier: processIdentifier,
+                bundleIdentifier: bundleIdentifier
+            ),
+            attempt: attempt
+        )
+        switch disposition {
+        case .confirmed:
+            _ = recovery.shouldRetain(after: disposition)
+            ignoredQuickAppVisibilityRecoveries.removeValue(forKey: bundleKey)
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "ignored-session-application-visible",
+                correlation: correlationID,
+                fields: ["bundle": bundleIdentifier, "frame-write": "false"]
+            )
+        case .timedOut:
+            if recovery.shouldRetain(after: disposition) {
+                ignoredQuickAppVisibilityRecoveries[bundleKey] = recovery
+            }
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "ignored-session-application-unhide-timeout",
+                correlation: correlationID,
+                fields: [
+                    "bundle": bundleIdentifier,
+                    "recovery-retained": "true",
+                    "frame-write": "false",
+                ]
+            )
+        case .retry:
+            _ = requestDropDownApplicationHidden(
+                false,
+                processIdentifier: processIdentifier,
+                bundleIdentifier: bundleIdentifier,
+                allowWhilePaused: true
+            )
+            queue.asyncAfter(deadline: .now() + .milliseconds(75)) { [weak self] in
+                self?.confirmIgnoredQuickAppApplicationVisible(
+                    bundleKey: bundleKey,
+                    generation: generation,
+                    processIdentifier: processIdentifier,
+                    bundleIdentifier: bundleIdentifier,
+                    correlationID: correlationID,
+                    attempt: attempt + 1
+                )
+            }
+        }
+    }
+
     private func restoreAndClearQuickAppSession(
         bundleKey: String,
         reason: String,
@@ -12821,7 +13240,17 @@ final class WorkspaceEngine {
                         displayIdentifier: pair.value.displayIdentifier,
                         isApplicationHiddenByWindowRanger: true
                     )
-                }
+                },
+                ignoredQuickAppVisibilityRecoveries: ignoredQuickAppVisibilityRecoveries.isEmpty
+                    ? nil
+                    : ignoredQuickAppVisibilityRecoveries.mapValues { recovery in
+                        IgnoredQuickAppVisibilityRecovery(
+                            generation: recovery.generation,
+                            processIdentifier: recovery.processIdentifier,
+                            bundleIdentifier: recovery.bundleIdentifier,
+                            confirmationInFlight: false
+                        )
+                    }
             ),
             waitForCompletion: waitForCompletion
         )

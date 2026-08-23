@@ -45,6 +45,7 @@ struct WindowServerPointerEntry: Equatable, Sendable {
 enum WindowAdmissionDisposition: String, Equatable, Sendable {
     case managedNormal = "managed-normal"
     case managedDialog = "managed-dialog"
+    case ignoredCompanionSurface = "ignored-companion-surface"
     case ignoredTransientPopup = "ignored-transient-popup"
     case temporarilyIneligible = "temporarily-ineligible"
 
@@ -53,7 +54,7 @@ enum WindowAdmissionDisposition: String, Equatable, Sendable {
     }
 
     var evictsTrackedWindow: Bool {
-        self == .ignoredTransientPopup
+        self == .ignoredCompanionSurface || self == .ignoredTransientPopup
     }
 }
 
@@ -67,6 +68,8 @@ enum WindowAdmissionReason: String, Equatable, Sendable {
     case transientDialogNonNormalLayer = "transient-dialog-non-normal-layer"
     case ambiguousDialogMetadata = "ambiguous-dialog-metadata"
     case verifiedBundleNonNormalLayer = "verified-bundle-non-normal-layer"
+    case rangerCompanionSurface = "ranger-companion-surface"
+    case rangerCompanionSurfaceIdentifierUnavailable = "ranger-companion-surface-identifier-unavailable"
     case unsupportedRole = "unsupported-role"
     case minimized = "minimized"
     case fullscreen = "fullscreen"
@@ -77,6 +80,17 @@ enum AXAttributePresence: String, Equatable, Sendable {
     case present
     case absent
     case unavailable
+}
+
+enum AXStringAttributeObservation: Equatable, Sendable {
+    case value(String)
+    case absentOrUnsupported
+    case unavailable
+
+    var value: String? {
+        guard case let .value(value) = self else { return nil }
+        return value
+    }
 }
 
 enum AXBooleanAttributeObservation: String, Equatable, Sendable {
@@ -96,6 +110,7 @@ enum AXBooleanAttributeObservation: String, Equatable, Sendable {
 
 struct WindowAdmissionMetadata: Equatable, Sendable {
     let bundleIdentifier: String?
+    let accessibilityIdentifierObservation: AXStringAttributeObservation
     let role: String?
     let subrole: String?
     let windowLayer: Int?
@@ -114,6 +129,8 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
 
     init(
         bundleIdentifier: String?,
+        accessibilityIdentifier: String? = nil,
+        accessibilityIdentifierObservation: AXStringAttributeObservation? = nil,
         role: String?,
         subrole: String?,
         windowLayer: Int?,
@@ -131,6 +148,9 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
         sizeSettable: AXBooleanAttributeObservation = .unsupported
     ) {
         self.bundleIdentifier = bundleIdentifier
+        self.accessibilityIdentifierObservation = accessibilityIdentifierObservation
+            ?? accessibilityIdentifier.map(AXStringAttributeObservation.value)
+            ?? .absentOrUnsupported
         self.role = role
         self.subrole = subrole
         self.windowLayer = windowLayer
@@ -149,13 +169,19 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
         self.sizeSettable = sizeSettable
     }
 
+    var accessibilityIdentifier: String? { accessibilityIdentifierObservation.value }
+
     /// A broad discovery pass refreshes classifier inputs but must not add support-only AX reads to
     /// the 0.75-second engine poll. Retain the last on-demand evidence until it is explicitly
     /// refreshed or the window's admission state changes.
     func retainingSupportEvidence(from previous: WindowAdmissionMetadata?) -> WindowAdmissionMetadata {
         guard let previous else { return self }
+        let retainedAccessibilityIdentifierObservation = accessibilityIdentifierObservation == .unavailable
+            ? previous.accessibilityIdentifierObservation
+            : accessibilityIdentifierObservation
         return WindowAdmissionMetadata(
             bundleIdentifier: bundleIdentifier,
+            accessibilityIdentifierObservation: retainedAccessibilityIdentifierObservation,
             role: role,
             subrole: subrole,
             windowLayer: windowLayer,
@@ -221,6 +247,7 @@ enum WindowCompatibilityLayerConstraint: Equatable, Sendable {
 struct WindowCompatibilityProfile: Equatable, Sendable {
     let identifier: String
     let bundleIdentifiers: Set<String>
+    let accessibilityIdentifier: String?
     let role: String?
     let subrole: String?
     let layer: WindowCompatibilityLayerConstraint?
@@ -239,6 +266,7 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
     init(
         identifier: String,
         bundleIdentifiers: Set<String>,
+        accessibilityIdentifier: String? = nil,
         role: String? = nil,
         subrole: String? = nil,
         layer: WindowCompatibilityLayerConstraint? = nil,
@@ -256,6 +284,7 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
     ) {
         self.identifier = identifier
         self.bundleIdentifiers = Set(bundleIdentifiers.map { $0.lowercased() })
+        self.accessibilityIdentifier = accessibilityIdentifier
         self.role = role
         self.subrole = subrole
         self.layer = layer
@@ -275,6 +304,7 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
     func matches(_ metadata: WindowAdmissionMetadata) -> Bool {
         guard let bundleIdentifier = metadata.bundleIdentifier?.lowercased(),
               bundleIdentifiers.contains(bundleIdentifier),
+              accessibilityIdentifier.map({ $0 == metadata.accessibilityIdentifier }) ?? true,
               role.map({ $0 == metadata.role }) ?? true,
               subrole.map({ $0 == metadata.subrole }) ?? true,
               layer.map({ $0.matches(metadata.windowLayer) }) ?? true,
@@ -306,6 +336,7 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
     func matchesCoreEvidence(_ metadata: WindowAdmissionMetadata) -> Bool {
         guard let bundleIdentifier = metadata.bundleIdentifier?.lowercased(),
               bundleIdentifiers.contains(bundleIdentifier),
+              accessibilityIdentifier.map({ $0 == metadata.accessibilityIdentifier }) ?? true,
               role.map({ $0 == metadata.role }) ?? true,
               subrole.map({ $0 == metadata.subrole }) ?? true,
               layer.map({ $0.matches(metadata.windowLayer) }) ?? true,
@@ -327,10 +358,22 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
 enum AccessibilityWindow {
     private static let enhancedUserInterfaceAttribute = "AXEnhancedUserInterface" as CFString
     private static let fullScreenAttribute = "AXFullScreen" as CFString
+    static let desktopRangerSurfaceAccessibilityIdentifier = "dev.appranger.desktopranger.surface.v1"
+    private static let desktopRangerSurfaceBundleIdentifiers: Set<String> = [
+        "dev.appranger.desktopranger.surfacelab",
+    ]
 
     /// Bundled compatibility facts grow only from a reproducible report and privacy-safe fixture.
     /// Keep matches surface-specific; never use a profile as a hidden whole-app layout preference.
     static let builtInCompatibilityProfiles: [WindowCompatibilityProfile] = [
+        WindowCompatibilityProfile(
+            identifier: "desktopranger-owned-surface-v1",
+            bundleIdentifiers: desktopRangerSurfaceBundleIdentifiers,
+            accessibilityIdentifier: desktopRangerSurfaceAccessibilityIdentifier,
+            role: kAXWindowRole as String,
+            disposition: .ignoredCompanionSurface,
+            reason: .rangerCompanionSurface
+        ),
         WindowCompatibilityProfile(
             identifier: "codex-transient-non-normal-layer-v1",
             bundleIdentifiers: ["com.openai.codex"],
@@ -364,6 +407,14 @@ enum AccessibilityWindow {
         return builtInCompatibilityProfiles.contains {
             $0.bundleIdentifiers.contains(bundleIdentifier) && $0.layer != nil
         }
+    }
+
+    /// The cooperative Ranger surface marker is a cheap, privacy-safe core signal, but it still
+    /// adds an AX read. Query it only for the exact SurfaceLab host identity participating in this
+    /// versioned contract; nearby and hypothetical future bundle identifiers remain ordinary apps.
+    static func shouldReadAccessibilityIdentifierForCompatibility(_ bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier = bundleIdentifier?.lowercased() else { return false }
+        return desktopRangerSurfaceBundleIdentifiers.contains(bundleIdentifier)
     }
 
     static func shouldCollectSupportMetadataForCompatibility(
@@ -423,6 +474,27 @@ enum AccessibilityWindow {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else { return nil }
         return value as? T
+    }
+
+    /// Unlike a plain optional read, this distinguishes an authoritative absence from a transient
+    /// AX transport failure. The companion-surface contract must not briefly admit a previously
+    /// tagged window merely because its process was temporarily unresponsive.
+    static func stringAttributeObservation(
+        _ attribute: CFString,
+        of element: AXUIElement
+    ) -> AXStringAttributeObservation {
+        var value: CFTypeRef?
+        switch AXUIElementCopyAttributeValue(element, attribute, &value) {
+        case .success:
+            guard let value = value as? String else {
+                return value == nil ? .absentOrUnsupported : .unavailable
+            }
+            return .value(value)
+        case .noValue, .attributeUnsupported:
+            return .absentOrUnsupported
+        default:
+            return .unavailable
+        }
     }
 
     /// Distinguishes a reliably absent window control from an AX read that timed out or failed.
@@ -618,8 +690,12 @@ enum AccessibilityWindow {
         effectiveFullscreen: Bool? = nil
     ) -> WindowAdmissionMetadata {
         let fullscreenObservation = suppliedFullscreenObservation ?? self.fullscreenObservation(of: element)
+        let accessibilityIdentifierObservation = shouldReadAccessibilityIdentifierForCompatibility(bundleIdentifier)
+            ? stringAttributeObservation(kAXIdentifierAttribute as CFString, of: element)
+            : .absentOrUnsupported
         return WindowAdmissionMetadata(
             bundleIdentifier: bundleIdentifier,
+            accessibilityIdentifierObservation: accessibilityIdentifierObservation,
             role: copyAttribute(element, kAXRoleAttribute as CFString, as: String.self),
             subrole: copyAttribute(element, kAXSubroleAttribute as CFString, as: String.self),
             windowLayer: windowLayer,
@@ -639,6 +715,7 @@ enum AccessibilityWindow {
     ) -> WindowAdmissionMetadata {
         WindowAdmissionMetadata(
             bundleIdentifier: coreMetadata.bundleIdentifier,
+            accessibilityIdentifierObservation: coreMetadata.accessibilityIdentifierObservation,
             role: coreMetadata.role,
             subrole: coreMetadata.subrole,
             windowLayer: coreMetadata.windowLayer,
@@ -658,6 +735,13 @@ enum AccessibilityWindow {
     }
 
     static func admissionDecision(for metadata: WindowAdmissionMetadata) -> WindowAdmissionDecision {
+        if shouldReadAccessibilityIdentifierForCompatibility(metadata.bundleIdentifier),
+           metadata.accessibilityIdentifierObservation == .unavailable {
+            return WindowAdmissionDecision(
+                disposition: .temporarilyIneligible,
+                reason: .rangerCompanionSurfaceIdentifierUnavailable
+            )
+        }
         if let profile = matchingCompatibilityProfile(for: metadata) {
             return profile.decision()
         }
