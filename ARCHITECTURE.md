@@ -20,6 +20,7 @@ parking them at a recoverable screen edge.
 | Onboarding | `Sources/Onboarding`, `Sources/App/OnboardingWindowController.swift` | Versioned local progress, seven settings-backed stages and first-run window presentation. |
 | Command surfaces | `Sources/CommandPalette`, `Sources/MenuBar`, `Sources/RadialMenu` | Searchable and contextual presentation through the same typed command layer used by hotkeys. |
 | Shortcut guide | `Sources/ShortcutGuide` | Passive modifier observation, conflict-checked key-map content, screen geometry and a nonactivating glass HUD. |
+| Updates | `Sources/Updates` | Local Stable/Beta preference, Sparkle lifecycle, signed-update configuration and the hard Dev-build network boundary. |
 | Diagnostics | `Sources/Diagnostics` | Structured privacy-filtered Debug traces with bounded rotation and no-op/test sinks. |
 
 The non-hosted `WindowRangerTests` target compiles shared sources directly and excludes
@@ -157,6 +158,12 @@ the user's cache directory using an atomic replacement. This includes exact hidd
 identities only when WindowRanger hid those windows' applications. A changed WindowServer session
 invalidates exact window IDs and that ownership marker rather than guessing. Legacy minimized-window
 markers decode without granting application-unhide ownership.
+
+The Stable/Beta update-channel choice and Sparkle automatic-check/download choices also remain
+local to one Mac. Build-time Info.plist values decide whether the signed app is eligible to update,
+which HTTPS appcast it may read, and which public EdDSA key verifies archives. Dev builds fail closed
+before constructing Sparkle's updater, regardless of saved preferences. Stable clients allow only
+Sparkle's default channel; Beta opt-in adds `beta`, while retaining default-channel eligibility.
 
 Automatic profile resolution is pure and ordered: manual pin, foreground full-screen Game Mode
 eligible session, exact display topology, portable dock state, local default, then safe fallback.

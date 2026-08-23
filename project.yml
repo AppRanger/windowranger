@@ -11,6 +11,13 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
     WINDOWRANGER_GIT_COMMIT: unknown
+    WINDOWRANGER_UPDATE_CHANNEL: dev
+    WINDOWRANGER_SPARKLE_FEED_URL: https://windowranger.com/appcast.xml
+    WINDOWRANGER_SPARKLE_PUBLIC_ED_KEY: ""
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.8.1
 targets:
   WindowRanger:
     type: application
@@ -31,6 +38,7 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
     dependencies:
+      - package: Sparkle
       - sdk: ApplicationServices.framework
       - sdk: Carbon.framework
       - sdk: ServiceManagement.framework
@@ -43,6 +51,7 @@ targets:
         excludes:
           - App
     dependencies:
+      - package: Sparkle
       - sdk: ApplicationServices.framework
       - sdk: Carbon.framework
       - sdk: ServiceManagement.framework

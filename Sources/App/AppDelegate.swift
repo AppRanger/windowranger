@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let diagnostics = DiagnosticLogger.makeAppLogger()
     lazy var settingsStore = SettingsStore(diagnostics: diagnostics)
     lazy var settingsNavigation = SettingsNavigationModel()
+    lazy var updateController = UpdateController()
     lazy var settingsWindowCoordinator = SettingsWindowCoordinator(diagnostics: diagnostics)
     lazy var settingsCommandRequestRouter = SettingsCommandRequestRouter()
     private lazy var onboardingWindowController = OnboardingWindowController(
@@ -1037,6 +1038,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 stateModel: menuBarState,
                 settingsStore: settingsStore,
                 settingsCommandRequestRouter: settingsCommandRequestRouter,
+                updateController: updateController,
                 diagnostics: diagnostics,
                 tiledPlacementUndoManager: tiledPlacementUndoManager,
                 initialMode: settingsStore.menuBarPresentationMode,

@@ -1046,6 +1046,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private let stateModel: MenuBarStateModel
     private let settingsStore: SettingsStore
     private let settingsCommandRequestRouter: SettingsCommandRequestRouter
+    private let updateController: UpdateController?
     private let diagnostics: DiagnosticLogger
     private let tiledPlacementUndoManager: UndoManager?
     private let isPauseModeEnabled: () -> Bool
@@ -1065,6 +1066,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private var isInvalidated = false
     private var menuPresentationRequestGate = MenuBarMenuPresentationRequestGate()
     private var settingsStatusMenuOpenGate = SettingsStatusMenuOpenGate()
+    private var checkForUpdatesAfterMenuCloses = false
     private var shelfGeneration: UInt64 = 0
     private var pendingShelfTarget: MenuBarHitTarget?
     private var pendingShelfAnchorFrame: CGRect?
@@ -1088,6 +1090,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         stateModel: MenuBarStateModel,
         settingsStore: SettingsStore,
         settingsCommandRequestRouter: SettingsCommandRequestRouter,
+        updateController: UpdateController? = nil,
         diagnostics: DiagnosticLogger,
         tiledPlacementUndoManager: UndoManager? = nil,
         initialMode: MenuBarPresentationMode,
@@ -1101,6 +1104,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         self.stateModel = stateModel
         self.settingsStore = settingsStore
         self.settingsCommandRequestRouter = settingsCommandRequestRouter
+        self.updateController = updateController
         self.diagnostics = diagnostics
         self.tiledPlacementUndoManager = tiledPlacementUndoManager
         self.isPauseModeEnabled = isPauseModeEnabled
@@ -1705,6 +1709,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         supportSectionVisibleForCurrentOpen = false
         focusedWindowDiagnosticReport = nil
         hostView?.setMenuPresented(false)
+        if checkForUpdatesAfterMenuCloses {
+            checkForUpdatesAfterMenuCloses = false
+            DispatchQueue.main.async { [weak self] in
+                self?.updateController?.checkForUpdates()
+            }
+        }
     }
 
     private func rebuildMenu() {
@@ -1770,6 +1780,15 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         }
 
         appMenu.addItem(.separator())
+        if let updateController {
+            let updates = actionMenuItem(
+                title: "Check for Updates…",
+                action: #selector(checkForUpdatesFromStatusMenu)
+            )
+            updates.image = symbol("arrow.triangle.2.circlepath")
+            updates.isEnabled = updateController.canCheckForUpdates
+            appMenu.addItem(updates)
+        }
         let settings = actionMenuItem(
             title: "Settings…",
             action: #selector(openSettingsFromStatusMenu)
@@ -1874,6 +1893,10 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             event: "status-menu-open-deferred",
             fields: ["reason": "awaiting-popup-return"]
         )
+    }
+
+    @objc private func checkForUpdatesFromStatusMenu() {
+        checkForUpdatesAfterMenuCloses = true
     }
 
     private func performPendingSettingsCommandFromStatusMenu() {

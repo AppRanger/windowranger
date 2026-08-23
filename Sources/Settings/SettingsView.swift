@@ -78,6 +78,7 @@ struct SettingsView: View {
     @ObservedObject var navigation: SettingsNavigationModel
     let windowCoordinator: SettingsWindowCoordinator
     let diagnostics: DiagnosticLogger
+    @ObservedObject var updateController: UpdateController
     let shortcutRecordingStateChanged: (Bool) -> Void
     let onboardingRestartRequested: () -> Void
 
@@ -87,6 +88,7 @@ struct SettingsView: View {
         navigation: SettingsNavigationModel,
         windowCoordinator: SettingsWindowCoordinator,
         diagnostics: DiagnosticLogger,
+        updateController: UpdateController,
         shortcutRecordingStateChanged: @escaping (Bool) -> Void,
         onboardingRestartRequested: @escaping () -> Void = {}
     ) {
@@ -95,6 +97,7 @@ struct SettingsView: View {
         self.navigation = navigation
         self.windowCoordinator = windowCoordinator
         self.diagnostics = diagnostics
+        self.updateController = updateController
         self.shortcutRecordingStateChanged = shortcutRecordingStateChanged
         self.onboardingRestartRequested = onboardingRestartRequested
     }
@@ -155,6 +158,7 @@ struct SettingsView: View {
                     )) {
                         Section("WindowRanger") {
                             sidebarRow(.general)
+                            sidebarRow(.updates)
                             sidebarRow(.sync)
                             sidebarRow(.behavior)
                             sidebarRow(.profiles)
@@ -262,6 +266,8 @@ struct SettingsView: View {
                         category: navigation.selectedCategory,
                         onboardingRestartRequested: onboardingRestartRequested
                     )
+                case .updates:
+                    UpdateSettingsView(updateController: updateController)
                 case .profiles:
                     ProfilesSettingsView(store: store)
                 case .profileSwitching:
@@ -314,6 +320,88 @@ struct SettingsView: View {
             entry.id == navigation.highlightedSettingID &&
                 entry.category.canonicalDestination == navigation.selectedCategory.canonicalDestination
         }
+    }
+}
+
+private struct UpdateSettingsView: View {
+    @ObservedObject var updateController: UpdateController
+
+    private var buildChannelTitle: String {
+        switch updateController.configuration.buildChannel {
+        case .development: "Development"
+        case .stable: "Stable"
+        case .beta: "Beta"
+        }
+    }
+
+    var body: some View {
+        Form {
+            Section("Software Updates") {
+                LabeledContent("Current build", value: buildChannelTitle)
+                if updateController.availability == .available {
+                    Picker(
+                        "Update channel",
+                        selection: Binding(
+                            get: { updateController.betaUpdatesEnabled },
+                            set: { updateController.betaUpdatesEnabled = $0 }
+                        )
+                    ) {
+                        Text("Stable").tag(false)
+                        Text("Beta").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+
+                    Button("Check for Updates…", systemImage: "arrow.triangle.2.circlepath") {
+                        updateController.checkForUpdates()
+                    }
+                    .disabled(!updateController.canCheckForUpdates)
+                } else {
+                    Label(
+                        updateController.statusMessage ?? updateController.availability.message,
+                        systemImage: "hammer"
+                    )
+                    .foregroundStyle(.secondary)
+                    Text("Development builds continue to use WindowRanger's local development install flow and never contact the public update feed.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if updateController.availability == .available {
+                Section("Automatic Updates") {
+                    Toggle(
+                        "Automatically check for updates",
+                        isOn: Binding(
+                            get: { updateController.automaticChecksEnabled },
+                            set: { updateController.automaticChecksEnabled = $0 }
+                        )
+                    )
+                    Toggle(
+                        "Download updates automatically",
+                        isOn: Binding(
+                            get: { updateController.automaticDownloadsEnabled },
+                            set: { updateController.automaticDownloadsEnabled = $0 }
+                        )
+                    )
+                    .disabled(!updateController.automaticChecksEnabled)
+                    Text("Updates are verified with WindowRanger's embedded public signing key before installation.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Release Channel") {
+                    if updateController.betaUpdatesEnabled {
+                        Text("Beta includes prerelease builds as well as newer Stable releases.")
+                    } else {
+                        Text("Stable excludes prerelease builds.")
+                    }
+                    Text("Returning to Stable does not downgrade an installed Beta. WindowRanger waits until a newer Stable release is available.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

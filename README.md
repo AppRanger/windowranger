@@ -7,8 +7,9 @@ A small, native macOS virtual-workspace manager built around one workflow rather
 general-purpose command language.
 
 WindowRanger will use three release channels: Stable from `main`, Beta from release branches, and
-rolling Dev builds from `develop`. Stable and opt-in Beta updates will use Sparkle later; Dev builds
-will remain outside automatic updates.
+rolling Dev builds from `develop`. Stable and opt-in Beta builds contain Sparkle update support;
+Dev builds remain outside automatic updates. The public feed will be activated only after its first
+signed update archive passes the packaged-app upgrade checks.
 
 Download the signed and notarized
 [`v0.1.0-beta.6` GitHub prerelease](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.6)
@@ -26,6 +27,7 @@ not an installable macOS app.
 - [Release channels and branching](docs/release-channels-and-branching.md)
 - [First GitHub release runbook](docs/first-github-release.md)
 - [Release notes template](docs/release-notes-template.md)
+- [Sparkle update design and release flow](docs/sparkle-updates.md)
 - [WindowRanger 0.1.0 Beta 6 release notes](docs/releases/v0.1.0-beta.6.md)
 - [WindowRanger 0.1.0 Beta 5 release notes](docs/releases/v0.1.0-beta.5.md)
 - [WindowRanger 0.1.0 Beta 4 release notes](docs/releases/v0.1.0-beta.4.md)

@@ -3,6 +3,7 @@ import Foundation
 
 enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
     case general
+    case updates
     case sync
     case appearance
     case menuBar
@@ -25,6 +26,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
     var title: String {
         switch self {
         case .general: "General"
+        case .updates: "Updates"
         case .sync: "Sync"
         case .appearance: "Appearance"
         case .menuBar: "Menu Bar"
@@ -47,6 +49,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
     var systemImage: String {
         switch self {
         case .general: "gearshape"
+        case .updates: "arrow.triangle.2.circlepath.circle"
         case .sync: "icloud"
         case .appearance: "paintbrush"
         case .menuBar: "menubar.rectangle"
@@ -128,6 +131,9 @@ enum SettingsCatalog {
         SettingsSearchEntry(id: "accessibility", category: .general, title: "Accessibility permission", description: "Allow WindowRanger to discover, move, resize, and focus windows.", synonyms: ["privacy", "grant access", "TCC"]),
         SettingsSearchEntry(id: "launch-at-login", category: .general, title: "Open at login", description: "Start WindowRanger automatically after signing in.", synonyms: ["startup", "login item"]),
         SettingsSearchEntry(id: "run-setup-again", category: .general, title: "Run Setup Again", description: "Reopen the guided WindowRanger setup from the Welcome step without resetting existing choices.", synonyms: ["onboarding", "wizard", "welcome", "walkthrough", "restart setup"]),
+        SettingsSearchEntry(id: "check-for-updates", category: .updates, title: "Check for updates", description: "Check the signed WindowRanger update feed from a Stable or Beta build.", synonyms: ["Sparkle", "new version", "software update"]),
+        SettingsSearchEntry(id: "update-channel", category: .updates, title: "Stable or Beta updates", description: "Stay on Stable releases or opt in to prerelease Beta updates on this Mac.", synonyms: ["channel", "prerelease", "early access", "Sparkle"]),
+        SettingsSearchEntry(id: "automatic-updates", category: .updates, title: "Automatic updates", description: "Choose whether WindowRanger checks for and downloads signed updates automatically on this Mac.", synonyms: ["download", "background", "Sparkle"]),
         SettingsSearchEntry(id: "icloud", category: .sync, title: "iCloud settings sync", description: "Review exactly which profile definitions and global preferences sync and which settings stay on this Mac.", synonyms: ["cloud", "sync", "local profile", "what syncs", "this mac"]),
         SettingsSearchEntry(id: "profiles-current", category: .profiles, title: "Profile status and identity", description: "Edit the selected profile's name and icon, review the active profile, or explicitly use the selected reusable configuration.", synonyms: ["active profile", "editing profile", "profile name", "profile icon", "PRF-01", "PRF-08"]),
         SettingsSearchEntry(id: "profiles-manage", category: .profiles, title: "Create and manage profiles", description: "Create from the current reusable configuration, duplicate, rename, or safely delete profiles.", synonyms: ["clone", "copy", "named setup", "PRF-01"]),

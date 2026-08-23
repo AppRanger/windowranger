@@ -1950,9 +1950,16 @@ second copy of that checklist.
   - keep Beta and Dev packaging out of the initial Homebrew acceptance boundary unless separately
     approved.
 - **Completed groundwork:** Public Beta distribution, local-first signing/notarization, release
-  provenance, protected integration/stable branches and protected release tags.
-- **Remaining scope:** Accessibility migration guidance, Sparkle, Homebrew Stable distribution, and
-  update/rollback failure handling.
+  provenance, protected integration/stable branches and protected release tags. Sparkle 2.8.1 is
+  integrated behind a hard Dev-build exclusion with local Stable/Beta selection, manual and opt-in
+  automatic checks, an append-only build-number ledger, signed-archive appcast tooling, guarded
+  initial-feed/monotonic-feed preflight, central allocation recheck, atomic feed staging, and
+  deterministic two-release/stale-publication/runtime tests (691-test full suite and universal app
+  build on 23 August 2026).
+- **Remaining scope:** Provision the release EdDSA key, create and host the first appcast, validate
+  older-to-newer packaged updates plus cancellation/failure/Beta-to-Stable/rollback behavior, then
+  decide when automatic checking can default on. Accessibility migration guidance, Homebrew Stable
+  distribution, and update/rollback failure handling also remain.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
