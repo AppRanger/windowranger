@@ -1900,25 +1900,6 @@ design notes, but every active candidate must map back to a work item here or be
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
-### WR-073 — Publish WindowRanger 0.1.0 Beta 7 as the Sparkle upgrade baseline
-
-- **Type:** Beta release preparation
-- **Status:** Ready
-- **Requested:** 2026-08-23 after acceptance of the Shelf, Settings, shortcut, onboarding, Game Mode,
-  Pause Mode, and Sparkle integration work.
-- **Smallest useful outcome:** Publish signed, notarized universal Beta `0.1.0-beta.7` as public
-  build `8` with the Sparkle feed URL, Beta channel, and release public key embedded. Keep the live
-  appcast absent so the maintainer can install this exact GitHub artifact as the older side of the
-  first real updater test.
-- **Acceptance boundary:** Central `develop` owns the single build-8 allocation; the reviewed tree is
-  promoted without force-updating `release/0.1.0`; stable Xcode produces the Developer ID-signed,
-  notarized and stapled DMG/ZIP; the tag, five GitHub assets and round-trip provenance match exactly;
-  the GitHub release is a prerelease. Do not generate or deploy the appcast in this stage.
-- **Automated evidence:** The Sparkle implementation passes all 691 non-hosted tests, the release
-  ledger and two-release/stale-publication/atomic-failure checks, Release analysis, and a universal
-  app build. The exact release-commit verification, signing, notarization, packaging, public asset
-  checks, and maintainer installation remain pending.
-
 ### WR-012 — Clean build and package verification
 
 - **Type:** Release epic
@@ -1975,13 +1956,40 @@ second copy of that checklist.
   initial-feed/monotonic-feed preflight, central allocation recheck, atomic feed staging, and
   deterministic two-release/stale-publication/runtime tests (691-test full suite and universal app
   build on 23 August 2026).
-- **Remaining scope:** Provision the release EdDSA key, create and host the first appcast, validate
-  older-to-newer packaged updates plus cancellation/failure/Beta-to-Stable/rollback behavior, then
-  decide when automatic checking can default on. Accessibility migration guidance, Homebrew Stable
-  distribution, and update/rollback failure handling also remain.
+- **Remaining scope:** Back up the release EdDSA key through the maintainer's secure credential
+  process, create and host the first appcast, validate older-to-newer packaged updates plus
+  cancellation/failure/Beta-to-Stable/rollback behavior, then decide when automatic checking can
+  default on. Accessibility migration guidance, Homebrew Stable distribution, and update/rollback
+  failure handling also remain.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-073 — Publish WindowRanger 0.1.0 Beta 7 as the Sparkle upgrade baseline
+
+- **Result:** Published
+  [`v0.1.0-beta.7`](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.7) as a
+  GitHub prerelease on 23 August 2026. The protected annotated tag points to release commit
+  `bc92df8c6c962b56fc337ff9dfd23d9230a72f60`, whose tree matches reviewed `develop` commit
+  `d0781e5377d6621d6e5e46e715e9244ca157dbe2`. The
+  [candidate CI run](https://github.com/AppRanger/windowranger/actions/runs/32649902913) passed before
+  promotion, and stable Xcode 26.6 then passed the exact release tree's 691 tests, static analysis,
+  signed universal archive, and release packaging.
+- **Distribution evidence:** Developer ID build `8` uses bundle identifier
+  `dev.appranger.WindowRanger`, Team ID `44NAD22AK6`, CDHash
+  `11aa2f794c9c35a46556fbf98ae4b6495aef34af`, the Beta update channel, the HTTPS appcast URL, and
+  the WindowRanger-specific Sparkle public key. App notarization
+  `6a6fe56f-a5b2-4891-9681-ad0373655dcb` and DMG notarization
+  `db061403-2c1e-4b4f-9a4a-2d3e98e0481a` were accepted with zero logged issues. Both staples,
+  Gatekeeper assessments, strict signatures, embedded Sparkle framework, universal architecture,
+  and DMG verification passed.
+- **Public asset evidence:** The public DMG, ZIP, two checksum files, and provenance manifest were
+  downloaded after publication and round-trip verified against the tag. The DMG SHA-256 is
+  `051a1a63544076c12715400d6c17342ec314a3554ffa8c2faa4f759d6773a385`; the ZIP SHA-256 is
+  `af17b58f9358e629892f8511dfe0e48650a02348d19f9d8a013c5de247b4ce6e`.
+- **Live-validation boundary:** This release intentionally leaves `appcast.xml` absent. Maintainer
+  installation from the public GitHub DMG is the older side of the first real updater test; the
+  later signed Beta and feed publication remain separate work.
 
 ### WR-062 — Publish WindowRanger 0.1.0 Beta 6
 

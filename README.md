@@ -12,7 +12,7 @@ Dev builds remain outside automatic updates. The public feed will be activated o
 signed update archive passes the packaged-app upgrade checks.
 
 Download the signed and notarized
-[`v0.1.0-beta.6` GitHub prerelease](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.6)
+[`v0.1.0-beta.7` GitHub prerelease](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.7)
 as a DMG, with a notarized ZIP as a fallback. GitHub's automatically generated source archives are
 not an installable macOS app.
 
@@ -28,6 +28,7 @@ not an installable macOS app.
 - [First GitHub release runbook](docs/first-github-release.md)
 - [Release notes template](docs/release-notes-template.md)
 - [Sparkle update design and release flow](docs/sparkle-updates.md)
+- [WindowRanger 0.1.0 Beta 7 release notes](docs/releases/v0.1.0-beta.7.md)
 - [WindowRanger 0.1.0 Beta 6 release notes](docs/releases/v0.1.0-beta.6.md)
 - [WindowRanger 0.1.0 Beta 5 release notes](docs/releases/v0.1.0-beta.5.md)
 - [WindowRanger 0.1.0 Beta 4 release notes](docs/releases/v0.1.0-beta.4.md)
