@@ -935,6 +935,30 @@ final class RadialMenuAndSettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsExternalPresentationDismissesExactSurfaceAndClearsAssignment() {
+        let displays = settingsDisplays()
+        let coordinator = SettingsWindowCoordinator(displayProvider: { displays })
+        let surface = TestSettingsWindowSurface(
+            frame: CGRect(x: 100, y: 100, width: 900, height: 640)
+        )
+        coordinator.attach(surface: surface)
+        let context = SettingsSurfaceContext(
+            workspaceID: workspaceA.id,
+            displayIdentifier: "main",
+            displayMode: .unified,
+            resolutionReason: "test"
+        )
+        coordinator.requestOpen(context: context, openSettings: { true })
+
+        coordinator.dismissForExternalPresentation()
+
+        XCTAssertEqual(surface.externalDismissCount, 1)
+        XCTAssertFalse(surface.isVisible)
+        XCTAssertNil(coordinator.assignedContext)
+        XCTAssertFalse(coordinator.isHiddenForWorkspace)
+    }
+
+    @MainActor
     func testSettingsReleasedWindowRequestsANewSceneAfterClose() {
         let displays = settingsDisplays()
         let coordinator = SettingsWindowCoordinator(displayProvider: { displays })
@@ -1292,6 +1316,16 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         model.select(result)
         XCTAssertEqual(model.selectedCategory, .radialMenu)
         XCTAssertEqual(model.highlightedSettingID, "radial-shortcut")
+    }
+
+    func testSettingsSearchFindsTheRepeatSetupAction() {
+        let result = SettingsCatalog.search(
+            "restart setup wizard",
+            includeDebug: false
+        ).first
+
+        XCTAssertEqual(result?.id, "run-setup-again")
+        XCTAssertEqual(result?.category, .general)
     }
 
     @MainActor
@@ -2681,6 +2715,7 @@ private final class TestSettingsWindowSurface: SettingsWindowSurface {
     private(set) var nonactivatingSurfaceFrames: [CGRect] = []
     private(set) var repositionedFrames: [CGRect] = []
     private(set) var hideCount = 0
+    private(set) var externalDismissCount = 0
     private(set) var restoreCount = 0
 
     init(frame: CGRect) {
@@ -2718,6 +2753,11 @@ private final class TestSettingsWindowSurface: SettingsWindowSurface {
     func hideForWorkspace() {
         isVisible = false
         hideCount += 1
+    }
+
+    func dismissForExternalPresentation() {
+        isVisible = false
+        externalDismissCount += 1
     }
 
     func restoreOrdinaryLifecycle() { restoreCount += 1 }

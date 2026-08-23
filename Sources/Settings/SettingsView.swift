@@ -79,6 +79,25 @@ struct SettingsView: View {
     let windowCoordinator: SettingsWindowCoordinator
     let diagnostics: DiagnosticLogger
     let shortcutRecordingStateChanged: (Bool) -> Void
+    let onboardingRestartRequested: () -> Void
+
+    init(
+        store: SettingsStore,
+        engine: WorkspaceEngine,
+        navigation: SettingsNavigationModel,
+        windowCoordinator: SettingsWindowCoordinator,
+        diagnostics: DiagnosticLogger,
+        shortcutRecordingStateChanged: @escaping (Bool) -> Void,
+        onboardingRestartRequested: @escaping () -> Void = {}
+    ) {
+        self.store = store
+        self.engine = engine
+        self.navigation = navigation
+        self.windowCoordinator = windowCoordinator
+        self.diagnostics = diagnostics
+        self.shortcutRecordingStateChanged = shortcutRecordingStateChanged
+        self.onboardingRestartRequested = onboardingRestartRequested
+    }
 
     var body: some View {
         NavigationStack {
@@ -240,7 +259,8 @@ struct SettingsView: View {
                     GeneralSettingsView(
                         store: store,
                         engine: engine,
-                        category: navigation.selectedCategory
+                        category: navigation.selectedCategory,
+                        onboardingRestartRequested: onboardingRestartRequested
                     )
                 case .profiles:
                     ProfilesSettingsView(store: store)
@@ -523,6 +543,7 @@ private struct GeneralSettingsView: View {
     @ObservedObject var store: SettingsStore
     let engine: WorkspaceEngine
     let category: SettingsCategory
+    let onboardingRestartRequested: () -> Void
     @Environment(\.undoManager) private var undoManager
     @StateObject private var accessibilityPermission = AccessibilityPermissionMonitor()
     @StateObject private var launchAtLogin = LaunchAtLoginController()
@@ -542,43 +563,51 @@ private struct GeneralSettingsView: View {
         Form {
             if category == .general {
                 Section("Permissions") {
-                LabeledContent("Accessibility") {
-                    HStack {
-                        Text(accessibilityPermission.isGranted ? "Granted" : "Required")
-                            .foregroundStyle(accessibilityPermission.isGranted ? .green : .orange)
-                        if !accessibilityPermission.isGranted {
-                            Button("Grant Access") {
-                                _ = AccessibilityWindow.requestPermission()
-                                accessibilityPermission.refresh()
+                    LabeledContent("Accessibility") {
+                        HStack {
+                            Text(accessibilityPermission.isGranted ? "Granted" : "Required")
+                                .foregroundStyle(accessibilityPermission.isGranted ? .green : .orange)
+                            if !accessibilityPermission.isGranted {
+                                Button("Grant Access") {
+                                    _ = AccessibilityWindow.requestPermission()
+                                    accessibilityPermission.refresh()
+                                }
                             }
                         }
                     }
+                    Text("Accessibility access lets the app discover, move, resize, and focus windows.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                Text("Accessibility access lets the app discover, move, resize, and focus windows.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
 
                 Section("Startup") {
-                Toggle("Open at login", isOn: Binding(
-                    get: { launchAtLogin.isEnabled },
-                    set: { launchAtLogin.setEnabled($0) }
-                ))
-                if let statusMessage = launchAtLogin.statusMessage {
-                    Text(statusMessage)
-                        .font(.caption)
-                        .foregroundStyle(launchAtLogin.status == .notFound ? .red : .secondary)
-                }
-                if launchAtLogin.status == .requiresApproval {
-                    Button("Open Login Items Settings", systemImage: "gear") {
-                        launchAtLogin.openSystemSettings()
+                    Toggle("Open at login", isOn: Binding(
+                        get: { launchAtLogin.isEnabled },
+                        set: { launchAtLogin.setEnabled($0) }
+                    ))
+                    if let statusMessage = launchAtLogin.statusMessage {
+                        Text(statusMessage)
+                            .font(.caption)
+                            .foregroundStyle(launchAtLogin.status == .notFound ? .red : .secondary)
+                    }
+                    if launchAtLogin.status == .requiresApproval {
+                        Button("Open Login Items Settings", systemImage: "gear") {
+                            launchAtLogin.openSystemSettings()
+                        }
+                    }
+                    if let errorMessage = launchAtLogin.errorMessage {
+                        Text(errorMessage).font(.caption).foregroundStyle(.red)
                     }
                 }
-                if let errorMessage = launchAtLogin.errorMessage {
-                    Text(errorMessage).font(.caption).foregroundStyle(.red)
-                }
-            }
 
+                Section("Setup") {
+                    Button("Run Setup Again…", systemImage: "sparkles") {
+                        onboardingRestartRequested()
+                    }
+                    Text("Revisit the guided setup without resetting your existing profiles or choices.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             if category == .sync {

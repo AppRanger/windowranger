@@ -8,6 +8,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var settingsNavigation = SettingsNavigationModel()
     lazy var settingsWindowCoordinator = SettingsWindowCoordinator(diagnostics: diagnostics)
     lazy var settingsCommandRequestRouter = SettingsCommandRequestRouter()
+    private lazy var onboardingWindowController = OnboardingWindowController(
+        settingsStore: settingsStore,
+        diagnostics: diagnostics
+    )
     lazy var menuBarState = MenuBarStateModel(
         workspaces: settingsStore.workspaces,
         displayMode: settingsStore.multiDisplayMode,
@@ -571,6 +575,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.workspaceStatusBarController?.rebuild()
             }
             .store(in: &cancellables)
+
+        onboardingWindowController.presentIfNeeded()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -600,6 +606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         commandFeedbackPresenter.shutdown()
         stopShortcutGuideObservation()
         focusedWindowHighlightPresenter.shutdown()
+        onboardingWindowController.shutdown()
         settingsWindowCoordinator.shutdown()
         workspaceStatusBarController?.invalidate()
         workspaceStatusBarController = nil
@@ -767,6 +774,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             workspaceSwipeController.setSuppressed(false, reason: "shortcut-recording")
             updateShortcutGuideActivation()
         }
+    }
+
+    func restartOnboardingFromSettings() {
+        OnboardingRestartHandoff.perform(
+            dismissSettings: settingsWindowCoordinator.dismissForExternalPresentation,
+            schedulePresentation: { action in
+                DispatchQueue.main.async {
+                    action()
+                }
+            },
+            presentOnboarding: { [weak self] in
+                self?.onboardingWindowController.presentFromBeginning()
+            }
+        )
     }
 
     private func reconcileAfterWake(source: WakeReconciliationSource) {

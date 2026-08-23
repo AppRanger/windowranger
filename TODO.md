@@ -171,6 +171,111 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-070 — Add a branded, settings-backed first-run onboarding wizard
+
+- **Type:** First-run experience and feature education
+- **Priority:** P1
+- **Status:** Live validation — the signed daily walkthrough, repeat-setup Settings route, and
+  corrected mouse controls have maintainer interaction evidence. The remaining first-run,
+  permission, keyboard, picker, resume, and completion boundaries are listed below.
+- **Requested:** 22 August 2026.
+- **User-observed context:** WindowRanger now has a coherent core model, but a new user must discover
+  iCloud, Navigate/Arrange shortcut families, Focus Border, menu-bar presentation, the Quick App
+  Shelf, and workspace navigation independently in Settings. There is no first-run walkthrough.
+- **Smallest useful outcome:** Present a resumable seven-stage native wizard on first launch:
+  Welcome, iCloud, Shortcuts, Focus Border, Menu Bar, Quick App Shelf, and Workspaces. Use the
+  selected compact dark Mission Control shell, WindowRanger's canonical robot, and one purposeful
+  illustration per stage. Each configurable stage must read and mutate the same SettingsStore value
+  used by the running app; Settings remains the later editing surface.
+- **Ownership boundary:** Onboarding progress and completion are versioned, local-only application
+  state. They are not profile content and are never sent through iCloud. Setting choices retain
+  their existing global, profile, or machine-local ownership. A separate coordinator owns step
+  navigation and completion; the wizard must not duplicate engine or profile serialization.
+- **Acceptance:** A new install sees the wizard after runtime initialization; an incomplete wizard
+  resumes safely; completion does not reappear for the same version. Back/Continue flows work
+  with keyboard and mouse. The wizard can opt into iCloud, change both shortcut-family modifiers,
+  preview/toggle/change Focus Border, preview/select menu-bar presentation, choose ordered Shelf apps
+  or leave Shelf setup for later, and teach keyboard/swipe workspace navigation. Existing users with
+  no onboarding marker receive the wizard because there has not yet been a public release. Pure
+  state/action tests, the complete isolated suite, an unsigned universal build, signed installed-app
+  interaction, and visual
+  comparison against the selected mock are required before Done. General Settings exposes a
+  searchable repeat-setup action that closes Settings before restarting at Welcome, preserves every
+  existing configuration choice, and resumes normally if the repeated walkthrough is left incomplete.
+- **Result:** A dedicated fixed native window now presents the seven versioned, resumable stages
+  after runtime setup. Its controls mutate the existing SettingsStore owners directly. Onboarding
+  keeps only version-namespaced progress locally; completion of one version cannot suppress or
+  resume midway through a newer flow. The Shelf stage adds, removes, reorders, caps, and reports up
+  to four profile-owned apps. Seven canonical-Ranger ImageGen scenes are bundled behind native UI.
+- **Automated and visual evidence:** 22 August 2026 — all 673 isolated tests pass, including six
+  focused onboarding state/action tests and the opt-in seven-stage production renderer. The
+  unsigned Release app builds successfully for `arm64` and `x86_64`. All seven 1,960 x 1,320 dark
+  production renders were inspected against the selected Mission Control reference; `design-qa.md`
+  records the resolved asset-bundle, clipping, Shelf-order/capacity, and version-resume findings
+  with no remaining scoped P0/P1/P2 mismatch. A skeptical read-only review reported no P0 and its
+  three P1/P2 findings were corrected and reverified.
+- **Installed evidence:** 23 August 2026 — signed universal daily revision
+  `98d12d5fe02a-dirty` was installed at `/Applications/WindowRanger.app`, passed strict deep
+  signature verification, matched the tested build bundle exactly, and resumed as the running
+  application. The versioned first-run flow launched and persisted progress through step 5.
+- **First-trial feedback and correction:** 23 August 2026 — the maintainer accepted the imagery and
+  reported non-trailing iCloud/Focus switches, inert shortcut-family dropdown choices, a dead area
+  near menu-bar selection ticks, unnecessary Shelf Skip affordance/copy, and an overly artificial
+  thick left card accent. The corrected view uses explicit trailing switches, native menus containing
+  only modifier combinations valid against the other family, non-hittable decorative strokes over
+  full-row menu-bar buttons, clearer Shelf purpose/later-Settings copy without Skip, and a quiet
+  accent wash with a uniform hairline instead of a left stripe. All 674 isolated tests pass,
+  including valid onboarding shortcut-choice coverage, and all seven corrected production stages
+  were rendered and inspected at 1,960 x 1,320.
+- **Corrected install evidence:** 23 August 2026 — the refreshed signed universal daily revision
+  `98d12d5fe02a-dirty` (CDHash `3e7df86750881ad6a3c2847f2fb9450c8428e6ca`) passed strict deep
+  signature verification, matched the tested build bundle exactly, and resumed from
+  `/Applications/WindowRanger.app`. The completed-version marker was intentionally preserved rather
+  than silently resetting the maintainer's finished walkthrough.
+- **Repeat-setup route:** 23 August 2026 — after the completed first trial showed there was no route
+  back into the wizard, General Settings gained a searchable **Run Setup Again…** action. It closes
+  the coordinator-owned Settings window, resets only versioned local onboarding progress, and
+  presents Welcome on the next main-loop turn; profiles and current setting values remain intact.
+  All 678 isolated tests pass, including ordered Settings dismissal before presentation, exact
+  Settings-surface dismissal, search routing, preservation of global and profile-owned values, and
+  resume from an interrupted repeated walkthrough. The unsigned Release app builds successfully
+  for `arm64` and `x86_64`. Normal, dark, and compact production Settings renders show the new
+  Setup section without clipping.
+- **Repeat-route install evidence:** 23 August 2026 — signed universal Release daily revision
+  `98d12d5fe02a-dirty` (CDHash `3b8fe6bd8973d7e14c7c43ee51fce206b21b0d86`) passed strict deep
+  signature verification, matched the tested daily build bundle exactly, and resumed from
+  `/Applications/WindowRanger.app`.
+- **Repeat-route live finding:** The refreshed signed trial reopened at the correct saved stage, but
+  mouse interaction remained unreliable for the compact shortcut menus and Focus Border switch even
+  though footer navigation worked. Keyboard activation changed the live Focus Border setting, proving
+  the SettingsStore binding was intact and narrowing the fault to the wizard's mouse targets. The
+  corrective candidate gives switches their complete labelled row as a native hit target, gives each
+  shortcut menu a visible minimum-size target, and activates the app before making the wizard key and
+  main. All 678 isolated tests still pass, all seven production stages render without clipping, and
+  the unsigned Release app builds successfully for `arm64` and `x86_64`. Refreshed signed mouse
+  validation is required.
+- **Control-target install evidence:** 23 August 2026 — signed universal Release daily revision
+  `98d12d5fe02a-dirty` (CDHash `7619db47ae6e6582259716bd59ce067e86ad2717`) passed strict deep
+  signature verification, matched the tested daily build bundle exactly, and resumed from
+  `/Applications/WindowRanger.app`. The maintainer confirmed that this candidate still failed: only
+  the exposed left edge of each shortcut menu responded, while the trailing Focus Border switch and
+  colour well remained inert. Live accessibility geometry then identified the actual deterministic
+  fault: the unconstrained decorative artwork owned a 702-point hit surface beginning 101 points
+  inside the 480-point controls column. It covered every trailing body control but ended above the
+  footer, exactly matching the observed split. The next candidate constrains artwork to the remaining
+  right column, clips that column, makes the decorative surface pointer-transparent, and restores the
+  earlier native shortcut-menu appearance. All 678 isolated tests pass, all seven corrected stages
+  render cleanly, and the unsigned Release app builds successfully for `arm64` and `x86_64`.
+  Refreshed signed mouse validation is required.
+- **Artwork-boundary install evidence:** 23 August 2026 — signed universal Release daily revision
+  `98d12d5fe02a-dirty` (CDHash `fd7fa8f927043306bd5e391d621bb792cf6c3fc7`) passed strict deep
+  signature verification, matched the tested daily build bundle exactly, and resumed from
+  `/Applications/WindowRanger.app`. The maintainer confirmed the complete visible shortcut-menu
+  targets, Focus Border switch, and colour picker all respond correctly in this installed build.
+- **Live boundary:** The first-run gate, app activation/Space placement, Accessibility permission
+  handoff, keyboard traversal, application picker, resume after closing, and final completion still
+  require explicit maintainer validation before Done.
+
 ### WR-069 — Wrap directional focus at workspace and Shelf edges
 
 - **Type:** Navigation consistency improvement

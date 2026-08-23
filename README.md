@@ -46,6 +46,11 @@ not an installable macOS app.
 
 ## Current feature set
 
+- A resumable seven-stage first-run setup for iCloud, Navigate/Arrange shortcuts, Focus Border,
+  menu-bar presentation, the Quick App Shelf, and keyboard/trackpad workspace navigation. Every
+  choice edits the same setting used by the app; only the wizard's versioned progress remains local.
+  General Settings can close Settings and restart the walkthrough from Welcome without resetting
+  those choices.
 - Three native, display-aware menu-bar presentations: Compact by default, Medium chips, or a Full display-grouped workspace strip.
 - A standard menu from the primary app item with Settings and a graceful Quit command; the primary item never switches workspaces.
 - Virtual workspaces that remember window membership and the active workspace across app restarts.
@@ -187,6 +192,12 @@ The selected three-column Workspaces Settings screen has the same isolated produ
 
 ```sh
 ./scripts/render-settings-preview.sh /path/to/output-directory
+```
+
+The seven production onboarding stages can likewise be rendered without starting the app:
+
+```sh
+./scripts/render-onboarding-previews.sh /path/to/output-directory
 ```
 
 The current selected-reference review and durable output paths are recorded in `design-qa.md`.

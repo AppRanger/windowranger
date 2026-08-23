@@ -17,6 +17,7 @@ parking them at a recoverable screen edge.
 | Window engine | `Sources/Windows` | AX discovery, admission, membership, parking/restoration, focus, layout application and wake reconciliation. |
 | Reusable models | `Sources/Model` | Workspaces, layouts, profiles, display identity, app rules, window manipulation and radial-menu preferences. |
 | Settings | `Sources/Settings` | Profile/iCloud-backed configuration, machine-local state, searchable native UI and app-owned Settings-window routing. |
+| Onboarding | `Sources/Onboarding`, `Sources/App/OnboardingWindowController.swift` | Versioned local progress, seven settings-backed stages and first-run window presentation. |
 | Command surfaces | `Sources/CommandPalette`, `Sources/MenuBar`, `Sources/RadialMenu` | Searchable and contextual presentation through the same typed command layer used by hotkeys. |
 | Shortcut guide | `Sources/ShortcutGuide` | Passive modifier observation, conflict-checked key-map content, screen geometry and a nonactivating glass HUD. |
 | Diagnostics | `Sources/Diagnostics` | Structured privacy-filtered Debug traces with bounded rotation and no-op/test sinks. |
@@ -31,6 +32,10 @@ installing production hotkeys, asking for Accessibility permission or moving liv
    presentation controllers and `HotKeyManager`.
 2. `SettingsStore` loads one versioned synced `ProfileLibrary` plus machine-local
    `ProfileLocalState`, then resolves abstract display roles against connected local displays.
+   After the runtime publishers are wired, the onboarding controller presents when its local
+   completion version is stale and binds every choice back to this same store. General Settings can
+   explicitly restart only that local progress; the Settings window closes before onboarding is
+   presented on the next main-loop turn, and existing configuration remains intact.
 3. `WorkspaceEngine.start()` checks Accessibility trust, enumerates applications/windows and sends
    each candidate through the central admission classifier before it can enter any other subsystem.
 4. Hotkeys, the optional local workspace-swipe monitor, the menu bar, and the Command Palette emit
@@ -145,7 +150,8 @@ action and never occurs as a side effect of a failed pull.
 The active/manual profile selection, automatic trigger mappings, runtime active-workspace state,
 the selected Quick App identity for each profile, monitor fingerprints, role-to-physical-monitor
 bindings, trackpad preferences, Shortcut Guide enablement/size/position, focused-window border
-preferences and per-application radius overrides, Accessibility state, login-item state, diagnostics, and live window
+preferences and per-application radius overrides, versioned onboarding progress/completion,
+Accessibility state, login-item state, diagnostics, and live window
 session remain local. `WorkspaceStateStore` writes the current WindowServer-bound session beneath
 the user's cache directory using an atomic replacement. This includes exact hidden Quick App
 identities only when WindowRanger hid those windows' applications. A changed WindowServer session

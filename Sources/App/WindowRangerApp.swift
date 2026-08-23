@@ -13,7 +13,8 @@ struct WindowRangerApp: App {
                 navigation: appDelegate.settingsNavigation,
                 windowCoordinator: appDelegate.settingsWindowCoordinator,
                 diagnostics: appDelegate.diagnostics,
-                shortcutRecordingStateChanged: appDelegate.shortcutRecordingStateDidChange
+                shortcutRecordingStateChanged: appDelegate.shortcutRecordingStateDidChange,
+                onboardingRestartRequested: appDelegate.restartOnboardingFromSettings
             )
         }
         .defaultSize(
