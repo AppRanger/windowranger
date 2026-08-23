@@ -1900,6 +1900,25 @@ design notes, but every active candidate must map back to a work item here or be
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
+### WR-073 — Publish WindowRanger 0.1.0 Beta 7 as the Sparkle upgrade baseline
+
+- **Type:** Beta release preparation
+- **Status:** Ready
+- **Requested:** 2026-08-23 after acceptance of the Shelf, Settings, shortcut, onboarding, Game Mode,
+  Pause Mode, and Sparkle integration work.
+- **Smallest useful outcome:** Publish signed, notarized universal Beta `0.1.0-beta.7` as public
+  build `8` with the Sparkle feed URL, Beta channel, and release public key embedded. Keep the live
+  appcast absent so the maintainer can install this exact GitHub artifact as the older side of the
+  first real updater test.
+- **Acceptance boundary:** Central `develop` owns the single build-8 allocation; the reviewed tree is
+  promoted without force-updating `release/0.1.0`; stable Xcode produces the Developer ID-signed,
+  notarized and stapled DMG/ZIP; the tag, five GitHub assets and round-trip provenance match exactly;
+  the GitHub release is a prerelease. Do not generate or deploy the appcast in this stage.
+- **Automated evidence:** The Sparkle implementation passes all 691 non-hosted tests, the release
+  ledger and two-release/stale-publication/atomic-failure checks, Release analysis, and a universal
+  app build. The exact release-commit verification, signing, notarization, packaging, public asset
+  checks, and maintainer installation remain pending.
+
 ### WR-012 — Clean build and package verification
 
 - **Type:** Release epic
