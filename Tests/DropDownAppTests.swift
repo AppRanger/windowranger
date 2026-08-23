@@ -173,6 +173,7 @@ final class DropDownAppTests: XCTestCase {
         var object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: JSONEncoder().encode(profile)) as? [String: Any]
         )
+        object.removeValue(forKey: "quickApps")
         var oldConfiguration = try XCTUnwrap(object["dropDownApp"] as? [String: Any])
         oldConfiguration.removeValue(forKey: "isAnimationEnabled")
         oldConfiguration.removeValue(forKey: "direction")
@@ -321,7 +322,7 @@ final class DropDownAppTests: XCTestCase {
 
     func testDropDownShortcutDefaultIsControlOptionBacktick() {
         XCTAssertEqual(
-            ConfigurableHotKeyAction.toggleDropDownApp.defaultChord,
+            HotKeyConfiguration().chord(for: .toggleDropDownApp),
             HotKeyChord(keyCode: 50, modifiers: UInt32(controlKey | optionKey))
         )
         XCTAssertEqual(

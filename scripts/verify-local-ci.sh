@@ -41,6 +41,12 @@ cd "$repository_root"
 print "Checking shell syntax..."
 zsh -n scripts/*.sh .githooks/*
 
+print "Verifying the release build-number ledger..."
+./scripts/verify-release-build-registry.sh
+
+print "Verifying the Sparkle feed ordering and failure workflow..."
+./scripts/verify-sparkle-feed-workflow.sh
+
 print "Generating the Xcode project..."
 xcodegen generate
 

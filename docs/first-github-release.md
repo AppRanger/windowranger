@@ -209,6 +209,11 @@ For a later release, review the draft on GitHub and explicitly publish it only a
 gate for that release is complete. GitHub's automatically generated source archives are not the
 macOS app and must not be described as the install download.
 
+For an update-enabled release, follow [the Sparkle update runbook](sparkle-updates.md) after the
+immutable release ZIP is available. Generating the local appcast, publishing the GitHub release,
+and deploying the reviewed website appcast plus its checksum-identical update archives remain three
+separate approval checkpoints.
+
 ## Repository visibility
 
 The repository became public on 10 August 2026 after the history/privacy scan, licence review,

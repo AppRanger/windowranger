@@ -13,7 +13,9 @@ struct WindowRangerApp: App {
                 navigation: appDelegate.settingsNavigation,
                 windowCoordinator: appDelegate.settingsWindowCoordinator,
                 diagnostics: appDelegate.diagnostics,
-                shortcutRecordingStateChanged: appDelegate.shortcutRecordingStateDidChange
+                updateController: appDelegate.updateController,
+                shortcutRecordingStateChanged: appDelegate.shortcutRecordingStateDidChange,
+                onboardingRestartRequested: appDelegate.restartOnboardingFromSettings
             )
         }
         .defaultSize(
@@ -26,7 +28,8 @@ struct WindowRangerApp: App {
                 navigation: appDelegate.settingsNavigation,
                 engine: appDelegate.engine,
                 coordinator: appDelegate.settingsWindowCoordinator,
-                requestRouter: appDelegate.settingsCommandRequestRouter
+                requestRouter: appDelegate.settingsCommandRequestRouter,
+                updateController: appDelegate.updateController
             )
         }
     }
@@ -37,6 +40,7 @@ private struct WindowRangerSettingsCommands: Commands {
     let engine: WorkspaceEngine
     let coordinator: SettingsWindowCoordinator
     let requestRouter: SettingsCommandRequestRouter
+    @ObservedObject var updateController: UpdateController
     @Environment(\.openSettings) private var openSettings
 
     var body: some Commands {
@@ -56,6 +60,12 @@ private struct WindowRangerSettingsCommands: Commands {
                 )
             }
             .keyboardShortcut(",", modifiers: .command)
+        }
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                updateController.checkForUpdates()
+            }
+            .disabled(!updateController.canCheckForUpdates)
         }
     }
 }

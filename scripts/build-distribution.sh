@@ -6,6 +6,7 @@ repository_root="${0:A:h:h}"
 script_name="${0:t}"
 project_file="$repository_root/WindowRanger.xcodeproj"
 export_options="$repository_root/config/ExportOptions-DeveloperID.plist"
+release_build_registry="$repository_root/config/release-builds.tsv"
 release_team_id="$(/usr/libexec/PlistBuddy -c 'Print :teamID' "$export_options" 2>/dev/null || true)"
 release_bundle_id="dev.appranger.WindowRanger"
 release_root="${WINDOWRANGER_RELEASE_ROOT:-$repository_root/.build/releases}"
@@ -16,10 +17,13 @@ version=""
 build_number=""
 notary_profile=""
 notary_keychain="${WINDOWRANGER_NOTARY_KEYCHAIN:-}"
+sparkle_feed_url="${WINDOWRANGER_SPARKLE_FEED_URL:-https://windowranger.com/appcast.xml}"
+sparkle_public_ed_key="${WINDOWRANGER_SPARKLE_PUBLIC_ED_KEY:-}"
+initial_update_feed=false
 preflight_only=false
 
 usage() {
-    print "Usage: $script_name --version VERSION --build-number NUMBER --notary-profile PROFILE [--notary-keychain PATH] [--preflight]"
+    print "Usage: $script_name --version VERSION --build-number NUMBER --notary-profile PROFILE [--notary-keychain PATH] [--sparkle-feed-url URL] [--sparkle-public-key KEY] [--initial-update-feed] [--preflight]"
     print ""
     print "Builds, Developer ID-signs, notarizes, staples, and packages a Stable or Beta release."
     print "The command never tags, pushes, creates a GitHub release, or changes repository visibility."
@@ -29,6 +33,8 @@ usage() {
     print "  WINDOWRANGER_RELEASE_ROOT   Artifact root (default: .build/releases)"
     print "  WINDOWRANGER_DMG_TOOL_ROOT  dmgbuild virtual environment (default: .build/dmg-tools)"
     print "  WINDOWRANGER_NOTARY_KEYCHAIN  Explicit file-based keychain for the notary profile"
+    print "  WINDOWRANGER_SPARKLE_FEED_URL  HTTPS appcast URL embedded in the app"
+    print "  WINDOWRANGER_SPARKLE_PUBLIC_ED_KEY  Public EdDSA key embedded in the app"
 }
 
 while (( $# > 0 )); do
@@ -53,6 +59,17 @@ while (( $# > 0 )); do
             notary_keychain="$2"
             shift
             ;;
+        --sparkle-feed-url)
+            (( $# >= 2 )) || { print -u2 "--sparkle-feed-url requires a value"; exit 2; }
+            sparkle_feed_url="$2"
+            shift
+            ;;
+        --sparkle-public-key)
+            (( $# >= 2 )) || { print -u2 "--sparkle-public-key requires a value"; exit 2; }
+            sparkle_public_ed_key="$2"
+            shift
+            ;;
+        --initial-update-feed) initial_update_feed=true ;;
         --preflight) preflight_only=true ;;
         -h|--help)
             usage
@@ -70,6 +87,18 @@ done
 [[ -n "$version" ]] || { print -u2 "Missing --version"; exit 2; }
 [[ -n "$build_number" ]] || { print -u2 "Missing --build-number"; exit 2; }
 [[ -n "$notary_profile" ]] || { print -u2 "Missing --notary-profile"; exit 2; }
+[[ -n "$sparkle_public_ed_key" ]] || {
+    print -u2 "Missing Sparkle public key; set WINDOWRANGER_SPARKLE_PUBLIC_ED_KEY or use --sparkle-public-key"
+    exit 2
+}
+[[ "$sparkle_feed_url" == https://* ]] || {
+    print -u2 "Sparkle feed URL must use HTTPS: $sparkle_feed_url"
+    exit 2
+}
+print -r -- "$sparkle_public_ed_key" | /usr/bin/grep -Eq '^[A-Za-z0-9+/]{40,64}={0,2}$' || {
+    print -u2 "Sparkle public key is not a valid EdDSA public-key string"
+    exit 2
+}
 
 typeset -a notary_keychain_arguments
 notary_keychain_arguments=()
@@ -102,9 +131,19 @@ require_command() {
     command -v "$1" >/dev/null 2>&1 || blockers+=("Missing required command: $1")
 }
 
-for required_command in git xcodegen xcodebuild codesign security ditto shasum hdiutil; do
+for required_command in git xcodegen xcodebuild codesign security ditto shasum hdiutil curl; do
     require_command "$required_command"
 done
+
+if [[ -x "$repository_root/scripts/verify-release-build-registry.sh" ]]; then
+    if ! registry_result="$($repository_root/scripts/verify-release-build-registry.sh \
+        --version "$version" --build-number "$build_number" 2>&1)"; then
+        blockers+=("$registry_result")
+    fi
+else
+    blockers+=("Missing release build registry verifier")
+fi
+[[ -f "$release_build_registry" ]] || blockers+=("Missing release build registry: $release_build_registry")
 
 [[ -d "$developer_directory" ]] || blockers+=("Xcode Developer directory does not exist: $developer_directory")
 [[ "$developer_directory:l" != *beta* ]] || blockers+=(
@@ -130,6 +169,37 @@ source_revision="$(/usr/bin/git -C "$repository_root" rev-parse --short=12 HEAD)
 
 working_tree_state="$(/usr/bin/git -C "$repository_root" status --porcelain --untracked-files=normal)"
 [[ -z "$working_tree_state" ]] || blockers+=("The release worktree must be clean and committed")
+
+appcast_preflight="$(/usr/bin/mktemp /tmp/windowranger-appcast.XXXXXX)"
+if ! appcast_http_code="$(/usr/bin/curl --silent --show-error --location \
+    --max-time 20 --write-out '%{http_code}' "$sparkle_feed_url" \
+    --output "$appcast_preflight" 2>/dev/null)"; then
+    appcast_http_code=000
+fi
+if [[ "$initial_update_feed" == true ]]; then
+    if [[ "$appcast_http_code" == 200 ]]; then
+        blockers+=("The Sparkle appcast already exists; --initial-update-feed cannot bypass its published build history")
+    elif [[ "$appcast_http_code" != 404 && "$appcast_http_code" != 410 ]]; then
+        blockers+=("Could not prove the Sparkle appcast is absent (HTTP $appcast_http_code); initial-feed mode requires an authoritative 404 or 410")
+    fi
+else
+    if [[ "$appcast_http_code" != 200 ]]; then
+        blockers+=("Could not download the current Sparkle appcast (HTTP $appcast_http_code); use --initial-update-feed only when the public endpoint authoritatively returns 404 or 410")
+    else
+        latest_feed_build="$(
+            /usr/bin/grep -Eo 'sparkle:version="[1-9][0-9]*"' "$appcast_preflight" |
+                /usr/bin/sed -E 's/.*="([0-9]+)"/\1/' |
+                /usr/bin/sort -n |
+                /usr/bin/tail -1
+        )"
+        if [[ -z "$latest_feed_build" ]]; then
+            blockers+=("The current Sparkle appcast contains no numeric sparkle:version values")
+        elif (( build_number <= latest_feed_build )); then
+            blockers+=("Build $build_number must be greater than appcast build $latest_feed_build")
+        fi
+    fi
+fi
+/bin/rm -f -- "$appcast_preflight"
 
 identity_output="$(/usr/bin/security find-identity -v -p codesigning 2>&1 || true)"
 matching_identities="$(
@@ -167,6 +237,8 @@ print "  Build: $build_number"
 print "  Branch: $current_branch"
 print "  Toolchain: $xcode_version"
 print "  Signing team: $release_team_id"
+print "  Sparkle feed: $sparkle_feed_url"
+print "  Update-feed baseline: $([[ "$initial_update_feed" == true ]] && print initial || print verified)"
 print "  Notary keychain profile: $notary_profile"
 print "  Notary keychain: ${notary_keychain:-data protection keychain}"
 
@@ -279,6 +351,9 @@ DEVELOPER_DIR="$developer_directory" /usr/bin/xcodebuild \
     MARKETING_VERSION="$base_version" \
     CURRENT_PROJECT_VERSION="$build_number" \
     WINDOWRANGER_GIT_COMMIT="$source_revision" \
+    WINDOWRANGER_UPDATE_CHANNEL="$channel" \
+    WINDOWRANGER_SPARKLE_FEED_URL="$sparkle_feed_url" \
+    WINDOWRANGER_SPARKLE_PUBLIC_ED_KEY="$sparkle_public_ed_key" \
     archive
 
 print "Exporting with Developer ID..."
@@ -315,8 +390,14 @@ app_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$export
 
 app_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$exported_app/Contents/Info.plist")"
 app_build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$exported_app/Contents/Info.plist")"
+app_update_channel="$(/usr/libexec/PlistBuddy -c 'Print :WindowRangerUpdateChannel' "$exported_app/Contents/Info.plist")"
+app_update_feed="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$exported_app/Contents/Info.plist")"
+app_update_public_key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$exported_app/Contents/Info.plist")"
 [[ "$app_version" == "$base_version" ]] || { print -u2 "Unexpected app version: $app_version"; exit 1; }
 [[ "$app_build" == "$build_number" ]] || { print -u2 "Unexpected app build: $app_build"; exit 1; }
+[[ "$app_update_channel" == "$channel" ]] || { print -u2 "Unexpected update channel: $app_update_channel"; exit 1; }
+[[ "$app_update_feed" == "$sparkle_feed_url" ]] || { print -u2 "Unexpected Sparkle feed URL: $app_update_feed"; exit 1; }
+[[ "$app_update_public_key" == "$sparkle_public_ed_key" ]] || { print -u2 "Unexpected Sparkle public key"; exit 1; }
 
 architectures="$(/usr/bin/lipo -archs "$exported_app/Contents/MacOS/WindowRanger")"
 [[ " $architectures " == *" arm64 "* && " $architectures " == *" x86_64 "* ]] || {
@@ -378,6 +459,8 @@ dmg_checksum="$(/usr/bin/awk '{ print $1 }' "$dmg_checksum_file")"
     print "version=$version"
     print "bundle_version=$base_version"
     print "build_number=$build_number"
+    print "update_channel=$channel"
+    print "sparkle_feed_url=$sparkle_feed_url"
     print "commit=$commit_sha"
     print "xcode=$xcode_version"
     print "architectures=$architectures"

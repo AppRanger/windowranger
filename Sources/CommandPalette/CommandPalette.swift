@@ -42,12 +42,20 @@ enum CommandPaletteIndex {
     static func entries(
         context: RadialCommandContext,
         query: String,
-        hotKeyConfiguration: HotKeyConfiguration
+        hotKeyConfiguration: HotKeyConfiguration,
+        isPauseModeEnabled: Bool = false
     ) -> [CommandPaletteEntry] {
+        if isPauseModeEnabled {
+            return filtered(
+                [pauseModeEntry(isPaused: true)],
+                query: query
+            )
+        }
         var entries = contextualEntries(
             context: context,
             hotKeyConfiguration: hotKeyConfiguration
         )
+        entries.append(pauseModeEntry(isPaused: false))
         entries.append(CommandPaletteEntry(
             id: "application:settings",
             title: "Open Settings",
@@ -63,6 +71,13 @@ enum CommandPaletteIndex {
             entries.filter { $0.section == section }
         }
 
+        return filtered(entries, query: query)
+    }
+
+    private static func filtered(
+        _ entries: [CommandPaletteEntry],
+        query: String
+    ) -> [CommandPaletteEntry] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !needle.isEmpty else { return entries }
         return entries.enumerated().compactMap { offset, entry -> (Int, Int, CommandPaletteEntry)? in
@@ -77,6 +92,23 @@ enum CommandPaletteIndex {
         .map(\.2)
     }
 
+    private static func pauseModeEntry(isPaused: Bool) -> CommandPaletteEntry {
+        CommandPaletteEntry(
+            id: isPaused ? "application:resume" : "application:pause",
+            title: isPaused ? "Resume WindowRanger" : "Pause WindowRanger",
+            detail: isPaused
+                ? "Resume shortcuts and reconcile managed windows"
+                : "Temporarily stop shortcuts and window management",
+            shortcut: nil,
+            systemImage: isPaused ? "play.circle" : "pause.circle",
+            section: .application,
+            destination: .command(.setPauseMode(!isPaused)),
+            searchTerms: isPaused
+                ? ["unpause", "continue", "start", "hotkeys"]
+                : ["stop", "suspend", "freeze", "hotkeys"]
+        )
+    }
+
     static func spatialPlacementActions(in context: RadialCommandContext) -> [RadialMenuItem] {
         RadialCommandCatalogue.resolveSpatialPlacement(context: context)?.children ?? []
     }
@@ -88,9 +120,15 @@ enum CommandPaletteIndex {
     static func contains(
         _ destination: CommandPaletteDestination,
         context: RadialCommandContext,
-        hotKeyConfiguration: HotKeyConfiguration
+        hotKeyConfiguration: HotKeyConfiguration,
+        isPauseModeEnabled: Bool = false
     ) -> Bool {
-        entries(context: context, query: "", hotKeyConfiguration: hotKeyConfiguration)
+        entries(
+            context: context,
+            query: "",
+            hotKeyConfiguration: hotKeyConfiguration,
+            isPauseModeEnabled: isPauseModeEnabled
+        )
             .contains { $0.destination == destination }
     }
 
@@ -123,13 +161,50 @@ enum CommandPaletteIndex {
                 id: "shortcut:\(action.rawValue)",
                 title: action.title,
                 detail: detail(for: action, context: context),
-                shortcut: hotKeyConfiguration.chord(for: action).title,
+                shortcut: hotKeyConfiguration.optionalChord(for: action)?.title,
                 systemImage: systemImage(for: action),
                 section: section(for: action),
                 destination: .command(command),
                 searchTerms: searchTerms(for: action)
             ))
             includedCommands.insert(command)
+        }
+
+        if !context.quickApps.isEmpty {
+            for app in context.quickApps {
+                let bundle = app.bundleIdentifier
+                let command = WindowManagerCommand.selectQuickApp(bundle)
+                guard includedCommands.insert(command).inserted else { continue }
+                entries.append(CommandPaletteEntry(
+                    id: "quick-app:\(bundle)",
+                    title: "Show \(app.displayName)",
+                    detail: "Quick App · \(context.workspaceName)",
+                    shortcut: nil,
+                    systemImage: "rectangle.bottomthird.inset.filled",
+                    section: .application,
+                    destination: .command(command),
+                    searchTerms: ["quick app", "shelf", "show", bundle]
+                ))
+            }
+            if context.quickApps.count > 1 {
+                for (offset, title, terms) in [
+                    (-1, "Previous Quick App", ["quick app", "shelf", "previous", "cycle"]),
+                    (1, "Next Quick App", ["quick app", "shelf", "next", "cycle"]),
+                ] {
+                    let command = WindowManagerCommand.cycleQuickApp(offset)
+                    guard includedCommands.insert(command).inserted else { continue }
+                    entries.append(CommandPaletteEntry(
+                        id: "quick-app-cycle:\(offset)",
+                        title: title,
+                        detail: "Quick App Shelf",
+                        shortcut: nil,
+                        systemImage: offset < 0 ? "chevron.left" : "chevron.right",
+                        section: .application,
+                        destination: .command(command),
+                        searchTerms: terms
+                    ))
+                }
+            }
         }
 
         return entries
@@ -278,7 +353,7 @@ enum CommandPaletteIndex {
         hotKeyConfiguration: HotKeyConfiguration
     ) -> String? {
         if let action = ConfigurableHotKeyAction.allCases.first(where: { $0.command == command }) {
-            return hotKeyConfiguration.chord(for: action).title
+            return hotKeyConfiguration.optionalChord(for: action)?.title
         }
         switch command {
         case let .setLayout(layout):
@@ -287,14 +362,20 @@ enum CommandPaletteIndex {
             case .tiled: .selectTiled
             case .none: nil
             }
-            return action.map { hotKeyConfiguration.chord(for: $0).title }
+            return action.flatMap { hotKeyConfiguration.optionalChord(for: $0)?.title }
         case let .switchWorkspace(id):
             return context.workspaces.first(where: { $0.id == id }).flatMap {
-                workspaceShortcut($0.key, modifiers: UInt32(controlKey | optionKey))
+                workspaceShortcut(
+                    $0.key,
+                    modifiers: hotKeyConfiguration.modifierMask(for: .navigate)
+                )
             }
         case let .moveFocusedWindow(id):
             return context.workspaces.first(where: { $0.id == id }).flatMap {
-                workspaceShortcut($0.key, modifiers: UInt32(optionKey | cmdKey))
+                workspaceShortcut(
+                    $0.key,
+                    modifiers: hotKeyConfiguration.modifierMask(for: .arrange)
+                )
             }
         default: return nil
         }
@@ -429,11 +510,162 @@ enum CommandPalettePlacementNavigation {
     }
 }
 
+enum CommandPaletteQuickAction: Equatable, Sendable {
+    case workspaceLayout
+    case placement
+}
+
+enum CommandPaletteQuickActionNavigation {
+    static func availableActions(
+        supportsLayoutSelection: Bool,
+        supportsPlacement: Bool,
+        isSearchEmpty: Bool = true
+    ) -> [CommandPaletteQuickAction] {
+        guard isSearchEmpty else { return [] }
+        var actions: [CommandPaletteQuickAction] = []
+        if supportsLayoutSelection {
+            actions.append(.workspaceLayout)
+        }
+        if supportsPlacement {
+            actions.append(.placement)
+        }
+        return actions
+    }
+
+    static func actionEnteringFromTopResult(
+        selectedIndex: Int,
+        resultCount: Int,
+        actions: [CommandPaletteQuickAction]
+    ) -> CommandPaletteQuickAction? {
+        guard selectedIndex == 0, resultCount > 0 else { return nil }
+        return actions.last
+    }
+
+    static func moved(
+        from current: CommandPaletteQuickAction,
+        offset: Int,
+        in actions: [CommandPaletteQuickAction]
+    ) -> CommandPaletteQuickAction? {
+        guard let currentIndex = actions.firstIndex(of: current) else {
+            return offset >= 0 ? actions.first : actions.last
+        }
+        let nextIndex = currentIndex + offset
+        guard actions.indices.contains(nextIndex) else { return nil }
+        return actions[nextIndex]
+    }
+}
+
+enum CommandPaletteLayoutNavigation {
+    static func moved(
+        from current: WorkspaceLayout,
+        offset: Int
+    ) -> WorkspaceLayout {
+        current.cycled(by: offset)
+    }
+}
+
+enum CommandPaletteSelectionRevalidation {
+    static func destination(
+        _ requested: CommandPaletteDestination,
+        original: RadialCommandContext,
+        current: RadialCommandContext,
+        hotKeyConfiguration: HotKeyConfiguration,
+        isPauseModeEnabled: Bool = false,
+        allowsInlineLayoutRefresh: Bool
+    ) -> CommandPaletteDestination? {
+        if current.sessionValidationToken == original.sessionValidationToken {
+            if CommandPaletteIndex.contains(
+                requested,
+                context: current,
+                hotKeyConfiguration: hotKeyConfiguration,
+                isPauseModeEnabled: isPauseModeEnabled
+            ) {
+                return requested
+            }
+        }
+        guard allowsInlineLayoutRefresh,
+              preservesInteractionTarget(from: original, to: current)
+        else { return nil }
+
+        let refreshed = switch requested {
+        case let .command(.placeFreeformWindow(placement, _)):
+            CommandPaletteDestination.command(
+                .placeFreeformWindow(placement, validationToken: current.validationToken)
+            )
+        case let .command(.placeTiledWindow(placement, _)):
+            CommandPaletteDestination.command(
+                .placeTiledWindow(placement, validationToken: current.validationToken)
+            )
+        default:
+            requested
+        }
+        return CommandPaletteIndex.contains(
+            refreshed,
+            context: current,
+            hotKeyConfiguration: hotKeyConfiguration,
+            isPauseModeEnabled: isPauseModeEnabled
+        ) ? refreshed : nil
+    }
+
+    static func defersFocusRestoration(
+        for destination: CommandPaletteDestination
+    ) -> Bool {
+        switch destination {
+        case .command(.placeFreeformWindow), .command(.placeTiledWindow):
+            true
+        default:
+            false
+        }
+    }
+
+    static func preservesInteractionTarget(
+        from original: RadialCommandContext,
+        to current: RadialCommandContext
+    ) -> Bool {
+        guard original.workspaceID == current.workspaceID,
+              original.layout == current.layout,
+              original.displayIdentifier == current.displayIdentifier,
+              original.displayMode == current.displayMode,
+              Set(original.connectedDisplayIdentifiers) == Set(current.connectedDisplayIdentifiers),
+              original.activeProfileID == current.activeProfileID,
+              original.externalValidationToken == current.externalValidationToken
+        else { return false }
+
+        switch (original.focusedWindow, current.focusedWindow) {
+        case (nil, nil):
+            return true
+        case let (original?, current?):
+            return original.processIdentifier == current.processIdentifier &&
+                original.windowIdentifier == current.windowIdentifier &&
+                original.workspaceID == current.workspaceID &&
+                original.layoutState == current.layoutState &&
+                original.isAutomaticallyFloatingDialog == current.isAutomaticallyFloatingDialog &&
+                original.isAppRuleExcluded == current.isAppRuleExcluded &&
+                original.keepsOnAllWorkspaces == current.keepsOnAllWorkspaces
+        default:
+            return false
+        }
+    }
+}
+
+@MainActor
+final class CommandPalettePresentationModel: ObservableObject {
+    @Published private(set) var context: RadialCommandContext
+
+    init(context: RadialCommandContext) {
+        self.context = context
+    }
+
+    func update(context: RadialCommandContext) {
+        self.context = context
+    }
+}
+
 @MainActor
 final class CommandPaletteController: NSObject, NSWindowDelegate {
-    static let panelSize = CGSize(width: 620, height: 480)
-    static let placementHaloHorizontalOverflow: CGFloat = 128
-    static let placementHaloVerticalOverflow: CGFloat = 84
+    static let panelSize = CGSize(width: 620, height: 526)
+    static let placementHaloHorizontalOverflow: CGFloat = 200
+    static let placementHaloVerticalOverflow: CGFloat = 0
     static let expandedPanelSize = CGSize(
         width: panelSize.width + placementHaloHorizontalOverflow,
         height: panelSize.height + placementHaloVerticalOverflow
@@ -444,9 +676,13 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
     private let diagnostics: DiagnosticLogger
     private let contextEnricher: @MainActor (RadialCommandContext) -> RadialCommandContext
     private let hotKeyConfigurationProvider: () -> HotKeyConfiguration
+    private let isPauseModeEnabledProvider: () -> Bool
     private let openSettings: () -> Void
     private var panel: CommandPalettePanel?
+    private var presentationModel: CommandPalettePresentationModel?
     private var context: RadialCommandContext?
+    private var pendingInlineLayout: (workspaceID: UUID, layout: WorkspaceLayout)?
+    private var allowsInlineContextRefresh = false
     private var previousApplication: NSRunningApplication?
     private var requestGeneration: UInt64 = 0
     private var isClosing = false
@@ -457,6 +693,7 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         diagnostics: DiagnosticLogger = .disabled,
         contextEnricher: @escaping @MainActor (RadialCommandContext) -> RadialCommandContext = { $0 },
         hotKeyConfigurationProvider: @escaping () -> HotKeyConfiguration,
+        isPauseModeEnabledProvider: @escaping () -> Bool = { false },
         openSettings: @escaping () -> Void
     ) {
         self.engine = engine
@@ -464,6 +701,7 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         self.diagnostics = diagnostics
         self.contextEnricher = contextEnricher
         self.hotKeyConfigurationProvider = hotKeyConfigurationProvider
+        self.isPauseModeEnabledProvider = isPauseModeEnabledProvider
         self.openSettings = openSettings
         super.init()
     }
@@ -484,7 +722,8 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
             guard !CommandPaletteIndex.entries(
                 context: context,
                 query: "",
-                hotKeyConfiguration: self.hotKeyConfigurationProvider()
+                hotKeyConfiguration: self.hotKeyConfigurationProvider(),
+                isPauseModeEnabled: self.isPauseModeEnabledProvider()
             ).isEmpty else { return }
             self.present(context, previousApplication: priorApplication)
         }
@@ -500,9 +739,45 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         guard isPresented, let original = context else { return }
         engine.radialCommandContext { [weak self] current in
             guard let self, self.isPresented else { return }
-            if self.contextEnricher(current).sessionValidationToken != original.sessionValidationToken {
-                self.dismiss(reason: "context-changed")
+            let current = self.contextEnricher(current)
+            guard current.sessionValidationToken != original.sessionValidationToken else { return }
+            if current.sessionValidationToken == self.context?.sessionValidationToken { return }
+            if let pending = self.pendingInlineLayout,
+               current.workspaceID == pending.workspaceID {
+                if current.layout == pending.layout {
+                    self.pendingInlineLayout = nil
+                }
+                self.context = current
+                self.presentationModel?.update(context: current)
+                self.diagnostics.log(
+                    category: "command-palette",
+                    event: "inline-layout-context-refreshed",
+                    fields: [
+                        "workspace": String(current.workspaceID.uuidString.prefix(6)),
+                        "layout": current.layout.rawValue,
+                    ]
+                )
+                return
             }
+            if self.allowsInlineContextRefresh,
+               CommandPaletteSelectionRevalidation.preservesInteractionTarget(
+                   from: original,
+                   to: current
+               ) {
+                self.context = current
+                self.presentationModel?.update(context: current)
+                self.diagnostics.log(
+                    category: "command-palette",
+                    event: "inline-layout-context-refreshed",
+                    fields: [
+                        "workspace": String(current.workspaceID.uuidString.prefix(6)),
+                        "layout": current.layout.rawValue,
+                        "phase": "settled",
+                    ]
+                )
+                return
+            }
+            self.dismiss(reason: "context-changed")
         }
     }
 
@@ -536,10 +811,14 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         panel.collectionBehavior = [.transient, .moveToActiveSpace, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
         panel.setAccessibilitySubrole(.dialog)
+        let presentationModel = CommandPalettePresentationModel(context: context)
+        let isPauseModeEnabled = isPauseModeEnabledProvider()
         panel.contentView = NSHostingView(rootView: CommandPaletteView(
-            context: context,
+            presentationModel: presentationModel,
             hotKeyConfiguration: configuration,
+            isPauseModeEnabled: isPauseModeEnabled,
             choose: { [weak self] destination in self?.activate(destination) },
+            changeLayout: { [weak self] layout in self?.changeLayout(layout) },
             placementHaloPresentationChanged: { [weak self] isPresented in
                 self?.setPlacementHaloPresented(isPresented)
             },
@@ -559,10 +838,12 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         }
 
         self.context = context
+        self.presentationModel = presentationModel
         self.previousApplication = previousApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier
             ? nil
             : previousApplication
         self.panel = panel
+        engine.commandPalettePresentationChanged(true)
         diagnostics.log(
             category: "command-palette",
             event: "opened",
@@ -593,32 +874,110 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
             event: "selection-requested",
             fields: ["destination": destinationName]
         )
-        closePanel(reason: "selection", restorePreviousApplication: true)
+        let allowsInlineLayoutRefresh = allowsInlineContextRefresh
+        let defersFocusRestoration = CommandPaletteSelectionRevalidation.defersFocusRestoration(
+            for: destination
+        )
+        let fallbackProcessIdentifier = previousApplication?.processIdentifier
+        if defersFocusRestoration {
+            validateAndDispatch(
+                destination,
+                original: original,
+                allowsInlineLayoutRefresh: allowsInlineLayoutRefresh,
+                dismissAfterDispatch: true,
+                completion: { [weak self] in
+                    self?.engine.restoreFocusAfterCommandPalette(
+                        fallbackProcessIdentifier: fallbackProcessIdentifier
+                    )
+                }
+            )
+            return
+        }
+        closePanel(
+            reason: "selection",
+            restorePreviousApplication: true
+        )
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             switch destination {
             case .settings:
                 self.openSettings()
             case .command:
-                self.validateAndDispatch(destination, original: original)
+                self.validateAndDispatch(
+                    destination,
+                    original: original,
+                    allowsInlineLayoutRefresh: allowsInlineLayoutRefresh
+                )
+            }
+        }
+    }
+
+    private func changeLayout(_ layout: WorkspaceLayout) {
+        guard isPresented,
+              let original = context,
+              original.layout != layout,
+              original.supportedCommands.contains(.setLayout)
+        else { return }
+        engine.radialCommandContext { [weak self] current in
+            guard let self, self.isPresented else { return }
+            let current = self.contextEnricher(current)
+            guard current.workspaceID == original.workspaceID,
+                  current.supportedCommands.contains(.setLayout)
+            else {
+                self.dismiss(reason: "inline-layout-context-changed")
+                return
+            }
+            let correlationID = self.diagnostics.makeCorrelationID()
+            self.pendingInlineLayout = (current.workspaceID, layout)
+            self.diagnostics.log(
+                category: "command-palette",
+                event: "inline-layout-requested",
+                correlation: correlationID,
+                fields: [
+                    "workspace": String(current.workspaceID.uuidString.prefix(6)),
+                    "previous-layout": current.layout.rawValue,
+                    "requested-layout": layout.rawValue,
+                ]
+            )
+            let result = self.dispatcher.dispatch(
+                .setLayout(layout),
+                source: .commandPalette,
+                correlationID: correlationID
+            )
+            if result == .rejectedReentrant {
+                self.pendingInlineLayout = nil
+                self.presentationModel?.update(context: current)
+            } else {
+                self.allowsInlineContextRefresh = true
             }
         }
     }
 
     private func validateAndDispatch(
         _ destination: CommandPaletteDestination,
-        original: RadialCommandContext
+        original: RadialCommandContext,
+        allowsInlineLayoutRefresh: Bool = false,
+        dismissAfterDispatch: Bool = false,
+        completion: @escaping () -> Void = {}
     ) {
         engine.radialCommandContext { [weak self] current in
             guard let self else { return }
+            defer {
+                if dismissAfterDispatch {
+                    self.closePanel(reason: "selection", restorePreviousApplication: false)
+                }
+                completion()
+            }
             let current = self.contextEnricher(current)
-            guard current.sessionValidationToken == original.sessionValidationToken,
-                  CommandPaletteIndex.contains(
+            guard let validatedDestination = CommandPaletteSelectionRevalidation.destination(
                       destination,
-                      context: current,
-                      hotKeyConfiguration: self.hotKeyConfigurationProvider()
+                      original: original,
+                      current: current,
+                      hotKeyConfiguration: self.hotKeyConfigurationProvider(),
+                      isPauseModeEnabled: self.isPauseModeEnabledProvider(),
+                      allowsInlineLayoutRefresh: allowsInlineLayoutRefresh
                   ),
-                  case let .command(command) = destination
+                  case let .command(command) = validatedDestination
             else {
                 self.diagnostics.log(
                     category: "command-palette",
@@ -626,6 +985,13 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
                     fields: ["reason": "stale-context"]
                 )
                 return
+            }
+            if current.sessionValidationToken != original.sessionValidationToken {
+                self.diagnostics.log(
+                    category: "command-palette",
+                    event: "selection-revalidated",
+                    fields: ["reason": "accepted-inline-layout-refresh"]
+                )
             }
             let correlationID = self.diagnostics.makeCorrelationID()
             self.diagnostics.log(
@@ -644,9 +1010,13 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         panel.orderOut(nil)
         panel.delegate = nil
         self.panel = nil
+        presentationModel = nil
         context = nil
+        pendingInlineLayout = nil
+        allowsInlineContextRefresh = false
         let application = previousApplication
         previousApplication = nil
+        engine.commandPalettePresentationChanged(false)
         isClosing = false
         diagnostics.log(
             category: "command-palette",
@@ -654,7 +1024,9 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
             fields: ["reason": reason]
         )
         if restorePreviousApplication {
-            application?.activate(options: [])
+            engine.restoreFocusAfterCommandPalette(
+                fallbackProcessIdentifier: application?.processIdentifier
+            )
         }
     }
 
@@ -702,14 +1074,18 @@ private final class CommandPalettePanel: NSPanel {
 }
 
 struct CommandPaletteView: View {
-    let context: RadialCommandContext
+    @ObservedObject private var presentationModel: CommandPalettePresentationModel
     let hotKeyConfiguration: HotKeyConfiguration
+    let isPauseModeEnabled: Bool
     let choose: (CommandPaletteDestination) -> Void
+    let changeLayout: (WorkspaceLayout) -> Void
     let placementHaloPresentationChanged: (Bool) -> Void
     let dismiss: () -> Void
 
     @State private var query = ""
     @State private var selectedIndex = 0
+    @State private var selectedLayout: WorkspaceLayout
+    @State private var keyboardFocusedQuickAction: CommandPaletteQuickAction? = nil
     @State private var isPlacementHaloPresented: Bool
     @State private var selectedPlacement: VisualPlacement?
     @State private var isPlacementHaloKeyboardFocused = false
@@ -719,19 +1095,52 @@ struct CommandPaletteView: View {
     init(
         context: RadialCommandContext,
         hotKeyConfiguration: HotKeyConfiguration,
+        isPauseModeEnabled: Bool = false,
         initiallyShowsPlacementHalo: Bool = false,
         initialPlacementHaloSelection: VisualPlacement? = nil,
         initiallyKeyboardFocusesPlacementHalo: Bool = false,
         focusesSearchOnAppear: Bool = true,
         choose: @escaping (CommandPaletteDestination) -> Void,
+        changeLayout: @escaping (WorkspaceLayout) -> Void = { _ in },
         placementHaloPresentationChanged: @escaping (Bool) -> Void,
         dismiss: @escaping () -> Void
     ) {
-        self.context = context
+        self.init(
+            presentationModel: CommandPalettePresentationModel(context: context),
+            hotKeyConfiguration: hotKeyConfiguration,
+            isPauseModeEnabled: isPauseModeEnabled,
+            initiallyShowsPlacementHalo: initiallyShowsPlacementHalo,
+            initialPlacementHaloSelection: initialPlacementHaloSelection,
+            initiallyKeyboardFocusesPlacementHalo: initiallyKeyboardFocusesPlacementHalo,
+            focusesSearchOnAppear: focusesSearchOnAppear,
+            choose: choose,
+            changeLayout: changeLayout,
+            placementHaloPresentationChanged: placementHaloPresentationChanged,
+            dismiss: dismiss
+        )
+    }
+
+    init(
+        presentationModel: CommandPalettePresentationModel,
+        hotKeyConfiguration: HotKeyConfiguration,
+        isPauseModeEnabled: Bool = false,
+        initiallyShowsPlacementHalo: Bool = false,
+        initialPlacementHaloSelection: VisualPlacement? = nil,
+        initiallyKeyboardFocusesPlacementHalo: Bool = false,
+        focusesSearchOnAppear: Bool = true,
+        choose: @escaping (CommandPaletteDestination) -> Void,
+        changeLayout: @escaping (WorkspaceLayout) -> Void = { _ in },
+        placementHaloPresentationChanged: @escaping (Bool) -> Void,
+        dismiss: @escaping () -> Void
+    ) {
+        _presentationModel = ObservedObject(wrappedValue: presentationModel)
         self.hotKeyConfiguration = hotKeyConfiguration
+        self.isPauseModeEnabled = isPauseModeEnabled
         self.choose = choose
+        self.changeLayout = changeLayout
         self.placementHaloPresentationChanged = placementHaloPresentationChanged
         self.dismiss = dismiss
+        _selectedLayout = State(initialValue: presentationModel.context.layout)
         _isPlacementHaloPresented = State(initialValue: initiallyShowsPlacementHalo)
         _selectedPlacement = State(initialValue: initialPlacementHaloSelection)
         _isPlacementHaloKeyboardFocused = State(
@@ -740,16 +1149,27 @@ struct CommandPaletteView: View {
         self.focusesSearchOnAppear = focusesSearchOnAppear
     }
 
+    private var context: RadialCommandContext { presentationModel.context }
+
     private var entries: [CommandPaletteEntry] {
         CommandPaletteIndex.entries(
             context: context,
             query: query,
-            hotKeyConfiguration: hotKeyConfiguration
+            hotKeyConfiguration: hotKeyConfiguration,
+            isPauseModeEnabled: isPauseModeEnabled
         )
     }
 
     private var placementActions: [RadialMenuItem] {
         CommandPaletteIndex.spatialPlacementActions(in: context)
+    }
+
+    private var availableQuickActions: [CommandPaletteQuickAction] {
+        CommandPaletteQuickActionNavigation.availableActions(
+            supportsLayoutSelection: !isPauseModeEnabled && context.supportedCommands.contains(.setLayout),
+            supportsPlacement: !isPauseModeEnabled && !placementActions.isEmpty,
+            isSearchEmpty: query.isEmpty
+        )
     }
 
     private var canvasSize: CGSize {
@@ -777,8 +1197,9 @@ struct CommandPaletteView: View {
                     height: CommandPalettePlacementHaloView.diameter
                 )
                 .position(
-                    x: CommandPaletteController.panelSize.width - 35,
-                    y: canvasSize.height - CommandPaletteController.panelSize.height + 29
+                    x: CommandPaletteController.panelSize.width + 25,
+                    y: canvasSize.height - CommandPaletteController.panelSize.height
+                        + placementHaloAnchorYOffset
                 )
                 .transition(.scale(scale: 0.92).combined(with: .opacity))
                 .zIndex(2)
@@ -791,13 +1212,29 @@ struct CommandPaletteView: View {
             await Task.yield()
             searchFocused = true
         }
-        .onChange(of: query) { selectedIndex = 0 }
+        .onChange(of: query) {
+            selectedIndex = 0
+            keyboardFocusedQuickAction = nil
+            if !query.isEmpty, isPlacementHaloPresented {
+                setPlacementHaloPresented(false)
+            }
+        }
+        .onChange(of: context.layout) {
+            selectedLayout = context.layout
+        }
+        .onChange(of: placementActions.isEmpty) {
+            revalidateQuickActionFocus()
+        }
         .onChange(of: entries.count) {
             selectedIndex = min(selectedIndex, max(entries.count - 1, 0))
         }
         .onKeyPress(.downArrow) {
             if isPlacementHaloKeyboardFocused {
                 movePlacementSelection(1)
+                return .handled
+            }
+            if keyboardFocusedQuickAction != nil {
+                moveQuickActionFocus(1)
                 return .handled
             }
             guard !entries.isEmpty else { return .handled }
@@ -809,30 +1246,61 @@ struct CommandPaletteView: View {
                 movePlacementSelection(-1)
                 return .handled
             }
+            if keyboardFocusedQuickAction != nil {
+                moveQuickActionFocus(-1)
+                return .handled
+            }
             guard !entries.isEmpty else { return .handled }
+            if let quickAction = CommandPaletteQuickActionNavigation.actionEnteringFromTopResult(
+                selectedIndex: selectedIndex,
+                resultCount: entries.count,
+                actions: availableQuickActions
+            ) {
+                enterQuickActions(at: quickAction)
+                return .handled
+            }
             selectedIndex = max(selectedIndex - 1, 0)
             return .handled
         }
         .onKeyPress(.escape) {
             if isPlacementHaloPresented {
                 setPlacementHaloPresented(false)
+            } else if keyboardFocusedQuickAction != nil {
+                leaveQuickActions()
             } else {
                 dismiss()
             }
             return .handled
         }
         .onKeyPress(.leftArrow) {
-            guard isPlacementHaloKeyboardFocused else { return .ignored }
-            movePlacementSelection(-1)
-            return .handled
+            if isPlacementHaloKeyboardFocused {
+                movePlacementSelection(-1)
+                return .handled
+            }
+            if let keyboardFocusedQuickAction {
+                if keyboardFocusedQuickAction == .workspaceLayout {
+                    moveLayoutSelection(-1)
+                }
+                return .handled
+            }
+            return .ignored
         }
         .onKeyPress(.rightArrow) {
             if isPlacementHaloKeyboardFocused {
                 movePlacementSelection(1)
                 return .handled
             }
-            guard query.isEmpty, !placementActions.isEmpty else { return .ignored }
-            enterPlacementHaloFromKeyboard()
+            if let keyboardFocusedQuickAction {
+                if keyboardFocusedQuickAction == .workspaceLayout {
+                    moveLayoutSelection(1)
+                }
+                return .handled
+            }
+            return .ignored
+        }
+        .onKeyPress(.tab, phases: .down) { press in
+            guard !isPlacementHaloKeyboardFocused else { return .handled }
+            cycleQuickActionFocus(press.modifiers.contains(.shift) ? -1 : 1)
             return .handled
         }
     }
@@ -847,48 +1315,16 @@ struct CommandPaletteView: View {
                     .font(.system(size: 18))
                     .focused($searchFocused)
                     .onSubmit { activateSelection() }
-                if !placementActions.isEmpty {
-                    Button {
-                        setPlacementHaloPresented(!isPlacementHaloPresented)
-                    } label: {
-                        RadialMenuSymbol(
-                            systemImage: RadialCommandCatalogue.SymbolName.placeWindow,
-                            size: 15,
-                            weight: .semibold
-                        )
-                        .frame(width: 22, height: 22)
-                    }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.circle)
-                    .help("Show window placements")
-                    .accessibilityLabel(isPlacementHaloPresented
-                        ? "Hide window placements"
-                        : "Show window placements")
-                }
             }
             .padding(.horizontal, 18)
             .frame(height: 58)
 
             Divider().opacity(0.45)
 
-            HStack(spacing: 6) {
-                Text(context.workspaceName)
-                Text("·")
-                Text(context.layout.title)
-                Text("·")
-                Text(context.displayName)
-                Spacer()
-                Text(isPlacementHaloKeyboardFocused
-                    ? "←↑↓→ Move   ↩ Place   esc Back"
-                    : "↑↓ Select   ↩ Run   esc Close")
-                    .font(.caption.monospaced())
+            if !availableQuickActions.isEmpty {
+                quickActionsSurface
+                Divider().opacity(0.35)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 18)
-            .frame(height: 34)
-
-            Divider().opacity(0.35)
 
             if entries.isEmpty {
                 ContentUnavailableView.search(text: query)
@@ -915,7 +1351,11 @@ struct CommandPaletteView: View {
                                             weight: .semibold
                                         )
                                         .frame(width: 22)
-                                        .foregroundStyle(index == selectedIndex ? .primary : .secondary)
+                                        .foregroundStyle(
+                                            isCommandListKeyboardFocused && index == selectedIndex
+                                                ? .primary
+                                                : .secondary
+                                        )
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(entry.title).lineLimit(1)
                                             Text(entry.detail)
@@ -933,7 +1373,7 @@ struct CommandPaletteView: View {
                                     .padding(.horizontal, 12)
                                     .frame(height: 44)
                                     .background(
-                                        index == selectedIndex
+                                        isCommandListKeyboardFocused && index == selectedIndex
                                             ? Color.accentColor.opacity(0.2)
                                             : Color.clear,
                                         in: RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -962,6 +1402,129 @@ struct CommandPaletteView: View {
         }
     }
 
+    private var quickActionsSurface: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 5) {
+                Text("Quick actions")
+                    .fontWeight(.semibold)
+                    .textCase(.uppercase)
+                Text("·")
+                Text(context.workspaceName)
+                Text("·")
+                Text(context.displayName)
+                Spacer(minLength: 8)
+                Text(keyboardHint)
+                    .font(.caption2.monospaced())
+                    .lineLimit(1)
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .frame(height: 18)
+
+            if availableQuickActions.contains(.workspaceLayout) {
+                workspaceLayoutQuickAction
+            }
+            if availableQuickActions.contains(.placement) {
+                placementQuickAction
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Quick actions")
+    }
+
+    private var workspaceLayoutQuickAction: some View {
+        HStack(spacing: 10) {
+            Label("Workspace layout", systemImage: "rectangle.3.group")
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Picker(
+                "Workspace layout",
+                selection: Binding(
+                    get: { selectedLayout },
+                    set: { selectLayout($0) }
+                )
+            ) {
+                ForEach(WorkspaceLayout.allCases) { layout in
+                    Label(layout.title, systemImage: layout.systemImage)
+                        .tag(layout)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .focusable(false)
+            .frame(width: 350)
+            .accessibilityLabel("Current workspace layout")
+            .accessibilityHint("Choose Freeform, Tiled, or Accordion")
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 36)
+        .background(
+            keyboardFocusedQuickAction == .workspaceLayout
+                ? Color.accentColor.opacity(0.11)
+                : Color.primary.opacity(0.035),
+            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(
+                    keyboardFocusedQuickAction == .workspaceLayout
+                        ? Color.accentColor.opacity(0.9)
+                        : Color.primary.opacity(0.08),
+                    lineWidth: keyboardFocusedQuickAction == .workspaceLayout ? 2 : 1
+                )
+        }
+    }
+
+    private var placementQuickAction: some View {
+        Button {
+            keyboardFocusedQuickAction = nil
+            setPlacementHaloPresented(!isPlacementHaloPresented)
+        } label: {
+            HStack(spacing: 10) {
+                RadialMenuSymbol(
+                    systemImage: RadialCommandCatalogue.SymbolName.placeWindow,
+                    size: 15,
+                    weight: .semibold
+                )
+                .frame(width: 18, height: 18)
+                Text("Place focused window")
+                    .font(.caption.weight(.medium))
+                Spacer()
+                Image(systemName: "return")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 36)
+            .contentShape(Rectangle())
+            .background(
+                keyboardFocusedQuickAction == .placement
+                    ? Color.accentColor.opacity(0.11)
+                    : Color.primary.opacity(0.035),
+                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(
+                        keyboardFocusedQuickAction == .placement
+                            ? Color.accentColor.opacity(0.9)
+                            : Color.primary.opacity(0.08),
+                        lineWidth: keyboardFocusedQuickAction == .placement ? 2 : 1
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .help("Show window placements")
+        .accessibilityLabel(isPlacementHaloPresented
+            ? "Hide window placements"
+            : "Place focused window")
+        .accessibilityHint("Opens the available placements for the focused window")
+    }
+
     private func setPlacementHaloPresented(
         _ isPresented: Bool,
         keyboardFocused: Bool = false
@@ -979,8 +1542,90 @@ struct CommandPaletteView: View {
     }
 
     private func enterPlacementHaloFromKeyboard() {
+        keyboardFocusedQuickAction = nil
         selectedPlacement = CommandPalettePlacementNavigation.initialPlacement(in: placementActions)
         setPlacementHaloPresented(true, keyboardFocused: true)
+    }
+
+    private func enterQuickActions(fromEnd: Bool = false) {
+        guard !availableQuickActions.isEmpty else { return }
+        if isPlacementHaloPresented {
+            setPlacementHaloPresented(false)
+        }
+        selectedLayout = context.layout
+        keyboardFocusedQuickAction = fromEnd
+            ? availableQuickActions.last
+            : availableQuickActions.first
+        searchFocused = true
+    }
+
+    private func enterQuickActions(at action: CommandPaletteQuickAction) {
+        guard availableQuickActions.contains(action) else { return }
+        if isPlacementHaloPresented {
+            setPlacementHaloPresented(false)
+        }
+        selectedLayout = context.layout
+        keyboardFocusedQuickAction = action
+        searchFocused = true
+    }
+
+    private func leaveQuickActions() {
+        keyboardFocusedQuickAction = nil
+        selectedIndex = 0
+        searchFocused = true
+    }
+
+    private func cycleQuickActionFocus(_ offset: Int) {
+        guard !availableQuickActions.isEmpty else { return }
+        guard let keyboardFocusedQuickAction else {
+            enterQuickActions(fromEnd: offset < 0)
+            return
+        }
+        if let next = CommandPaletteQuickActionNavigation.moved(
+            from: keyboardFocusedQuickAction,
+            offset: offset,
+            in: availableQuickActions
+        ) {
+            self.keyboardFocusedQuickAction = next
+        } else {
+            leaveQuickActions()
+        }
+    }
+
+    private func moveQuickActionFocus(_ offset: Int) {
+        guard let keyboardFocusedQuickAction else { return }
+        if let next = CommandPaletteQuickActionNavigation.moved(
+            from: keyboardFocusedQuickAction,
+            offset: offset,
+            in: availableQuickActions
+        ) {
+            self.keyboardFocusedQuickAction = next
+        } else if offset > 0 {
+            leaveQuickActions()
+        }
+    }
+
+    private func revalidateQuickActionFocus() {
+        if let keyboardFocusedQuickAction,
+           !availableQuickActions.contains(keyboardFocusedQuickAction) {
+            self.keyboardFocusedQuickAction = availableQuickActions.first
+        }
+        if placementActions.isEmpty, isPlacementHaloPresented {
+            setPlacementHaloPresented(false)
+        }
+    }
+
+    private func moveLayoutSelection(_ offset: Int) {
+        selectLayout(CommandPaletteLayoutNavigation.moved(from: selectedLayout, offset: offset))
+    }
+
+    private func selectLayout(_ layout: WorkspaceLayout) {
+        guard selectedLayout != layout else { return }
+        if isPlacementHaloPresented {
+            setPlacementHaloPresented(false)
+        }
+        selectedLayout = layout
+        changeLayout(layout)
     }
 
     private func movePlacementSelection(_ offset: Int) {
@@ -992,6 +1637,15 @@ struct CommandPaletteView: View {
     }
 
     private func activateSelection() {
+        if let keyboardFocusedQuickAction {
+            switch keyboardFocusedQuickAction {
+            case .workspaceLayout:
+                leaveQuickActions()
+            case .placement:
+                enterPlacementHaloFromKeyboard()
+            }
+            return
+        }
         if isPlacementHaloKeyboardFocused,
            let item = CommandPalettePlacementNavigation.item(
                for: selectedPlacement,
@@ -1008,6 +1662,31 @@ struct CommandPaletteView: View {
     private func shouldShowHeader(at index: Int) -> Bool {
         guard entries.indices.contains(index) else { return false }
         return index == 0 || entries[index - 1].section != entries[index].section
+    }
+
+    private var keyboardHint: String {
+        if isPlacementHaloKeyboardFocused {
+            return "←↑↓→ Move   ↩ Place   esc Back"
+        }
+        switch keyboardFocusedQuickAction {
+        case .workspaceLayout:
+            return "↑↓ Action   ←→ Change   ↩ Back   esc Back"
+        case .placement:
+            return "↑↓ Action   ↩ Open   esc Back"
+        case nil:
+            if selectedIndex == 0, !availableQuickActions.isEmpty {
+                return "↑ Actions   ↓ Select   ↩ Run   esc Close"
+            }
+            return "↑↓ Select   ↩ Run   esc Close"
+        }
+    }
+
+    private var isCommandListKeyboardFocused: Bool {
+        keyboardFocusedQuickAction == nil && !isPlacementHaloKeyboardFocused
+    }
+
+    private var placementHaloAnchorYOffset: CGFloat {
+        availableQuickActions.contains(.workspaceLayout) ? 151 : 111
     }
 }
 

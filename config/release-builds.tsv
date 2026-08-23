@@ -1,0 +1,16 @@
+# WindowRanger public build-number ledger.
+#
+# Columns: build_number<TAB>version<TAB>state<TAB>note
+# State is one of: allocated, published, superseded.
+#
+# Before a distributable build, reserve the next number by appending one `allocated` row on
+# develop and commit that allocation before creating/promoting the release branch. Never reuse or
+# delete a number, including when a candidate is superseded.
+1	0.1.0-beta.1	published	GitHub prerelease v0.1.0-beta.1
+2	0.1.0-beta.2	published	GitHub prerelease v0.1.0-beta.2
+3	0.1.0-beta.3	superseded	Signed Beta 3 candidate replaced before publication
+4	0.1.0-beta.3	published	GitHub prerelease v0.1.0-beta.3
+5	0.1.0-beta.4	published	GitHub prerelease v0.1.0-beta.4
+6	0.1.0-beta.5	published	GitHub prerelease v0.1.0-beta.5
+7	0.1.0-beta.6	published	GitHub prerelease v0.1.0-beta.6
+8	0.1.0-beta.7	allocated	First Sparkle-capable GitHub Beta and updater baseline

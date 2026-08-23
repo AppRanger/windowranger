@@ -11,6 +11,8 @@ enum WindowManagerCommand: Hashable, Sendable {
     case selectLayoutFromShortcut(WorkspaceLayout)
     case toggleFloating
     case toggleDropDownApp
+    case selectQuickApp(String)
+    case cycleQuickApp(Int)
     case previousWorkspace
     case resetCurrentWorkspace
     case resetAllWindows
@@ -26,6 +28,7 @@ enum WindowManagerCommand: Hashable, Sendable {
     case placeFreeformWindow(VisualPlacement, validationToken: String)
     case selectProfile(UUID)
     case resumeAutomaticProfileSelection
+    case setPauseMode(Bool)
 
     var diagnosticFields: [String: String] {
         switch self {
@@ -49,6 +52,10 @@ enum WindowManagerCommand: Hashable, Sendable {
             ["action": "toggle-floating"]
         case .toggleDropDownApp:
             ["action": "toggle-drop-down-app"]
+        case let .selectQuickApp(bundleIdentifier):
+            ["action": "select-quick-app", "bundle": bundleIdentifier]
+        case let .cycleQuickApp(offset):
+            ["action": "cycle-quick-app", "offset": String(offset)]
         case .previousWorkspace:
             ["action": "previous-workspace"]
         case .resetCurrentWorkspace:
@@ -99,6 +106,8 @@ enum WindowManagerCommand: Hashable, Sendable {
             ["action": "select-profile", "profile": id.uuidString]
         case .resumeAutomaticProfileSelection:
             ["action": "resume-automatic-profile-selection"]
+        case let .setPauseMode(isPaused):
+            ["action": isPaused ? "pause-window-ranger" : "resume-window-ranger"]
         }
     }
 }
@@ -129,7 +138,8 @@ final class WindowManagerCommandDispatcher {
         engine: WorkspaceEngine,
         diagnostics: DiagnosticLogger = .disabled,
         selectProfile: @escaping (UUID, String) -> Void = { _, _ in },
-        resumeAutomaticProfileSelection: @escaping (String) -> Void = { _ in }
+        resumeAutomaticProfileSelection: @escaping (String) -> Void = { _ in },
+        setPauseMode: @escaping (Bool, String) -> Void = { _, _ in }
     ) {
         self.init(diagnostics: diagnostics) { [weak engine] command, correlationID in
             switch command {
@@ -154,6 +164,10 @@ final class WindowManagerCommandDispatcher {
             case .toggleFloating: engine?.toggleFocusedWindowFloating()
             case .toggleDropDownApp:
                 engine?.toggleDropDownApp(correlationID: correlationID)
+            case let .selectQuickApp(bundleIdentifier):
+                engine?.selectQuickApp(bundleIdentifier: bundleIdentifier, correlationID: correlationID)
+            case let .cycleQuickApp(offset):
+                engine?.cycleQuickApp(offset: offset, correlationID: correlationID)
             case .previousWorkspace:
                 engine?.switchToPreviousWorkspace(correlationID: correlationID)
             case .resetCurrentWorkspace: engine?.resetCurrentWorkspace(correlationID: correlationID)
@@ -205,6 +219,8 @@ final class WindowManagerCommandDispatcher {
                 selectProfile(id, correlationID)
             case .resumeAutomaticProfileSelection:
                 resumeAutomaticProfileSelection(correlationID)
+            case let .setPauseMode(isPaused):
+                setPauseMode(isPaused, correlationID)
             }
         }
     }

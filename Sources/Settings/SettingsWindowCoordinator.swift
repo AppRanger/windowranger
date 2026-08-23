@@ -220,6 +220,7 @@ protocol SettingsWindowSurface: AnyObject {
     func surfaceWithoutActivation(at frame: CGRect)
     func repositionWithoutActivation(to frame: CGRect)
     func hideForWorkspace()
+    func dismissForExternalPresentation()
     func restoreOrdinaryLifecycle()
 }
 
@@ -412,6 +413,18 @@ final class SettingsWindowCoordinator {
                 "resolved-display": Self.short(placement.displayIdentifier),
                 "display-resolution": placement.resolutionReason,
             ]
+        )
+    }
+
+    func dismissForExternalPresentation() {
+        pendingContext = nil
+        assignedContext = nil
+        isHiddenForWorkspace = false
+        surface?.restoreOrdinaryLifecycle()
+        surface?.dismissForExternalPresentation()
+        diagnostics.log(
+            category: "settings-window",
+            event: "dismissed-for-external-presentation"
         )
     }
 
@@ -667,6 +680,10 @@ private final class AppKitSettingsWindowSurface: SettingsWindowSurface {
 
     func hideForWorkspace() {
         window?.orderOut(nil)
+    }
+
+    func dismissForExternalPresentation() {
+        window?.performClose(nil)
     }
 
     func restoreOrdinaryLifecycle() {
