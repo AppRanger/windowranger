@@ -42,12 +42,20 @@ enum CommandPaletteIndex {
     static func entries(
         context: RadialCommandContext,
         query: String,
-        hotKeyConfiguration: HotKeyConfiguration
+        hotKeyConfiguration: HotKeyConfiguration,
+        isPauseModeEnabled: Bool = false
     ) -> [CommandPaletteEntry] {
+        if isPauseModeEnabled {
+            return filtered(
+                [pauseModeEntry(isPaused: true)],
+                query: query
+            )
+        }
         var entries = contextualEntries(
             context: context,
             hotKeyConfiguration: hotKeyConfiguration
         )
+        entries.append(pauseModeEntry(isPaused: false))
         entries.append(CommandPaletteEntry(
             id: "application:settings",
             title: "Open Settings",
@@ -63,6 +71,13 @@ enum CommandPaletteIndex {
             entries.filter { $0.section == section }
         }
 
+        return filtered(entries, query: query)
+    }
+
+    private static func filtered(
+        _ entries: [CommandPaletteEntry],
+        query: String
+    ) -> [CommandPaletteEntry] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !needle.isEmpty else { return entries }
         return entries.enumerated().compactMap { offset, entry -> (Int, Int, CommandPaletteEntry)? in
@@ -77,6 +92,23 @@ enum CommandPaletteIndex {
         .map(\.2)
     }
 
+    private static func pauseModeEntry(isPaused: Bool) -> CommandPaletteEntry {
+        CommandPaletteEntry(
+            id: isPaused ? "application:resume" : "application:pause",
+            title: isPaused ? "Resume WindowRanger" : "Pause WindowRanger",
+            detail: isPaused
+                ? "Resume shortcuts and reconcile managed windows"
+                : "Temporarily stop shortcuts and window management",
+            shortcut: nil,
+            systemImage: isPaused ? "play.circle" : "pause.circle",
+            section: .application,
+            destination: .command(.setPauseMode(!isPaused)),
+            searchTerms: isPaused
+                ? ["unpause", "continue", "start", "hotkeys"]
+                : ["stop", "suspend", "freeze", "hotkeys"]
+        )
+    }
+
     static func spatialPlacementActions(in context: RadialCommandContext) -> [RadialMenuItem] {
         RadialCommandCatalogue.resolveSpatialPlacement(context: context)?.children ?? []
     }
@@ -88,9 +120,15 @@ enum CommandPaletteIndex {
     static func contains(
         _ destination: CommandPaletteDestination,
         context: RadialCommandContext,
-        hotKeyConfiguration: HotKeyConfiguration
+        hotKeyConfiguration: HotKeyConfiguration,
+        isPauseModeEnabled: Bool = false
     ) -> Bool {
-        entries(context: context, query: "", hotKeyConfiguration: hotKeyConfiguration)
+        entries(
+            context: context,
+            query: "",
+            hotKeyConfiguration: hotKeyConfiguration,
+            isPauseModeEnabled: isPauseModeEnabled
+        )
             .contains { $0.destination == destination }
     }
 
@@ -532,13 +570,15 @@ enum CommandPaletteSelectionRevalidation {
         original: RadialCommandContext,
         current: RadialCommandContext,
         hotKeyConfiguration: HotKeyConfiguration,
+        isPauseModeEnabled: Bool = false,
         allowsInlineLayoutRefresh: Bool
     ) -> CommandPaletteDestination? {
         if current.sessionValidationToken == original.sessionValidationToken {
             if CommandPaletteIndex.contains(
                 requested,
                 context: current,
-                hotKeyConfiguration: hotKeyConfiguration
+                hotKeyConfiguration: hotKeyConfiguration,
+                isPauseModeEnabled: isPauseModeEnabled
             ) {
                 return requested
             }
@@ -562,7 +602,8 @@ enum CommandPaletteSelectionRevalidation {
         return CommandPaletteIndex.contains(
             refreshed,
             context: current,
-            hotKeyConfiguration: hotKeyConfiguration
+            hotKeyConfiguration: hotKeyConfiguration,
+            isPauseModeEnabled: isPauseModeEnabled
         ) ? refreshed : nil
     }
 
@@ -635,6 +676,7 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
     private let diagnostics: DiagnosticLogger
     private let contextEnricher: @MainActor (RadialCommandContext) -> RadialCommandContext
     private let hotKeyConfigurationProvider: () -> HotKeyConfiguration
+    private let isPauseModeEnabledProvider: () -> Bool
     private let openSettings: () -> Void
     private var panel: CommandPalettePanel?
     private var presentationModel: CommandPalettePresentationModel?
@@ -651,6 +693,7 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         diagnostics: DiagnosticLogger = .disabled,
         contextEnricher: @escaping @MainActor (RadialCommandContext) -> RadialCommandContext = { $0 },
         hotKeyConfigurationProvider: @escaping () -> HotKeyConfiguration,
+        isPauseModeEnabledProvider: @escaping () -> Bool = { false },
         openSettings: @escaping () -> Void
     ) {
         self.engine = engine
@@ -658,6 +701,7 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         self.diagnostics = diagnostics
         self.contextEnricher = contextEnricher
         self.hotKeyConfigurationProvider = hotKeyConfigurationProvider
+        self.isPauseModeEnabledProvider = isPauseModeEnabledProvider
         self.openSettings = openSettings
         super.init()
     }
@@ -678,7 +722,8 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
             guard !CommandPaletteIndex.entries(
                 context: context,
                 query: "",
-                hotKeyConfiguration: self.hotKeyConfigurationProvider()
+                hotKeyConfiguration: self.hotKeyConfigurationProvider(),
+                isPauseModeEnabled: self.isPauseModeEnabledProvider()
             ).isEmpty else { return }
             self.present(context, previousApplication: priorApplication)
         }
@@ -767,9 +812,11 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         panel.isReleasedWhenClosed = false
         panel.setAccessibilitySubrole(.dialog)
         let presentationModel = CommandPalettePresentationModel(context: context)
+        let isPauseModeEnabled = isPauseModeEnabledProvider()
         panel.contentView = NSHostingView(rootView: CommandPaletteView(
             presentationModel: presentationModel,
             hotKeyConfiguration: configuration,
+            isPauseModeEnabled: isPauseModeEnabled,
             choose: { [weak self] destination in self?.activate(destination) },
             changeLayout: { [weak self] layout in self?.changeLayout(layout) },
             placementHaloPresentationChanged: { [weak self] isPresented in
@@ -927,6 +974,7 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
                       original: original,
                       current: current,
                       hotKeyConfiguration: self.hotKeyConfigurationProvider(),
+                      isPauseModeEnabled: self.isPauseModeEnabledProvider(),
                       allowsInlineLayoutRefresh: allowsInlineLayoutRefresh
                   ),
                   case let .command(command) = validatedDestination
@@ -1028,6 +1076,7 @@ private final class CommandPalettePanel: NSPanel {
 struct CommandPaletteView: View {
     @ObservedObject private var presentationModel: CommandPalettePresentationModel
     let hotKeyConfiguration: HotKeyConfiguration
+    let isPauseModeEnabled: Bool
     let choose: (CommandPaletteDestination) -> Void
     let changeLayout: (WorkspaceLayout) -> Void
     let placementHaloPresentationChanged: (Bool) -> Void
@@ -1046,6 +1095,7 @@ struct CommandPaletteView: View {
     init(
         context: RadialCommandContext,
         hotKeyConfiguration: HotKeyConfiguration,
+        isPauseModeEnabled: Bool = false,
         initiallyShowsPlacementHalo: Bool = false,
         initialPlacementHaloSelection: VisualPlacement? = nil,
         initiallyKeyboardFocusesPlacementHalo: Bool = false,
@@ -1058,6 +1108,7 @@ struct CommandPaletteView: View {
         self.init(
             presentationModel: CommandPalettePresentationModel(context: context),
             hotKeyConfiguration: hotKeyConfiguration,
+            isPauseModeEnabled: isPauseModeEnabled,
             initiallyShowsPlacementHalo: initiallyShowsPlacementHalo,
             initialPlacementHaloSelection: initialPlacementHaloSelection,
             initiallyKeyboardFocusesPlacementHalo: initiallyKeyboardFocusesPlacementHalo,
@@ -1072,6 +1123,7 @@ struct CommandPaletteView: View {
     init(
         presentationModel: CommandPalettePresentationModel,
         hotKeyConfiguration: HotKeyConfiguration,
+        isPauseModeEnabled: Bool = false,
         initiallyShowsPlacementHalo: Bool = false,
         initialPlacementHaloSelection: VisualPlacement? = nil,
         initiallyKeyboardFocusesPlacementHalo: Bool = false,
@@ -1083,6 +1135,7 @@ struct CommandPaletteView: View {
     ) {
         _presentationModel = ObservedObject(wrappedValue: presentationModel)
         self.hotKeyConfiguration = hotKeyConfiguration
+        self.isPauseModeEnabled = isPauseModeEnabled
         self.choose = choose
         self.changeLayout = changeLayout
         self.placementHaloPresentationChanged = placementHaloPresentationChanged
@@ -1102,7 +1155,8 @@ struct CommandPaletteView: View {
         CommandPaletteIndex.entries(
             context: context,
             query: query,
-            hotKeyConfiguration: hotKeyConfiguration
+            hotKeyConfiguration: hotKeyConfiguration,
+            isPauseModeEnabled: isPauseModeEnabled
         )
     }
 
@@ -1112,8 +1166,8 @@ struct CommandPaletteView: View {
 
     private var availableQuickActions: [CommandPaletteQuickAction] {
         CommandPaletteQuickActionNavigation.availableActions(
-            supportsLayoutSelection: context.supportedCommands.contains(.setLayout),
-            supportsPlacement: !placementActions.isEmpty,
+            supportsLayoutSelection: !isPauseModeEnabled && context.supportedCommands.contains(.setLayout),
+            supportsPlacement: !isPauseModeEnabled && !placementActions.isEmpty,
             isSearchEmpty: query.isEmpty
         )
     }

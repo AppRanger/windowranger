@@ -41,6 +41,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         },
         resumeAutomaticProfileSelection: { [weak self] _ in
             Task { @MainActor [weak self] in self?.settingsStore.resumeAutomaticProfileSelection() }
+        },
+        setPauseMode: { [weak self] isPaused, correlationID in
+            Task { @MainActor [weak self] in
+                self?.setPauseMode(isPaused, source: "command-palette", correlationID: correlationID)
+            }
         }
     )
     private lazy var commandPaletteController = CommandPaletteController(
@@ -52,6 +57,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         },
         hotKeyConfigurationProvider: { [weak self] in
             self?.settingsStore.hotKeyConfiguration ?? HotKeyConfiguration()
+        },
+        isPauseModeEnabledProvider: { [weak self] in
+            self?.isPauseModeEnabled ?? false
         },
         openSettings: { [weak self] in
             guard let self else { return }
@@ -106,6 +114,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
     private var preparedForTermination = false
     private var isShortcutRecording = false
+    private var isPauseModeEnabled = false
+    private var pendingPausedProfileActivationRequest: ProfileActivationRequest?
     private var fullscreenGameSession: FullscreenGameSessionSnapshot?
     private var isForegroundDeclaredGameApplication = false
     private var shortcutGuideObservationGeneration = ShortcutGuideObservationGeneration()
@@ -156,6 +166,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         engine.onCommandFeedback = { [weak self] request in
             guard let self else { return }
+            guard !self.isPauseModeEnabled else {
+                self.diagnostics.log(
+                    category: "pause-mode",
+                    event: "command-feedback-suppressed",
+                    correlation: request.correlationID
+                )
+                return
+            }
             if let gameSession = self.fullscreenGameSession,
                request.preferredDisplayIdentifier == nil ||
                 request.preferredDisplayIdentifier == gameSession.displayIdentifier {
@@ -175,15 +193,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         engine.onFullscreenGameSessionChanged = { [weak self] session in
             guard let self, self.fullscreenGameSession != session else { return }
             self.fullscreenGameSession = session
+            self.settingsStore.setGameModeActive(session?.isGameModeEligible == true)
             self.focusedWindowHighlightPresenter.setSuppressed(
-                session != nil,
+                session != nil || self.isPauseModeEnabled,
                 reason: session == nil ? "fullscreen-game-ended" : "fullscreen-game-session"
             )
             self.workspaceSwipeController.setSuppressed(
                 session != nil,
                 reason: "fullscreen-game-session"
             )
-            if session != nil {
+            if session != nil, !self.isPauseModeEnabled {
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "fullscreen-game-session")
                 self.commandPaletteController.dismiss(reason: "fullscreen-game-session")
                 self.commandFeedbackPresenter.dismiss(reason: "fullscreen-game-session")
@@ -200,7 +219,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registerHotKeys()
         updateWorkspaceSwipeActivation()
         updateShortcutGuideActivation()
-        engine.start()
         updateMenuBarPresentation()
         focusedWindowHighlightPresenter.update(
             enabled: settingsStore.focusedWindowHighlightEnabled,
@@ -557,25 +575,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .dropFirst()
             .compactMap { $0 }
             .sink { [weak self] request in
-                guard let self else { return }
-                self.clearTiledPlacementHistory()
-                self.hotKeyManager.cancelDirectionalMoveGesture(reason: "profile-transition")
-                self.workspaceSwipeController.cancel(reason: "profile-transition")
-                self.commandPaletteController.dismiss(reason: "profile-transition")
-                self.commandFeedbackPresenter.dismiss(reason: "profile-transition")
-                self.shortcutGuideController.dismiss()
-                self.engine.transitionToProfile(request)
-                self.registerHotKeys()
-                self.menuBarState.updateConfiguration(
-                    workspaces: self.settingsStore.workspaces,
-                    displayMode: self.settingsStore.multiDisplayMode,
-                    connectedDisplays: self.settingsStore.connectedDisplays,
-                    workspaceDisplayAssignments: self.settingsStore.workspaceDisplayAssignments
-                )
-                self.workspaceStatusBarController?.rebuild()
+                self?.handleProfileActivationRequest(request)
             }
             .store(in: &cancellables)
 
+        // Install every Settings/profile subscriber before discovery can publish a foreground
+        // full-screen game session. Otherwise an immediate startup session could advance the
+        // active profile while the engine misses its generated transition request.
+        engine.start()
         onboardingWindowController.presentIfNeeded()
     }
 
@@ -615,11 +622,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func registerHotKeys() {
         guard !isShortcutRecording else { return }
+        let scope: HotKeyRegistrationScope = if isPauseModeEnabled {
+            .commandPaletteOnly
+        } else if fullscreenGameSession != nil {
+            .workspaceNavigationOnly
+        } else {
+            .all
+        }
         let report = hotKeyManager.register(
             workspaces: settingsStore.workspaces,
             hotKeyConfiguration: settingsStore.hotKeyConfiguration,
-            radialMenuEnabled: settingsStore.radialMenuEnabled,
-            scope: fullscreenGameSession == nil ? .all : .workspaceNavigationOnly
+            radialMenuEnabled: isPauseModeEnabled || settingsStore.radialMenuEnabled,
+            scope: scope,
+            forceCommandPaletteEscapeHatch: isPauseModeEnabled
         )
         settingsStore.setHotKeyRuntimeIssues(report.runtimeIssues)
     }
@@ -637,6 +652,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard !preparedForTermination,
               !isShortcutRecording,
+              !isPauseModeEnabled,
               fullscreenGameSession == nil,
               !isForegroundDeclaredGameApplication else {
             stopShortcutGuideObservation()
@@ -646,6 +662,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 fields: [
                     "reason": preparedForTermination ? "termination"
                         : isShortcutRecording ? "shortcut-recording"
+                        : isPauseModeEnabled ? "pause-mode"
                         : fullscreenGameSession != nil ? "fullscreen-game"
                         : "declared-game",
                 ]
@@ -695,6 +712,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         guard settingsStore.shortcutGuideEnabled,
               !isShortcutRecording,
+              !isPauseModeEnabled,
               fullscreenGameSession == nil,
               !isForegroundDeclaredGameApplication,
               let family else {
@@ -753,6 +771,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         enriched.externalValidationToken = [
             "active=\(settingsStore.activeProfileID.uuidString)",
             "pinned=\(settingsStore.manualPinnedProfileID?.uuidString ?? "none")",
+            "paused=\(isPauseModeEnabled)",
             settingsStore.profiles.map { "\($0.id.uuidString)=\($0.name)" }.joined(separator: ","),
         ].joined(separator: "|")
         enriched.quickApps = settingsStore.quickApps
@@ -774,6 +793,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             workspaceSwipeController.setSuppressed(false, reason: "shortcut-recording")
             updateShortcutGuideActivation()
         }
+    }
+
+    private func setPauseMode(
+        _ isPaused: Bool,
+        source: String,
+        correlationID: String? = nil
+    ) {
+        guard isPauseModeEnabled != isPaused else { return }
+        isPauseModeEnabled = isPaused
+        if isPaused {
+            engine.setWindowManagementPaused(true)
+            hotKeyManager.cancelDirectionalMoveGesture(reason: "pause-mode")
+            workspaceSwipeController.setSuppressed(true, reason: "pause-mode")
+            commandFeedbackPresenter.dismiss(reason: "pause-mode")
+            stopShortcutGuideObservation()
+            focusedWindowHighlightPresenter.setSuppressed(true, reason: "pause-mode")
+        } else if let pendingRequest = pendingPausedProfileActivationRequest {
+            pendingPausedProfileActivationRequest = nil
+            // Keep the engine write gate closed while the newest profile transition updates its
+            // logical configuration, then let Resume reconcile that destination once. Reversing
+            // this order would briefly snap the stale profile before applying the pending one.
+            handleProfileActivationRequest(pendingRequest)
+            engine.setWindowManagementPaused(false)
+        } else {
+            engine.setWindowManagementPaused(false)
+            workspaceSwipeController.setSuppressed(false, reason: "pause-mode")
+        }
+
+        if !isPaused {
+            workspaceSwipeController.setSuppressed(false, reason: "pause-mode")
+            focusedWindowHighlightPresenter.setSuppressed(
+                fullscreenGameSession != nil,
+                reason: "pause-mode-ended"
+            )
+            updateWorkspaceSwipeActivation()
+        }
+        registerHotKeys()
+        updateShortcutGuideActivation()
+        commandPaletteController.contextDidPossiblyChange()
+        workspaceStatusBarController?.rebuild()
+        diagnostics.log(
+            category: "pause-mode",
+            event: isPaused ? "enabled" : "disabled",
+            correlation: correlationID,
+            fields: [
+                "source": source,
+                "pending-profile": String(pendingPausedProfileActivationRequest != nil),
+            ]
+        )
+    }
+
+    private func handleProfileActivationRequest(_ request: ProfileActivationRequest) {
+        if isPauseModeEnabled {
+            pendingPausedProfileActivationRequest = request
+            diagnostics.log(
+                category: "pause-mode",
+                event: "profile-transition-deferred",
+                fields: [
+                    "profile": String(request.configuration.profileID.uuidString.prefix(8)),
+                    "generation": String(request.generation),
+                ]
+            )
+            menuBarState.updateConfiguration(
+                workspaces: settingsStore.workspaces,
+                displayMode: settingsStore.multiDisplayMode,
+                connectedDisplays: settingsStore.connectedDisplays,
+                workspaceDisplayAssignments: settingsStore.workspaceDisplayAssignments
+            )
+            workspaceStatusBarController?.rebuild()
+            return
+        }
+        clearTiledPlacementHistory()
+        hotKeyManager.cancelDirectionalMoveGesture(reason: "profile-transition")
+        workspaceSwipeController.cancel(reason: "profile-transition")
+        commandPaletteController.dismiss(reason: "profile-transition")
+        commandFeedbackPresenter.dismiss(reason: "profile-transition")
+        shortcutGuideController.dismiss()
+        engine.transitionToProfile(request)
+        registerHotKeys()
+        menuBarState.updateConfiguration(
+            workspaces: settingsStore.workspaces,
+            displayMode: settingsStore.multiDisplayMode,
+            connectedDisplays: settingsStore.connectedDisplays,
+            workspaceDisplayAssignments: settingsStore.workspaceDisplayAssignments
+        )
+        workspaceStatusBarController?.rebuild()
     }
 
     func restartOnboardingFromSettings() {
@@ -806,7 +911,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         commandFeedbackPresenter.dismiss(reason: source.rawValue)
         updateShortcutGuideActivation()
         focusedWindowHighlightPresenter.setSuppressed(
-            fullscreenGameSession != nil,
+            fullscreenGameSession != nil || isPauseModeEnabled,
             reason: source.rawValue
         )
         // Monitor pins/fingerprints must resolve before the engine reconciles workspace homes.
@@ -836,6 +941,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         workspaceSwipeController.setSuppressed(
             isShortcutRecording,
             reason: "shortcut-recording"
+        )
+        workspaceSwipeController.setSuppressed(
+            isPauseModeEnabled,
+            reason: "pause-mode"
         )
     }
 
@@ -933,7 +1042,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 initialMode: settingsStore.menuBarPresentationMode,
                 initialWorkspaceLabelMode: settingsStore.menuBarWorkspaceLabelMode,
                 initialDisplayIconConfiguration: settingsStore.menuBarDisplayIconConfiguration,
-                initialHighlightColor: settingsStore.menuBarHighlightColor
+                initialHighlightColor: settingsStore.menuBarHighlightColor,
+                isPauseModeEnabled: { [weak self] in
+                    self?.isPauseModeEnabled ?? false
+                },
+                setPauseMode: { [weak self] isPaused in
+                    self?.setPauseMode(isPaused, source: "menu-bar")
+                }
             )
         } else {
             workspaceStatusBarController?.setPresentationMode(

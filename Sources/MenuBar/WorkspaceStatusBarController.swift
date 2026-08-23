@@ -1048,6 +1048,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private let settingsCommandRequestRouter: SettingsCommandRequestRouter
     private let diagnostics: DiagnosticLogger
     private let tiledPlacementUndoManager: UndoManager?
+    private let isPauseModeEnabled: () -> Bool
+    private let setPauseMode: (Bool) -> Void
     private var presentationMode: MenuBarPresentationMode
     private var workspaceLabelMode: MenuBarWorkspaceLabelMode
     private var displayIconConfiguration: MenuBarDisplayIconConfiguration
@@ -1091,7 +1093,9 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         initialMode: MenuBarPresentationMode,
         initialWorkspaceLabelMode: MenuBarWorkspaceLabelMode = .name,
         initialDisplayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic,
-        initialHighlightColor: MenuBarHighlightColor = .default
+        initialHighlightColor: MenuBarHighlightColor = .default,
+        isPauseModeEnabled: @escaping () -> Bool = { false },
+        setPauseMode: @escaping (Bool) -> Void = { _ in }
     ) {
         self.engine = engine
         self.stateModel = stateModel
@@ -1099,6 +1103,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         self.settingsCommandRequestRouter = settingsCommandRequestRouter
         self.diagnostics = diagnostics
         self.tiledPlacementUndoManager = tiledPlacementUndoManager
+        self.isPauseModeEnabled = isPauseModeEnabled
+        self.setPauseMode = setPauseMode
         presentationMode = initialMode
         workspaceLabelMode = initialWorkspaceLabelMode
         displayIconConfiguration = initialDisplayIconConfiguration
@@ -1390,6 +1396,11 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         _ target: MenuBarHitTarget?,
         anchorFrame: CGRect?
     ) {
+        guard !isPauseModeEnabled() else {
+            cancelPendingShelfPresentation()
+            dismissApplicationShelf()
+            return
+        }
         guard case let .workspace(workspaceID, _) = target,
               let target,
               let anchorFrame
@@ -1618,6 +1629,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         case .openMenu:
             requestMenuPresentation(relativeTo: menuAnchor)
         case let .switchWorkspace(workspaceID, _):
+            guard !isPauseModeEnabled() else { return }
             engine.switchToWorkspace(workspaceID)
         }
     }
@@ -1717,6 +1729,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             profilesMenu.addItem(item)
         }
         switchProfile.submenu = profilesMenu
+        switchProfile.isEnabled = !isPauseModeEnabled()
         appMenu.addItem(switchProfile)
 
         if settingsStore.manualPinnedProfileID != nil {
@@ -1725,8 +1738,18 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
                 action: #selector(resumeAutomaticProfileSelection)
             )
             resume.image = symbol("arrow.triangle.2.circlepath")
+            resume.isEnabled = !isPauseModeEnabled()
             appMenu.addItem(resume)
         }
+
+        let paused = isPauseModeEnabled()
+        let pauseMode = actionMenuItem(
+            title: paused ? "Resume WindowRanger" : "Pause WindowRanger",
+            action: #selector(togglePauseMode)
+        )
+        pauseMode.image = symbol(paused ? "play.circle" : "pause.circle")
+        pauseMode.state = paused ? .on : .off
+        appMenu.addItem(pauseMode)
 
         if presentationMode == .full {
             let snapshot = stateModel.presentation(
@@ -1878,6 +1901,13 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func resumeAutomaticProfileSelection() {
         settingsStore.resumeAutomaticProfileSelection()
+    }
+
+    @objc private func togglePauseMode() {
+        let next = !isPauseModeEnabled()
+        DispatchQueue.main.async { [weak self] in
+            self?.setPauseMode(next)
+        }
     }
 
     @objc private func undoTiledPlacement() {

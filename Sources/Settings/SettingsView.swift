@@ -1335,6 +1335,13 @@ private struct ProfileSwitchingSettingsView: View {
                     get: { Optional(store.defaultProfileID) },
                     set: { if let id = $0 { store.setDefaultProfile(id) } }
                 ), permitsNone: false)
+                profilePicker("During Game Mode", selection: Binding(
+                    get: { store.gameModeProfileID },
+                    set: { store.setGameModeProfile($0) }
+                ))
+                Text("Uses this profile while a foreground full-screen game that explicitly supports macOS Game Mode is active. Game Mode takes priority over display rules, but not a manually selected profile.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 profilePicker("When docked", selection: Binding(
                     get: { store.dockedProfileID },
                     set: { store.setDockedProfile($0) }

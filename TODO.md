@@ -171,6 +171,55 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-071 — Switch profiles for foreground full-screen Game Mode sessions
+
+- **Type:** Automatic profile selection
+- **Priority:** P1
+- **Status:** Automated implementation complete; signed-app and live-game validation remain.
+- **Requested:** 23 August 2026.
+- **User-observed context:** Games that activate macOS Game Mode need a purpose-built profile without
+  requiring a manual profile change on launch and another change on exit.
+- **Smallest useful outcome:** Let this Mac map one profile to a foreground full-screen game whose
+  bundle explicitly declares `LSSupportsGameMode`. Manual profile pins remain authoritative; otherwise the
+  Game Mode target takes priority over display and dock rules. Ending the session re-evaluates the
+  ordinary automatic rules rather than restoring a stale remembered profile.
+- **Detection boundary:** Public macOS APIs do not expose a direct, supported `isGameModeActive`
+  property. WindowRanger therefore requires both an explicit `LSSupportsGameMode` declaration and
+  a foreground full-screen window; a Games category or Game Controller declaration alone is not
+  enough. The UI and documentation must not claim it can
+  observe a user's per-game Game Mode override directly.
+- **Acceptance:** The mapping is local to this Mac, survives profile edits safely, does not replace
+  the profile being edited in Settings, switches through the normal generation-guarded profile
+  transition, and returns to the currently resolved ordinary profile when the session ends.
+- **Automated evidence:** On 23 August 2026, the isolated non-hosted suite passed 686 tests, including
+  explicit `LSSupportsGameMode` eligibility, category/controller-only exclusion, local mapping,
+  precedence, deletion, undo, and restart coverage. The unsigned arm64 Debug app also builds.
+
+### WR-072 — Pause WindowRanger without losing the Command Palette escape hatch
+
+- **Type:** Runtime control and safety
+- **Priority:** P1
+- **Status:** Automated implementation complete; signed-app and live-window validation remain.
+- **Requested:** 23 August 2026.
+- **Smallest useful outcome:** Add a transient Pause state, available from both the menu bar and
+  Command Palette. While paused, retain only the Command Palette global shortcut; disable all other
+  WindowRanger shortcuts, workspace swipes, shortcut-guide observation, and automatic window writes.
+  WindowRanger must ignore manual moves and resizes rather than learning them. Resuming performs one
+  fresh reconciliation so managed layouts snap windows back only where the active workspace rules
+  require it.
+- **Ownership boundary:** Pause is runtime-only and resets off at launch. It must not mutate profile
+  content, window membership, saved layout intent, or iCloud/local Settings state merely by being
+  toggled.
+- **Acceptance:** Menu bar and palette can pause and resume; the palette shortcut remains usable
+  while paused even if its normal assignment was disabled; stale registrations and queued Shelf
+  transitions cannot dispatch other commands or window actions; windows remain freely movable
+  and resizable without corrective writes until resume; resume respects the current profile,
+  workspace layout, full-screen-game shortcut scope, and any independently active suppression reason.
+- **Automated evidence:** On 23 August 2026, test isolation passed and all 686 non-hosted tests passed,
+  covering the pause-only palette catalogue, forced family-aware escape shortcut, command routing,
+  and runtime/local-state boundaries. The unsigned arm64 Debug app builds; signed live window,
+  Shelf, display-change, Game Mode, and resume reconciliation checks remain.
+
 ### WR-070 — Add a branded, settings-backed first-run onboarding wizard
 
 - **Type:** First-run experience and feature education

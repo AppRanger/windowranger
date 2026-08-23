@@ -28,6 +28,7 @@ enum WindowManagerCommand: Hashable, Sendable {
     case placeFreeformWindow(VisualPlacement, validationToken: String)
     case selectProfile(UUID)
     case resumeAutomaticProfileSelection
+    case setPauseMode(Bool)
 
     var diagnosticFields: [String: String] {
         switch self {
@@ -105,6 +106,8 @@ enum WindowManagerCommand: Hashable, Sendable {
             ["action": "select-profile", "profile": id.uuidString]
         case .resumeAutomaticProfileSelection:
             ["action": "resume-automatic-profile-selection"]
+        case let .setPauseMode(isPaused):
+            ["action": isPaused ? "pause-window-ranger" : "resume-window-ranger"]
         }
     }
 }
@@ -135,7 +138,8 @@ final class WindowManagerCommandDispatcher {
         engine: WorkspaceEngine,
         diagnostics: DiagnosticLogger = .disabled,
         selectProfile: @escaping (UUID, String) -> Void = { _, _ in },
-        resumeAutomaticProfileSelection: @escaping (String) -> Void = { _ in }
+        resumeAutomaticProfileSelection: @escaping (String) -> Void = { _ in },
+        setPauseMode: @escaping (Bool, String) -> Void = { _, _ in }
     ) {
         self.init(diagnostics: diagnostics) { [weak engine] command, correlationID in
             switch command {
@@ -215,6 +219,8 @@ final class WindowManagerCommandDispatcher {
                 selectProfile(id, correlationID)
             case .resumeAutomaticProfileSelection:
                 resumeAutomaticProfileSelection(correlationID)
+            case let .setPauseMode(isPaused):
+                setPauseMode(isPaused, correlationID)
             }
         }
     }

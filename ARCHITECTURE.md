@@ -158,6 +158,12 @@ identities only when WindowRanger hid those windows' applications. A changed Win
 invalidates exact window IDs and that ownership marker rather than guessing. Legacy minimized-window
 markers decode without granting application-unhide ownership.
 
+Automatic profile resolution is pure and ordered: manual pin, foreground full-screen Game Mode
+eligible session, exact display topology, portable dock state, local default, then safe fallback.
+The local Game Mode mapping consumes the engine session only when the foreground full-screen game's
+bundle explicitly declares `LSSupportsGameMode`; macOS exposes no supported API for reading the user's live per-game Game Mode
+override. Ending that session re-runs the ordinary rules rather than restoring a remembered profile.
+
 Portable profile transfer serializes only reusable profile definitions into a separately versioned
 JSON transport document. Import validates the complete document, remaps every internal identity,
 previews deterministic additive names, and performs one profile-library mutation without activation.
@@ -397,6 +403,16 @@ Legacy standalone-wheel preferences remain decodable for compatibility. The supe
 preference, gesture state and event-monitor implementation are absent; Command Palette activation
 uses the same Navigate-family registry as every other global shortcut.
 
+Pause is an AppDelegate-owned transient runtime state backed by a defensive engine write gate. Its
+hotkey registration scope admits only the Command Palette owner, and the paused palette indexes only
+the explicit Resume command. Workspace swipe and Shortcut Guide keep independent suppression reasons.
+The engine timer continues read-only discovery so full-screen-game exit and window membership remain
+current, while frame, position, Quick App animation, wake, activation, and visibility writers fail
+closed. Resume refreshes with `performAXWrites: false` before clearing the gate; this deliberately
+skips tiled drag/resize reconciliation, then applies current visibility/layout once. A profile
+activation published during Pause is retained as the newest generation and transitions before any
+stale-profile reconciliation.
+
 Settings is an explicit app-owned floating utility: it may activate and focus, but it is excluded
 from third-party discovery, layout and persistence. Every explicit open captures the engine's
 current virtual workspace and interaction display, updates the utility's assignment, and surfaces
@@ -428,7 +444,7 @@ gesture ends so it cannot emit multiple commands. The adapter returns every even
 no touch history after the gesture, and fails closed if macOS does not expose the generic gesture
 stream. Accepted swipes use `cycleWorkspace`, preserving its ordered wraparound and Independent
 Displays interaction routing. Sleep, inactive login sessions, foreground declared games,
-full-screen games, shortcut recording, display changes, and profile transitions cancel or suspend
+full-screen games, Pause, shortcut recording, display changes, and profile transitions cancel or suspend
 observation.
 
 Exact focus operations use bounded activation/focus/raise verification and generation tokens. For an

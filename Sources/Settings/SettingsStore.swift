@@ -135,6 +135,9 @@ final class SettingsStore: ObservableObject {
     @Published private(set) var settingsProfileID: UUID
     @Published private(set) var activeProfileSelectionReason: ProfileSelectionReason
     @Published private(set) var profileActivationRequest: ProfileActivationRequest?
+    /// Ephemeral runtime input supplied by the workspace engine. This is intentionally not part
+    /// of ProfileLocalState: a restored launch must re-observe the current game session.
+    @Published private(set) var isGameModeActive = false
 
     @Published var workspaces: [WorkspaceDefinition] {
         didSet { activeProfileContentDidChange() }
@@ -521,6 +524,7 @@ final class SettingsStore: ObservableObject {
 
     var manualPinnedProfileID: UUID? { localProfileState.manualPinnedProfileID }
     var defaultProfileID: UUID { localProfileState.defaultProfileID }
+    var gameModeProfileID: UUID? { localProfileState.gameModeProfileID }
     var dockedProfileID: UUID? { localProfileState.dockedProfileID }
     var undockedProfileID: UUID? { localProfileState.undockedProfileID }
     var exactProfileTriggers: [ExactProfileTrigger] { localProfileState.exactTriggers }
@@ -706,6 +710,28 @@ final class SettingsStore: ObservableObject {
         if manualPinnedProfileID == nil {
             evaluateAutomaticProfileSelectionPreservingSettingsTarget(source: "default-changed")
         }
+    }
+
+    func setGameModeProfile(_ profileID: UUID?) {
+        guard profileID == nil || profiles.contains(where: { $0.id == profileID }) else { return }
+        var local = localProfileState
+        local.gameModeProfileID = profileID
+        localProfileState = local
+        persistLocalProfileState()
+        if manualPinnedProfileID == nil {
+            evaluateAutomaticProfileSelectionPreservingSettingsTarget(source: "game-mode-rule-changed")
+        }
+    }
+
+    /// Updates the live Game Mode input without persisting it. Passing `false` immediately lets
+    /// normal automatic rules select the active profile again.
+    func setGameModeActive(_ isActive: Bool) {
+        guard isGameModeActive != isActive else { return }
+        isGameModeActive = isActive
+        guard manualPinnedProfileID == nil else { return }
+        evaluateAutomaticProfileSelectionPreservingSettingsTarget(
+            source: isActive ? "game-mode-started" : "game-mode-ended"
+        )
     }
 
     func setDockedProfile(_ profileID: UUID?) {
@@ -2181,6 +2207,7 @@ final class SettingsStore: ObservableObject {
         guard !importedProfileIDs.contains(activeProfileID),
               localProfileState.manualPinnedProfileID.map({ !importedProfileIDs.contains($0) }) ?? true,
               !importedProfileIDs.contains(localProfileState.defaultProfileID),
+              localProfileState.gameModeProfileID.map({ !importedProfileIDs.contains($0) }) ?? true,
               localProfileState.dockedProfileID.map({ !importedProfileIDs.contains($0) }) ?? true,
               localProfileState.undockedProfileID.map({ !importedProfileIDs.contains($0) }) ?? true,
               localProfileState.exactTriggers.allSatisfy({ !importedProfileIDs.contains($0.profileID) }),
@@ -2243,7 +2270,8 @@ final class SettingsStore: ObservableObject {
             profiles: profiles,
             localState: localProfileState,
             displays: connectedDisplays,
-            isPortableMac: isPortableMacProvider()
+            isPortableMac: isPortableMacProvider(),
+            isGameModeActive: isGameModeActive
         )
         if selection.profileID == activeProfileID {
             let reasonChanged = selection.reason != activeProfileSelectionReason
@@ -2577,7 +2605,8 @@ final class SettingsStore: ObservableObject {
                 profiles: profiles,
                 localState: local,
                 displays: connectedDisplays,
-                isPortableMac: isPortableMacProvider()
+                isPortableMac: isPortableMacProvider(),
+                isGameModeActive: isGameModeActive
             )
             if !profiles.contains(where: { $0.id == settingsProfileID }) {
                 settingsProfileID = selection.profileID

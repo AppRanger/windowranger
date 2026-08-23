@@ -2164,6 +2164,57 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertFalse(report.registeredOwners.contains { $0.kind == .commandWheel })
     }
 
+    func testPauseRegistrationScopeKeepsOnlyCommandPaletteShortcut() {
+        let service = TestGlobalHotKeyRegistrationService()
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { _, _ in },
+            registrationService: service,
+            installsEventHandler: false
+        )
+        let workspace = WorkspaceDefinition(name: "Paused", key: "1", layout: .tiled)
+
+        let report = manager.register(
+            workspaces: [workspace],
+            hotKeyConfiguration: HotKeyConfiguration(),
+            radialMenuEnabled: true,
+            scope: .commandPaletteOnly
+        )
+
+        XCTAssertEqual(report.registeredOwners.count, 1)
+        XCTAssertEqual(report.registeredOwners.first?.kind, .commandWheel)
+        XCTAssertEqual(report.registeredOwners.first?.configurableAction, .commandWheel)
+        XCTAssertFalse(report.registeredOwners.contains { $0.kind == .workspaceSwitch })
+        XCTAssertFalse(report.registeredOwners.contains { $0.kind == .workspaceMove })
+    }
+
+    func testPauseRegistrationForcesCommandPaletteEscapeHatchWhenDisabled() {
+        let service = TestGlobalHotKeyRegistrationService()
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { _, _ in },
+            registrationService: service,
+            installsEventHandler: false
+        )
+        var configuration = HotKeyConfiguration()
+        XCTAssertNil(configuration.setModifierMask(
+            UInt32(controlKey | shiftKey),
+            for: .navigate
+        ))
+        configuration.setKeyCode(nil, for: .commandWheel)
+
+        let report = manager.register(
+            workspaces: [WorkspaceDefinition(name: "Paused", key: "1", layout: .tiled)],
+            hotKeyConfiguration: configuration,
+            radialMenuEnabled: true,
+            scope: .commandPaletteOnly,
+            forceCommandPaletteEscapeHatch: true
+        )
+
+        XCTAssertEqual(report.registeredOwners.map(\.kind), [.commandWheel])
+        XCTAssertEqual(service.registrations.map(\.chord), [
+            HotKeyChord(keyCode: 49, modifiers: UInt32(controlKey | shiftKey)),
+        ])
+    }
+
     func testFamilyModelCannotProduceReservedCommandEscapeGameOverlayChord() {
         let service = TestGlobalHotKeyRegistrationService()
         let manager = HotKeyManager(

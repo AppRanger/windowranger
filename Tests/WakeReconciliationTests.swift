@@ -777,6 +777,27 @@ final class WakeReconciliationTests: XCTestCase {
         ))
     }
 
+    func testGameModeProfileEligibilityRequiresExplicitLaunchServicesOptIn() {
+        XCTAssertTrue(FullscreenGameMetadataPolicy.isGameModeEligible(
+            supportsGameMode: true
+        ))
+        XCTAssertFalse(FullscreenGameMetadataPolicy.isGameModeEligible(
+            supportsGameMode: false
+        ))
+        XCTAssertFalse(FullscreenGameMetadataPolicy.isGameModeEligible(
+            supportsGameMode: nil
+        ))
+
+        XCTAssertTrue(FullscreenGameMetadataPolicy.isDeclaredGame(
+            supportsGameMode: nil,
+            supportsGameControllerMode: true,
+            applicationCategory: nil
+        ))
+        XCTAssertFalse(FullscreenGameMetadataPolicy.isGameModeEligible(
+            supportsGameMode: nil
+        ))
+    }
+
     func testWakeFocusRestoresPriorVisibleLocalWindowAndNeverParkedOrOtherDisplay() {
         let candidates = [
             WakeFocusCandidate(

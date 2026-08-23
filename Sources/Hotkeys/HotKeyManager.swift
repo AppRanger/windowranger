@@ -339,6 +339,7 @@ struct HotKeyRegistrationReport: Equatable, Sendable {
 enum HotKeyRegistrationScope: Equatable, Sendable {
     case all
     case workspaceNavigationOnly
+    case commandPaletteOnly
 
     func allows(_ binding: ShortcutBindingDefinition) -> Bool {
         switch self {
@@ -357,6 +358,8 @@ enum HotKeyRegistrationScope: Equatable, Sendable {
                     $0 == .nextWorkspace ||
                     $0 == .backAndForthWorkspace
             } == true
+        case .commandPaletteOnly:
+            return binding.owner.kind == .commandWheel
         }
     }
 }
@@ -521,7 +524,8 @@ final class HotKeyManager {
         workspaces: [WorkspaceDefinition],
         hotKeyConfiguration: HotKeyConfiguration = HotKeyConfiguration(),
         radialMenuEnabled: Bool = false,
-        scope: HotKeyRegistrationScope = .all
+        scope: HotKeyRegistrationScope = .all,
+        forceCommandPaletteEscapeHatch: Bool = false
     ) -> HotKeyRegistrationReport {
         cancelDirectionalMoveGesture(reason: "hotkeys-reconfigured", awaitRelease: false)
         unregisterAll()
@@ -530,7 +534,25 @@ final class HotKeyManager {
             workspaces: workspaces,
             includeCommandWheel: radialMenuEnabled
         )
-        let eligibleBindings = configuration.eligibleBindings.filter(scope.allows)
+        var eligibleBindings = configuration.eligibleBindings.filter(scope.allows)
+        if forceCommandPaletteEscapeHatch, scope == .commandPaletteOnly {
+            let configuredChord = hotKeyConfiguration.optionalChord(for: .commandWheel)
+            let familyFallbackChord = HotKeyChord(
+                keyCode: ConfigurableHotKeyAction.commandWheel.defaultKeyCode ?? 49,
+                modifiers: hotKeyConfiguration.modifierMask(for: .navigate)
+            )
+            let stockFallbackChord = HotKeyConfiguration().chord(for: .commandWheel)
+            let escapeChord = configuredChord.flatMap {
+                ShortcutConflictModel.validationMessage($0) == nil ? $0 : nil
+            } ?? (ShortcutConflictModel.validationMessage(familyFallbackChord) == nil
+                ? familyFallbackChord
+                : stockFallbackChord)
+            eligibleBindings.removeAll { $0.owner.kind == .commandWheel }
+            eligibleBindings.append(ShortcutBindingDefinition(
+                owner: .global(.commandWheel),
+                chord: escapeChord
+            ))
+        }
         for issue in configuration.issues {
             diagnostics.log(
                 category: "hotkey",

@@ -474,6 +474,73 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(ProfileDockState.resolve(isPortableMac: false, displays: displays), .notApplicable)
     }
 
+    func testGameModeProfileTakesPriorityOverDisplayRulesButNotManualPin() {
+        let first = profile(name: "First")
+        let game = profile(name: "Game")
+        let exact = profile(name: "Exact")
+        let displays = [profileDisplay("main", isMain: true, serial: "1")]
+        let exactTrigger = ExactProfileTrigger(
+            name: "Desk",
+            profileID: exact.id,
+            displayPins: [WorkspaceDisplayPin(
+                lastKnownIdentifier: displays[0].identifier,
+                fingerprint: displays[0].fingerprint
+            )]
+        )
+        var local = ProfileLocalState(
+            activeProfileID: first.id,
+            manualPinnedProfileID: first.id,
+            defaultProfileID: first.id,
+            gameModeProfileID: game.id,
+            exactTriggers: [exactTrigger]
+        )
+
+        XCTAssertEqual(
+            ProfileTriggerResolver.resolve(
+                profiles: [first, game, exact],
+                localState: local,
+                displays: displays,
+                isPortableMac: false,
+                isGameModeActive: true
+            ),
+            ProfileSelection(profileID: first.id, reason: .manualPin)
+        )
+
+        local.manualPinnedProfileID = nil
+        XCTAssertEqual(
+            ProfileTriggerResolver.resolve(
+                profiles: [first, game, exact],
+                localState: local,
+                displays: displays,
+                isPortableMac: false,
+                isGameModeActive: true
+            ),
+            ProfileSelection(profileID: game.id, reason: .gameMode)
+        )
+        XCTAssertEqual(
+            ProfileTriggerResolver.resolve(
+                profiles: [first, game, exact],
+                localState: local,
+                displays: displays,
+                isPortableMac: false,
+                isGameModeActive: false
+            ),
+            ProfileSelection(profileID: exact.id, reason: .exactTopology(exactTrigger.id))
+        )
+
+        local.gameModeProfileID = UUID()
+        XCTAssertEqual(
+            ProfileTriggerResolver.resolve(
+                profiles: [first, game, exact],
+                localState: local,
+                displays: displays,
+                isPortableMac: false,
+                isGameModeActive: true
+            ),
+            ProfileSelection(profileID: exact.id, reason: .exactTopology(exactTrigger.id))
+        )
+    }
+
     func testExactTopologyAndRoleBindingsNeverGuessAmbiguousIdenticalMonitors() {
         let workspace = WorkspaceDefinition(name: "Work", key: "w")
         let role = ProfileDisplayRole(name: "Desk")
@@ -642,6 +709,43 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(store.activeProfileSelectionReason, .exactTopology(exactTriggerID))
     }
 
+    func testGameModeActivationRestoresAutomaticProfileAndPreservesSettingsTarget() throws {
+        let (defaults, suite) = isolatedDefaults("GameModeProfileSelection")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let displays = [profileDisplay("main", isMain: true, serial: "1")]
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { displays },
+            isPortableMacProvider: { false }
+        )
+        let editingProfileID = store.activeProfileID
+        let gameProfileID = try XCTUnwrap(
+            store.createProfile(named: "Game", source: .scratch)
+        )
+        store.selectProfileForEditing(editingProfileID)
+        store.setGameModeProfile(gameProfileID)
+
+        store.setGameModeActive(true)
+        XCTAssertTrue(store.isGameModeActive)
+        XCTAssertEqual(store.activeProfileID, gameProfileID)
+        XCTAssertEqual(store.activeProfileSelectionReason, .gameMode)
+        XCTAssertEqual(store.settingsProfileID, editingProfileID)
+
+        store.setGameModeActive(false)
+        XCTAssertFalse(store.isGameModeActive)
+        XCTAssertEqual(store.activeProfileID, editingProfileID)
+        XCTAssertEqual(store.activeProfileSelectionReason, .localDefault)
+        XCTAssertEqual(store.settingsProfileID, editingProfileID)
+
+        store.setGameModeActive(true)
+        XCTAssertTrue(store.deleteProfile(gameProfileID))
+        XCTAssertNil(store.gameModeProfileID)
+        XCTAssertEqual(store.activeProfileID, editingProfileID)
+        XCTAssertEqual(store.activeProfileSelectionReason, .localDefault)
+    }
+
     func testFreshInstallStartsWithDefaultProfileAndFourNumberedWorkspaces() {
         let (defaults, suite) = isolatedDefaults("FreshProfileDefaults")
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -767,6 +871,27 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(decoded.iconStyle, .profile)
     }
 
+    func testLegacyLocalProfileStateWithoutGameModeTargetDecodes() throws {
+        let configured = profile(name: "Legacy")
+        let local = ProfileLocalState(
+            activeProfileID: configured.id,
+            defaultProfileID: configured.id
+        )
+        let encoded = try JSONEncoder().encode(local)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "gameModeProfileID")
+
+        let decoded = try JSONDecoder().decode(
+            ProfileLocalState.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+
+        XCTAssertNil(decoded.gameModeProfileID)
+        XCTAssertEqual(decoded.version, ProfileLocalState.currentVersion)
+    }
+
     func testProfileCrudCleansLocalReferencesAndProtectsOnlyRemainingProfile() throws {
         let (defaults, suite) = isolatedDefaults("ProfileCrud")
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -782,6 +907,7 @@ final class ProfileTests: XCTestCase {
         let duplicateID = try XCTUnwrap(store.duplicateProfile(originalID))
         store.renameProfile(duplicateID, to: "Travel")
         store.setDefaultProfile(duplicateID)
+        store.setGameModeProfile(duplicateID)
         store.setDockedProfile(duplicateID)
         _ = store.addExactTriggerForCurrentDisplays(profileID: duplicateID)
 
@@ -789,6 +915,7 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(store.profiles.count, 1)
         XCTAssertEqual(store.activeProfileID, originalID)
         XCTAssertEqual(store.defaultProfileID, originalID)
+        XCTAssertNil(store.gameModeProfileID)
         XCTAssertNil(store.dockedProfileID)
         XCTAssertTrue(store.exactProfileTriggers.isEmpty)
         XCTAssertFalse(store.deleteProfile(originalID))

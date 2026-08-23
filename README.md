@@ -54,7 +54,7 @@ not an installable macOS app.
 - Three native, display-aware menu-bar presentations: Compact by default, Medium chips, or a Full display-grouped workspace strip.
 - A standard menu from the primary app item with Settings and a graceful Quit command; the primary item never switches workspaces.
 - Virtual workspaces that remember window membership and the active workspace across app restarts.
-- Named reusable profiles with local manual/automatic selection, dock and exact-topology triggers, synced abstract display roles, and per-Mac monitor bindings.
+- Named reusable profiles with local manual/automatic selection, Game Mode, dock and exact-topology triggers, synced abstract display roles, and per-Mac monitor bindings.
 - Previewed portable JSON profile export/import that adds fresh reusable definitions without transferring or changing this Mac's active profile, triggers, monitor bindings, runtime workspaces, or open windows.
 - Switching parks windows from inactive workspaces at the edge of the desktop and restores their previous frames when returning.
 - Workspace switches restore the destination before parking the source, touch only those two workspaces, issue position-only Accessibility writes, and suppress participating apps' own move animation for the duration of each batch.
@@ -78,7 +78,7 @@ not an installable macOS app.
   along its layout axis and ignores perpendicular arrows.
 - Automatic workspace following when a managed window is focused through the Dock or another macOS route.
 - Per-workspace Freeform, Tiled, and Accordion layouts with migration-safe persistence, automatic or explicit orientation, gaps, outer padding, Accordion overlap, and stable ordering/weights.
-- A searchable global Command Palette with compact Quick Actions and an inline Placement Halo for window positioning.
+- A searchable global Command Palette with compact Quick Actions, an inline Placement Halo for window positioning, and a runtime Pause command.
 - An optional, Mac-local Shortcut Guide that appears while either configured shortcut family is held,
   using a passive bottom key map by default and deriving every visible action from the active
   profile's conflict-checked shortcuts. It follows the focused window's resolved interaction
@@ -317,8 +317,9 @@ or remote library exceeds a limit, the local library remains authoritative and G
 shows the reason; when the local copy is valid, recovery requires the explicit **Replace iCloud
 Profile Library with This Mac** action.
 
-Automatic selection resolves in a fixed order: a manual pin; an exact known display topology; a
-generic docked or undocked rule on portable Macs; then this Mac's default profile. A manual selection
+Automatic selection resolves in a fixed order: a manual pin; this Mac's profile for a foreground
+full-screen declared-game session; an exact known display topology; a generic docked or undocked
+rule on portable Macs; then this Mac's default profile. A manual selection
 cannot be cleared by wake, timers, or later display events—choose **Resume Automatic** in Profile
 Switching Settings or the app menu to release it. A portable Mac with only its built-in display is undocked; a
 portable Mac with an external display is docked. Desktop Macs skip that generic distinction.
@@ -329,7 +330,7 @@ export profiles. The icon follows the reusable profile into the Settings selecto
 and portable transfer. Selecting, creating, or duplicating a library profile chooses it for editing
 without changing the live desktop. **Use Profile** remains in Profile Status as the explicit action
 that activates the edited profile and pins it on this Mac until automatic selection resumes. Profile
-Switching owns this Mac's default, docked, undocked, and exact
+Switching owns this Mac's Game Mode, default, docked, undocked, and exact
 display-setup rules. Displays owns the selected profile's Unified or Independent mode and abstract
 display-role names alongside this Mac's physical monitor bindings. Workspaces, Applications, Quick
 App Shelf, Displays, and profile-owned Menu Bar icons all follow the independent Settings edit
@@ -380,6 +381,14 @@ current workspace's **Freeform**, **Tiled**, or **Accordion** layout and changes
 the palette. Its second row opens focused-window placement only when truthful placements exist.
 Results also show their configured shortcuts where one exists. Arrow keys move selection, Return
 runs it, and Escape or a second shortcut press closes the palette.
+
+**Pause WindowRanger** is a transient runtime state available from the palette and app menu. While
+paused, only the Command Palette shortcut remains registered; the palette offers only **Resume
+WindowRanger**. Workspace swipes, shortcut guidance, focus highlighting, automatic visibility and
+layout writes, and menu-bar workspace actions remain inactive. WindowRanger takes a read-only window
+snapshot on resume so Tiled and Accordion changes made while paused are not learned, then reconciles
+the current profile and layout once. Freeform windows remain user-positioned. Pause is never saved or
+synced and always starts off after relaunch.
 
 Opening a key window must not retarget a window-management command to WindowRanger itself. The
 palette therefore captures the external interaction context and frontmost application first. It
@@ -453,6 +462,9 @@ category, foreground sessions also suppress the Command Palette and command-feed
 only workspace-navigation hotkeys, reserve Command-Escape for macOS Game Overlay, and reduce broad
 window discovery while still checking promptly for full-screen exit. Returning to the workspace
 focuses the native full-screen window without restoring a frame or moving it between displays.
+The optional local Game Mode profile mapping requires a foreground full-screen game whose bundle
+explicitly declares `LSSupportsGameMode`. Public macOS APIs do not expose the user's live per-game Game Mode override, so WindowRanger
+does not claim to observe that private system state directly.
 
 Lifecycle wiring follows Apple's documented notification centers and boundaries:
 [NSWorkspace willSleep](https://developer.apple.com/documentation/appkit/nsworkspace/willsleepnotification),

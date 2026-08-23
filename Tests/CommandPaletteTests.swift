@@ -23,11 +23,58 @@ final class CommandPaletteTests: XCTestCase {
         XCTAssertFalse(destinations.contains(.command(.moveWindowDirection(.left))))
         XCTAssertTrue(destinations.contains(.command(.smartResize(-50))))
         XCTAssertTrue(destinations.contains(.command(.smartResize(50))))
+        XCTAssertTrue(destinations.contains(.command(.setPauseMode(true))))
 
         XCTAssertEqual(
             entries.first { $0.destination == .command(.cycleWindow(1)) }?.shortcut,
             HotKeyConfiguration().chord(for: .nextWindow).title
         )
+    }
+
+    func testPausedPaletteOffersOnlyResumeAndRejectsStalePauseEntry() {
+        let value = context()
+        let configuration = HotKeyConfiguration()
+        let entries = CommandPaletteIndex.entries(
+            context: value,
+            query: "",
+            hotKeyConfiguration: configuration,
+            isPauseModeEnabled: true
+        )
+
+        XCTAssertEqual(entries.map(\.destination), [.command(.setPauseMode(false))])
+        XCTAssertEqual(entries.first?.title, "Resume WindowRanger")
+        XCTAssertNil(entries.first?.shortcut)
+        XCTAssertTrue(CommandPaletteIndex.entries(
+            context: value,
+            query: "continue",
+            hotKeyConfiguration: configuration,
+            isPauseModeEnabled: true
+        ).contains { $0.destination == .command(.setPauseMode(false)) })
+        XCTAssertFalse(CommandPaletteIndex.contains(
+            .command(.setPauseMode(true)),
+            context: value,
+            hotKeyConfiguration: configuration,
+            isPauseModeEnabled: true
+        ))
+    }
+
+    func testDispatcherRoutesPauseModeWithoutTouchingEngineCommands() {
+        var requested: (Bool, String)?
+        let dispatcher = WindowManagerCommandDispatcher(
+            engine: WorkspaceEngine(workspaces: WorkspaceDefinition.defaults),
+            setPauseMode: { requested = ($0, $1) }
+        )
+
+        XCTAssertEqual(
+            dispatcher.dispatch(
+                .setPauseMode(true),
+                source: .commandPalette,
+                correlationID: "pause-test"
+            ),
+            .dispatched
+        )
+        XCTAssertEqual(requested?.0, true)
+        XCTAssertEqual(requested?.1, "pause-test")
     }
 
     func testPaletteDoesNotInventAChordForAnUnassignedCommand() {

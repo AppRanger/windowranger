@@ -119,12 +119,14 @@ intentionally omitted.
   App Shelf plus its shared presentation.
 - Synced global content: Menu Bar presentation/labels/highlight, global shortcuts and Command
   Palette activation, focus-following moves, and automatic application-unhide behavior.
-- Local per Mac: active profile/manual pin, automatic trigger mappings, physical monitor
+- Local per Mac: active profile/manual pin, automatic trigger mappings including the foreground
+  foreground full-screen `LSSupportsGameMode` profile target, physical monitor
   fingerprints and role bindings, current focus, active runtime workspace state, selected Quick App,
   open-window membership, trackpad preferences, Focus Border preferences and application overrides,
   permissions, login-item state, and diagnostics.
 - Settings category, independently selected profile edit target, and currently inspected workspace
   are local UI state. They do not enter profile or iCloud data.
+- Pause is runtime-only, starts off on every launch, and enters neither local persistence nor iCloud.
 
 No profile/storage format migration is needed for this redesign. Existing profile-backed values stay
 authoritative. The Settings-navigation migration keeps Displays as a current destination and maps

@@ -585,6 +585,9 @@ struct ProfileLocalState: Codable, Equatable, Sendable {
     var activeProfileID: UUID
     var manualPinnedProfileID: UUID?
     var defaultProfileID: UUID
+    /// This Mac's optional automatic target for a foreground full-screen game session.
+    /// It remains local because it describes how this particular Mac should behave.
+    var gameModeProfileID: UUID?
     var dockedProfileID: UUID?
     var undockedProfileID: UUID?
     var exactTriggers: [ExactProfileTrigger]
@@ -596,6 +599,7 @@ struct ProfileLocalState: Codable, Equatable, Sendable {
         activeProfileID: UUID,
         manualPinnedProfileID: UUID? = nil,
         defaultProfileID: UUID,
+        gameModeProfileID: UUID? = nil,
         dockedProfileID: UUID? = nil,
         undockedProfileID: UUID? = nil,
         exactTriggers: [ExactProfileTrigger] = [],
@@ -606,6 +610,7 @@ struct ProfileLocalState: Codable, Equatable, Sendable {
         self.activeProfileID = activeProfileID
         self.manualPinnedProfileID = manualPinnedProfileID
         self.defaultProfileID = defaultProfileID
+        self.gameModeProfileID = gameModeProfileID
         self.dockedProfileID = dockedProfileID
         self.undockedProfileID = undockedProfileID
         self.exactTriggers = exactTriggers
@@ -617,6 +622,7 @@ struct ProfileLocalState: Codable, Equatable, Sendable {
         exactTriggers.removeAll { $0.profileID == profileID || !validProfileIDs.contains($0.profileID) }
         runtimeWorkspaceStates.removeValue(forKey: profileID)
         if manualPinnedProfileID == profileID { manualPinnedProfileID = nil }
+        if gameModeProfileID == profileID { gameModeProfileID = nil }
         if dockedProfileID == profileID { dockedProfileID = nil }
         if undockedProfileID == profileID { undockedProfileID = nil }
     }
@@ -628,6 +634,9 @@ struct ProfileLocalState: Codable, Equatable, Sendable {
         if !validIDs.contains(activeProfileID) { activeProfileID = defaultProfileID }
         if let manualPinnedProfileID, !validIDs.contains(manualPinnedProfileID) {
             self.manualPinnedProfileID = nil
+        }
+        if let gameModeProfileID, !validIDs.contains(gameModeProfileID) {
+            self.gameModeProfileID = nil
         }
         if let dockedProfileID, !validIDs.contains(dockedProfileID) { self.dockedProfileID = nil }
         if let undockedProfileID, !validIDs.contains(undockedProfileID) { self.undockedProfileID = nil }
@@ -676,6 +685,7 @@ enum ProfileDockState: String, Equatable, Sendable {
 
 enum ProfileSelectionReason: Equatable, Sendable {
     case manualPin
+    case gameMode
     case exactTopology(UUID)
     case docked
     case undocked
@@ -685,6 +695,7 @@ enum ProfileSelectionReason: Equatable, Sendable {
     var diagnosticValue: String {
         switch self {
         case .manualPin: "manual-pin"
+        case .gameMode: "game-mode"
         case .exactTopology: "exact-topology"
         case .docked: "generic-docked"
         case .undocked: "generic-undocked"
@@ -696,6 +707,7 @@ enum ProfileSelectionReason: Equatable, Sendable {
     var title: String {
         switch self {
         case .manualPin: "Manually selected"
+        case .gameMode: "Automatic · Game Mode"
         case .exactTopology: "Automatic · exact display setup"
         case .docked: "Automatic · docked"
         case .undocked: "Automatic · undocked"
@@ -715,11 +727,17 @@ enum ProfileTriggerResolver {
         profiles: [WindowManagerProfile],
         localState: ProfileLocalState,
         displays: [DisplaySnapshot],
-        isPortableMac: Bool
+        isPortableMac: Bool,
+        isGameModeActive: Bool = false
     ) -> ProfileSelection {
         let validIDs = Set(profiles.map(\.id))
         if let manual = localState.manualPinnedProfileID, validIDs.contains(manual) {
             return ProfileSelection(profileID: manual, reason: .manualPin)
+        }
+        if isGameModeActive,
+           let id = localState.gameModeProfileID,
+           validIDs.contains(id) {
+            return ProfileSelection(profileID: id, reason: .gameMode)
         }
         for trigger in localState.exactTriggers where validIDs.contains(trigger.profileID) {
             if exactTopologyMatches(trigger.displayPins, displays: displays) {

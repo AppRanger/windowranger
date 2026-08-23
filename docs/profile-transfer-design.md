@@ -19,7 +19,8 @@ The versioned document contains an ordered collection of `WindowManagerProfile` 
 - complete typed application rules, including enabled/paused state;
 - the ordered Quick App Shelf of up to four apps and its shared presentation.
 
-It deliberately excludes the active or manually pinned profile, automatic trigger mappings,
+It deliberately excludes the active or manually pinned profile, automatic trigger mappings
+(including the local foreground full-screen Game Mode target),
 runtime active-workspace state, physical display identifiers/fingerprints and role bindings, live
 window membership/IDs/frames/focus, permissions, diagnostics, login-item state, and global app
 preferences. Physical monitor bindings must be established locally after import.
