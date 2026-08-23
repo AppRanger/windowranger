@@ -175,7 +175,8 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Window-admission compatibility and companion-app safety
 - **Priority:** P1
-- **Status:** Source implementation and refreshed automation pass; installed coexistence validation remains.
+- **Status:** Source implementation, complete automation, and one-display UTM coexistence pass;
+  supported physical-Mac validation remains.
 - **Requested:** 23 August 2026.
 - **User-observed context:** DesktopRanger's persistent desktop, overlay, ordinary drawing, Recovery,
   and interaction-island surfaces can otherwise look like ordinary application windows to
@@ -201,16 +202,22 @@ smallest useful outcome and acceptance boundary.
   identifier failure never re-admits a previously confirmed surface and fails closed until a first
   classification can be completed. Focused admission, state-eviction, and Quick App tests plus the
   complete non-hosted suite pass. A
-  signed installed check must still confirm that macOS exports the AppKit marker through AX and
-  that surfaces remain stable through one WindowRanger workspace, layout, and focus cycle while an
-  untagged DesktopRanger manager window remains manageable.
-- **Current candidate evidence (23 August 2026):** After the explicit persistent-surface disposition,
+  supported physical installed check must repeat the UTM-confirmed AX export and stability through
+  one WindowRanger workspace, layout, and focus cycle while an untagged DesktopRanger manager window
+  remains manageable.
+- **Current candidate evidence (24 August 2026):** After the explicit persistent-surface disposition,
   SurfaceLab-only identity correction, and late-marker transition coverage, 151 focused admission,
   eviction, and Quick App tests passed. `./scripts/verify-local-ci.sh --full` passed the complete
   isolated 698-test suite with no failures, static analysis, unsigned universal Release build, and
-  Stable/Beta DMG smoke verification. A separately packaged local candidate launched in the macOS
-  26.6.2 UTM guest and reached the expected Accessibility permission boundary; the permission grant
-  and visible two-app workspace/layout/focus coexistence sequence remain unverified.
+  Stable/Beta DMG smoke verification. In the macOS 26.6.2 build 25G83 UTM guest, the final diagnostic
+  candidate classified exact tagged SurfaceLab Recovery/drawing windows as
+  `ignored-companion-surface` while the unmarked normal manager probe from the same process remained
+  `managed-normal`. Desktop/Floating/Bounded, click-through, interaction-island, Pause All, and the
+  retained Ordinary close → Floating → Ordinary crash sequence passed visibly with both processes
+  alive and no current SurfaceLab crash report. Four native focus cycles targeted exactly Terminal,
+  Finder, System Settings, and the unmarked manager probe; tagged Recovery/drawing IDs never entered
+  the layout targets. The guest lane proves the exact AX contract and visible one-display
+  coexistence, not release signing, multi-display behaviour, or the supported physical-Mac matrix.
 
 ### WR-071 — Switch profiles for foreground full-screen Game Mode sessions
 
