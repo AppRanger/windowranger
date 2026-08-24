@@ -42,6 +42,7 @@ not an installable macOS app.
 - [Portable profile transfer design](docs/profile-transfer-design.md)
 - [Future workspace systems decision brief](docs/future-workspace-systems-decisions.md)
 - [Omarchy-inspired product research](docs/omarchy-inspired-ideas.md)
+- [DesktopRanger integration direction](docs/desktop-ranger-integration.md)
 - [Two-arrow Tiled placement](docs/two-arrow-tiled-placement-recommendation.md)
 - [2026-08-08 code review](docs/code-review-2026-08-08.md)
 - [Third-party reference notices](THIRD_PARTY_NOTICES.md)

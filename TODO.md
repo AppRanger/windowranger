@@ -268,6 +268,25 @@ smallest useful outcome and acceptance boundary.
   and runtime/local-state boundaries. The unsigned arm64 Debug app builds; signed live window,
   Shelf, display-change, Game Mode, and resume reconciliation checks remain.
 
+### WR-074 — Define the DesktopRanger integration and structured CLI contract
+
+- **Type:** Integration contract and CLI research
+- **Priority:** P2
+- **Status:** Needs decision; product direction is approved, but the public contract is not scoped or
+  implemented.
+- **Source:** `docs/desktop-ranger-integration.md`
+- **Requested outcome:** Define a deliberately small, versioned, non-interactive WindowRanger command
+  contract that lets the DesktopRanger host expose bounded typed operations without giving plugins
+  shell access, private state, or a second workspace engine.
+- **Acceptance:** Choose the initial query/control allowlist, request/response/error envelopes,
+  privacy grants, compatibility and migration policy, same-user authenticated IPC, designated-signing
+  checks, deadlines, cancellation, idempotency, and relaunch/concurrency semantics. Converge every
+  exposed UI and CLI operation on the same validation and engine path. Test missing or incompatible
+  peers, malformed and oversized messages, wrong signer/path substitution, stale or duplicate
+  operations, timeouts, cancellation, late replies, and owner relaunch. Keep the integration
+  unavailable or simulated until signed two-app validation passes without weakening macOS protections
+  or changing the Apple Dock.
+
 ### WR-070 — Add a branded, settings-backed first-run onboarding wizard
 
 - **Type:** First-run experience and feature education
