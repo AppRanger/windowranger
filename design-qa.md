@@ -72,6 +72,88 @@ final result: passed
 
 ---
 
+# WR-078 Shortcut Guide Target Labels Design QA
+
+## Scope and evidence
+
+- **Selected Navigate visual truth:**
+  `/Users/chris/.codex/generated_images/01a03375-297d-7fb2-9bfc-6953d00ebee4/exec-a4a1121c-dc30-4678-8624-f94c80d1875b.png`
+  (1,818 x 865 pixels).
+- **Selected Arrange visual truth:**
+  `/Users/chris/.codex/generated_images/01a03375-297d-7fb2-9bfc-6953d00ebee4/exec-92a16d88-f6d4-4cc6-873f-40b8a367c423.png`
+  (1,817 x 866 pixels).
+- **Rendered implementation:** `.build/shortcut-guide-wr078/alignment-refinement/` contains both
+  families in Small, Medium, and Large, Light and Dark: 12 production-view PNGs at Retina 2x.
+  Large is 1,200 x 286 points / 2,400 x 572 pixels; Medium is 920 x 230 points / 1,840 x 460 pixels;
+  Small is 680 x 190 points / 1,360 x 380 pixels.
+- **State:** five numbered workspaces and the complete conflict-free default action set. Snapshot
+  style replaces only live desktop compositing with deterministic native material; the production
+  hierarchy, typography, SF-symbol key labels, spacing, and adaptive sizing are unchanged.
+- **Combined full-view comparisons:**
+  `.build/shortcut-guide-wr078/comparisons/navigate-reference-above-alignment-refinement.png` and
+  `.build/shortcut-guide-wr078/comparisons/arrange-reference-above-alignment-refinement.png`. Each
+  input places the approved reference and final Large Dark native render together at a common
+  2,400-pixel width before review.
+- **Normalization:** the generated references did not obey the requested low-wide canvas and include
+  surrounding black presentation space. They are width-normalized without distortion. Production
+  deliberately retains WindowRanger's accepted 1,200 x 286-point Large boundary because the active
+  requirement is glanceable copy without consuming more screen height.
+- **Focused-region evidence:**
+  `.build/shortcut-guide-wr078/comparisons/navigate-small-lower-band-before-above-alignment-refinement.png`
+  compares the exact compact lower band before and after the final alignment pass. Compact fidelity
+  was also checked in the original-resolution Small and Medium Light/Dark files rather than inferred
+  from Large.
+
+## Comparison history
+
+1. **P2 resolved — Small Navigate shortened the target-bearing labels with ellipses.** The first
+   680-point render showed “Previous Workspace”, “Next Workspace”, and “Last Workspace” clipping.
+   Small now uses Previous, Next, and Last below the explicit **Switch Workspace** heading; Medium
+   and Large retain the full labels.
+2. **P2 resolved — the Arrange directional caption did not have a dependable intrinsic width.** A
+   fixed size-specific directional column now keeps **Reorder by direction** complete and centred
+   beneath the one arrow pad at all three densities without compressing workspace destinations.
+3. **P2 resolved — a defensive mixed focus/reorder configuration fell into a generic More group.**
+   If both directional command families ever share one presentation, they now retain distinct
+   **Focus Window** and **Reorder Window** target headings instead of losing semantics in fallback.
+4. **Final full-view result:** both families retain the approved modifier-family header, prominent
+   workspace band, centred spatial caption, restrained divider, and target-labelled lower groups.
+   Navigate distinguishes workspace switching from ordered window cycling; Arrange distinguishes
+   focused-window changes, layout choice, and workspace display movement.
+5. **P2 resolved — user-observed lower groups and keycaps were not optically centred.** Each heading,
+   action pair, row, and group now centres within its allocated container instead of inheriting the
+   text's leading intrinsic width. The compact **Space** keycap receives dedicated horizontal padding
+   and a fixed-size label, keeping the full word readable at Small while giving it room at every size.
+
+## Fidelity surfaces
+
+- **Fonts and typography:** native San Francisco semantic weights match the existing guide. Family
+  names remain prominent; uppercase tracked headings stay quiet; action labels keep readable optical
+  weight and use compact wording only where Small genuinely needs it.
+- **Spacing and layout rhythm:** the existing Small/Medium/Large panel sizes, 18-point continuous
+  corner, low-wide hierarchy, equal workspace distribution, and restrained separators remain. The
+  arrow caption is directly below and horizontally centred under its cluster. Lower headings and
+  action rows now share the visual centre of each container, and the Space key has deliberate side
+  padding instead of touching its box.
+- **Colors and visual tokens:** native semantic primary, secondary, tertiary, blue accent, Liquid
+  Glass, and older-system HUD fallback remain authoritative in Light and Dark. No generated colour,
+  shadow, or background asset ships.
+- **Image quality and asset fidelity:** all keys, arrows, dividers, type, and material are native
+  vector/system output at Retina scale. The approved mockups are references only and are not embedded.
+- **Copy and content:** **Navigate** and **Arrange** are unchanged. Group headings now supply the
+  previously missing targets, while every visible command still comes from the same configured,
+  conflict-checked registry and unavailable actions remain omitted.
+- **Interaction and accessibility:** no panel policy changed. The guide remains nonactivating,
+  non-key, non-main, click-through, excluded from window cycling, and hidden from accessibility so a
+  held modifier cannot steal focus or create VoiceOver chatter.
+
+No actionable P0, P1, or P2 mismatch remains. Real Liquid Glass compositing, interaction-display
+placement, and press/release feel remain the signed installed-app validation boundary.
+
+final result: passed
+
+---
+
 # First-run Onboarding Mission Control Design QA
 
 ## Scope and evidence

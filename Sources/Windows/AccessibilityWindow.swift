@@ -45,6 +45,7 @@ struct WindowServerPointerEntry: Equatable, Sendable {
 enum WindowAdmissionDisposition: String, Equatable, Sendable {
     case managedNormal = "managed-normal"
     case managedDialog = "managed-dialog"
+    case ignoredCompanionSurface = "ignored-companion-surface"
     case ignoredTransientPopup = "ignored-transient-popup"
     case temporarilyIneligible = "temporarily-ineligible"
 
@@ -53,7 +54,7 @@ enum WindowAdmissionDisposition: String, Equatable, Sendable {
     }
 
     var evictsTrackedWindow: Bool {
-        self == .ignoredTransientPopup
+        self == .ignoredCompanionSurface || self == .ignoredTransientPopup
     }
 }
 
@@ -64,9 +65,13 @@ enum WindowAdmissionReason: String, Equatable, Sendable {
     case dialogSubroleWithoutFullscreenButton = "dialog-subrole-without-fullscreen-button"
     case floatingWindowWithoutFullscreenButton = "floating-window-without-fullscreen-button"
     case fixedSizeStandardWindow = "fixed-size-standard-window"
+    case nativeFilePanelIdentifier = "native-file-panel-identifier"
+    case standardWindowWithDialogControls = "standard-window-with-dialog-controls"
     case transientDialogNonNormalLayer = "transient-dialog-non-normal-layer"
     case ambiguousDialogMetadata = "ambiguous-dialog-metadata"
     case verifiedBundleNonNormalLayer = "verified-bundle-non-normal-layer"
+    case rangerCompanionSurface = "ranger-companion-surface"
+    case rangerCompanionSurfaceIdentifierUnavailable = "ranger-companion-surface-identifier-unavailable"
     case unsupportedRole = "unsupported-role"
     case minimized = "minimized"
     case fullscreen = "fullscreen"
@@ -77,6 +82,17 @@ enum AXAttributePresence: String, Equatable, Sendable {
     case present
     case absent
     case unavailable
+}
+
+enum AXStringAttributeObservation: Equatable, Sendable {
+    case value(String)
+    case absentOrUnsupported
+    case unavailable
+
+    var value: String? {
+        guard case let .value(value) = self else { return nil }
+        return value
+    }
 }
 
 enum AXBooleanAttributeObservation: String, Equatable, Sendable {
@@ -94,8 +110,17 @@ enum AXBooleanAttributeObservation: String, Equatable, Sendable {
     }
 }
 
+enum WindowFrameWriteResult: Equatable, Sendable {
+    case succeeded
+    case valueCreationFailed
+    case initialSizeRejected
+    case positionRejected
+    case finalSizeRejected
+}
+
 struct WindowAdmissionMetadata: Equatable, Sendable {
     let bundleIdentifier: String?
+    let accessibilityIdentifierObservation: AXStringAttributeObservation
     let role: String?
     let subrole: String?
     let windowLayer: Int?
@@ -109,11 +134,17 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
     let minimizeButton: AXAttributePresence
     let closeButton: AXAttributePresence
     let zoomButton: AXAttributePresence
+    let defaultButton: AXAttributePresence
+    let cancelButton: AXAttributePresence
+    let nativeFilePanelIdentifierObservation: AXBooleanAttributeObservation
     let positionSettable: AXBooleanAttributeObservation
     let sizeSettable: AXBooleanAttributeObservation
+    let supportMetadataWasCollected: Bool
 
     init(
         bundleIdentifier: String?,
+        accessibilityIdentifier: String? = nil,
+        accessibilityIdentifierObservation: AXStringAttributeObservation? = nil,
         role: String?,
         subrole: String?,
         windowLayer: Int?,
@@ -127,10 +158,17 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
         minimizeButton: AXAttributePresence = .unavailable,
         closeButton: AXAttributePresence = .unavailable,
         zoomButton: AXAttributePresence = .unavailable,
+        defaultButton: AXAttributePresence = .unavailable,
+        cancelButton: AXAttributePresence = .unavailable,
+        nativeFilePanelIdentifierObservation: AXBooleanAttributeObservation = .unsupported,
         positionSettable: AXBooleanAttributeObservation = .unsupported,
-        sizeSettable: AXBooleanAttributeObservation = .unsupported
+        sizeSettable: AXBooleanAttributeObservation = .unsupported,
+        supportMetadataWasCollected: Bool? = nil
     ) {
         self.bundleIdentifier = bundleIdentifier
+        self.accessibilityIdentifierObservation = accessibilityIdentifierObservation
+            ?? accessibilityIdentifier.map(AXStringAttributeObservation.value)
+            ?? .absentOrUnsupported
         self.role = role
         self.subrole = subrole
         self.windowLayer = windowLayer
@@ -145,17 +183,38 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
         self.minimizeButton = minimizeButton
         self.closeButton = closeButton
         self.zoomButton = zoomButton
+        self.defaultButton = defaultButton
+        self.cancelButton = cancelButton
+        self.nativeFilePanelIdentifierObservation = nativeFilePanelIdentifierObservation
         self.positionSettable = positionSettable
         self.sizeSettable = sizeSettable
+        self.supportMetadataWasCollected = supportMetadataWasCollected ?? (
+            modalObservation != .unsupported ||
+                focusedObservation != .unsupported ||
+                mainObservation != .unsupported ||
+                minimizeButton != .unavailable ||
+                zoomButton != .unavailable ||
+                defaultButton != .unavailable ||
+                cancelButton != .unavailable ||
+                nativeFilePanelIdentifierObservation != .unsupported ||
+                positionSettable != .unsupported ||
+                sizeSettable != .unsupported
+        )
     }
+
+    var accessibilityIdentifier: String? { accessibilityIdentifierObservation.value }
 
     /// A broad discovery pass refreshes classifier inputs but must not add support-only AX reads to
     /// the 0.75-second engine poll. Retain the last on-demand evidence until it is explicitly
     /// refreshed or the window's admission state changes.
     func retainingSupportEvidence(from previous: WindowAdmissionMetadata?) -> WindowAdmissionMetadata {
         guard let previous else { return self }
+        let retainedAccessibilityIdentifierObservation = accessibilityIdentifierObservation == .unavailable
+            ? previous.accessibilityIdentifierObservation
+            : accessibilityIdentifierObservation
         return WindowAdmissionMetadata(
             bundleIdentifier: bundleIdentifier,
+            accessibilityIdentifierObservation: retainedAccessibilityIdentifierObservation,
             role: role,
             subrole: subrole,
             windowLayer: windowLayer,
@@ -169,8 +228,13 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
             minimizeButton: previous.minimizeButton,
             closeButton: closeButton,
             zoomButton: previous.zoomButton,
+            defaultButton: previous.defaultButton,
+            cancelButton: previous.cancelButton,
+            nativeFilePanelIdentifierObservation:
+                previous.nativeFilePanelIdentifierObservation,
             positionSettable: previous.positionSettable,
-            sizeSettable: previous.sizeSettable
+            sizeSettable: previous.sizeSettable,
+            supportMetadataWasCollected: previous.supportMetadataWasCollected
         )
     }
 }
@@ -221,6 +285,7 @@ enum WindowCompatibilityLayerConstraint: Equatable, Sendable {
 struct WindowCompatibilityProfile: Equatable, Sendable {
     let identifier: String
     let bundleIdentifiers: Set<String>
+    let accessibilityIdentifier: String?
     let role: String?
     let subrole: String?
     let layer: WindowCompatibilityLayerConstraint?
@@ -239,6 +304,7 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
     init(
         identifier: String,
         bundleIdentifiers: Set<String>,
+        accessibilityIdentifier: String? = nil,
         role: String? = nil,
         subrole: String? = nil,
         layer: WindowCompatibilityLayerConstraint? = nil,
@@ -256,6 +322,7 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
     ) {
         self.identifier = identifier
         self.bundleIdentifiers = Set(bundleIdentifiers.map { $0.lowercased() })
+        self.accessibilityIdentifier = accessibilityIdentifier
         self.role = role
         self.subrole = subrole
         self.layer = layer
@@ -275,6 +342,7 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
     func matches(_ metadata: WindowAdmissionMetadata) -> Bool {
         guard let bundleIdentifier = metadata.bundleIdentifier?.lowercased(),
               bundleIdentifiers.contains(bundleIdentifier),
+              accessibilityIdentifier.map({ $0 == metadata.accessibilityIdentifier }) ?? true,
               role.map({ $0 == metadata.role }) ?? true,
               subrole.map({ $0 == metadata.subrole }) ?? true,
               layer.map({ $0.matches(metadata.windowLayer) }) ?? true,
@@ -306,6 +374,7 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
     func matchesCoreEvidence(_ metadata: WindowAdmissionMetadata) -> Bool {
         guard let bundleIdentifier = metadata.bundleIdentifier?.lowercased(),
               bundleIdentifiers.contains(bundleIdentifier),
+              accessibilityIdentifier.map({ $0 == metadata.accessibilityIdentifier }) ?? true,
               role.map({ $0 == metadata.role }) ?? true,
               subrole.map({ $0 == metadata.subrole }) ?? true,
               layer.map({ $0.matches(metadata.windowLayer) }) ?? true,
@@ -327,10 +396,22 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
 enum AccessibilityWindow {
     private static let enhancedUserInterfaceAttribute = "AXEnhancedUserInterface" as CFString
     private static let fullScreenAttribute = "AXFullScreen" as CFString
+    static let desktopRangerSurfaceAccessibilityIdentifier = "dev.appranger.desktopranger.surface.v1"
+    private static let desktopRangerSurfaceBundleIdentifiers: Set<String> = [
+        "dev.appranger.desktopranger.surfacelab",
+    ]
 
     /// Bundled compatibility facts grow only from a reproducible report and privacy-safe fixture.
     /// Keep matches surface-specific; never use a profile as a hidden whole-app layout preference.
     static let builtInCompatibilityProfiles: [WindowCompatibilityProfile] = [
+        WindowCompatibilityProfile(
+            identifier: "desktopranger-owned-surface-v1",
+            bundleIdentifiers: desktopRangerSurfaceBundleIdentifiers,
+            accessibilityIdentifier: desktopRangerSurfaceAccessibilityIdentifier,
+            role: kAXWindowRole as String,
+            disposition: .ignoredCompanionSurface,
+            reason: .rangerCompanionSurface
+        ),
         WindowCompatibilityProfile(
             identifier: "codex-transient-non-normal-layer-v1",
             bundleIdentifiers: ["com.openai.codex"],
@@ -366,6 +447,14 @@ enum AccessibilityWindow {
         }
     }
 
+    /// The cooperative Ranger surface marker is a cheap, privacy-safe core signal, but it still
+    /// adds an AX read. Query it only for the exact SurfaceLab host identity participating in this
+    /// versioned contract; nearby and hypothetical future bundle identifiers remain ordinary apps.
+    static func shouldReadAccessibilityIdentifierForCompatibility(_ bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier = bundleIdentifier?.lowercased() else { return false }
+        return desktopRangerSurfaceBundleIdentifiers.contains(bundleIdentifier)
+    }
+
     static func shouldCollectSupportMetadataForCompatibility(
         _ metadata: WindowAdmissionMetadata,
         profiles: [WindowCompatibilityProfile]? = nil
@@ -375,9 +464,9 @@ enum AccessibilityWindow {
         }
     }
 
-    /// A fixed-size alert can expose itself as an ordinary AXStandardWindow even though it cannot
-    /// participate in a managed layout. Only this narrow core shape receives the extra move/resize
-    /// capability reads needed to distinguish it from a real document window. Missing or failed
+    /// A fixed-size surface can expose itself as an ordinary AXStandardWindow even though it cannot
+    /// participate in a managed layout. Only a normal layer-0 window with a Close control receives
+    /// the one-time move/resize capability reads needed to prove that mismatch. Missing or failed
     /// reads remain conservative and do not themselves change admission.
     static func shouldCollectFixedSizeStandardWindowEvidence(
         _ metadata: WindowAdmissionMetadata
@@ -387,7 +476,6 @@ enum AccessibilityWindow {
             metadata.windowLayer == 0 &&
             !metadata.isMinimized &&
             !metadata.isFullscreen &&
-            metadata.fullscreenButton == .absent &&
             metadata.closeButton == .present
     }
 
@@ -395,10 +483,82 @@ enum AccessibilityWindow {
         metadata.positionSettable.value != nil && metadata.sizeSettable.value != nil
     }
 
+    static func shouldCollectFixedSizeSupportMetadata(
+        coreMetadata: WindowAdmissionMetadata,
+        retainedMetadata: WindowAdmissionMetadata
+    ) -> Bool {
+        shouldCollectFixedSizeStandardWindowEvidence(coreMetadata) &&
+            !retainedMetadata.supportMetadataWasCollected
+    }
+
     static func isFixedSizeStandardWindow(_ metadata: WindowAdmissionMetadata) -> Bool {
         shouldCollectFixedSizeStandardWindowEvidence(metadata) &&
             metadata.positionSettable == .trueValue &&
             metadata.sizeSettable == .falseValue
+    }
+
+    /// Native Open/Save panels and similarly structured system dialogs can expose the generic
+    /// AXStandardWindow subrole. Require affirmative window-level Default and Cancel relationships
+    /// together with the closeless standard-window shape; failed reads and ordinary document
+    /// controls remain conservative.
+    static func shouldCollectStandardWindowDialogControlEvidence(
+        _ metadata: WindowAdmissionMetadata
+    ) -> Bool {
+        metadata.role == kAXWindowRole as String &&
+            metadata.subrole == kAXStandardWindowSubrole as String &&
+            (metadata.windowLayer == nil || metadata.windowLayer == 0) &&
+            !metadata.isMinimized &&
+            !metadata.isFullscreen &&
+            metadata.fullscreenButton == .absent &&
+            metadata.closeButton == .absent
+    }
+
+    static func shouldCollectStandardWindowDialogSupportMetadata(
+        coreMetadata: WindowAdmissionMetadata,
+        retainedMetadata: WindowAdmissionMetadata
+    ) -> Bool {
+        shouldCollectStandardWindowDialogControlEvidence(coreMetadata) &&
+            !retainedMetadata.supportMetadataWasCollected
+    }
+
+    static func isStandardWindowWithDialogControls(_ metadata: WindowAdmissionMetadata) -> Bool {
+        shouldCollectStandardWindowDialogControlEvidence(metadata) &&
+            metadata.defaultButton == .present &&
+            metadata.cancelButton == .present
+    }
+
+    /// AppKit's native file panels expose a nonlocalized Accessibility identifier even on systems
+    /// where their Default and Cancel relationship attributes return no values. Reduce the raw
+    /// identifier immediately to a privacy-safe boolean and keep the closeless standard-window
+    /// shape as corroboration, so arbitrary app identifiers cannot float a document window.
+    static func nativeFilePanelIdentifierObservation(
+        accessibilityIdentifier: String?
+    ) -> AXBooleanAttributeObservation {
+        guard let accessibilityIdentifier else { return .unsupported }
+        switch accessibilityIdentifier.lowercased() {
+        case "open-panel", "save-panel":
+            return .trueValue
+        default:
+            return .falseValue
+        }
+    }
+
+    static func isStandardWindowNativeFilePanel(_ metadata: WindowAdmissionMetadata) -> Bool {
+        shouldCollectStandardWindowDialogControlEvidence(metadata) &&
+            metadata.nativeFilePanelIdentifierObservation == .trueValue
+    }
+
+    /// A rejected initial size write is direct operational evidence that this otherwise ordinary
+    /// standard window cannot safely occupy a managed frame, even when the earlier support probe
+    /// was unavailable. The engine uses this only as a bounded failure recovery.
+    static func fixedSizeDecisionAfterRejectedResize(
+        _ metadata: WindowAdmissionMetadata
+    ) -> WindowAdmissionDecision? {
+        guard shouldCollectFixedSizeStandardWindowEvidence(metadata) else { return nil }
+        return WindowAdmissionDecision(
+            disposition: .managedDialog,
+            reason: .fixedSizeStandardWindow
+        )
     }
 
     static func requestPermission(
@@ -423,6 +583,27 @@ enum AccessibilityWindow {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else { return nil }
         return value as? T
+    }
+
+    /// Unlike a plain optional read, this distinguishes an authoritative absence from a transient
+    /// AX transport failure. The companion-surface contract must not briefly admit a previously
+    /// tagged window merely because its process was temporarily unresponsive.
+    static func stringAttributeObservation(
+        _ attribute: CFString,
+        of element: AXUIElement
+    ) -> AXStringAttributeObservation {
+        var value: CFTypeRef?
+        switch AXUIElementCopyAttributeValue(element, attribute, &value) {
+        case .success:
+            guard let value = value as? String else {
+                return value == nil ? .absentOrUnsupported : .unavailable
+            }
+            return .value(value)
+        case .noValue, .attributeUnsupported:
+            return .absentOrUnsupported
+        default:
+            return .unavailable
+        }
     }
 
     /// Distinguishes a reliably absent window control from an AX read that timed out or failed.
@@ -462,6 +643,25 @@ enum AccessibilityWindow {
 
     static func fullscreenObservation(of element: AXUIElement) -> AXBooleanAttributeObservation {
         booleanAttributeObservation(fullScreenAttribute, of: element)
+    }
+
+    static func nativeFilePanelIdentifierObservation(
+        of element: AXUIElement
+    ) -> AXBooleanAttributeObservation {
+        var value: CFTypeRef?
+        switch AXUIElementCopyAttributeValue(
+            element,
+            kAXIdentifierAttribute as CFString,
+            &value
+        ) {
+        case .success:
+            guard let identifier = value as? String else { return .unavailable }
+            return nativeFilePanelIdentifierObservation(accessibilityIdentifier: identifier)
+        case .noValue, .attributeUnsupported:
+            return .unsupported
+        default:
+            return .unavailable
+        }
     }
 
     /// Preserves unavailable and unsupported Accessibility results so future admission changes can
@@ -618,8 +818,12 @@ enum AccessibilityWindow {
         effectiveFullscreen: Bool? = nil
     ) -> WindowAdmissionMetadata {
         let fullscreenObservation = suppliedFullscreenObservation ?? self.fullscreenObservation(of: element)
+        let accessibilityIdentifierObservation = shouldReadAccessibilityIdentifierForCompatibility(bundleIdentifier)
+            ? stringAttributeObservation(kAXIdentifierAttribute as CFString, of: element)
+            : .absentOrUnsupported
         return WindowAdmissionMetadata(
             bundleIdentifier: bundleIdentifier,
+            accessibilityIdentifierObservation: accessibilityIdentifierObservation,
             role: copyAttribute(element, kAXRoleAttribute as CFString, as: String.self),
             subrole: copyAttribute(element, kAXSubroleAttribute as CFString, as: String.self),
             windowLayer: windowLayer,
@@ -631,14 +835,15 @@ enum AccessibilityWindow {
         )
     }
 
-    /// Collects evidence used to build real-app regression fixtures. These additional AX queries are
-    /// intentionally user-triggered for managed windows rather than part of the normal engine poll.
+    /// Collects support evidence for a one-time admission probe or a user-requested diagnostic
+    /// refresh. The completion marker prevents failed candidate reads from joining the normal poll.
     static func admissionSupportMetadata(
         of element: AXUIElement,
         coreMetadata: WindowAdmissionMetadata
     ) -> WindowAdmissionMetadata {
         WindowAdmissionMetadata(
             bundleIdentifier: coreMetadata.bundleIdentifier,
+            accessibilityIdentifierObservation: coreMetadata.accessibilityIdentifierObservation,
             role: coreMetadata.role,
             subrole: coreMetadata.subrole,
             windowLayer: coreMetadata.windowLayer,
@@ -652,12 +857,24 @@ enum AccessibilityWindow {
             minimizeButton: attributePresence(kAXMinimizeButtonAttribute as CFString, of: element),
             closeButton: coreMetadata.closeButton,
             zoomButton: attributePresence(kAXZoomButtonAttribute as CFString, of: element),
+            defaultButton: attributePresence(kAXDefaultButtonAttribute as CFString, of: element),
+            cancelButton: attributePresence(kAXCancelButtonAttribute as CFString, of: element),
+            nativeFilePanelIdentifierObservation:
+                nativeFilePanelIdentifierObservation(of: element),
             positionSettable: attributeSettableObservation(kAXPositionAttribute as CFString, of: element),
-            sizeSettable: attributeSettableObservation(kAXSizeAttribute as CFString, of: element)
+            sizeSettable: attributeSettableObservation(kAXSizeAttribute as CFString, of: element),
+            supportMetadataWasCollected: true
         )
     }
 
     static func admissionDecision(for metadata: WindowAdmissionMetadata) -> WindowAdmissionDecision {
+        if shouldReadAccessibilityIdentifierForCompatibility(metadata.bundleIdentifier),
+           metadata.accessibilityIdentifierObservation == .unavailable {
+            return WindowAdmissionDecision(
+                disposition: .temporarilyIneligible,
+                reason: .rangerCompanionSurfaceIdentifierUnavailable
+            )
+        }
         if let profile = matchingCompatibilityProfile(for: metadata) {
             return profile.decision()
         }
@@ -676,6 +893,20 @@ enum AccessibilityWindow {
             return WindowAdmissionDecision(disposition: .managedDialog, reason: .sheetRole)
         }
 
+        if metadata.subrole == kAXStandardWindowSubrole as String,
+           isStandardWindowNativeFilePanel(metadata) {
+            return WindowAdmissionDecision(
+                disposition: .managedDialog,
+                reason: .nativeFilePanelIdentifier
+            )
+        }
+        if metadata.subrole == kAXStandardWindowSubrole as String,
+           isStandardWindowWithDialogControls(metadata) {
+            return WindowAdmissionDecision(
+                disposition: .managedDialog,
+                reason: .standardWindowWithDialogControls
+            )
+        }
         if metadata.subrole == kAXStandardWindowSubrole as String,
            isFixedSizeStandardWindow(metadata) {
             return WindowAdmissionDecision(
@@ -870,17 +1101,24 @@ enum AccessibilityWindow {
 
     @discardableResult
     static func setFrame(_ frame: WindowFrame, of element: AXUIElement) -> Bool {
+        setFrameResult(frame, of: element) == .succeeded
+    }
+
+    static func setFrameResult(
+        _ frame: WindowFrame,
+        of element: AXUIElement
+    ) -> WindowFrameWriteResult {
         if let current = self.frame(of: element), framesMatch(current, frame) {
-            return true
+            return .succeeded
         }
 
         var position = frame.position
         var size = frame.size
         guard let positionValue = AXValueCreate(.cgPoint, &position),
               let sizeValue = AXValueCreate(.cgSize, &size)
-        else { return false }
+        else { return .valueCreationFailed }
 
-        return applyFrameWriteSequence(
+        return applyFrameWriteSequenceResult(
             writeSize: {
                 AXUIElementSetAttributeValue(
                     element,
@@ -905,9 +1143,19 @@ enum AccessibilityWindow {
         writeSize: () -> Bool,
         writePosition: () -> Bool
     ) -> Bool {
-        guard writeSize() else { return false }
-        guard writePosition() else { return false }
-        return writeSize()
+        applyFrameWriteSequenceResult(
+            writeSize: writeSize,
+            writePosition: writePosition
+        ) == .succeeded
+    }
+
+    static func applyFrameWriteSequenceResult(
+        writeSize: () -> Bool,
+        writePosition: () -> Bool
+    ) -> WindowFrameWriteResult {
+        guard writeSize() else { return .initialSizeRejected }
+        guard writePosition() else { return .positionRejected }
+        return writeSize() ? .succeeded : .finalSizeRejected
     }
 
 }

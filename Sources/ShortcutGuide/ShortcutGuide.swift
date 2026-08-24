@@ -170,6 +170,95 @@ struct ShortcutGuidePresentationGroups: Equatable, Sendable {
     }
 }
 
+enum ShortcutGuideActionGroupKind: String, Equatable, Sendable {
+    case switchWorkspace
+    case supporting
+    case cycleWindows
+    case arrangeWindow
+    case chooseLayout
+    case moveWorkspace
+    case focusWindow
+    case reorderWindow
+    case other
+
+    var title: String? {
+        switch self {
+        case .switchWorkspace: "Switch Workspace"
+        case .supporting: nil
+        case .cycleWindows: "Cycle Windows in Order"
+        case .arrangeWindow: "Arrange Window"
+        case .chooseLayout: "Choose Layout"
+        case .moveWorkspace: "Move Workspace"
+        case .focusWindow: "Focus Window"
+        case .reorderWindow: "Reorder Window"
+        case .other: "More"
+        }
+    }
+}
+
+struct ShortcutGuideActionGroup: Identifiable, Equatable, Sendable {
+    let kind: ShortcutGuideActionGroupKind
+    let actions: [ShortcutGuideAction]
+
+    var id: ShortcutGuideActionGroupKind { kind }
+    var title: String? { kind.title }
+}
+
+enum ShortcutGuideActionGroupBuilder {
+    static func build(
+        family: ShortcutFamily,
+        actions: [ShortcutGuideAction]
+    ) -> [ShortcutGuideActionGroup] {
+        let regularActions = ShortcutGuidePresentationGroups(actions: actions).regularSecondaryActions
+        let order: [ShortcutGuideActionGroupKind] = switch family {
+        case .navigate: [
+            .switchWorkspace, .supporting, .cycleWindows,
+            .focusWindow, .reorderWindow, .other,
+        ]
+        case .arrange: [
+            .arrangeWindow, .chooseLayout, .moveWorkspace,
+            .reorderWindow, .focusWindow, .other,
+        ]
+        }
+        let grouped = Dictionary(grouping: regularActions) { action in
+            groupKind(for: action, family: family)
+        }
+        return order.compactMap { kind in
+            guard let actions = grouped[kind], !actions.isEmpty else { return nil }
+            return ShortcutGuideActionGroup(kind: kind, actions: actions)
+        }
+    }
+
+    private static func groupKind(
+        for action: ShortcutGuideAction,
+        family: ShortcutFamily
+    ) -> ShortcutGuideActionGroupKind {
+        guard case let .global(value) = action.kind else { return .other }
+        if [.focusLeft, .focusDown, .focusUp, .focusRight].contains(value) {
+            return .focusWindow
+        }
+        if [.moveLeft, .moveDown, .moveUp, .moveRight].contains(value) {
+            return .reorderWindow
+        }
+        switch family {
+        case .navigate:
+            return switch value {
+            case .previousWorkspace, .nextWorkspace, .backAndForthWorkspace: .switchWorkspace
+            case .commandWheel, .toggleDropDownApp: .supporting
+            case .previousWindow, .nextWindow: .cycleWindows
+            default: .other
+            }
+        case .arrange:
+            return switch value {
+            case .toggleFloating, .resizeSmaller, .resizeLarger: .arrangeWindow
+            case .selectAccordion, .selectTiled: .chooseLayout
+            case .moveWorkspaceToNextDisplay: .moveWorkspace
+            default: .other
+            }
+        }
+    }
+}
+
 /// Keeps the normal key map low and wide, then adds rows only when a valid configuration would
 /// otherwise clip actions. Supported workspace keys can substantially outnumber the default four.
 struct ShortcutGuideLayoutMetrics: Equatable, Sendable {
@@ -322,11 +411,11 @@ enum ShortcutGuideContentBuilder {
 
     private static func conciseTitle(_ action: ConfigurableHotKeyAction) -> String {
         switch action {
-        case .previousWorkspace: "Previous"
-        case .nextWorkspace: "Next"
-        case .backAndForthWorkspace: "Back"
-        case .previousWindow: "Previous Window"
-        case .nextWindow: "Next Window"
+        case .previousWorkspace: "Previous Workspace"
+        case .nextWorkspace: "Next Workspace"
+        case .backAndForthWorkspace: "Last Workspace"
+        case .previousWindow: "Previous"
+        case .nextWindow: "Next"
         case .selectAccordion: "Accordion"
         case .selectTiled: "Tiled"
         case .toggleFloating: "Floating"
@@ -613,6 +702,13 @@ struct ShortcutGuideView: View {
         ShortcutGuidePresentationGroups(actions: content.secondaryActions)
     }
 
+    private var actionGroups: [ShortcutGuideActionGroup] {
+        ShortcutGuideActionGroupBuilder.build(
+            family: content.family,
+            actions: content.secondaryActions
+        )
+    }
+
     private var layoutMetrics: ShortcutGuideLayoutMetrics {
         ShortcutGuideLayoutMetrics(size: size, content: content)
     }
@@ -641,6 +737,46 @@ struct ShortcutGuideView: View {
         }
     }
 
+    private var groupTitleFontSize: CGFloat {
+        switch size {
+        case .small: 8
+        case .medium: 9
+        case .large: 11
+        }
+    }
+
+    private var groupSpacing: CGFloat {
+        switch size {
+        case .small: 4
+        case .medium: 5
+        case .large: 7
+        }
+    }
+
+    private var contentPadding: CGFloat {
+        switch size {
+        case .small: 12
+        case .medium: 14
+        case .large: 16
+        }
+    }
+
+    private var sectionSpacing: CGFloat {
+        switch size {
+        case .small: 6
+        case .medium: 8
+        case .large: 10
+        }
+    }
+
+    private var directionalColumnWidth: CGFloat {
+        switch size {
+        case .small: 132
+        case .medium: 154
+        case .large: 176
+        }
+    }
+
     var body: some View {
         ZStack {
             if surfaceStyle == .snapshot {
@@ -653,7 +789,7 @@ struct ShortcutGuideView: View {
             } else {
                 ShortcutGuideGlassSurface(style: surfaceStyle)
             }
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: sectionSpacing) {
                 HStack(spacing: 8) {
                     Text(content.modifierLabel)
                         .font(.system(size: headerFontSize, weight: .bold))
@@ -668,26 +804,29 @@ struct ShortcutGuideView: View {
                 if layoutMetrics.showsPrimaryBand {
                     HStack(alignment: .top, spacing: 14) {
                         if !content.primaryActions.isEmpty {
-                            LazyVGrid(
-                                columns: Array(
-                                    repeating: GridItem(.flexible(), spacing: 8),
-                                    count: layoutMetrics.primaryColumnCount
-                                ),
-                                spacing: 8
-                            ) {
-                                ForEach(content.primaryActions) { action in
-                                    VStack(spacing: 5) {
-                                        ShortcutGuideKeycap(
-                                            label: action.keyLabel,
-                                            side: workspaceKeycapSide
-                                        )
-                                        Text(workspaceTitle(for: action))
-                                            .lineLimit(1)
-                                            .minimumScaleFactor(0.68)
-                                            .font(.system(size: actionFontSize, weight: .medium))
-                                            .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: groupSpacing) {
+                                groupTitle(primaryGroupTitle)
+                                LazyVGrid(
+                                    columns: Array(
+                                        repeating: GridItem(.flexible(), spacing: 8),
+                                        count: layoutMetrics.primaryColumnCount
+                                    ),
+                                    spacing: 8
+                                ) {
+                                    ForEach(content.primaryActions) { action in
+                                        VStack(spacing: 5) {
+                                            ShortcutGuideKeycap(
+                                                label: action.keyLabel,
+                                                side: workspaceKeycapSide
+                                            )
+                                            Text(workspaceTitle(for: action))
+                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.68)
+                                                .font(.system(size: actionFontSize, weight: .medium))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .frame(maxWidth: .infinity)
                                     }
-                                    .frame(maxWidth: .infinity)
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -698,39 +837,37 @@ struct ShortcutGuideView: View {
                                 .frame(height: workspaceKeycapSide + 34)
                         }
                         if !clusteredDirectionalActions.isEmpty {
-                            directionalCluster
+                            VStack(spacing: groupSpacing) {
+                                directionalCluster
+                                Text(directionalGroupTitle)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.75)
+                                    .font(.system(size: actionFontSize, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(width: directionalColumnWidth)
+                            .frame(minHeight: workspaceKeycapSide + 34, alignment: .center)
                         }
                     }
                 }
                 if !regularSecondaryActions.isEmpty {
                     Divider().overlay(.white.opacity(0.18))
-                    LazyVGrid(
-                        columns: Array(
-                            repeating: GridItem(.flexible(), spacing: 11),
-                            count: layoutMetrics.secondaryColumnCount
-                        ),
-                        alignment: .leading,
-                        spacing: 8
-                    ) {
-                        ForEach(regularSecondaryActions) { action in
-                            HStack(spacing: 5) {
-                                ShortcutGuideKeycap(
-                                    label: action.keyLabel,
-                                    compact: true,
-                                    side: secondaryKeycapSide
-                                )
-                                Text(action.title)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.65)
-                                    .font(.system(size: actionFontSize, weight: .medium))
-                                    .foregroundStyle(.secondary)
+                    if layoutMetrics.secondaryRowCount > 1 {
+                        denseSecondaryGrid
+                    } else {
+                        HStack(alignment: .top, spacing: 12) {
+                            ForEach(Array(actionGroups.enumerated()), id: \.element.id) { index, group in
+                                if index > 0 {
+                                    Divider()
+                                        .overlay(.white.opacity(0.16))
+                                }
+                                actionGroup(group)
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }
             }
-            .padding(16)
+            .padding(contentPadding)
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .accessibilityHidden(true)
@@ -740,6 +877,107 @@ struct ShortcutGuideView: View {
         action.title.caseInsensitiveCompare(action.keyLabel) == .orderedSame
             ? "Workspace \(action.title)"
             : action.title
+    }
+
+    private var primaryGroupTitle: String {
+        switch content.family {
+        case .navigate: "Workspaces"
+        case .arrange: "Move Window to Workspace"
+        }
+    }
+
+    private var directionalGroupTitle: String {
+        switch content.family {
+        case .navigate: "Focus by direction"
+        case .arrange: "Reorder by direction"
+        }
+    }
+
+    private func groupTitle(_ title: String) -> some View {
+        Text(title.uppercased())
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .font(.system(size: groupTitleFontSize, weight: .semibold))
+            .tracking(0.8)
+            .foregroundStyle(.tertiary)
+    }
+
+    @ViewBuilder
+    private func actionGroup(_ group: ShortcutGuideActionGroup) -> some View {
+        VStack(alignment: .center, spacing: groupSpacing) {
+            if let title = group.title {
+                groupTitle(displayTitle(for: group.kind, fallback: title))
+                    .frame(maxWidth: .infinity, alignment: .center)
+            } else {
+                Color.clear
+                    .frame(height: groupTitleFontSize + 2)
+                    .accessibilityHidden(true)
+            }
+            HStack(spacing: groupSpacing) {
+                ForEach(group.actions) { action in
+                    HStack(spacing: groupSpacing) {
+                        ShortcutGuideKeycap(
+                            label: action.keyLabel,
+                            compact: true,
+                            side: secondaryKeycapSide
+                        )
+                        Text(displayTitle(for: action))
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.62)
+                            .font(.system(size: actionFontSize, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private func displayTitle(
+        for kind: ShortcutGuideActionGroupKind,
+        fallback: String
+    ) -> String {
+        if size == .small, kind == .cycleWindows { return "Cycle Windows" }
+        return fallback
+    }
+
+    private func displayTitle(for action: ShortcutGuideAction) -> String {
+        guard size == .small, case let .global(value) = action.kind else { return action.title }
+        return switch value {
+        case .previousWorkspace: "Previous"
+        case .nextWorkspace: "Next"
+        case .backAndForthWorkspace: "Last"
+        default: action.title
+        }
+    }
+
+    private var denseSecondaryGrid: some View {
+        LazyVGrid(
+            columns: Array(
+                repeating: GridItem(.flexible(), spacing: 11),
+                count: layoutMetrics.secondaryColumnCount
+            ),
+            alignment: .leading,
+            spacing: 8
+        ) {
+            ForEach(regularSecondaryActions) { action in
+                HStack(spacing: 5) {
+                    ShortcutGuideKeycap(
+                        label: action.keyLabel,
+                        compact: true,
+                        side: secondaryKeycapSide
+                    )
+                    Text(action.title)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .font(.system(size: actionFontSize, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
     }
 
     private func directionalAction(_ candidate: ConfigurableHotKeyAction) -> ShortcutGuideAction? {
@@ -801,14 +1039,20 @@ private struct ShortcutGuideKeycap: View {
                 )
             }
         }
-        .padding(.horizontal, side == nil ? (compact ? 3 : 5) : 0)
+        .padding(.horizontal, horizontalPadding)
         .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(.white.opacity(0.16), lineWidth: 1))
+    }
+
+    private var horizontalPadding: CGFloat {
+        if compact, label.caseInsensitiveCompare("Space") == .orderedSame { return 8 }
+        return side == nil ? (compact ? 3 : 5) : 0
     }
 
     private var labelView: some View {
         Text(label)
             .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .font(.system(
                 size: side.map { max(compact ? 11 : 13, $0 * 0.38) } ?? (compact ? 11 : 13),
                 weight: .bold,

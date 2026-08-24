@@ -72,6 +72,11 @@ struct RadialProfileOption: Equatable, Sendable, Identifiable {
     let name: String
 }
 
+struct RadialApplicationOption: Equatable, Sendable {
+    let bundleIdentifier: String
+    let displayName: String
+}
+
 struct RadialCommandContext: Equatable, Sendable {
     let focusedWindow: RadialFocusedWindowContext?
     let focusSource: RadialFocusSource
@@ -101,6 +106,8 @@ struct RadialCommandContext: Equatable, Sendable {
     /// commits must continue passing the engine-owned token unchanged.
     var externalValidationToken = ""
     var quickApps: [DropDownAppConfiguration] = []
+    var currentApplication: RadialApplicationOption?
+    var applicationRuleBundleIdentifiers: Set<String> = []
 
     var sessionValidationToken: String {
         externalValidationToken.isEmpty

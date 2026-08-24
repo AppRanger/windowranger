@@ -244,13 +244,30 @@ struct QuickAppShelfPresentation: Codable, Equatable, Sendable {
 
 /// The ordered, profile-owned Quick App shelf. The first entry remains the legacy Quick App so
 /// existing shortcuts and profile files keep their established meaning.
+enum RangerCompanionApplicationPolicy {
+    /// Shelf retraction hides a whole application process, so companion hosts whose tagged
+    /// surfaces WindowRanger deliberately ignores cannot participate in the Shelf.
+    static let wholeApplicationVisibilityRestrictedBundleIdentifiers: Set<String> = [
+        "dev.appranger.desktopranger.surfacelab",
+    ]
+
+    static func allowsWholeApplicationVisibilityControl(_ bundleIdentifier: String) -> Bool {
+        !wholeApplicationVisibilityRestrictedBundleIdentifiers.contains(bundleIdentifier.lowercased())
+    }
+}
+
 enum QuickAppShelfPolicy {
     static let maximumCount = 4
+
+    static func isEligible(bundleIdentifier: String) -> Bool {
+        RangerCompanionApplicationPolicy.allowsWholeApplicationVisibilityControl(bundleIdentifier)
+    }
 
     static func normalized(_ values: [DropDownAppConfiguration]) -> [DropDownAppConfiguration] {
         var seen = Set<String>()
         return values.compactMap { value in
             guard let normalized = value.normalized(),
+                  isEligible(bundleIdentifier: normalized.bundleIdentifier),
                   seen.insert(normalized.bundleIdentifier.lowercased()).inserted
             else { return nil }
             return normalized
@@ -262,7 +279,9 @@ enum QuickAppShelfPolicy {
         with value: DropDownAppConfiguration
     ) -> [DropDownAppConfiguration] {
         let normalized = normalized(values)
-        guard let normalizedValue = value.normalized() else { return normalized }
+        guard let normalizedValue = value.normalized(),
+              isEligible(bundleIdentifier: normalizedValue.bundleIdentifier)
+        else { return normalized }
         let bundle = normalizedValue.bundleIdentifier.lowercased()
         if normalized.contains(where: { $0.bundleIdentifier.lowercased() == bundle }) {
             return normalized

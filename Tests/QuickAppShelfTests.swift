@@ -23,6 +23,12 @@ final class QuickAppShelfTests: XCTestCase {
         XCTAssertEqual(QuickAppShelfPolicy.replacing(values, with: app("a")).map(\.bundleIdentifier), ["A", "B"])
     }
 
+    func testCompanionHostCannotEnterShelfThroughNormalizationOrReplacement() {
+        let companion = app("dev.appranger.DesktopRanger.SurfaceLab", "SurfaceLab")
+        XCTAssertTrue(QuickAppShelfPolicy.normalized([companion]).isEmpty)
+        XCTAssertTrue(QuickAppShelfPolicy.replacing([], with: companion).isEmpty)
+    }
+
     func testDirectSelectionAndNextPreviousSwitchingStayOnTheShelf() {
         let values = [app("A"), app("B"), app("C")]
         XCTAssertEqual(
@@ -247,6 +253,67 @@ final class QuickAppShelfTests: XCTestCase {
             ),
             .queueLatest
         )
+    }
+
+    func testIgnoredCompanionDiscardResetsQuickAppWithoutAFrameWrite() {
+        let bundleKey = "dev.appranger.desktopranger.surfacelab"
+
+        XCTAssertEqual(
+            IgnoredQuickAppDiscardPolicy.transitionAfterDiscard(
+                .showing(bundleKey),
+                bundleKey: bundleKey
+            ),
+            .idle
+        )
+        XCTAssertEqual(
+            IgnoredQuickAppDiscardPolicy.transitionAfterDiscard(
+                .hiding(bundleKey),
+                bundleKey: bundleKey
+            ),
+            .idle
+        )
+        XCTAssertEqual(
+            IgnoredQuickAppDiscardPolicy.transitionAfterDiscard(
+                .showing("com.example.other"),
+                bundleKey: bundleKey
+            ),
+            .showing("com.example.other")
+        )
+        XCTAssertTrue(IgnoredQuickAppDiscardPolicy.shouldClearPendingSelection(
+            pendingBundleIdentifier: "com.example.next",
+            discardedBundleKey: bundleKey,
+            interruptedTransition: true
+        ))
+        XCTAssertTrue(IgnoredQuickAppDiscardPolicy.shouldRequestApplicationUnhide(
+            wasHiddenByWindowRanger: true,
+            observedHidden: nil
+        ))
+        XCTAssertTrue(IgnoredQuickAppDiscardPolicy.shouldRequestApplicationUnhide(
+            wasHiddenByWindowRanger: false,
+            observedHidden: true
+        ))
+        XCTAssertFalse(IgnoredQuickAppDiscardPolicy.shouldRequestApplicationUnhide(
+            wasHiddenByWindowRanger: false,
+            observedHidden: false
+        ))
+        XCTAssertFalse(IgnoredQuickAppDiscardPolicy.performsFrameWrite)
+
+        var recovery = IgnoredQuickAppVisibilityRecovery(
+            generation: 7,
+            processIdentifier: 42,
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            confirmationInFlight: true
+        )
+        XCTAssertEqual(recovery.generation, 7)
+        let timeout = DropDownAppVisibilityConfirmationPolicy.disposition(
+            expectedHidden: false,
+            observedHidden: true,
+            attempt: DropDownAppVisibilityConfirmationPolicy.maximumAttempts
+        )
+        XCTAssertEqual(timeout, .timedOut)
+        XCTAssertTrue(recovery.shouldRetain(after: timeout))
+        XCTAssertFalse(recovery.confirmationInFlight)
+        XCTAssertFalse(recovery.shouldRetain(after: .confirmed))
     }
 
     func testRepeatedCycleAdvancesFromLatestPendingSelection() {
@@ -622,23 +689,25 @@ final class QuickAppShelfTests: XCTestCase {
         ))
     }
 
-    func testSelectedEntryRetainsExactLaunchAndAmbiguityBoundary() {
+    func testEveryShelfEntryRetainsExactStartupAndAmbiguityBoundary() {
         let candidates = [
             DropDownAppStartupCandidate(
                 key: WindowKey(processIdentifier: 1, windowIdentifier: 1),
                 bundleIdentifier: "com.example.one",
                 isMeaningfullyVisible: false,
-                displayIdentifier: nil,
                 wasHiddenByWindowRanger: false
             ),
             DropDownAppStartupCandidate(
                 key: WindowKey(processIdentifier: 2, windowIdentifier: 2),
                 bundleIdentifier: "com.example.two",
                 isMeaningfullyVisible: true,
-                displayIdentifier: "main",
                 wasHiddenByWindowRanger: false
             ),
         ]
+        XCTAssertEqual(
+            DropDownAppStartupPolicy.selection(bundleIdentifier: "com.example.one", candidates: candidates)?.windowKey,
+            WindowKey(processIdentifier: 1, windowIdentifier: 1)
+        )
         XCTAssertEqual(
             DropDownAppStartupPolicy.selection(bundleIdentifier: "com.example.two", candidates: candidates)?.windowKey,
             WindowKey(processIdentifier: 2, windowIdentifier: 2)
@@ -746,6 +815,44 @@ final class QuickAppShelfTests: XCTestCase {
         )
         XCTAssertEqual(decodedShelf.dropDownAppSessions?["com.example.a"], sessionA)
         XCTAssertEqual(decodedShelf.dropDownAppSessions?["com.example.b"], sessionB)
+    }
+
+    func testIgnoredCompanionVisibilityDebtSurvivesRestartWithoutWindowGeometry() throws {
+        let workspaceID = WorkspaceDefinition.defaults[0].id
+        let bundleKey = "dev.appranger.desktopranger.surfacelab"
+        let debt = IgnoredQuickAppVisibilityRecovery(
+            generation: 9,
+            processIdentifier: 42,
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            confirmationInFlight: true
+        )
+        let state = PersistedWorkspaceState(
+            version: PersistedWorkspaceState.currentVersion,
+            windowServerSession: "session",
+            activeWorkspaceID: workspaceID,
+            windows: [:],
+            ignoredQuickAppVisibilityRecoveries: [bundleKey: debt]
+        )
+
+        let decoded = try JSONDecoder().decode(
+            PersistedWorkspaceState.self,
+            from: JSONEncoder().encode(state)
+        )
+        let restored = WorkspaceEngine.restoredIgnoredQuickAppVisibilityRecoveries(
+            decoded.ignoredQuickAppVisibilityRecoveries
+        )
+
+        XCTAssertEqual(restored[bundleKey]?.generation, 9)
+        XCTAssertEqual(restored[bundleKey]?.processIdentifier, 42)
+        XCTAssertFalse(try XCTUnwrap(restored[bundleKey]).confirmationInFlight)
+        XCTAssertTrue(WorkspaceEngine.restoredIgnoredQuickAppVisibilityRecoveries([
+            "com.example.other": IgnoredQuickAppVisibilityRecovery(
+                generation: 10,
+                processIdentifier: 43,
+                bundleIdentifier: "com.example.Other",
+                confirmationInFlight: false
+            ),
+        ]).isEmpty)
     }
 
     @MainActor

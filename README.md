@@ -12,7 +12,7 @@ Dev builds remain outside automatic updates. The public feed will be activated o
 signed update archive passes the packaged-app upgrade checks.
 
 Download the signed and notarized
-[`v0.1.0-beta.6` GitHub prerelease](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.6)
+[`v0.1.0-beta.7` GitHub prerelease](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.7)
 as a DMG, with a notarized ZIP as a fallback. GitHub's automatically generated source archives are
 not an installable macOS app.
 
@@ -28,6 +28,7 @@ not an installable macOS app.
 - [First GitHub release runbook](docs/first-github-release.md)
 - [Release notes template](docs/release-notes-template.md)
 - [Sparkle update design and release flow](docs/sparkle-updates.md)
+- [WindowRanger 0.1.0 Beta 7 release notes](docs/releases/v0.1.0-beta.7.md)
 - [WindowRanger 0.1.0 Beta 6 release notes](docs/releases/v0.1.0-beta.6.md)
 - [WindowRanger 0.1.0 Beta 5 release notes](docs/releases/v0.1.0-beta.5.md)
 - [WindowRanger 0.1.0 Beta 4 release notes](docs/releases/v0.1.0-beta.4.md)
@@ -41,6 +42,7 @@ not an installable macOS app.
 - [Portable profile transfer design](docs/profile-transfer-design.md)
 - [Future workspace systems decision brief](docs/future-workspace-systems-decisions.md)
 - [Omarchy-inspired product research](docs/omarchy-inspired-ideas.md)
+- [DesktopRanger integration direction](docs/desktop-ranger-integration.md)
 - [Two-arrow Tiled placement](docs/two-arrow-tiled-placement-recommendation.md)
 - [2026-08-08 code review](docs/code-review-2026-08-08.md)
 - [Third-party reference notices](THIRD_PARTY_NOTICES.md)
@@ -83,7 +85,9 @@ not an installable macOS app.
 - A searchable global Command Palette with compact Quick Actions, an inline Placement Halo for window positioning, and a runtime Pause command.
 - An optional, Mac-local Shortcut Guide that appears while either configured shortcut family is held,
   using a passive bottom key map by default and deriving every visible action from the active
-  profile's conflict-checked shortcuts. It follows the focused window's resolved interaction
+  profile's conflict-checked shortcuts. Compact headings distinguish workspace, window, layout, and
+  display targets, while the arrow pad names its spatial focus or reorder behavior below the keys.
+  It follows the focused window's resolved interaction
   display and adds rows only when a dense valid configuration would otherwise clip actions.
 - A profile-aware Quick App Shelf with up to four ordered entries, palette selection, Previous/Next
   Window traversal while open, exact-window presentation, and conservative launch/recovery handling.
@@ -98,7 +102,10 @@ Window discovery treats a successful per-application Accessibility window enumer
 authoritative lifecycle snapshot for that application. A native tab/window identity absent from a
 successful snapshot is removed immediately from the registry, focus history, Tiled tree, and next
 persisted state, so closed or inactive tab identities cannot leave ghost layout slots. A failed or
-incomplete enumeration is not evidence that a window closed and retains prior state for recovery.
+incomplete enumeration is not evidence that a window closed. Existing Tiled and Accordion
+participants retain their stable layout slots while their geometry writes remain suppressed; an
+authoritative minimized, fullscreen, ignored, floating, or layout-excluded state still leaves the
+layout immediately.
 
 Default shortcuts:
 
@@ -296,6 +303,11 @@ multiple eligible windows produces clear feedback instead of guessing or retryin
 Profiles can choose different ordered shelves and shared shelf presentation. These are managed in
 the dedicated Quick App Shelf Settings section, while shortcuts remain global preferences. Existing
 profiles migrate the first configured Quick App's presentation to the shared shelf setting.
+For the app that owns the focused window, Command Palette can add it directly to the active
+profile's normal Applications list or App Shelf. Moving between those destinations is labelled
+explicitly because one profile never stores the same app in both. A companion host whose tagged
+surfaces are ignored cannot enter App Shelf because Shelf visibility controls an entire application
+process.
 WindowRanger omits ambiguous neighbours and still reports a clear no-op rather than guessing when
 the explicitly selected app has multiple eligible windows.
 
@@ -492,11 +504,18 @@ orientation first resolves from the interaction display and then changes to the 
 direction. Tiled orientation changes retain the session tree's window identities, topology and
 ratios rather than rebuilding membership or focus.
 
-Arrange-F toggles only the focused managed window between Floating and the workspace layout. Enabling Floating captures the current frame and leaves the window in its workspace while the remaining windows reflow; disabling it immediately returns the window to Tiled or Accordion. The override is restored only when the exact window ID and bundle identifier still match within the same WindowServer session, and is discarded with other stale window state. An app-level layout-exclusion rule is authoritative: the shortcut makes no contradictory override and the menu-bar icon briefly explains why.
+Arrange-F toggles only the focused managed window between Floating and the workspace layout. Enabling Floating captures the current frame and leaves the window in its workspace while the remaining windows reflow; disabling it immediately returns the window to Tiled or Accordion. The override is restored only when the exact window ID and bundle identifier still match within the same WindowServer session, and is discarded with other stale window state. An app-level layout-exclusion rule is authoritative: the shortcut makes no contradictory override and the menu-bar icon briefly explains why. A window authoritatively proven movable but not resizable also cannot be forced into layout; Arrange-F explains that it must remain floating. A structurally proven standard-window dialog likewise stays floating at its application-chosen size.
 
-Dialogs use the same managed workspace membership, visibility, focus, display affinity, persistence, and quit recovery as normal windows, but high-confidence dialogs float automatically so they do not distort Tiled or Accordion. High-confidence signals are an Accessibility sheet role, a system-dialog subrole, a layer-0 dialog/floating-window subrole corroborated by reliable window-control metadata, or a layer-0 standard window that has a Close control, no Full Screen control, can move, and authoritatively cannot resize. The last case covers fixed-size update and confirmation alerts that otherwise accept a layout position while rejecting its size. A known nonzero-layer Accessibility dialog is left untouched until its live layer metadata settles, preventing transient prompts from entering a split; an unknown layer remains conservatively managed. A rejected size write also stops before position so a fixed-size surface cannot be displaced toward a layout frame it cannot occupy. Other ambiguous dialog-like windows remain in the layout, and a missing or failed Accessibility read is never treated as positive evidence. Verified nonzero-layer Codex transient panels remain ignored entirely.
+Dialogs use the same managed workspace membership, visibility, focus, display affinity, persistence, and quit recovery as normal windows, but high-confidence dialogs float automatically so they do not distort Tiled or Accordion. High-confidence signals are an Accessibility sheet role, a system-dialog subrole, a layer-0 dialog/floating-window subrole corroborated by reliable window-control metadata, a standard window with absent Full Screen/Close controls and either affirmative window-level Default and Cancel relationships or AppKit's native `open-panel`/`save-panel` Accessibility identifier, or a layer-0 standard window that has a Close control, can move, and authoritatively cannot resize. The native-panel identifier is reduced immediately to a privacy-safe true/false observation; no arbitrary identifier is retained or logged. These cases cover native Open/Save panels without inspecting localized titles, button labels, dimensions, file paths, or application identity. They and proven fixed-size windows use position-only writes, cannot consume a layout slot, and cannot be forced into one, preserving native dialog size. Each candidate gets one support probe, so an unsupported or failed relationship/identifier/capability read stays conservative without adding repeated Accessibility traffic. If a later initial size write is nevertheless rejected, WindowRanger rechecks that exact standard window once, converts it to the fixed-size safety path, and immediately completes the move without resizing. A known nonzero-layer Accessibility dialog is left untouched until its live layer metadata settles, preventing transient prompts from entering a split; an unknown layer remains conservatively managed. A rejected size write also stops before position so a fixed-size surface cannot be displaced toward a layout frame it cannot occupy. Other ambiguous dialog-like windows remain in the layout, and a missing or failed Accessibility read is never treated as positive evidence. Verified nonzero-layer Codex transient panels remain ignored entirely.
 
-Layout precedence is explicit and deterministic: an app-level **Do not include in Tiled or Accordion** rule wins first; a per-window Arrange-F choice wins over automatic behavior; verified dialog floating applies next; an opt-in per-app **Float detected dialogs and secondary windows** rule can also float conservatively ambiguous dialog-like metadata; otherwise a normal window participates in layout. The secondary-window rule never uses titles and never infers from size or non-resizability alone. Pressing Arrange-F on an automatically floated window forces it into the current layout, and pressing it again makes it explicitly floating. Only the explicit per-window choice persists for the exact window ID within the current WindowServer session. Automatic classification is reevaluated from live metadata and is never copied onto a newly created window ID.
+Layout precedence is explicit and deterministic: an app-level **Do not include in Tiled or Accordion** rule wins first; proven fixed-size and standard-window-dialog safety win next; a per-window Arrange-F choice wins over other automatic behavior; verified dialog floating follows; an opt-in per-app **Float detected dialogs and secondary windows** rule can also float conservatively ambiguous dialog-like metadata; otherwise a normal window participates in layout. The secondary-window rule never uses titles and never infers secondary ownership from size or non-resizability alone; authoritative structural or move/resize evidence instead decides whether a standard window can safely participate in layout at all. Pressing Arrange-F on another automatically floated dialog forces it into the current layout, and pressing it again makes it explicitly floating. Only the explicit per-window choice persists for the exact window ID within the current WindowServer session. Automatic classification is reevaluated from live metadata and is never copied onto a newly created window ID.
+
+Externally hidden applications remain tracked so their workspace and restore state survive Hide,
+but their ordinary windows reserve no layout space, receive no focus target, and receive no geometry
+writes while the application is hidden. Hiding an app immediately reflows the remaining visible
+windows; unhiding it returns its retained windows through the normal current/inactive-workspace
+visibility path. This is separate from WindowRanger-owned Quick App hiding and does not treat Hide
+as termination or a failed Accessibility snapshot.
 
 Application Rules are selected from installed or currently running apps and are stored by bundle identifier rather than file path. The picker groups open apps first. When an open app's managed windows all belong to one WindowRanger workspace, a newly created rule starts with that workspace assigned; windowless apps and apps split across multiple workspaces retain the conservative **Use current workspace** default. A workspace assignment routes newly discovered windows to that workspace; in Independent Displays mode it also follows that workspace's display home. You can still move an individual window elsewhere manually, and that override survives routine window refreshes. Moving it back to the assigned workspace clears the override; changing the App Rule or profile, resetting its workspace, reopening the window, or choosing Reset All Windows reapplies the rule. Keep on all workspaces takes precedence over assignment, prevents parking, and preserves the window's existing display affinity. Layout exclusion leaves the app's windows at their current frames while the remaining windows participate in Tiled or Accordion. Secondary-window floating is narrower and preserves ordinary document-window layout participation. No rules are created during migration, so existing behavior is unchanged until a rule is added.
 
