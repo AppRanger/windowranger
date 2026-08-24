@@ -1,4 +1,5 @@
 import Carbon
+import Combine
 import CoreGraphics
 import XCTest
 
@@ -290,6 +291,99 @@ final class DropDownAppTests: XCTestCase {
         store.setDropDownApp(application)
         store.addAppRule(for: application)
         XCTAssertNil(store.dropDownApp)
+        XCTAssertEqual(store.appRules.map(\.bundleIdentifier), [application.bundleIdentifier])
+    }
+
+    @MainActor
+    func testRuleAndShelfConversionsPublishOnlyFinalProfileMembership() throws {
+        let suite = "DropDownAppTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SettingsStore(defaults: defaults, ubiquitousStore: nil)
+        let application = InstalledApplication(
+            bundleIdentifier: "com.example.Editor", displayName: "Editor", bundleURL: nil, isRunning: false
+        )
+        store.addAppRule(for: application)
+        var observations: [(hasRule: Bool, isOnShelf: Bool)] = []
+        let cancellable = store.$profiles.dropFirst().sink { profiles in
+            guard let profile = profiles.first(where: { $0.id == store.activeProfileID }) else { return }
+            observations.append((
+                profile.appRules.contains { $0.bundleIdentifier == application.bundleIdentifier },
+                profile.quickApps.contains { $0.bundleIdentifier == application.bundleIdentifier }
+            ))
+        }
+        store.convertAppRuleToQuickApp(bundleIdentifier: application.bundleIdentifier)
+        XCTAssertEqual(observations.count, 1)
+        XCTAssertEqual(observations.first?.hasRule, false)
+        XCTAssertEqual(observations.first?.isOnShelf, true)
+        withExtendedLifetime(cancellable) {}
+    }
+
+    @MainActor
+    func testCurrentApplicationCommandsConvertExclusivelyAndFailSafelyWhenShelfIsFull() throws {
+        let suite = "DropDownAppTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SettingsStore(defaults: defaults, ubiquitousStore: nil)
+        let workspaceID = store.workspaces[0].id
+        XCTAssertTrue(store.addCurrentApplicationToQuickAppShelf(
+            bundleIdentifier: "com.example.Editor", displayName: "Editor", expectedActiveProfileID: store.activeProfileID
+        ))
+        XCTAssertTrue(store.addCurrentApplicationRule(
+            bundleIdentifier: "com.example.Editor", displayName: "Editor", defaultWorkspaceID: workspaceID,
+            expectedActiveProfileID: store.activeProfileID
+        ))
+        XCTAssertTrue(store.quickApps.isEmpty)
+        XCTAssertEqual(store.appRules.first?.assignedWorkspaceID, workspaceID)
+        for index in 1...QuickAppShelfPolicy.maximumCount {
+            store.setDropDownApp(InstalledApplication(
+                bundleIdentifier: "com.example.Shelf\(index)", displayName: "Shelf \(index)", bundleURL: nil, isRunning: true
+            ))
+        }
+        XCTAssertFalse(store.addCurrentApplicationToQuickAppShelf(
+            bundleIdentifier: "com.example.Editor", displayName: "Editor", expectedActiveProfileID: store.activeProfileID
+        ))
+        XCTAssertEqual(store.quickApps.count, QuickAppShelfPolicy.maximumCount)
+        XCTAssertEqual(store.appRules.map(\.bundleIdentifier), ["com.example.Editor"])
+    }
+
+    @MainActor
+    func testCurrentApplicationCommandsAlwaysMutateTheActiveProfileAndRejectStaleProfile() throws {
+        let suite = "DropDownAppTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SettingsStore(defaults: defaults, ubiquitousStore: nil)
+        let activeProfileID = store.activeProfileID
+        let editingProfileID = store.createProfileFromCurrentConfiguration(name: "Editing")
+        store.selectProfileForEditing(editingProfileID)
+        XCTAssertTrue(store.addCurrentApplicationRule(
+            bundleIdentifier: "com.example.Editor", displayName: "Editor", defaultWorkspaceID: store.workspaces[0].id,
+            expectedActiveProfileID: activeProfileID
+        ))
+        XCTAssertEqual(store.settingsProfileID, editingProfileID)
+        XCTAssertEqual(store.profiles.first(where: { $0.id == activeProfileID })?.appRules.map(\.bundleIdentifier), ["com.example.Editor"])
+        store.selectProfile(editingProfileID)
+        XCTAssertFalse(store.addCurrentApplicationRule(
+            bundleIdentifier: "com.example.Stale", displayName: "Stale", defaultWorkspaceID: store.workspaces[0].id,
+            expectedActiveProfileID: activeProfileID
+        ))
+        XCTAssertFalse(store.addCurrentApplicationToQuickAppShelf(
+            bundleIdentifier: "com.example.Stale", displayName: "Stale", expectedActiveProfileID: activeProfileID
+        ))
+    }
+
+    @MainActor
+    func testSurfaceLabHostIsRejectedFromShelfButAllowedAsRule() throws {
+        let suite = "DropDownAppTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SettingsStore(defaults: defaults, ubiquitousStore: nil)
+        let application = InstalledApplication(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab", displayName: "SurfaceLab", bundleURL: nil, isRunning: true
+        )
+        store.setDropDownApp(application)
+        XCTAssertTrue(store.quickApps.isEmpty)
+        store.addAppRule(for: application, defaultWorkspaceID: store.workspaces.first?.id)
         XCTAssertEqual(store.appRules.map(\.bundleIdentifier), [application.bundleIdentifier])
     }
 

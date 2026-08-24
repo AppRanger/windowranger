@@ -1648,7 +1648,30 @@ smallest useful outcome and acceptance boundary.
   dialog activity with multi-window Tiled and Accordion workspaces. Confirm no sibling double reflow,
   then confirm genuine close, minimize, fullscreen, floating, layout exclusion, workspace switching,
   and wake still release or retain slots as specified.
+### WR-080 — Add the current application from Command Palette
 
+- **Type:** Command Palette and application-configuration improvement
+- **Priority:** P2
+- **Status:** Implementation and automated verification complete; signed live validation pending.
+- **Requested:** 23 August 2026 after installing the first Sparkle-capable Beta.
+- **Smallest useful outcome:** For an eligible app owning the captured focused window, Command
+  Palette offers searchable actions for the active profile's normal Applications list and App Shelf.
+  An already assigned destination is omitted, conversion is labelled Move, and the Shelf action is
+  omitted at its four-entry cap. Applications uses the captured workspace as the app's initial rule
+  destination. WindowRanger, non-regular apps, and SurfaceLab's whole-application Shelf visibility
+  restriction are excluded.
+- **Safety boundary:** The palette revalidates focused-app membership, capacity, workspace, and
+  active-profile identity. The MainActor write fails closed if automatic profile selection changes
+  profiles after dispatch. Editing a different Settings profile does not redirect the action, and a
+  full Shelf cannot discard an existing App Rule.
+- **Automated evidence:** Focused palette, dispatcher, Settings, and Shelf-policy tests cover
+  searchable Add/Move labels, destination omission, capacity changes, exclusive conversion,
+  active-versus-editing profile separation, stale profile rejection, and the SurfaceLab Shelf
+  restriction. `./scripts/verify-local-ci.sh --quick` passed all 699 non-hosted tests on 24 August
+  2026.
+- **Live validation remaining:** From an unconfigured ordinary app, verify both palette additions,
+  both conversions, full-Shelf omission, captured workspace assignment, and behavior while Settings
+  edits a different profile.
 ### WR-061 — Quick App Shelf
 
 - **Type:** Feature / corrective overhaul

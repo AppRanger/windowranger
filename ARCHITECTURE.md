@@ -457,7 +457,12 @@ command path and keeps the palette open; an observable presentation context adop
 layout token so repeated changes remain valid. A selection made after an inline layout change is
 revalidated against a fresh context; a placement command may adopt the settled placement token only
 when the exact window, workspace, layout, display topology, and profile identity are unchanged.
-Every genuinely different target still fails closed. Exact placement is revalidated and enqueued
+Every genuinely different target still fails closed. For an eligible app owning the captured focused
+window, the same context exposes its active profile's App Rule and App Shelf membership. The add
+commands carry the captured workspace and active-profile identity through dispatch, mutate only the
+active profile, and fail closed if profile selection, membership, or Shelf capacity changes before
+the MainActor write. An App Shelf conversion first proves capacity so it cannot discard an App Rule
+when all four Shelf entries are occupied. Exact placement is revalidated and enqueued
 while the palette still owns a preserved managed-window anchor; a transient nil AX focus during
 dismissal retains that anchor. The engine's serial queue commits placement before palette dismissal
 ends Shelf preservation or restores a Quick App Shelf window or fallback application. The command

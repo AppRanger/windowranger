@@ -170,6 +170,8 @@ enum CommandPaletteIndex {
             includedCommands.insert(command)
         }
 
+        appendCurrentApplicationEntries(context: context, to: &entries)
+
         if !context.quickApps.isEmpty {
             for app in context.quickApps {
                 let bundle = app.bundleIdentifier
@@ -208,6 +210,60 @@ enum CommandPaletteIndex {
         }
 
         return entries
+    }
+
+    private static func appendCurrentApplicationEntries(
+        context: RadialCommandContext,
+        to entries: inout [CommandPaletteEntry]
+    ) {
+        guard let application = context.currentApplication,
+              let activeProfileID = context.activeProfileID
+        else { return }
+        let bundleIdentifier = application.bundleIdentifier
+        let normalizedBundleIdentifier = bundleIdentifier.lowercased()
+        let hasApplicationRule = context.applicationRuleBundleIdentifiers.contains(normalizedBundleIdentifier)
+        let isInQuickAppShelf = context.quickApps.contains {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
+
+        if !hasApplicationRule {
+            let command = WindowManagerCommand.addCurrentApplication(
+                bundleIdentifier, displayName: application.displayName,
+                workspaceID: context.workspaceID, profileID: activeProfileID
+            )
+            entries.append(CommandPaletteEntry(
+                id: "current-application:applications:\(normalizedBundleIdentifier)",
+                title: isInQuickAppShelf
+                    ? "Move \(application.displayName) to Applications"
+                    : "Add \(application.displayName) to Applications",
+                detail: isInQuickAppShelf
+                    ? "Remove from App Shelf · \(context.workspaceName)"
+                    : "Application rule · \(context.workspaceName)",
+                shortcut: nil, systemImage: "app.badge", section: .application,
+                destination: .command(command),
+                searchTerms: ["current app", "application", "applications", "settings", "rule", "add", "move", bundleIdentifier]
+            ))
+        }
+
+        if QuickAppShelfPolicy.isEligible(bundleIdentifier: bundleIdentifier),
+           !isInQuickAppShelf,
+           context.quickApps.count < QuickAppShelfPolicy.maximumCount {
+            let command = WindowManagerCommand.addCurrentApplicationToQuickAppShelf(
+                bundleIdentifier, displayName: application.displayName, profileID: activeProfileID
+            )
+            entries.append(CommandPaletteEntry(
+                id: "current-application:quick-app-shelf:\(normalizedBundleIdentifier)",
+                title: hasApplicationRule
+                    ? "Move \(application.displayName) to App Shelf"
+                    : "Add \(application.displayName) to App Shelf",
+                detail: hasApplicationRule
+                    ? "Remove its application rule · App Shelf"
+                    : "Quick access from every workspace",
+                shortcut: nil, systemImage: "rectangle.bottomthird.inset.filled", section: .application,
+                destination: .command(command),
+                searchTerms: ["current app", "quick app", "app shelf", "shelf", "add", "move", bundleIdentifier]
+            ))
+        }
     }
 
     private static func append(

@@ -43,6 +43,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         resumeAutomaticProfileSelection: { [weak self] _ in
             Task { @MainActor [weak self] in self?.settingsStore.resumeAutomaticProfileSelection() }
         },
+        addCurrentApplication: { [weak self] bundleIdentifier, displayName, workspaceID, profileID, _ in
+            Task { @MainActor [weak self] in
+                self?.settingsStore.addCurrentApplicationRule(
+                    bundleIdentifier: bundleIdentifier,
+                    displayName: displayName,
+                    defaultWorkspaceID: workspaceID,
+                    expectedActiveProfileID: profileID
+                )
+            }
+        },
+        addCurrentApplicationToQuickAppShelf: { [weak self] bundleIdentifier, displayName, profileID, _ in
+            Task { @MainActor [weak self] in
+                self?.settingsStore.addCurrentApplicationToQuickAppShelf(
+                    bundleIdentifier: bundleIdentifier,
+                    displayName: displayName,
+                    expectedActiveProfileID: profileID
+                )
+            }
+        },
         setPauseMode: { [weak self] isPaused, correlationID in
             Task { @MainActor [weak self] in
                 self?.setPauseMode(isPaused, source: "command-palette", correlationID: correlationID)
@@ -769,10 +788,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         enriched.activeProfileID = settingsStore.activeProfileID
         enriched.isProfileManuallyPinned = settingsStore.manualPinnedProfileID != nil
+        if let processIdentifier = context.focusedWindow?.processIdentifier,
+           let application = NSRunningApplication(processIdentifier: processIdentifier),
+           application.activationPolicy == .regular,
+           let bundleIdentifier = application.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !bundleIdentifier.isEmpty,
+           bundleIdentifier.caseInsensitiveCompare(Bundle.main.bundleIdentifier ?? "") != .orderedSame {
+            let displayName = application.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            enriched.currentApplication = RadialApplicationOption(
+                bundleIdentifier: bundleIdentifier,
+                displayName: displayName.flatMap { $0.isEmpty ? nil : $0 } ?? bundleIdentifier
+            )
+        } else {
+            enriched.currentApplication = nil
+        }
+        enriched.applicationRuleBundleIdentifiers = Set(settingsStore.appRules.map { $0.bundleIdentifier.lowercased() })
         enriched.externalValidationToken = [
             "active=\(settingsStore.activeProfileID.uuidString)",
             "pinned=\(settingsStore.manualPinnedProfileID?.uuidString ?? "none")",
             "paused=\(isPauseModeEnabled)",
+            "current-app=\(enriched.currentApplication?.bundleIdentifier.lowercased() ?? "none")",
+            "app-rules=\(enriched.applicationRuleBundleIdentifiers.sorted().joined(separator: ","))",
+            "quick-apps=\(settingsStore.quickApps.map { $0.bundleIdentifier.lowercased() }.joined(separator: ","))",
             settingsStore.profiles.map { "\($0.id.uuidString)=\($0.name)" }.joined(separator: ","),
         ].joined(separator: "|")
         enriched.quickApps = settingsStore.quickApps

@@ -23,6 +23,12 @@ final class QuickAppShelfTests: XCTestCase {
         XCTAssertEqual(QuickAppShelfPolicy.replacing(values, with: app("a")).map(\.bundleIdentifier), ["A", "B"])
     }
 
+    func testCompanionHostCannotEnterShelfThroughNormalizationOrReplacement() {
+        let companion = app("dev.appranger.DesktopRanger.SurfaceLab", "SurfaceLab")
+        XCTAssertTrue(QuickAppShelfPolicy.normalized([companion]).isEmpty)
+        XCTAssertTrue(QuickAppShelfPolicy.replacing([], with: companion).isEmpty)
+    }
+
     func testDirectSelectionAndNextPreviousSwitchingStayOnTheShelf() {
         let values = [app("A"), app("B"), app("C")]
         XCTAssertEqual(

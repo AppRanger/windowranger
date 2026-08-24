@@ -2803,6 +2803,9 @@ private struct QuickAppShelfSettingsView: View {
                 excludedBundleIdentifiers: Set(
                     store.settingsAppRules.map { $0.bundleIdentifier.lowercased() }
                         + store.settingsQuickApps.map { $0.bundleIdentifier.lowercased() }
+                ).union(
+                    RangerCompanionApplicationPolicy
+                        .wholeApplicationVisibilityRestrictedBundleIdentifiers
                 )
             ) { application in
                 store.setSettingsQuickApp(application)
