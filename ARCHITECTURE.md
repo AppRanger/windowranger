@@ -95,15 +95,30 @@ polls retry it, while a newly acquired Quick App session supersedes the old reco
 The exact PID-and-bundle debt is persisted without window or frame data, retried at startup, and
 receives one final unhide request during an orderly WindowRanger shutdown.
 
+Generic admission performs one-time support reads, including move/resize capability, for an ordinary
+layer-0 standard window with a Close control. When position is authoritatively writable but size is
+authoritatively read-only, the window remains managed but is automatically floating. Visibility
+restoration can therefore return it with a position-only write while Tiled and Accordion solve only
+for windows that can actually accept their assigned frames. Missing, failed, or contradictory
+capability evidence remains managed conservatively and does not trigger this fallback. A completed
+negative probe is retained so the ordinary engine refresh does not repeat failed support reads.
+Proven fixed-size windows use position-only writes for visibility, display reconciliation, Quick App
+transitions, and quit recovery; neither an explicit per-window override nor another frame path can
+force a resize-first operation. If the one-time probe was inconclusive but an initial size write
+later rejects, the engine re-probes that exact candidate once, records the fixed-size decision, and
+immediately completes the requested position-only move and re-solves the affected visible layouts.
+Position or final-size failures do not promote a normal window into this safety classification.
+
 Effective layout participation follows this order:
 
 1. a narrowly matched built-in compatibility profile can correct the surface's admission;
 2. generic admission classifies every unmatched window;
 3. ignored/transient or temporarily unsafe windows are untouched;
 4. a user App Rule that excludes layout remains authoritative for admitted windows;
-5. explicit per-window floating state controls otherwise eligible normal windows;
-6. high-confidence dialog classification automatically floats a dialog;
-7. remaining windows participate in the workspace's Freeform, Tiled or Accordion behavior.
+5. proven fixed-size standard windows remain position-only and outside layout;
+6. explicit per-window floating state controls otherwise eligible windows;
+7. other high-confidence dialog classification automatically floats a dialog;
+8. remaining windows participate in the workspace's Freeform, Tiled or Accordion behavior.
 
 Keep-on-all-workspaces rules affect visibility but do not grant a window permission to enter layout
 or focus scopes that it otherwise fails.
@@ -114,10 +129,11 @@ position-settable, and size-settable observations so representative real-app fix
 later rule change. The regular engine poll retains cached support evidence rather than performing
 these extra queries every 0.75 seconds. The exceptions are a surface whose bundle and ordinary
 role/subrole/layer/control evidence already match a compatibility profile that explicitly requires
-support-only evidence, and a layer-0 standard window with a Close control but no Full Screen control
-whose move/resize capability evidence is not yet authoritative. Only those candidates are enriched
+support-only evidence, and a layer-0 standard window with a Close control that has not completed its
+one-time move/resize capability probe. Only those candidates are enriched
 before classification. A movable standard candidate that authoritatively cannot resize floats as a
-managed dialog; unavailable or unsupported evidence leaves it conservatively managed as normal.
+managed dialog; unavailable or unsupported evidence leaves it conservatively managed as normal and
+is not retried by the poll.
 An explicit `AXDialog` observed on a known nonzero WindowServer layer is temporarily ineligible for
 admission instead of being placed while its transient layer metadata settles. If the same window
 later reports layer zero with corroborating controls, it enters as an automatically floating dialog;

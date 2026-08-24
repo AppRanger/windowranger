@@ -946,12 +946,14 @@ struct PersistedWindowAssignment: Codable, Equatable, Sendable {
 enum FloatingToggleDecision: Equatable, Sendable {
     case setLayoutOverride(WindowLayoutOverride)
     case blockedByAppRule
+    case blockedByFixedSizeWindow
 }
 
 enum FloatingToggleResult: Equatable, Sendable {
     case enabled
     case disabled
     case blockedByAppRule(String)
+    case blockedByFixedSizeWindow
 
     var commandFeedbackMessage: String {
         switch self {
@@ -961,8 +963,15 @@ enum FloatingToggleResult: Equatable, Sendable {
             "Window returned to the workspace layout"
         case let .blockedByAppRule(appName):
             "\(appName) is excluded by an App Rule. That rule remains in control."
+        case .blockedByFixedSizeWindow:
+            "This window cannot be resized, so it must remain floating."
         }
     }
+}
+
+enum WindowGeometryWriteMode: String, Equatable, Sendable {
+    case frame
+    case positionOnly = "position-only"
 }
 
 struct CommandFeedbackRequest: Equatable, Sendable {
@@ -1577,6 +1586,8 @@ final class WorkspaceEngine {
     private var ignoredWindowKeys = Set<WindowKey>()
     private var admissionDecisionByWindow: [WindowKey: WindowAdmissionDecision] = [:]
     private var admissionMetadataByWindow: [WindowKey: WindowAdmissionMetadata] = [:]
+    private var rejectedResizeRecoveryAttemptedWindowKeys = Set<WindowKey>()
+    private var resizeRecoveryNeedsImmediateReflow = false
     private var lastKnownWindowLayer: [WindowKey: Int] = [:]
     private var lastFocusedWindow: [UUID: WindowKey] = [:]
     private var lastObservedFocusedWindow: WindowKey?
@@ -5479,6 +5490,8 @@ final class WorkspaceEngine {
                     .flatMap { NSRunningApplication(processIdentifier: tracked.processIdentifier)?.localizedName ?? $0 }
                     ?? "This app"
                 self.emitFloatingToggleResult(.blockedByAppRule(appName))
+            case .blockedByFixedSizeWindow:
+                self.emitFloatingToggleResult(.blockedByFixedSizeWindow)
             case let .setLayoutOverride(layoutOverride):
                 let displays = Self.activeDisplays()
                 let willFloat = Self.layoutDecision(
@@ -5777,6 +5790,9 @@ final class WorkspaceEngine {
         rule: ResolvedAppRule
     ) -> WindowLayoutDecision {
         if rule.excludesFromLayout { return .appRuleExcluded }
+        if geometryWriteMode(for: admissionDecision) == .positionOnly {
+            return .automaticallyFloatingDialog
+        }
         switch layoutOverride {
         case .floating:
             return .explicitlyFloating
@@ -5799,6 +5815,9 @@ final class WorkspaceEngine {
         rule: ResolvedAppRule
     ) -> FloatingToggleDecision {
         guard !rule.excludesFromLayout else { return .blockedByAppRule }
+        guard geometryWriteMode(for: admissionDecision) != .positionOnly else {
+            return .blockedByFixedSizeWindow
+        }
         let currentlyIncluded = layoutDecision(
             layoutOverride: currentOverride,
             admissionDecision: admissionDecision,
@@ -5809,6 +5828,12 @@ final class WorkspaceEngine {
 
     static func restoredLayoutOverride(_ persistedOverride: WindowLayoutOverride?) -> WindowLayoutOverride {
         persistedOverride ?? .automatic
+    }
+
+    static func geometryWriteMode(
+        for admissionDecision: WindowAdmissionDecision
+    ) -> WindowGeometryWriteMode {
+        admissionDecision.reason == .fixedSizeStandardWindow ? .positionOnly : .frame
     }
 
     static func displayModeForWindowPlacement(
@@ -8574,6 +8599,8 @@ final class WorkspaceEngine {
         ignoredWindowKeys.removeAll()
         admissionDecisionByWindow.removeAll()
         admissionMetadataByWindow.removeAll()
+        rejectedResizeRecoveryAttemptedWindowKeys.removeAll()
+        resizeRecoveryNeedsImmediateReflow = false
         lastKnownWindowLayer.removeAll()
         lastFocusedWindow.removeAll()
         lastObservedFocusedWindow = nil
@@ -8725,8 +8752,10 @@ final class WorkspaceEngine {
                 let collectsCompatibilitySupportMetadata = AccessibilityWindow
                     .shouldCollectSupportMetadataForCompatibility(coreAdmissionMetadata)
                 let collectsFixedSizeSupportMetadata = AccessibilityWindow
-                    .shouldCollectFixedSizeStandardWindowEvidence(coreAdmissionMetadata) &&
-                    !AccessibilityWindow.hasAuthoritativeMoveResizeEvidence(retainedAdmissionMetadata)
+                    .shouldCollectFixedSizeSupportMetadata(
+                        coreMetadata: coreAdmissionMetadata,
+                        retainedMetadata: retainedAdmissionMetadata
+                    )
                 let collectsSupportMetadata = collectsCompatibilitySupportMetadata ||
                     collectsFixedSizeSupportMetadata
                 let admissionMetadata = collectsSupportMetadata
@@ -8735,7 +8764,11 @@ final class WorkspaceEngine {
                         coreMetadata: coreAdmissionMetadata
                     )
                     : retainedAdmissionMetadata
-                let admissionDecision = AccessibilityWindow.admissionDecision(for: admissionMetadata)
+                let genericAdmissionDecision = AccessibilityWindow.admissionDecision(for: admissionMetadata)
+                let admissionDecision = rejectedResizeRecoveryAttemptedWindowKeys.contains(key)
+                    ? AccessibilityWindow.fixedSizeDecisionAfterRejectedResize(admissionMetadata)
+                        ?? genericAdmissionDecision
+                    : genericAdmissionDecision
                 let previousAdmissionDecision = admissionDecisionByWindow[key]
                 var recordedAdmissionMetadata = admissionMetadata
                 if previousAdmissionDecision != admissionDecision,
@@ -9166,6 +9199,9 @@ final class WorkspaceEngine {
         ignoredWindowKeys = ignoredWindowKeys.filter(shouldRetainDiscoveryState)
         admissionDecisionByWindow = admissionDecisionByWindow.filter { shouldRetainDiscoveryState($0.key) }
         admissionMetadataByWindow = admissionMetadataByWindow.filter { shouldRetainDiscoveryState($0.key) }
+        rejectedResizeRecoveryAttemptedWindowKeys = rejectedResizeRecoveryAttemptedWindowKeys.filter(
+            shouldRetainDiscoveryState
+        )
         lastKnownWindowLayer = lastKnownWindowLayer.filter { shouldRetainDiscoveryState($0.key) }
         staleParkedFocusSuppression = staleParkedFocusSuppression.filter {
             shouldRetainDiscoveryState($0.key)
@@ -9271,6 +9307,10 @@ final class WorkspaceEngine {
                     correlationID: correlationID
                 )
             }
+        }
+        if performAXWrites, !manualTiledDragInProgress, resizeRecoveryNeedsImmediateReflow {
+            resizeRecoveryNeedsImmediateReflow = false
+            applyVisibility(displays: displays, correlationID: correlationID)
         }
         if performAXWrites, !manualTiledDragInProgress {
             lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
@@ -11388,7 +11428,21 @@ final class WorkspaceEngine {
         guard !isWindowManagementPaused else { return false }
         var succeeded = false
         AccessibilityWindow.withoutPositionAnimations(for: target.processIdentifier) {
-            succeeded = AccessibilityWindow.setFrame(frame, of: target.element)
+            let current = self.windows[target.key] ?? target
+            if Self.geometryWriteMode(for: current.admissionDecision) == .positionOnly {
+                succeeded = AccessibilityWindow.setPositionIfNeeded(frame.position, of: current.element)
+            } else {
+                let frameResult = AccessibilityWindow.setFrameResult(frame, of: current.element)
+                succeeded = frameResult == .succeeded
+                if frameResult == .initialSizeRejected,
+                   let recovered = self.recoverRejectedResize(
+                    FrameChange(window: current, frame: frame),
+                    correlationID: nil,
+                    source: "quick-app"
+                   ) {
+                    succeeded = recovered
+                }
+            }
         }
         return succeeded
     }
@@ -12263,7 +12317,8 @@ final class WorkspaceEngine {
                     displays: displays,
                     forcedDisplayIdentifier: forcedDisplay
                 ).frame
-                if Self.sizesMatch(resolved.size, tracked.restoreFrame.size) {
+                if Self.geometryWriteMode(for: tracked.admissionDecision) == .positionOnly ||
+                    Self.sizesMatch(resolved.size, tracked.restoreFrame.size) {
                     positionChanges.append(PositionChange(window: tracked, position: resolved.position))
                 } else {
                     frameChanges.append(FrameChange(window: tracked, frame: resolved))
@@ -12846,13 +12901,29 @@ final class WorkspaceEngine {
             AccessibilityWindow.withoutPositionAnimations(for: processIdentifier) {
                 for (change, current) in applicationChanges {
                     let succeeded: Bool
-                    if let current, Self.sizesMatch(current.size, change.frame.size) {
+                    var writeMode = Self.geometryWriteMode(for: change.window.admissionDecision)
+                    if writeMode == .positionOnly ||
+                        (current.map { Self.sizesMatch($0.size, change.frame.size) } ?? false) {
                         succeeded = AccessibilityWindow.setPositionIfNeeded(
                             change.frame.position,
                             of: change.window.element
                         )
                     } else {
-                        succeeded = AccessibilityWindow.setFrame(change.frame, of: change.window.element)
+                        let frameResult = AccessibilityWindow.setFrameResult(
+                            change.frame,
+                            of: change.window.element
+                        )
+                        if frameResult == .initialSizeRejected,
+                           let recovered = self.recoverRejectedResize(
+                            change,
+                            correlationID: correlationID,
+                            source: "frame-application"
+                           ) {
+                            succeeded = recovered
+                            writeMode = .positionOnly
+                        } else {
+                            succeeded = frameResult == .succeeded
+                        }
                     }
                     diagnostics.log(
                         category: "window-frame",
@@ -12863,11 +12934,72 @@ final class WorkspaceEngine {
                             "from-frame": current.map(Self.diagnosticFrame) ?? "unknown",
                             "to-frame": Self.diagnosticFrame(change.frame),
                             "success": String(succeeded),
+                            "write-mode": writeMode.rawValue,
                         ]
                     )
                 }
             }
         }
+    }
+
+    /// When the initial size write rejects a normal standard window, re-probe once, classify that
+    /// exact surface as fixed-size, and immediately complete the requested move without resizing.
+    /// This prevents an unavailable discovery probe from leaving a window parked while it consumes
+    /// a layout slot.
+    private func recoverRejectedResize(
+        _ change: FrameChange,
+        correlationID: String?,
+        source: String
+    ) -> Bool? {
+        let cached = admissionMetadataByWindow[change.window.key]
+        let coreMetadata = AccessibilityWindow.admissionMetadata(
+            of: change.window.element,
+            bundleIdentifier: change.window.bundleIdentifier,
+            windowLayer: cached?.windowLayer ?? lastKnownWindowLayer[change.window.key]
+        )
+        guard AccessibilityWindow.shouldCollectFixedSizeStandardWindowEvidence(coreMetadata) else {
+            return nil
+        }
+        guard rejectedResizeRecoveryAttemptedWindowKeys.insert(change.window.key).inserted else {
+            return nil
+        }
+        let supportMetadata = AccessibilityWindow.admissionSupportMetadata(
+            of: change.window.element,
+            coreMetadata: coreMetadata
+        )
+        guard let decision = AccessibilityWindow.fixedSizeDecisionAfterRejectedResize(supportMetadata)
+        else { return nil }
+
+        recordAdmissionDecision(
+            decision,
+            metadata: supportMetadata,
+            key: change.window.key,
+            layerSource: "resize-rejection",
+            correlationID: correlationID
+        )
+        if var tracked = windows[change.window.key] {
+            tracked.admissionDecision = decision
+            windows[change.window.key] = tracked
+        }
+        resizeRecoveryNeedsImmediateReflow = true
+        let moved = AccessibilityWindow.setPositionIfNeeded(
+            change.frame.position,
+            of: change.window.element
+        )
+        diagnostics.log(
+            category: "window-frame",
+            event: "resize-rejection-recovered",
+            correlation: correlationID,
+            fields: [
+                "window": Self.diagnosticWindowKey(change.window.key),
+                "source": source,
+                "position": Self.diagnosticPoint(change.frame.position),
+                "position-success": String(moved),
+                "position-settable": supportMetadata.positionSettable.rawValue,
+                "size-settable": supportMetadata.sizeSettable.rawValue,
+            ]
+        )
+        return moved
     }
 
     private static func sizesMatch(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
@@ -12901,13 +13033,35 @@ final class WorkspaceEngine {
             for (processIdentifier, applicationChanges) in changesByApplication {
                 AccessibilityWindow.withoutPositionAnimations(for: processIdentifier) {
                     for change in applicationChanges {
-                        AccessibilityWindow.setFrame(change.frame, of: change.window.element)
+                        let current = self.windows[change.window.key] ?? change.window
+                        if Self.geometryWriteMode(for: current.admissionDecision) == .positionOnly {
+                            AccessibilityWindow.setPositionIfNeeded(
+                                change.frame.position,
+                                of: current.element
+                            )
+                        } else {
+                            let result = AccessibilityWindow.setFrameResult(
+                                change.frame,
+                                of: current.element
+                            )
+                            if result == .initialSizeRejected {
+                                _ = self.recoverRejectedResize(
+                                    FrameChange(window: current, frame: change.frame),
+                                    correlationID: nil,
+                                    source: "quit-recovery"
+                                )
+                            }
+                        }
                     }
                 }
             }
 
             pending = pending.filter { change in
-                guard let actual = AccessibilityWindow.frame(of: change.window.element) else { return true }
+                let current = self.windows[change.window.key] ?? change.window
+                guard let actual = AccessibilityWindow.frame(of: current.element) else { return true }
+                if Self.geometryWriteMode(for: current.admissionDecision) == .positionOnly {
+                    return !AccessibilityWindow.positionsMatch(actual.position, change.frame.position)
+                }
                 return !AccessibilityWindow.framesMatch(actual, change.frame)
             }
             if attempt < 2, !pending.isEmpty {

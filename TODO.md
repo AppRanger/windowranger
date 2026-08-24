@@ -1522,6 +1522,13 @@ smallest useful outcome and acceptance boundary.
   Tiled workspace edge and inserted into the split instead of remaining a floating alert. The same
   class of failure has been seen with other Sparkle update alerts. A later Ghostty confirmation
   prompt reproduced the issue under the signed Debug build and produced a complete diagnostic trace.
+- **Additional diagnostic-backed report (2026-08-24):** In workspace 1, Claude and Chrome occupied
+  only the left half of a four-window Tiled layout. Two unminimized Simulator device windows were
+  parked at `(3839, 1568)` and still counted as layout participants. Both were layer-0
+  `AXStandardWindow` surfaces with ordinary document controls, writable positions, and
+  authoritatively read-only sizes. Their rejected initial size writes correctly stopped the frame
+  sequence before position, but that safety behavior left them parked while they continued to
+  reserve two tile slots.
 - **Live evidence:** The signed Debug build classified the ChatGPT document window and updater as
   layer-0 `AXWindow` / `AXStandardWindow` surfaces. The document window exposed a Full Screen
   control. The 602 x 178 updater exposed Close but no Full Screen control; it accepted the requested
@@ -1531,11 +1538,13 @@ smallest useful outcome and acceptance boundary.
   size but accepted the position, and moved from `(1550, 314; 260 x 252)` to
   `(1683, 34; 260 x 252)`. Roughly 3.8 seconds later it reported layer 0 and was correctly floated,
   but its original position had already been lost; its layer then continued to alternate until close.
-- **Expected:** A standard window proven movable but not resizable, with Close and no Full Screen
-  control, floats automatically without using titles, dimensions, Sparkle-specific strings, or a
-  whole-app exclusion. An explicit dialog on a known nonzero transient layer remains untouched until
-  its layer settles. Missing layers or failed capability reads remain conservatively managed as
-  normal, and a rejected resize cannot still move a fixed-size surface.
+- **Expected:** Any ordinary layer-0 standard window proven movable but not resizable, with a Close
+  control, floats automatically without using titles, dimensions, application-specific strings, or
+  a whole-app exclusion. It must return on-screen through a position-only write and must not reserve
+  a Tiled or Accordion slot; resizable windows from the same application remain in layout. An
+  explicit dialog on a known nonzero transient layer remains untouched until its layer settles.
+  Missing layers or failed capability reads remain conservatively managed as normal, and a rejected
+  resize cannot still move a fixed-size surface.
 - **Research result:** AeroSpace's useful pattern is a real-window/dialog/popup classifier backed by
   captured Accessibility fixtures. yabai requires a root window and a narrow role/subrole set while
   recording move/resize capability; Amethyst requires a movable standard window. Preserve
@@ -1551,14 +1560,29 @@ smallest useful outcome and acceptance boundary.
   Settings, logs, and snapshot JSON, and remain separate from personal App Rules. A narrowly gated
   standard window with Close present, Full Screen absent, position settable, and size not settable is
   now admitted as an automatically floating dialog. Capability failures remain normal-window
-  admission, and ordinary document windows do not receive the additional support reads. A known
+  admission. A known
   nonzero-layer `AXDialog` is now deferred until its layer settles rather than being admitted to a
   layout. Frame application stops before position when its initial size write is rejected, preventing
-  fixed-size surfaces from being partially moved after a failed resize.
-- **Automated evidence:** Focused admission and workspace verification passes 119 tests. Local quick
-  verification passes all 559 non-hosted tests, including test-isolation validation; it does not
+  fixed-size surfaces from being partially moved after a failed resize. The 2026-08-24 correction
+  broadens the one-time capability probe to every ordinary layer-0 standard window with a Close
+  control. Authoritative writable-position/read-only-size evidence now floats the exact surface;
+  unsupported, failed, or contradictory reads remain conservative, and a completed negative probe
+  is retained instead of repeated on every refresh. Proven fixed-size surfaces use position-only
+  writes during ordinary restoration, display changes, Quick App transitions, and quit recovery,
+  and an explicit Arrange-F override cannot force them back into a resize-first layout path. If the
+  discovery probe was inconclusive but a later initial size write rejects, a bounded re-probe
+  converts that exact standard window to the same position-only safety path and immediately
+  completes the move, then re-solves the visible layouts so the freed slot is filled in the same
+  refresh. Position and final-size failures do not promote a normal document. This is
+  capability-based rather than a Simulator profile, so other windows in the same app are unaffected
+  when resizable.
+- **Automated evidence:** Focused admission, workspace, diagnostics, and Quick App verification pass
+  218 tests. Local quick verification passes all 693 non-hosted tests, including project
+  regeneration, script and release workflow checks, and test-isolation validation; it does not
   build, launch, sign, install, stop, or automate WindowRanger.app. Fixtures cover the captured
-  ChatGPT document/updater distinction plus unavailable and immovable conservative fallbacks.
+  ChatGPT document/updater distinction, the captured Simulator device-window metadata, a
+  non-Simulator fixed-size standard window, a resizable Simulator window, plus unavailable and
+  immovable conservative fallbacks.
 - **Live validation:** The signed Debug build from this branch kept the ordinary ChatGPT document
   window managed normally, classified the reopened Sparkle updater through the fixed-size path, and
   left the updater floating outside the Tiled tree. The user confirmed the result on 2026-08-14.
@@ -1567,6 +1591,21 @@ smallest useful outcome and acceptance boundary.
   user confirmed the result before proceeding to the Quick App follow-ups. Other applications may
   expose different transient metadata, so the classifier remains fixture-backed and fail-closed
   rather than inferring from titles, dimensions, or broad application exclusions.
+- **Installed diagnostic evidence (2026-08-24):** With explicit maintainer approval, the signed
+  universal Debug candidate at `c5a576c09c43-dirty` replaced the installed daily copy and preserved
+  Beta 7 build 8 as `/Applications/.WindowRanger.previous`. Fresh diagnostics classified both
+  fixed-size Simulator device windows as automatically floating, restored them on-screen at their
+  saved positions using successful position-only writes, and excluded them from the visible Tiled
+  solve. Repeated workspace-1 switches solved exactly two managed windows and applied full-height
+  frames across the complete display bounds to Claude and Chrome. The Simulator windows were parked
+  again only after leaving their own workspace, which is the normal hidden-workspace path rather
+  than the failed-resize state that caused this report.
+- **User-confirmed live result (2026-08-24):** The maintainer confirmed that the installed candidate
+  works well after switching through the affected workspaces: the fixed-size Simulator windows are
+  available as floating surfaces and workspace 1 no longer retains their empty layout slots.
+- **Live validation remaining:** Confirm the debug admission reason is
+  `fixed-size-standard-window` and that a resizable Simulator window still participates normally
+  before treating the broader admission regression as closed.
 
 ### WR-049 — Refine Command Wheel workspace-action icons
 

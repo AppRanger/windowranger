@@ -108,6 +108,14 @@ enum AXBooleanAttributeObservation: String, Equatable, Sendable {
     }
 }
 
+enum WindowFrameWriteResult: Equatable, Sendable {
+    case succeeded
+    case valueCreationFailed
+    case initialSizeRejected
+    case positionRejected
+    case finalSizeRejected
+}
+
 struct WindowAdmissionMetadata: Equatable, Sendable {
     let bundleIdentifier: String?
     let accessibilityIdentifierObservation: AXStringAttributeObservation
@@ -126,6 +134,7 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
     let zoomButton: AXAttributePresence
     let positionSettable: AXBooleanAttributeObservation
     let sizeSettable: AXBooleanAttributeObservation
+    let supportMetadataWasCollected: Bool
 
     init(
         bundleIdentifier: String?,
@@ -145,7 +154,8 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
         closeButton: AXAttributePresence = .unavailable,
         zoomButton: AXAttributePresence = .unavailable,
         positionSettable: AXBooleanAttributeObservation = .unsupported,
-        sizeSettable: AXBooleanAttributeObservation = .unsupported
+        sizeSettable: AXBooleanAttributeObservation = .unsupported,
+        supportMetadataWasCollected: Bool? = nil
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.accessibilityIdentifierObservation = accessibilityIdentifierObservation
@@ -167,6 +177,15 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
         self.zoomButton = zoomButton
         self.positionSettable = positionSettable
         self.sizeSettable = sizeSettable
+        self.supportMetadataWasCollected = supportMetadataWasCollected ?? (
+            modalObservation != .unsupported ||
+                focusedObservation != .unsupported ||
+                mainObservation != .unsupported ||
+                minimizeButton != .unavailable ||
+                zoomButton != .unavailable ||
+                positionSettable != .unsupported ||
+                sizeSettable != .unsupported
+        )
     }
 
     var accessibilityIdentifier: String? { accessibilityIdentifierObservation.value }
@@ -196,7 +215,8 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
             closeButton: closeButton,
             zoomButton: previous.zoomButton,
             positionSettable: previous.positionSettable,
-            sizeSettable: previous.sizeSettable
+            sizeSettable: previous.sizeSettable,
+            supportMetadataWasCollected: previous.supportMetadataWasCollected
         )
     }
 }
@@ -426,9 +446,9 @@ enum AccessibilityWindow {
         }
     }
 
-    /// A fixed-size alert can expose itself as an ordinary AXStandardWindow even though it cannot
-    /// participate in a managed layout. Only this narrow core shape receives the extra move/resize
-    /// capability reads needed to distinguish it from a real document window. Missing or failed
+    /// A fixed-size surface can expose itself as an ordinary AXStandardWindow even though it cannot
+    /// participate in a managed layout. Only a normal layer-0 window with a Close control receives
+    /// the one-time move/resize capability reads needed to prove that mismatch. Missing or failed
     /// reads remain conservative and do not themselves change admission.
     static func shouldCollectFixedSizeStandardWindowEvidence(
         _ metadata: WindowAdmissionMetadata
@@ -438,7 +458,6 @@ enum AccessibilityWindow {
             metadata.windowLayer == 0 &&
             !metadata.isMinimized &&
             !metadata.isFullscreen &&
-            metadata.fullscreenButton == .absent &&
             metadata.closeButton == .present
     }
 
@@ -446,10 +465,31 @@ enum AccessibilityWindow {
         metadata.positionSettable.value != nil && metadata.sizeSettable.value != nil
     }
 
+    static func shouldCollectFixedSizeSupportMetadata(
+        coreMetadata: WindowAdmissionMetadata,
+        retainedMetadata: WindowAdmissionMetadata
+    ) -> Bool {
+        shouldCollectFixedSizeStandardWindowEvidence(coreMetadata) &&
+            !retainedMetadata.supportMetadataWasCollected
+    }
+
     static func isFixedSizeStandardWindow(_ metadata: WindowAdmissionMetadata) -> Bool {
         shouldCollectFixedSizeStandardWindowEvidence(metadata) &&
             metadata.positionSettable == .trueValue &&
             metadata.sizeSettable == .falseValue
+    }
+
+    /// A rejected initial size write is direct operational evidence that this otherwise ordinary
+    /// standard window cannot safely occupy a managed frame, even when the earlier support probe
+    /// was unavailable. The engine uses this only as a bounded failure recovery.
+    static func fixedSizeDecisionAfterRejectedResize(
+        _ metadata: WindowAdmissionMetadata
+    ) -> WindowAdmissionDecision? {
+        guard shouldCollectFixedSizeStandardWindowEvidence(metadata) else { return nil }
+        return WindowAdmissionDecision(
+            disposition: .managedDialog,
+            reason: .fixedSizeStandardWindow
+        )
     }
 
     static func requestPermission(
@@ -707,8 +747,8 @@ enum AccessibilityWindow {
         )
     }
 
-    /// Collects evidence used to build real-app regression fixtures. These additional AX queries are
-    /// intentionally user-triggered for managed windows rather than part of the normal engine poll.
+    /// Collects support evidence for a one-time admission probe or a user-requested diagnostic
+    /// refresh. The completion marker prevents failed candidate reads from joining the normal poll.
     static func admissionSupportMetadata(
         of element: AXUIElement,
         coreMetadata: WindowAdmissionMetadata
@@ -730,7 +770,8 @@ enum AccessibilityWindow {
             closeButton: coreMetadata.closeButton,
             zoomButton: attributePresence(kAXZoomButtonAttribute as CFString, of: element),
             positionSettable: attributeSettableObservation(kAXPositionAttribute as CFString, of: element),
-            sizeSettable: attributeSettableObservation(kAXSizeAttribute as CFString, of: element)
+            sizeSettable: attributeSettableObservation(kAXSizeAttribute as CFString, of: element),
+            supportMetadataWasCollected: true
         )
     }
 
@@ -954,17 +995,24 @@ enum AccessibilityWindow {
 
     @discardableResult
     static func setFrame(_ frame: WindowFrame, of element: AXUIElement) -> Bool {
+        setFrameResult(frame, of: element) == .succeeded
+    }
+
+    static func setFrameResult(
+        _ frame: WindowFrame,
+        of element: AXUIElement
+    ) -> WindowFrameWriteResult {
         if let current = self.frame(of: element), framesMatch(current, frame) {
-            return true
+            return .succeeded
         }
 
         var position = frame.position
         var size = frame.size
         guard let positionValue = AXValueCreate(.cgPoint, &position),
               let sizeValue = AXValueCreate(.cgSize, &size)
-        else { return false }
+        else { return .valueCreationFailed }
 
-        return applyFrameWriteSequence(
+        return applyFrameWriteSequenceResult(
             writeSize: {
                 AXUIElementSetAttributeValue(
                     element,
@@ -989,9 +1037,19 @@ enum AccessibilityWindow {
         writeSize: () -> Bool,
         writePosition: () -> Bool
     ) -> Bool {
-        guard writeSize() else { return false }
-        guard writePosition() else { return false }
-        return writeSize()
+        applyFrameWriteSequenceResult(
+            writeSize: writeSize,
+            writePosition: writePosition
+        ) == .succeeded
+    }
+
+    static func applyFrameWriteSequenceResult(
+        writeSize: () -> Bool,
+        writePosition: () -> Bool
+    ) -> WindowFrameWriteResult {
+        guard writeSize() else { return .initialSizeRejected }
+        guard writePosition() else { return .positionRejected }
+        return writeSize() ? .succeeded : .finalSizeRejected
     }
 
 }

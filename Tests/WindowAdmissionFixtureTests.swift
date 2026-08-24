@@ -12,7 +12,7 @@ final class WindowAdmissionFixtureTests: XCTestCase {
         }
     }
 
-    func testFixedSizeCapabilityEvidenceDoesNotOverrideDocumentControls() {
+    func testAuthoritativeFixedSizeCapabilityFloatsDespiteDocumentControls() {
         let metadata = fixtureMetadata(
             subrole: kAXStandardWindowSubrole as String,
             modalObservation: .trueValue,
@@ -22,13 +22,13 @@ final class WindowAdmissionFixtureTests: XCTestCase {
             minimizeButton: .present,
             closeButton: .present,
             zoomButton: .present,
-            positionSettable: .falseValue,
+            positionSettable: .trueValue,
             sizeSettable: .falseValue
         )
 
         XCTAssertEqual(
             AccessibilityWindow.admissionDecision(for: metadata),
-            decision(.managedNormal, .normalWindow)
+            decision(.managedDialog, .fixedSizeStandardWindow)
         )
     }
 
@@ -111,7 +111,7 @@ final class WindowAdmissionFixtureTests: XCTestCase {
 
         XCTAssertTrue(AccessibilityWindow.shouldCollectFixedSizeStandardWindowEvidence(updaterCore))
         XCTAssertFalse(AccessibilityWindow.hasAuthoritativeMoveResizeEvidence(updaterCore))
-        XCTAssertFalse(AccessibilityWindow.shouldCollectFixedSizeStandardWindowEvidence(
+        XCTAssertTrue(AccessibilityWindow.shouldCollectFixedSizeStandardWindowEvidence(
             fixtureMetadata(subrole: kAXStandardWindowSubrole as String, fullscreenButton: .present)
         ))
         XCTAssertFalse(AccessibilityWindow.shouldCollectFixedSizeStandardWindowEvidence(
@@ -119,6 +119,31 @@ final class WindowAdmissionFixtureTests: XCTestCase {
                 subrole: kAXDialogSubrole as String,
                 fullscreenButton: .absent
             )
+        ))
+
+        let attemptedUnsupportedEvidence = WindowAdmissionMetadata(
+            bundleIdentifier: "com.example.Editor",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            fullscreenButton: .present,
+            closeButton: .present,
+            supportMetadataWasCollected: true
+        )
+        XCTAssertFalse(AccessibilityWindow.shouldCollectFixedSizeSupportMetadata(
+            coreMetadata: fixtureMetadata(
+                subrole: kAXStandardWindowSubrole as String,
+                fullscreenButton: .present
+            ),
+            retainedMetadata: attemptedUnsupportedEvidence
+        ))
+        XCTAssertEqual(
+            AccessibilityWindow.fixedSizeDecisionAfterRejectedResize(attemptedUnsupportedEvidence),
+            decision(.managedDialog, .fixedSizeStandardWindow)
+        )
+        XCTAssertNil(AccessibilityWindow.fixedSizeDecisionAfterRejectedResize(
+            fixtureMetadata(subrole: kAXDialogSubrole as String)
         ))
     }
 
@@ -158,6 +183,7 @@ final class WindowAdmissionFixtureTests: XCTestCase {
         XCTAssertEqual(merged.minimizeButton, .absent)
         XCTAssertEqual(merged.positionSettable, .trueValue)
         XCTAssertEqual(merged.sizeSettable, .falseValue)
+        XCTAssertTrue(merged.supportMetadataWasCollected)
     }
 }
 
@@ -302,6 +328,24 @@ private let fixtures: [WindowAdmissionFixture] = [
             sizeSettable: .falseValue
         ),
         expected: decision(.managedDialog, .fixedSizeStandardWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "captured fixed-size Simulator device window floats through generic capability evidence",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "com.apple.iphonesimulator",
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            fullscreenButton: .present,
+            minimizeButton: .present,
+            closeButton: .present,
+            zoomButton: .present,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue
+        ),
+        expected: decision(
+            .managedDialog,
+            .fixedSizeStandardWindow
+        )
     ),
     WindowAdmissionFixture(
         name: "fixed-size standard candidate with failed capability reads stays managed",

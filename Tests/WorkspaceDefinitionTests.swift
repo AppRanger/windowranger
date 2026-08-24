@@ -683,6 +683,138 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertTrue(unknownDialog.disposition.admitsNewWindow)
     }
 
+    func testFixedSizeSimulatorDeviceWindowFloatsByCapabilityWithoutWholeAppPolicy() {
+        let coreMetadata = WindowAdmissionMetadata(
+            bundleIdentifier: "com.apple.iphonesimulator",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            fullscreenButton: .present,
+            closeButton: .present
+        )
+        XCTAssertTrue(AccessibilityWindow.shouldCollectFixedSizeStandardWindowEvidence(coreMetadata))
+        XCTAssertFalse(AccessibilityWindow.shouldCollectSupportMetadataForCompatibility(coreMetadata))
+        XCTAssertFalse(AccessibilityWindow.mayNeedDirectLayerResolutionForCompatibility(
+            "com.apple.iphonesimulator"
+        ))
+
+        let fixedSizeDevice = WindowAdmissionMetadata(
+            bundleIdentifier: "com.apple.iphonesimulator",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            fullscreenButton: .present,
+            minimizeButton: .present,
+            closeButton: .present,
+            zoomButton: .present,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue
+        )
+        let decision = AccessibilityWindow.admissionDecision(for: fixedSizeDevice)
+
+        XCTAssertEqual(decision, WindowAdmissionDecision(
+            disposition: .managedDialog,
+            reason: .fixedSizeStandardWindow
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldIncludeInLayout(
+            layoutOverride: .automatic,
+            admissionDecision: decision,
+            rule: .none
+        ))
+        XCTAssertEqual(
+            WorkspaceEngine.layoutDecision(
+                layoutOverride: .managed,
+                admissionDecision: decision,
+                rule: .none
+            ),
+            .automaticallyFloatingDialog
+        )
+        XCTAssertEqual(
+            WorkspaceEngine.floatingToggleDecision(
+                currentOverride: .automatic,
+                admissionDecision: decision,
+                rule: .none
+            ),
+            .blockedByFixedSizeWindow
+        )
+        XCTAssertEqual(WorkspaceEngine.geometryWriteMode(for: decision), .positionOnly)
+
+        let resolvedOnSmallerDisplay = WorkspaceEngine.resolveDisplayFrame(
+            savedFrame: WindowFrame(
+                position: CGPoint(x: 3_839, y: 1_568),
+                size: CGSize(width: 1_400, height: 1_200)
+            ),
+            placement: PersistedDisplayPlacement(
+                displayIdentifier: "removed-display",
+                normalizedOrigin: CGPoint(x: 0.5, y: 0.5)
+            ),
+            displays: [DisplaySnapshot(
+                identifier: "main",
+                bounds: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+                isMain: true,
+                name: "Main"
+            )]
+        )
+        XCTAssertEqual(resolvedOnSmallerDisplay.frame.size, CGSize(width: 1_000, height: 800))
+        XCTAssertEqual(resolvedOnSmallerDisplay.frame.position, .zero)
+        XCTAssertEqual(WorkspaceEngine.geometryWriteMode(for: decision), .positionOnly)
+
+        let resizableDevice = WindowAdmissionMetadata(
+            bundleIdentifier: "com.apple.iphonesimulator",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            fullscreenButton: .present,
+            minimizeButton: .present,
+            closeButton: .present,
+            zoomButton: .present,
+            positionSettable: .trueValue,
+            sizeSettable: .trueValue
+        )
+        XCTAssertEqual(
+            AccessibilityWindow.admissionDecision(for: resizableDevice),
+            WindowAdmissionDecision(disposition: .managedNormal, reason: .normalWindow)
+        )
+        XCTAssertEqual(
+            WorkspaceEngine.geometryWriteMode(
+                for: AccessibilityWindow.admissionDecision(for: resizableDevice)
+            ),
+            .frame
+        )
+
+        let unrelatedFixedSizeWindow = WindowAdmissionMetadata(
+            bundleIdentifier: "com.example.FixedSizeUtility",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            fullscreenButton: .present,
+            closeButton: .present,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue
+        )
+        XCTAssertEqual(
+            AccessibilityWindow.admissionDecision(for: unrelatedFixedSizeWindow),
+            WindowAdmissionDecision(disposition: .managedDialog, reason: .fixedSizeStandardWindow)
+        )
+
+        let normalDecision = WindowAdmissionDecision(
+            disposition: .managedNormal,
+            reason: .normalWindow
+        )
+        let participantCount = [normalDecision, normalDecision, decision, decision].filter {
+            WorkspaceEngine.shouldIncludeInLayout(
+                layoutOverride: .automatic,
+                admissionDecision: $0,
+                rule: .none
+            )
+        }.count
+        XCTAssertEqual(participantCount, 2)
+    }
+
     func testNonNormalLayerStandardWindowIsNotRejectedGloballyForUnverifiedApplications() {
         let decision = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
             bundleIdentifier: "com.example.UnusualWindowLevels",
@@ -2035,6 +2167,42 @@ final class WorkspaceDefinitionTests: XCTestCase {
 
         XCTAssertTrue(succeeded)
         XCTAssertEqual(operations, ["size", "position", "size"])
+    }
+
+    func testFrameWriteResultPromotesOnlyAnInitialSizeRejection() {
+        XCTAssertEqual(
+            AccessibilityWindow.applyFrameWriteSequenceResult(
+                writeSize: { false },
+                writePosition: { true }
+            ),
+            .initialSizeRejected
+        )
+
+        var positionFailureSizeWrites = 0
+        XCTAssertEqual(
+            AccessibilityWindow.applyFrameWriteSequenceResult(
+                writeSize: {
+                    positionFailureSizeWrites += 1
+                    return true
+                },
+                writePosition: { false }
+            ),
+            .positionRejected
+        )
+        XCTAssertEqual(positionFailureSizeWrites, 1)
+
+        var finalSizeWrites = 0
+        XCTAssertEqual(
+            AccessibilityWindow.applyFrameWriteSequenceResult(
+                writeSize: {
+                    finalSizeWrites += 1
+                    return finalSizeWrites == 1
+                },
+                writePosition: { true }
+            ),
+            .finalSizeRejected
+        )
+        XCTAssertEqual(finalSizeWrites, 2)
     }
 
     func testTrustedInteractiveLaunchChecksTrustOnceWithoutPrompting() {
