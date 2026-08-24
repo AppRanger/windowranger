@@ -171,7 +171,7 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
-### WR-075 — Keep DesktopRanger-owned surfaces outside WindowRanger
+### WR-079 — Keep DesktopRanger-owned surfaces outside WindowRanger
 
 - **Type:** Window-admission compatibility and companion-app safety
 - **Priority:** P1
@@ -218,7 +218,102 @@ smallest useful outcome and acceptance boundary.
   Finder, System Settings, and the unmarked manager probe; tagged Recovery/drawing IDs never entered
   the layout targets. The guest lane proves the exact AX contract and visible one-display
   coexistence, not release signing, multi-display behaviour, or the supported physical-Mac matrix.
+### WR-075 — Exclude externally hidden applications from active layout geometry
 
+- **Type:** Workspace visibility bug
+- **Priority:** P1
+- **Status:** Live validation — implemented and automated-test verified; signed installed-app checks
+  remain.
+- **Requested:** 24 August 2026.
+- **User-observed (2026-08-24):** Workspace 2 visibly shifted from one full-width ChatGPT/Codex
+  window to a two-window Accordion even though TextEdit was hidden and no second application window
+  was visibly presented.
+- **Diagnostic evidence:** Workspace 2 correctly solved one participant until TextEdit exposed
+  window `49996:51782`. After TextEdit became hidden, AppKit reported the application itself as
+  hidden while Accessibility continued to report its unminimized standard window at an on-screen
+  frame. WindowRanger therefore treated that frame as meaningfully visible, retained two Accordion
+  participants, and reduced ChatGPT/Codex by 250 points. Once TextEdit and its window closed, the
+  successful Accessibility snapshot evicted that exact window and ChatGPT/Codex immediately returned
+  to the complete `3832 x 1582` managed bounds.
+- **Expected:** A genuinely windowless application contributes no participant, as it does today. An
+  externally hidden application's enumerated windows remain tracked with their workspace and restore
+  state intact, but do not participate in layout, focus candidates, or geometry writes until the
+  application becomes visible again. Hidden state must trigger a background reflow without treating
+  the application as terminated, moving its hidden windows, or weakening exact Quick App hide
+  ownership.
+- **Implemented:** Externally hidden ordinary applications remain tracked with their workspace and
+  restore state, but are excluded from layout, focus, manual-move reconciliation, and every central
+  geometry-write path. Application visibility is part of the background layout signature, so hide
+  and unhide trigger full visibility reconciliation; an unhidden window assigned to an inactive
+  workspace is parked normally. Quit recovery, wake focus recovery, and the final managed-focus
+  boundary all reject hidden ordinary applications. Exact Quick App sessions retain their existing
+  WindowRanger-owned hide behavior.
+- **Acceptance:** Pure tests cover visible-to-hidden and hidden-to-visible transitions, retained
+  assignment and restore geometry, immediate reflow, focus exclusion, inactive-workspace unhide,
+  Quick App ownership, and application termination while hidden. Signed live validation hides and
+  unhides a normal managed app without leaving an empty Accordion/Tiled slot or losing its workspace.
+- **Automated evidence:** On 24 August 2026, 190 focused admission, geometry, diagnostics, and
+  hidden-application policy tests passed, followed by the complete 700-test non-hosted suite and
+  local project/release checks. Coverage includes visibility-signature reflow, wake-focus exclusion,
+  Quick App separation, and the shared geometry exclusion used by quit recovery.
+- **Installed evidence:** On 24 August 2026, the signed Debug daily candidate
+  `cdd85908c712-dirty` was installed at `/Applications/WindowRanger.app`; its signature verified and
+  the installed process launched from that exact bundle.
+- **Live validation remaining:** Hide and unhide a normal app on active and inactive workspaces.
+  Confirm no empty layout slot remains, the assignment survives, an inactive-workspace unhide does
+  not surface the app, and Quick App hiding is unchanged.
+
+### WR-076 — Keep native file-selection surfaces out of managed layouts
+
+- **Type:** Window-admission bug
+- **Priority:** P1
+- **Status:** Live validation — revised signed Open-panel behavior accepted; ordinary document and
+  Arrange-F checks remain.
+- **Requested:** 24 August 2026.
+- **User-observed (2026-08-24):** Focusing newly launched TextEdit produced its native file Open
+  surface; WindowRanger expanded that surface to almost the full display and inserted it beside the
+  existing ChatGPT/Codex window.
+- **Diagnostic evidence:** TextEdit's Open surface presented as a layer-unknown `AXWindow` /
+  `AXStandardWindow`, not minimized or fullscreen, with Close absent, Minimize and Zoom unavailable,
+  modal state unsupported, and no authoritative move/resize capability evidence. The conservative
+  normal-window fallback admitted it, and the successful frame write changed it from
+  `369,83;3102 x 1380` to `254,34;3582 x 1582` as the second Accordion participant.
+- **Expected:** A native file-selection surface floats at its application-chosen size and remains
+  outside Tiled and Accordion layouts. Classification must use captured, non-textual Accessibility
+  evidence rather than the localized title `Open`, dimensions, a TextEdit-specific exception, or a
+  broad rule that floats ordinary document windows when capability reads are unavailable.
+- **Installed validation failure (2026-08-24):** The first signed candidate still admitted the live
+  TextEdit Open panel as `normal-window`. Fresh diagnostics proved both Default and Cancel
+  relationships returned absent on this macOS build even though the window declared those
+  attributes, so the fixture's affirmative relationships did not match the live surface.
+- **Implemented:** A conservative, one-time Accessibility support probe recognizes only a closeless
+  standard window that either affirmatively exposes both native Default and Cancel button
+  relationships or carries AppKit's exact nonlocalized `open-panel`/`save-panel` Accessibility
+  identifier. The raw identifier is reduced immediately to a privacy-safe boolean and is neither
+  retained nor logged. That surface is admitted as a floating managed dialog and receives
+  position-only safety writes, so it neither consumes a Tiled/Accordion slot nor gets resized.
+  Missing, failed, unrelated, partial, or contradictory evidence falls back to ordinary admission;
+  Arrange F cannot override this protected dialog classification. The rule uses no title, label,
+  path, size, document value, application identity, or bundle-specific exception.
+- **Acceptance:** Capture a deterministic fixture for this exact surface, establish the narrowest
+  source-level admission evidence, and cover native Open/Save panels plus ordinary standard document
+  windows with overlapping incomplete metadata. Signed live validation confirms the panel is neither
+  resized nor counted while ordinary TextEdit documents remain managed.
+- **Automated evidence:** After the installed mismatch, 171 focused tests and the complete 702-test
+  non-hosted suite passed on 24 August 2026. Fixtures now reproduce the live Open panel's absent
+  relationship values and affirmative native-panel identifier, plus Save-panel identifiers,
+  unrelated identifiers, ordinary documents with overlapping controls, failed and partial reads,
+  nonnormal layers, retained support evidence, position-only writes, protected Arrange-F feedback,
+  privacy-safe diagnostics, and snapshot schema migration.
+- **Installed evidence:** The signed Debug daily candidate `cdd85908c712-dirty` was installed and
+  launched from `/Applications/WindowRanger.app` on 24 August 2026. After the first candidate's live
+  mismatch, the identifier-based revision was rebuilt, signature-verified, installed, and launched
+  from the same exact bundle.
+- **Live evidence:** On 24 August 2026, the maintainer accepted the revised signed TextEdit Open-panel
+  behavior after confirming it retained its native floating presentation instead of being controlled
+  as a layout window.
+- **Live validation remaining:** Confirm the same behavior for a native Save panel, an ordinary
+  TextEdit document remains managed, and Arrange F reports the protected-dialog explanation.
 ### WR-071 — Switch profiles for foreground full-screen Game Mode sessions
 
 - **Type:** Automatic profile selection

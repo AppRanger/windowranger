@@ -815,6 +815,93 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertEqual(participantCount, 2)
     }
 
+    func testStandardWindowWithDefaultAndCancelControlsFloatsWithoutResizeWrites() {
+        let metadata = WindowAdmissionMetadata(
+            bundleIdentifier: "com.apple.TextEdit",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: nil,
+            isMinimized: false,
+            modalObservation: .unsupported,
+            fullscreenButton: .absent,
+            minimizeButton: .unavailable,
+            closeButton: .absent,
+            zoomButton: .unavailable,
+            defaultButton: .present,
+            cancelButton: .present,
+            positionSettable: .trueValue,
+            sizeSettable: .trueValue
+        )
+        let decision = AccessibilityWindow.admissionDecision(for: metadata)
+
+        XCTAssertEqual(decision, WindowAdmissionDecision(
+            disposition: .managedDialog,
+            reason: .standardWindowWithDialogControls
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldIncludeInLayout(
+            layoutOverride: .automatic,
+            admissionDecision: decision,
+            rule: .none
+        ))
+        XCTAssertEqual(
+            WorkspaceEngine.layoutDecision(
+                layoutOverride: .managed,
+                admissionDecision: decision,
+                rule: .none
+            ),
+            .automaticallyFloatingDialog
+        )
+        XCTAssertEqual(
+            WorkspaceEngine.floatingToggleDecision(
+                currentOverride: .automatic,
+                admissionDecision: decision,
+                rule: .none
+            ),
+            .blockedByProtectedDialog
+        )
+        XCTAssertEqual(WorkspaceEngine.geometryWriteMode(for: decision), .positionOnly)
+    }
+
+    func testNativeFilePanelIdentifierFloatsWithoutResizeWrites() {
+        let metadata = WindowAdmissionMetadata(
+            bundleIdentifier: "com.apple.TextEdit",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: nil,
+            isMinimized: false,
+            modalObservation: .falseValue,
+            fullscreenButton: .absent,
+            minimizeButton: .absent,
+            closeButton: .absent,
+            zoomButton: .absent,
+            defaultButton: .absent,
+            cancelButton: .absent,
+            nativeFilePanelIdentifierObservation: .trueValue,
+            positionSettable: .trueValue,
+            sizeSettable: .trueValue
+        )
+        let decision = AccessibilityWindow.admissionDecision(for: metadata)
+
+        XCTAssertEqual(decision, WindowAdmissionDecision(
+            disposition: .managedDialog,
+            reason: .nativeFilePanelIdentifier
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldIncludeInLayout(
+            layoutOverride: .automatic,
+            admissionDecision: decision,
+            rule: .none
+        ))
+        XCTAssertEqual(WorkspaceEngine.geometryWriteMode(for: decision), .positionOnly)
+        XCTAssertEqual(
+            WorkspaceEngine.floatingToggleDecision(
+                currentOverride: .managed,
+                admissionDecision: decision,
+                rule: .none
+            ),
+            .blockedByProtectedDialog
+        )
+    }
+
     func testNonNormalLayerStandardWindowIsNotRejectedGloballyForUnverifiedApplications() {
         let decision = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
             bundleIdentifier: "com.example.UnusualWindowLevels",
@@ -1364,6 +1451,8 @@ final class WorkspaceDefinitionTests: XCTestCase {
             minimizeButton: .absent,
             closeButton: .present,
             zoomButton: .absent,
+            defaultButton: .present,
+            cancelButton: .present,
             positionSettable: .trueValue,
             sizeSettable: .falseValue
         )
@@ -1384,6 +1473,9 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertEqual(fields["fullscreen-button"], "absent")
         XCTAssertEqual(fields["minimize-button"], "absent")
         XCTAssertEqual(fields["zoom-button"], "absent")
+        XCTAssertEqual(fields["default-button"], "present")
+        XCTAssertEqual(fields["cancel-button"], "present")
+        XCTAssertEqual(fields["native-file-panel-identifier"], "unsupported")
         XCTAssertEqual(fields["position-settable"], "true")
         XCTAssertEqual(fields["size-settable"], "false")
         XCTAssertEqual(fields["compatibility-profile"], "none")
@@ -1644,8 +1736,9 @@ final class WorkspaceDefinitionTests: XCTestCase {
         let snapshot = try? XCTUnwrap(
             WindowAdmissionSupportSnapshot(records: records).encodedString()
         )
-        XCTAssertTrue(snapshot?.contains("\"schemaVersion\" : 2") == true)
+        XCTAssertTrue(snapshot?.contains("\"schemaVersion\" : 4") == true)
         XCTAssertTrue(snapshot?.contains("\"modalObservation\" : \"true\"") == true)
+        XCTAssertTrue(snapshot?.contains("nativeFilePanelIdentifierObservation") == true)
         XCTAssertTrue(snapshot?.contains("codex-transient-non-normal-layer-v1") == true)
         XCTAssertFalse(snapshot?.lowercased().contains("title") == true)
         XCTAssertFalse(snapshot?.contains("/Users/") == true)

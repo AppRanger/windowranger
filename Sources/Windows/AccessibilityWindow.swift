@@ -65,6 +65,8 @@ enum WindowAdmissionReason: String, Equatable, Sendable {
     case dialogSubroleWithoutFullscreenButton = "dialog-subrole-without-fullscreen-button"
     case floatingWindowWithoutFullscreenButton = "floating-window-without-fullscreen-button"
     case fixedSizeStandardWindow = "fixed-size-standard-window"
+    case nativeFilePanelIdentifier = "native-file-panel-identifier"
+    case standardWindowWithDialogControls = "standard-window-with-dialog-controls"
     case transientDialogNonNormalLayer = "transient-dialog-non-normal-layer"
     case ambiguousDialogMetadata = "ambiguous-dialog-metadata"
     case verifiedBundleNonNormalLayer = "verified-bundle-non-normal-layer"
@@ -132,6 +134,9 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
     let minimizeButton: AXAttributePresence
     let closeButton: AXAttributePresence
     let zoomButton: AXAttributePresence
+    let defaultButton: AXAttributePresence
+    let cancelButton: AXAttributePresence
+    let nativeFilePanelIdentifierObservation: AXBooleanAttributeObservation
     let positionSettable: AXBooleanAttributeObservation
     let sizeSettable: AXBooleanAttributeObservation
     let supportMetadataWasCollected: Bool
@@ -153,6 +158,9 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
         minimizeButton: AXAttributePresence = .unavailable,
         closeButton: AXAttributePresence = .unavailable,
         zoomButton: AXAttributePresence = .unavailable,
+        defaultButton: AXAttributePresence = .unavailable,
+        cancelButton: AXAttributePresence = .unavailable,
+        nativeFilePanelIdentifierObservation: AXBooleanAttributeObservation = .unsupported,
         positionSettable: AXBooleanAttributeObservation = .unsupported,
         sizeSettable: AXBooleanAttributeObservation = .unsupported,
         supportMetadataWasCollected: Bool? = nil
@@ -175,6 +183,9 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
         self.minimizeButton = minimizeButton
         self.closeButton = closeButton
         self.zoomButton = zoomButton
+        self.defaultButton = defaultButton
+        self.cancelButton = cancelButton
+        self.nativeFilePanelIdentifierObservation = nativeFilePanelIdentifierObservation
         self.positionSettable = positionSettable
         self.sizeSettable = sizeSettable
         self.supportMetadataWasCollected = supportMetadataWasCollected ?? (
@@ -183,6 +194,9 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
                 mainObservation != .unsupported ||
                 minimizeButton != .unavailable ||
                 zoomButton != .unavailable ||
+                defaultButton != .unavailable ||
+                cancelButton != .unavailable ||
+                nativeFilePanelIdentifierObservation != .unsupported ||
                 positionSettable != .unsupported ||
                 sizeSettable != .unsupported
         )
@@ -214,6 +228,10 @@ struct WindowAdmissionMetadata: Equatable, Sendable {
             minimizeButton: previous.minimizeButton,
             closeButton: closeButton,
             zoomButton: previous.zoomButton,
+            defaultButton: previous.defaultButton,
+            cancelButton: previous.cancelButton,
+            nativeFilePanelIdentifierObservation:
+                previous.nativeFilePanelIdentifierObservation,
             positionSettable: previous.positionSettable,
             sizeSettable: previous.sizeSettable,
             supportMetadataWasCollected: previous.supportMetadataWasCollected
@@ -479,6 +497,57 @@ enum AccessibilityWindow {
             metadata.sizeSettable == .falseValue
     }
 
+    /// Native Open/Save panels and similarly structured system dialogs can expose the generic
+    /// AXStandardWindow subrole. Require affirmative window-level Default and Cancel relationships
+    /// together with the closeless standard-window shape; failed reads and ordinary document
+    /// controls remain conservative.
+    static func shouldCollectStandardWindowDialogControlEvidence(
+        _ metadata: WindowAdmissionMetadata
+    ) -> Bool {
+        metadata.role == kAXWindowRole as String &&
+            metadata.subrole == kAXStandardWindowSubrole as String &&
+            (metadata.windowLayer == nil || metadata.windowLayer == 0) &&
+            !metadata.isMinimized &&
+            !metadata.isFullscreen &&
+            metadata.fullscreenButton == .absent &&
+            metadata.closeButton == .absent
+    }
+
+    static func shouldCollectStandardWindowDialogSupportMetadata(
+        coreMetadata: WindowAdmissionMetadata,
+        retainedMetadata: WindowAdmissionMetadata
+    ) -> Bool {
+        shouldCollectStandardWindowDialogControlEvidence(coreMetadata) &&
+            !retainedMetadata.supportMetadataWasCollected
+    }
+
+    static func isStandardWindowWithDialogControls(_ metadata: WindowAdmissionMetadata) -> Bool {
+        shouldCollectStandardWindowDialogControlEvidence(metadata) &&
+            metadata.defaultButton == .present &&
+            metadata.cancelButton == .present
+    }
+
+    /// AppKit's native file panels expose a nonlocalized Accessibility identifier even on systems
+    /// where their Default and Cancel relationship attributes return no values. Reduce the raw
+    /// identifier immediately to a privacy-safe boolean and keep the closeless standard-window
+    /// shape as corroboration, so arbitrary app identifiers cannot float a document window.
+    static func nativeFilePanelIdentifierObservation(
+        accessibilityIdentifier: String?
+    ) -> AXBooleanAttributeObservation {
+        guard let accessibilityIdentifier else { return .unsupported }
+        switch accessibilityIdentifier.lowercased() {
+        case "open-panel", "save-panel":
+            return .trueValue
+        default:
+            return .falseValue
+        }
+    }
+
+    static func isStandardWindowNativeFilePanel(_ metadata: WindowAdmissionMetadata) -> Bool {
+        shouldCollectStandardWindowDialogControlEvidence(metadata) &&
+            metadata.nativeFilePanelIdentifierObservation == .trueValue
+    }
+
     /// A rejected initial size write is direct operational evidence that this otherwise ordinary
     /// standard window cannot safely occupy a managed frame, even when the earlier support probe
     /// was unavailable. The engine uses this only as a bounded failure recovery.
@@ -574,6 +643,25 @@ enum AccessibilityWindow {
 
     static func fullscreenObservation(of element: AXUIElement) -> AXBooleanAttributeObservation {
         booleanAttributeObservation(fullScreenAttribute, of: element)
+    }
+
+    static func nativeFilePanelIdentifierObservation(
+        of element: AXUIElement
+    ) -> AXBooleanAttributeObservation {
+        var value: CFTypeRef?
+        switch AXUIElementCopyAttributeValue(
+            element,
+            kAXIdentifierAttribute as CFString,
+            &value
+        ) {
+        case .success:
+            guard let identifier = value as? String else { return .unavailable }
+            return nativeFilePanelIdentifierObservation(accessibilityIdentifier: identifier)
+        case .noValue, .attributeUnsupported:
+            return .unsupported
+        default:
+            return .unavailable
+        }
     }
 
     /// Preserves unavailable and unsupported Accessibility results so future admission changes can
@@ -769,6 +857,10 @@ enum AccessibilityWindow {
             minimizeButton: attributePresence(kAXMinimizeButtonAttribute as CFString, of: element),
             closeButton: coreMetadata.closeButton,
             zoomButton: attributePresence(kAXZoomButtonAttribute as CFString, of: element),
+            defaultButton: attributePresence(kAXDefaultButtonAttribute as CFString, of: element),
+            cancelButton: attributePresence(kAXCancelButtonAttribute as CFString, of: element),
+            nativeFilePanelIdentifierObservation:
+                nativeFilePanelIdentifierObservation(of: element),
             positionSettable: attributeSettableObservation(kAXPositionAttribute as CFString, of: element),
             sizeSettable: attributeSettableObservation(kAXSizeAttribute as CFString, of: element),
             supportMetadataWasCollected: true
@@ -801,6 +893,20 @@ enum AccessibilityWindow {
             return WindowAdmissionDecision(disposition: .managedDialog, reason: .sheetRole)
         }
 
+        if metadata.subrole == kAXStandardWindowSubrole as String,
+           isStandardWindowNativeFilePanel(metadata) {
+            return WindowAdmissionDecision(
+                disposition: .managedDialog,
+                reason: .nativeFilePanelIdentifier
+            )
+        }
+        if metadata.subrole == kAXStandardWindowSubrole as String,
+           isStandardWindowWithDialogControls(metadata) {
+            return WindowAdmissionDecision(
+                disposition: .managedDialog,
+                reason: .standardWindowWithDialogControls
+            )
+        }
         if metadata.subrole == kAXStandardWindowSubrole as String,
            isFixedSizeStandardWindow(metadata) {
             return WindowAdmissionDecision(

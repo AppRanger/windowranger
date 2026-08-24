@@ -147,6 +147,87 @@ final class WindowAdmissionFixtureTests: XCTestCase {
         ))
     }
 
+    func testStandardWindowDialogControlProbeRequiresTheNarrowCloselessShapeAndRunsOnce() {
+        let candidate = WindowAdmissionMetadata(
+            bundleIdentifier: "com.example.Editor",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: nil,
+            isMinimized: false,
+            fullscreenButton: .absent,
+            closeButton: .absent
+        )
+        XCTAssertTrue(AccessibilityWindow.shouldCollectStandardWindowDialogControlEvidence(candidate))
+        XCTAssertTrue(AccessibilityWindow.shouldCollectStandardWindowDialogSupportMetadata(
+            coreMetadata: candidate,
+            retainedMetadata: candidate
+        ))
+
+        let attempted = WindowAdmissionMetadata(
+            bundleIdentifier: "com.example.Editor",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: nil,
+            isMinimized: false,
+            fullscreenButton: .absent,
+            closeButton: .absent,
+            supportMetadataWasCollected: true
+        )
+        XCTAssertFalse(AccessibilityWindow.shouldCollectStandardWindowDialogSupportMetadata(
+            coreMetadata: candidate,
+            retainedMetadata: attempted
+        ))
+        XCTAssertFalse(AccessibilityWindow.shouldCollectStandardWindowDialogControlEvidence(
+            fixtureMetadata(
+                subrole: kAXStandardWindowSubrole as String,
+                fullscreenButton: .present,
+                closeButton: .present
+            )
+        ))
+        XCTAssertFalse(AccessibilityWindow.shouldCollectStandardWindowDialogControlEvidence(
+            fixtureMetadata(
+                subrole: kAXDialogSubrole as String,
+                fullscreenButton: .absent,
+                closeButton: .absent
+            )
+        ))
+        XCTAssertFalse(AccessibilityWindow.shouldCollectStandardWindowDialogControlEvidence(
+            fixtureMetadata(
+                subrole: kAXStandardWindowSubrole as String,
+                windowLayer: 8,
+                fullscreenButton: .absent,
+                closeButton: .absent
+            )
+        ))
+    }
+
+    func testNativeFilePanelIdentifierObservationReducesRawIdentifiersImmediately() {
+        XCTAssertEqual(
+            AccessibilityWindow.nativeFilePanelIdentifierObservation(
+                accessibilityIdentifier: "open-panel"
+            ),
+            .trueValue
+        )
+        XCTAssertEqual(
+            AccessibilityWindow.nativeFilePanelIdentifierObservation(
+                accessibilityIdentifier: "SAVE-PANEL"
+            ),
+            .trueValue
+        )
+        XCTAssertEqual(
+            AccessibilityWindow.nativeFilePanelIdentifierObservation(
+                accessibilityIdentifier: "document-window"
+            ),
+            .falseValue
+        )
+        XCTAssertEqual(
+            AccessibilityWindow.nativeFilePanelIdentifierObservation(
+                accessibilityIdentifier: nil
+            ),
+            .unsupported
+        )
+    }
+
     func testBroadRefreshUpdatesClassifierInputsButRetainsSupportOnlyEvidence() {
         let previous = fixtureMetadata(
             subrole: kAXStandardWindowSubrole as String,
@@ -157,6 +238,8 @@ final class WindowAdmissionFixtureTests: XCTestCase {
             minimizeButton: .absent,
             closeButton: .present,
             zoomButton: .absent,
+            defaultButton: .present,
+            cancelButton: .present,
             positionSettable: .trueValue,
             sizeSettable: .falseValue
         )
@@ -181,6 +264,8 @@ final class WindowAdmissionFixtureTests: XCTestCase {
         XCTAssertEqual(merged.fullscreenButton, .absent)
         XCTAssertEqual(merged.modalObservation, .trueValue)
         XCTAssertEqual(merged.minimizeButton, .absent)
+        XCTAssertEqual(merged.defaultButton, .present)
+        XCTAssertEqual(merged.cancelButton, .present)
         XCTAssertEqual(merged.positionSettable, .trueValue)
         XCTAssertEqual(merged.sizeSettable, .falseValue)
         XCTAssertTrue(merged.supportMetadataWasCollected)
@@ -348,6 +433,118 @@ private let fixtures: [WindowAdmissionFixture] = [
         )
     ),
     WindowAdmissionFixture(
+        name: "live TextEdit Open panel floats through its native panel identifier",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "com.apple.TextEdit",
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: nil,
+            modalObservation: .unsupported,
+            focusedObservation: .unsupported,
+            mainObservation: .unsupported,
+            fullscreenButton: .absent,
+            minimizeButton: .unavailable,
+            closeButton: .absent,
+            zoomButton: .unavailable,
+            defaultButton: .absent,
+            cancelButton: .absent,
+            nativeFilePanelIdentifierObservation: .trueValue,
+            positionSettable: .trueValue,
+            sizeSettable: .trueValue
+        ),
+        expected: decision(.managedDialog, .nativeFilePanelIdentifier)
+    ),
+    WindowAdmissionFixture(
+        name: "movable resizable Save panel still floats through structural dialog controls",
+        metadata: fixtureMetadata(
+            subrole: kAXStandardWindowSubrole as String,
+            fullscreenButton: .absent,
+            closeButton: .absent,
+            defaultButton: .present,
+            cancelButton: .present,
+            positionSettable: .trueValue,
+            sizeSettable: .trueValue
+        ),
+        expected: decision(.managedDialog, .standardWindowWithDialogControls)
+    ),
+    WindowAdmissionFixture(
+        name: "closeless standard window with failed dialog-control reads stays managed",
+        metadata: fixtureMetadata(
+            subrole: kAXStandardWindowSubrole as String,
+            fullscreenButton: .absent,
+            closeButton: .absent,
+            defaultButton: .unavailable,
+            cancelButton: .unavailable
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "unrelated closeless identifier does not float a standard window",
+        metadata: fixtureMetadata(
+            subrole: kAXStandardWindowSubrole as String,
+            fullscreenButton: .absent,
+            closeButton: .absent,
+            defaultButton: .absent,
+            cancelButton: .absent,
+            nativeFilePanelIdentifierObservation: .falseValue
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "native panel identifier cannot override ordinary document controls",
+        metadata: fixtureMetadata(
+            subrole: kAXStandardWindowSubrole as String,
+            fullscreenButton: .present,
+            closeButton: .present,
+            nativeFilePanelIdentifierObservation: .trueValue
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "closeless standard window with only a default button stays managed",
+        metadata: fixtureMetadata(
+            subrole: kAXStandardWindowSubrole as String,
+            fullscreenButton: .absent,
+            closeButton: .absent,
+            defaultButton: .present,
+            cancelButton: .absent
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "closeless standard window with only a cancel button stays managed",
+        metadata: fixtureMetadata(
+            subrole: kAXStandardWindowSubrole as String,
+            fullscreenButton: .absent,
+            closeButton: .absent,
+            defaultButton: .absent,
+            cancelButton: .present
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "ordinary document controls win over embedded default and cancel relationships",
+        metadata: fixtureMetadata(
+            subrole: kAXStandardWindowSubrole as String,
+            fullscreenButton: .present,
+            closeButton: .present,
+            defaultButton: .present,
+            cancelButton: .present
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
+        name: "known non-normal standard layer does not use the dialog-control rule",
+        metadata: fixtureMetadata(
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 3,
+            fullscreenButton: .absent,
+            closeButton: .absent,
+            defaultButton: .present,
+            cancelButton: .present
+        ),
+        expected: decision(.managedNormal, .normalWindow)
+    ),
+    WindowAdmissionFixture(
         name: "fixed-size standard candidate with failed capability reads stays managed",
         metadata: fixtureMetadata(
             subrole: kAXStandardWindowSubrole as String,
@@ -489,6 +686,9 @@ private func fixtureMetadata(
     minimizeButton: AXAttributePresence = .present,
     closeButton: AXAttributePresence = .present,
     zoomButton: AXAttributePresence = .present,
+    defaultButton: AXAttributePresence = .absent,
+    cancelButton: AXAttributePresence = .absent,
+    nativeFilePanelIdentifierObservation: AXBooleanAttributeObservation = .unsupported,
     positionSettable: AXBooleanAttributeObservation = .trueValue,
     sizeSettable: AXBooleanAttributeObservation = .trueValue
 ) -> WindowAdmissionMetadata {
@@ -507,6 +707,9 @@ private func fixtureMetadata(
         minimizeButton: minimizeButton,
         closeButton: closeButton,
         zoomButton: zoomButton,
+        defaultButton: defaultButton,
+        cancelButton: cancelButton,
+        nativeFilePanelIdentifierObservation: nativeFilePanelIdentifierObservation,
         positionSettable: positionSettable,
         sizeSettable: sizeSettable
     )

@@ -3886,7 +3886,7 @@ private struct DiagnosticsSettingsView: View {
                                     .font(.caption.monospaced())
                                     .foregroundStyle(.secondary)
                             }
-                            Text("Modal \(record.modalObservation) · focused \(record.focusedObservation) · main \(record.mainObservation) · controls F/M/C/Z \(record.fullscreenButton)/\(record.minimizeButton)/\(record.closeButton)/\(record.zoomButton) · move \(record.positionSettable) · resize \(record.sizeSettable)")
+                            Text("Modal \(record.modalObservation) · focused \(record.focusedObservation) · main \(record.mainObservation) · controls F/M/C/Z/D/Ca \(record.fullscreenButton)/\(record.minimizeButton)/\(record.closeButton)/\(record.zoomButton)/\(record.defaultButton)/\(record.cancelButton) · native file panel \(record.nativeFilePanelIdentifierObservation) · move \(record.positionSettable) · resize \(record.sizeSettable)")
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                         }

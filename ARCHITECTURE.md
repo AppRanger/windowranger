@@ -108,6 +108,17 @@ force a resize-first operation. If the one-time probe was inconclusive but an in
 later rejects, the engine re-probes that exact candidate once, records the fixed-size decision, and
 immediately completes the requested position-only move and re-solves the affected visible layouts.
 Position or final-size failures do not promote a normal window into this safety classification.
+An otherwise closeless standard window on an unknown or normal layer receives a separate one-time
+dialog-control probe only when both its Full Screen and Close controls are authoritatively absent.
+Affirmative window-level Default and Cancel button relationships classify that surface as a managed
+dialog. AppKit file panels can declare those attributes while returning no relationship values, so
+the same one-time probe also reduces the window's Accessibility identifier to a privacy-safe boolean
+for the exact nonlocalized `open-panel` and `save-panel` identifiers. The raw identifier is neither
+retained nor logged, and the identifier cannot override a window that has ordinary Full Screen or
+Close controls. This covers native Open/Save panels without using localized titles, button labels,
+dimensions, bundle identifiers, child content, document URLs, or paths. Missing, failed, unrelated,
+or contradictory evidence remains conservatively normal. Proven standard-window dialogs are
+position-only and cannot be forced into a resize layout, preserving the application's chosen size.
 
 Effective layout participation follows this order:
 
@@ -115,22 +126,30 @@ Effective layout participation follows this order:
 2. generic admission classifies every unmatched window;
 3. ignored/transient or temporarily unsafe windows are untouched;
 4. a user App Rule that excludes layout remains authoritative for admitted windows;
-5. proven fixed-size standard windows remain position-only and outside layout;
+5. proven fixed-size or standard-window dialog surfaces remain position-only and outside layout;
 6. explicit per-window floating state controls otherwise eligible windows;
 7. other high-confidence dialog classification automatically floats a dialog;
 8. remaining windows participate in the workspace's Freeform, Tiled or Accordion behavior.
 
 Keep-on-all-workspaces rules affect visibility but do not grant a window permission to enter layout
 or focus scopes that it otherwise fails.
+An externally hidden regular application remains enumerated and tracked so its exact workspace,
+restore frame, lifecycle, and WindowServer identity are not confused with termination or an AX
+failure. Its ordinary windows are nevertheless excluded from active layout participants, focus
+candidates/history, and every geometry-write path until AppKit reports the application visible
+again. Hidden state participates in the background-layout signature so visible peers reflow on Hide
+and the retained windows rejoin normal visibility/layout handling on Unhide. Exact Quick App
+application-hide ownership remains governed by its separate session path.
 
 Debug admission evidence is deliberately richer than the active classifier. The cached snapshot
 distinguishes authoritative, unsupported, and unavailable modal, focused, main-window, window-control,
-position-settable, and size-settable observations so representative real-app fixtures can justify a
+Default/Cancel relationship, native-file-panel-identifier, position-settable, and size-settable observations so representative real-app fixtures can justify a
 later rule change. The regular engine poll retains cached support evidence rather than performing
 these extra queries every 0.75 seconds. The exceptions are a surface whose bundle and ordinary
 role/subrole/layer/control evidence already match a compatibility profile that explicitly requires
-support-only evidence, and a layer-0 standard window with a Close control that has not completed its
-one-time move/resize capability probe. Only those candidates are enriched
+support-only evidence, a layer-0 standard window with a Close control that has not completed its
+one-time move/resize capability probe, and a closeless normal/unknown-layer standard window that has
+not completed its one-time dialog-control probe. Only those candidates are enriched
 before classification. A movable standard candidate that authoritatively cannot resize floats as a
 managed dialog; unavailable or unsupported evidence leaves it conservatively managed as normal and
 is not retried by the poll.

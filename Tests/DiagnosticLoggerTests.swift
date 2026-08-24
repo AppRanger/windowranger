@@ -987,6 +987,10 @@ final class DiagnosticLoggerTests: XCTestCase {
             FloatingToggleResult.blockedByFixedSizeWindow.commandFeedbackMessage,
             "This window cannot be resized, so it must remain floating."
         )
+        XCTAssertEqual(
+            FloatingToggleResult.blockedByProtectedDialog.commandFeedbackMessage,
+            "This dialog must remain floating at its application-chosen size."
+        )
     }
 
     @MainActor

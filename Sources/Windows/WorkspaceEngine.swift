@@ -947,6 +947,7 @@ enum FloatingToggleDecision: Equatable, Sendable {
     case setLayoutOverride(WindowLayoutOverride)
     case blockedByAppRule
     case blockedByFixedSizeWindow
+    case blockedByProtectedDialog
 }
 
 enum FloatingToggleResult: Equatable, Sendable {
@@ -954,6 +955,7 @@ enum FloatingToggleResult: Equatable, Sendable {
     case disabled
     case blockedByAppRule(String)
     case blockedByFixedSizeWindow
+    case blockedByProtectedDialog
 
     var commandFeedbackMessage: String {
         switch self {
@@ -965,6 +967,8 @@ enum FloatingToggleResult: Equatable, Sendable {
             "\(appName) is excluded by an App Rule. That rule remains in control."
         case .blockedByFixedSizeWindow:
             "This window cannot be resized, so it must remain floating."
+        case .blockedByProtectedDialog:
+            "This dialog must remain floating at its application-chosen size."
         }
     }
 }
@@ -1269,6 +1273,9 @@ struct WindowAdmissionSupportRecord: Identifiable, Equatable, Sendable, Codable 
     let minimizeButton: String
     let closeButton: String
     let zoomButton: String
+    let defaultButton: String
+    let cancelButton: String
+    let nativeFilePanelIdentifierObservation: String
     let positionSettable: String
     let sizeSettable: String
 }
@@ -1278,7 +1285,7 @@ struct WindowAdmissionSupportSnapshot: Equatable, Sendable, Codable {
     let records: [WindowAdmissionSupportRecord]
 
     init(records: [WindowAdmissionSupportRecord]) {
-        schemaVersion = 2
+        schemaVersion = 4
         self.records = records
     }
 
@@ -4157,7 +4164,9 @@ final class WorkspaceEngine {
             let now = Date()
             self.focusCycleRejectedUntil = self.focusCycleRejectedUntil.filter { $0.value > now }
             let candidates = self.windows.compactMap { key, tracked -> (WindowKey, TrackedWindow, WindowFrame, String)? in
-                guard !self.isDropDownAppWindow(key) else { return nil }
+                guard !self.isDropDownAppWindow(key),
+                      !self.isExcludedFromWorkspaceParticipation(tracked)
+                else { return nil }
                 let rule = self.resolvedRule(for: tracked.bundleIdentifier)
                 let workspaceMatches = tracked.workspaceID == workspaceID || rule.keepsOnAllWorkspaces
                 let visible = Self.shouldWindowBeVisible(
@@ -5492,6 +5501,8 @@ final class WorkspaceEngine {
                 self.emitFloatingToggleResult(.blockedByAppRule(appName))
             case .blockedByFixedSizeWindow:
                 self.emitFloatingToggleResult(.blockedByFixedSizeWindow)
+            case .blockedByProtectedDialog:
+                self.emitFloatingToggleResult(.blockedByProtectedDialog)
             case let .setLayoutOverride(layoutOverride):
                 let displays = Self.activeDisplays()
                 let willFloat = Self.layoutDecision(
@@ -5816,7 +5827,9 @@ final class WorkspaceEngine {
     ) -> FloatingToggleDecision {
         guard !rule.excludesFromLayout else { return .blockedByAppRule }
         guard geometryWriteMode(for: admissionDecision) != .positionOnly else {
-            return .blockedByFixedSizeWindow
+            return admissionDecision.reason == .fixedSizeStandardWindow
+                ? .blockedByFixedSizeWindow
+                : .blockedByProtectedDialog
         }
         let currentlyIncluded = layoutDecision(
             layoutOverride: currentOverride,
@@ -5833,7 +5846,13 @@ final class WorkspaceEngine {
     static func geometryWriteMode(
         for admissionDecision: WindowAdmissionDecision
     ) -> WindowGeometryWriteMode {
-        admissionDecision.reason == .fixedSizeStandardWindow ? .positionOnly : .frame
+        switch admissionDecision.reason {
+        case .fixedSizeStandardWindow, .nativeFilePanelIdentifier,
+             .standardWindowWithDialogControls:
+            .positionOnly
+        default:
+            .frame
+        }
     }
 
     static func displayModeForWindowPlacement(
@@ -6345,7 +6364,9 @@ final class WorkspaceEngine {
         let now = Date()
         focusCycleRejectedUntil = focusCycleRejectedUntil.filter { $0.value > now }
         return windows.compactMap { key, tracked -> (WindowKey, WindowFrame)? in
-            guard !isDropDownAppWindow(key) else { return nil }
+            guard !isDropDownAppWindow(key),
+                  !isExcludedFromWorkspaceParticipation(tracked)
+            else { return nil }
             let rule = resolvedRule(for: tracked.bundleIdentifier)
             let workspaceMatches = tracked.workspaceID == workspaceID || rule.keepsOnAllWorkspaces
             let visible = Self.shouldWindowBeVisible(
@@ -6418,7 +6439,9 @@ final class WorkspaceEngine {
         correlationID: String?
     ) -> [DirectionalWindowCandidate<WindowKey>] {
         windows.compactMap { key, tracked in
-            guard !isDropDownAppWindow(key) else { return nil }
+            guard !isDropDownAppWindow(key),
+                  !isExcludedFromWorkspaceParticipation(tracked)
+            else { return nil }
             let rule = resolvedRule(for: tracked.bundleIdentifier)
             let workspaceMatches = tracked.workspaceID == workspaceID || rule.keepsOnAllWorkspaces
             let visible = Self.shouldWindowBeVisible(
@@ -6715,6 +6738,7 @@ final class WorkspaceEngine {
     ) -> [WindowKey] {
         windows.values.filter { tracked in
             guard !isDropDownAppWindow(tracked.key),
+                  !isExcludedFromWorkspaceParticipation(tracked),
                   tracked.workspaceID == workspaceID,
                   Self.shouldIncludeInLayout(
                       layoutOverride: tracked.layoutOverride,
@@ -7211,6 +7235,7 @@ final class WorkspaceEngine {
         let eligibleKeys = Set(windows.compactMap { key, tracked -> WindowKey? in
             guard key.processIdentifier != ownProcessIdentifier,
                   !isDropDownAppWindow(key),
+                  !isExcludedFromWorkspaceParticipation(tracked),
                   !ignoredWindowKeys.contains(key),
                   staleParkedFocusSuppression[key] == nil,
                   Self.shouldWindowBeVisible(
@@ -8419,9 +8444,16 @@ final class WorkspaceEngine {
         correlationID: String
     ) {
         let rawFocus = focusedWindowSnapshot()
-        let currentManagedFocus = rawFocus.flatMap { windows[$0.key] != nil ? $0.key : nil }
+        let currentManagedFocus = rawFocus.flatMap { snapshot -> WindowKey? in
+            guard let tracked = windows[snapshot.key],
+                  !isExcludedFromWorkspaceParticipation(tracked)
+            else { return nil }
+            return snapshot.key
+        }
         let currentFocusIsUnmanaged = rawFocus.map {
-            windows[$0.key] == nil || ignoredWindowKeys.contains($0.key)
+            guard let tracked = windows[$0.key] else { return true }
+            return ignoredWindowKeys.contains($0.key) ||
+                isExcludedFromWorkspaceParticipation(tracked)
         } ?? false
         let targetDisplayIdentifier: String? = {
             if let preferred = preSleepFocusContext?.displayIdentifier,
@@ -8432,7 +8464,13 @@ final class WorkspaceEngine {
         }()
 
         let ordered = windows.values
-            .filter { eligibleWindowKeys.contains($0.key) }
+            .filter {
+                Self.shouldIncludeInWakeFocusRecovery(
+                    isWriteEligible: eligibleWindowKeys.contains($0.key),
+                    isExcludedFromWorkspaceParticipation:
+                        isExcludedFromWorkspaceParticipation($0)
+                )
+            }
             .sorted { lhs, rhs in
                 if lhs.layoutOrder != rhs.layoutOrder { return lhs.layoutOrder < rhs.layoutOrder }
                 return lhs.key.windowIdentifier < rhs.key.windowIdentifier
@@ -8756,8 +8794,14 @@ final class WorkspaceEngine {
                         coreMetadata: coreAdmissionMetadata,
                         retainedMetadata: retainedAdmissionMetadata
                     )
+                let collectsStandardDialogSupportMetadata = AccessibilityWindow
+                    .shouldCollectStandardWindowDialogSupportMetadata(
+                        coreMetadata: coreAdmissionMetadata,
+                        retainedMetadata: retainedAdmissionMetadata
+                    )
                 let collectsSupportMetadata = collectsCompatibilitySupportMetadata ||
-                    collectsFixedSizeSupportMetadata
+                    collectsFixedSizeSupportMetadata ||
+                    collectsStandardDialogSupportMetadata
                 let admissionMetadata = collectsSupportMetadata
                     ? AccessibilityWindow.admissionSupportMetadata(
                         of: element,
@@ -8869,6 +8913,7 @@ final class WorkspaceEngine {
                         rule: rule
                     )
                     if !isDropDownAppWindow(key),
+                       !isExcludedFromWorkspaceParticipation(tracked),
                        isWorkspaceActive(tracked.workspaceID),
                        (workspaceLayout(for: tracked.workspaceID) == .none ||
                         !layoutDecision.includesInLayout ||
@@ -9252,13 +9297,16 @@ final class WorkspaceEngine {
         emitFullscreenGameSessionIfNeeded()
         if observeFocus, let focused,
            staleParkedFocusSuppression[focused] == nil,
-           let tracked = windows[focused] {
+           let tracked = windows[focused],
+           !isExcludedFromWorkspaceParticipation(tracked) {
             lastFocusedWindow[tracked.workspaceID] = focused
         }
 
         var manualTiledDragInProgress = false
         if performAXWrites, !isStartup, !topologyChanged, !lifecycleTransitionActive, let focused,
-           !isDropDownAppWindow(focused) {
+           !isDropDownAppWindow(focused),
+           let focusedTracked = windows[focused],
+           !isExcludedFromWorkspaceParticipation(focusedTracked) {
             let moveReconciliation = reconcileManualTiledMove(
                 focusedWindow: focused,
                 observedFrames: observedFrames,
@@ -9291,22 +9339,7 @@ final class WorkspaceEngine {
             currentSignature: layoutSignatureBeforeApply,
             isStartup: isStartup
         ) {
-            let visibleManagedWindows = windows.values.filter {
-                !temporarilyDeferredWindowKeys.contains($0.key) &&
-                !isDropDownAppWindow($0.key) &&
-                Self.shouldWindowBeVisible(
-                    workspaceID: $0.workspaceID,
-                    activeWorkspaceIDs: activeWorkspaceIDs,
-                    rule: resolvedRule(for: $0.bundleIdentifier)
-                )
-            }
-            if !visibleManagedWindows.isEmpty {
-                applyVisibleWindows(
-                    visibleManagedWindows,
-                    displays: displays,
-                    correlationID: correlationID
-                )
-            }
+            applyVisibility(displays: displays, correlationID: correlationID)
         }
         if performAXWrites, !manualTiledDragInProgress, resizeRecoveryNeedsImmediateReflow {
             resizeRecoveryNeedsImmediateReflow = false
@@ -9549,6 +9582,10 @@ final class WorkspaceEngine {
             "is-minimized": String(metadata.isMinimized),
             "close-button": metadata.closeButton.rawValue,
             "zoom-button": metadata.zoomButton.rawValue,
+            "default-button": metadata.defaultButton.rawValue,
+            "cancel-button": metadata.cancelButton.rawValue,
+            "native-file-panel-identifier":
+                metadata.nativeFilePanelIdentifierObservation.rawValue,
             "position-settable": metadata.positionSettable.rawValue,
             "size-settable": metadata.sizeSettable.rawValue,
             "disposition": decision.disposition.rawValue,
@@ -9582,6 +9619,10 @@ final class WorkspaceEngine {
                 minimizeButton: metadata.minimizeButton.rawValue,
                 closeButton: metadata.closeButton.rawValue,
                 zoomButton: metadata.zoomButton.rawValue,
+                defaultButton: metadata.defaultButton.rawValue,
+                cancelButton: metadata.cancelButton.rawValue,
+                nativeFilePanelIdentifierObservation:
+                    metadata.nativeFilePanelIdentifierObservation.rawValue,
                 positionSettable: metadata.positionSettable.rawValue,
                 sizeSettable: metadata.sizeSettable.rawValue
             )
@@ -9804,7 +9845,21 @@ final class WorkspaceEngine {
             }
             return $0.key.windowIdentifier < $1.key.windowIdentifier
         }.compactMap { tracked in
-            guard !isDropDownAppWindow(tracked.key) else { return nil }
+            guard let visibility = Self.backgroundApplicationVisibilityMarker(
+                isApplicationHidden: isExcludedFromWorkspaceParticipation(tracked),
+                isDropDownAppWindow: isDropDownAppWindow(tracked.key)
+            ) else { return nil }
+            return "application-visibility=\(Self.diagnosticWindowKey(tracked.key))|\(visibility)"
+        })
+        parts.append(contentsOf: windows.values.sorted {
+            if $0.key.processIdentifier != $1.key.processIdentifier {
+                return $0.key.processIdentifier < $1.key.processIdentifier
+            }
+            return $0.key.windowIdentifier < $1.key.windowIdentifier
+        }.compactMap { tracked in
+            guard !isDropDownAppWindow(tracked.key),
+                  !isExcludedFromWorkspaceParticipation(tracked)
+            else { return nil }
             let rule = resolvedRule(for: tracked.bundleIdentifier)
             guard Self.shouldWindowBeVisible(
                 workspaceID: tracked.workspaceID,
@@ -10377,6 +10432,18 @@ final class WorkspaceEngine {
             )
             return
         }
+        guard !isExcludedFromWorkspaceParticipation(tracked) else {
+            diagnostics.log(
+                category: "focus-follow",
+                event: "ignored",
+                correlation: correlationID,
+                fields: [
+                    "reason": "application-hidden",
+                    "window": Self.diagnosticWindowKey(focusedWindow),
+                ]
+            )
+            return
+        }
 
         let rule = resolvedRule(for: tracked.bundleIdentifier)
         guard !rule.keepsOnAllWorkspaces else {
@@ -10601,6 +10668,7 @@ final class WorkspaceEngine {
         let unusableAnchor = rawFocusedWindow.key.processIdentifier == ownProcessIdentifier ||
             ignoredWindowKeys.contains(rawFocusedWindow.key) ||
             isDropDownAppWindow(rawFocusedWindow.key) ||
+            windows[rawFocusedWindow.key].map(isExcludedFromWorkspaceParticipation) == true ||
             staleParkedFocusSuppression[rawFocusedWindow.key] != nil
         guard unusableAnchor else { return rawFocusedWindow }
 
@@ -10612,7 +10680,8 @@ final class WorkspaceEngine {
         for key in fallbackKeys {
             guard !isDropDownAppWindow(key),
                   staleParkedFocusSuppression[key] == nil,
-                  let tracked = windows[key]
+                  let tracked = windows[key],
+                  !isExcludedFromWorkspaceParticipation(tracked)
             else { continue }
             return FocusedWindowSnapshot(
                 key: key,
@@ -12175,6 +12244,41 @@ final class WorkspaceEngine {
         quickAppSessions.values.contains { $0.windowKey == key }
     }
 
+    /// Hiding an application is distinct from closing it or failing to enumerate its AX windows:
+    /// retain the tracked window and its workspace assignment, but never let an externally hidden
+    /// regular application consume layout space, receive focus, or receive geometry writes. Quick
+    /// App windows retain their exact hidden-session ownership and are governed by the shelf path.
+    private func isExcludedFromWorkspaceParticipation(_ tracked: TrackedWindow) -> Bool {
+        Self.isExcludedFromWorkspaceParticipation(
+            isApplicationHidden: NSRunningApplication(
+                processIdentifier: tracked.processIdentifier
+            )?.isHidden == true,
+            isDropDownAppWindow: isDropDownAppWindow(tracked.key)
+        )
+    }
+
+    static func isExcludedFromWorkspaceParticipation(
+        isApplicationHidden: Bool,
+        isDropDownAppWindow: Bool
+    ) -> Bool {
+        isApplicationHidden && !isDropDownAppWindow
+    }
+
+    static func backgroundApplicationVisibilityMarker(
+        isApplicationHidden: Bool,
+        isDropDownAppWindow: Bool
+    ) -> String? {
+        guard !isDropDownAppWindow else { return nil }
+        return isApplicationHidden ? "hidden" : "visible"
+    }
+
+    static func shouldIncludeInWakeFocusRecovery(
+        isWriteEligible: Bool,
+        isExcludedFromWorkspaceParticipation: Bool
+    ) -> Bool {
+        isWriteEligible && !isExcludedFromWorkspaceParticipation
+    }
+
     @discardableResult
     private func applyVisibility(
         displays: [DisplaySnapshot]? = nil,
@@ -12187,6 +12291,7 @@ final class WorkspaceEngine {
         let activeWorkspaceIDs = activeWorkspaceIDs
         let isEligible: (TrackedWindow) -> Bool = { tracked in
             !self.temporarilyDeferredWindowKeys.contains(tracked.key) &&
+                !self.isExcludedFromWorkspaceParticipation(tracked) &&
                 (eligibleWindowKeys == nil || eligibleWindowKeys!.contains(tracked.key))
         }
 
@@ -12244,7 +12349,9 @@ final class WorkspaceEngine {
         // no AX traffic at all.
         applyVisibleWindows(
             windows.values.filter {
-                $0.workspaceID == targetWorkspaceID && !isDropDownAppWindow($0.key)
+                $0.workspaceID == targetWorkspaceID &&
+                    !isDropDownAppWindow($0.key) &&
+                    !isExcludedFromWorkspaceParticipation($0)
             },
             displays: displays,
             correlationID: correlationID
@@ -12253,6 +12360,7 @@ final class WorkspaceEngine {
             .filter {
                 $0.workspaceID == sourceWorkspaceID &&
                     !isDropDownAppWindow($0.key) &&
+                    !isExcludedFromWorkspaceParticipation($0) &&
                     !resolvedRule(for: $0.bundleIdentifier).keepsOnAllWorkspaces
             }
             .map { PositionChange(window: $0, position: parkingPosition) },
@@ -12271,6 +12379,7 @@ final class WorkspaceEngine {
         var expectedLayoutFrames: [WindowKey: WindowFrame] = [:]
         let writeEligibleWindows = trackedWindows.filter {
             !isDropDownAppWindow($0.key) &&
+            !isExcludedFromWorkspaceParticipation($0) &&
             FullscreenSessionPolicy.allowsGeometryWrite(
                 hasFullscreenSession: fullscreenSessions[$0.key] != nil,
                 isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains($0.key)
@@ -12532,6 +12641,7 @@ final class WorkspaceEngine {
         for key in windows.keys {
             guard var tracked = windows[key],
                   !isDropDownAppWindow(key),
+                  !isExcludedFromWorkspaceParticipation(tracked),
                   FullscreenSessionPolicy.allowsGeometryWrite(
                     hasFullscreenSession: fullscreenSessions[key] != nil,
                     isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains(key)
@@ -12842,7 +12952,8 @@ final class WorkspaceEngine {
     ) {
         guard !isWindowManagementPaused else { return }
         let eligibleChanges = changes.filter {
-            FullscreenSessionPolicy.allowsGeometryWrite(
+            !isExcludedFromWorkspaceParticipation($0.window) &&
+                FullscreenSessionPolicy.allowsGeometryWrite(
                 hasFullscreenSession: fullscreenSessions[$0.window.key] != nil,
                 isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains($0.window.key)
             )
@@ -12876,7 +12987,8 @@ final class WorkspaceEngine {
     ) {
         guard !isWindowManagementPaused else { return }
         let effectiveChanges = changes.compactMap { change -> (FrameChange, WindowFrame?)? in
-            guard FullscreenSessionPolicy.allowsGeometryWrite(
+            guard !isExcludedFromWorkspaceParticipation(change.window),
+                  FullscreenSessionPolicy.allowsGeometryWrite(
                 hasFullscreenSession: fullscreenSessions[change.window.key] != nil,
                 isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains(change.window.key)
             )
@@ -13011,7 +13123,8 @@ final class WorkspaceEngine {
         guard !mainDisplayBounds.isNull, !mainDisplayBounds.isEmpty else { return }
 
         var pending = windows.values.compactMap { tracked -> FrameChange? in
-            guard FullscreenSessionPolicy.allowsGeometryWrite(
+            guard !isExcludedFromWorkspaceParticipation(tracked),
+                  FullscreenSessionPolicy.allowsGeometryWrite(
                 hasFullscreenSession: fullscreenSessions[tracked.key] != nil,
                 isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains(tracked.key)
             )
@@ -13034,6 +13147,7 @@ final class WorkspaceEngine {
                 AccessibilityWindow.withoutPositionAnimations(for: processIdentifier) {
                     for change in applicationChanges {
                         let current = self.windows[change.window.key] ?? change.window
+                        guard !self.isExcludedFromWorkspaceParticipation(current) else { continue }
                         if Self.geometryWriteMode(for: current.admissionDecision) == .positionOnly {
                             AccessibilityWindow.setPositionIfNeeded(
                                 change.frame.position,
@@ -13058,6 +13172,7 @@ final class WorkspaceEngine {
 
             pending = pending.filter { change in
                 let current = self.windows[change.window.key] ?? change.window
+                guard !isExcludedFromWorkspaceParticipation(current) else { return false }
                 guard let actual = AccessibilityWindow.frame(of: current.element) else { return true }
                 if Self.geometryWriteMode(for: current.admissionDecision) == .positionOnly {
                     return !AccessibilityWindow.positionsMatch(actual.position, change.frame.position)
@@ -13687,7 +13802,9 @@ final class WorkspaceEngine {
         focusCycleRejectedUntil = focusCycleRejectedUntil.filter { $0.value > now }
         let candidates: [(WorkspaceSwitchFocusCandidate<WindowKey>, WindowFrame)] = windows.compactMap {
             key, tracked in
-            guard !isDropDownAppWindow(key) else { return nil }
+            guard !isDropDownAppWindow(key),
+                  !isExcludedFromWorkspaceParticipation(tracked)
+            else { return nil }
             let rule = resolvedRule(for: tracked.bundleIdentifier)
             let frame = AccessibilityWindow.frame(of: tracked.element)
             let actualDisplayIdentifier = frame.flatMap {
@@ -14348,6 +14465,18 @@ final class WorkspaceEngine {
         token: FocusVerificationToken? = nil,
         allowImmediateAppKitCompatibilityFallback: Bool = true
     ) {
+        guard !isExcludedFromWorkspaceParticipation(tracked) else {
+            diagnostics.log(
+                category: "focus-action",
+                event: "skipped",
+                correlation: correlationID,
+                fields: [
+                    "window": Self.diagnosticWindowKey(key),
+                    "reason": "application-hidden-externally",
+                ]
+            )
+            return
+        }
         prepareProgrammaticFocusIntent(
             key,
             correlationID: correlationID,
