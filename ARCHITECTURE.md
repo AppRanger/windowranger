@@ -347,10 +347,9 @@ watchdog checks eight times after a short launch delay, then fails with explicit
 change, shutdown, newer launch generation, missing installation, launch error, timeout, or multiple
 eligible windows never grants permission to guess a target.
 During startup reconciliation, the engine establishes ownership only for configured shelf entries
-before initial workspace visibility and layout. For each persisted entry, exactly one eligible
-matching window is claimed: its observed pre-layout
-frame determines whether the session begins presented on that display or is converted from a legacy
-off-screen state to application Hide. Crash-restart recovery may reclaim a hidden application only
+before initial workspace visibility and layout. Every configured entry with exactly one eligible
+matching window is claimed hidden, regardless of its pre-launch visibility; launching WindowRanger
+never implicitly presents a Shelf entry. Crash-restart recovery may reclaim a hidden application only
 when the WindowServer-bound marker matches the exact process/window identity and bundle and AppKit
 still reports that application hidden. An ambiguous set is left untouched by Quick App startup
 handling.
@@ -422,7 +421,9 @@ family refreshes both Carbon registration and passive observation. Incompatible 
 failures produce no misleading entries. Its panel never becomes key or main, never activates the
 app, follows the engine's resolved interaction display, and uses macOS 26 Liquid Glass with the
 system HUD material as the older-system fallback. The normal presentation remains one low, wide
-key map; unusually dense valid configurations add rows rather than clipping actions. Enablement,
+key map. Presentation-only groups label the action and its workspace, window, layout, or display
+target without maintaining a second command list; the spatial arrow caption is centred below its
+keys. Unusually dense valid configurations add rows rather than clipping actions. Enablement,
 Small/Medium/Large density and the nine screen anchors are local to one Mac. Shortcut recording,
 protected game sessions, sleep, inactive login sessions, display changes and termination stop the
 passive monitor and clear the panel so a missed modifier release cannot leave it visible.

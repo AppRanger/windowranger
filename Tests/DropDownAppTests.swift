@@ -474,7 +474,7 @@ final class DropDownAppTests: XCTestCase {
         ))
     }
 
-    func testStartupClaimsOneVisibleQuickAppWindowAsPresentedOnItsCurrentDisplay() {
+    func testStartupClaimsOneVisibleQuickAppWindowAsHidden() {
         let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
 
         let selection = DropDownAppStartupPolicy.selection(
@@ -483,7 +483,6 @@ final class DropDownAppTests: XCTestCase {
                 key: key,
                 bundleIdentifier: "com.mitchellh.ghostty",
                 isMeaningfullyVisible: true,
-                displayIdentifier: "external",
                 wasHiddenByWindowRanger: false
             )]
         )
@@ -492,8 +491,7 @@ final class DropDownAppTests: XCTestCase {
             selection,
             DropDownAppStartupSelection(
                 windowKey: key,
-                isPresented: true,
-                displayIdentifier: "external",
+                wasMeaningfullyVisible: true,
                 wasHiddenByWindowRanger: false
             )
         )
@@ -508,7 +506,6 @@ final class DropDownAppTests: XCTestCase {
                 key: key,
                 bundleIdentifier: "com.mitchellh.ghostty",
                 isMeaningfullyVisible: false,
-                displayIdentifier: "external",
                 wasHiddenByWindowRanger: false
             )]
         )
@@ -517,8 +514,7 @@ final class DropDownAppTests: XCTestCase {
             selection,
             DropDownAppStartupSelection(
                 windowKey: key,
-                isPresented: false,
-                displayIdentifier: nil,
+                wasMeaningfullyVisible: false,
                 wasHiddenByWindowRanger: false
             )
         )
@@ -535,14 +531,12 @@ final class DropDownAppTests: XCTestCase {
                     key: first,
                     bundleIdentifier: "com.mitchellh.ghostty",
                     isMeaningfullyVisible: true,
-                    displayIdentifier: "main",
                     wasHiddenByWindowRanger: false
                 ),
                 DropDownAppStartupCandidate(
                     key: second,
                     bundleIdentifier: "com.mitchellh.ghostty",
                     isMeaningfullyVisible: true,
-                    displayIdentifier: "main",
                     wasHiddenByWindowRanger: false
                 ),
             ]
@@ -553,7 +547,6 @@ final class DropDownAppTests: XCTestCase {
                 key: first,
                 bundleIdentifier: "com.example.Other",
                 isMeaningfullyVisible: true,
-                displayIdentifier: "main",
                 wasHiddenByWindowRanger: false
             )]
         ))
@@ -567,16 +560,14 @@ final class DropDownAppTests: XCTestCase {
             candidates: [DropDownAppStartupCandidate(
                 key: key,
                 bundleIdentifier: "com.mitchellh.ghostty",
-                isMeaningfullyVisible: true,
-                displayIdentifier: "external",
+                isMeaningfullyVisible: false,
                 wasHiddenByWindowRanger: true
             )]
         )
 
         XCTAssertEqual(selection, DropDownAppStartupSelection(
             windowKey: key,
-            isPresented: false,
-            displayIdentifier: nil,
+            wasMeaningfullyVisible: false,
             wasHiddenByWindowRanger: true
         ))
     }

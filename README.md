@@ -85,7 +85,9 @@ not an installable macOS app.
 - A searchable global Command Palette with compact Quick Actions, an inline Placement Halo for window positioning, and a runtime Pause command.
 - An optional, Mac-local Shortcut Guide that appears while either configured shortcut family is held,
   using a passive bottom key map by default and deriving every visible action from the active
-  profile's conflict-checked shortcuts. It follows the focused window's resolved interaction
+  profile's conflict-checked shortcuts. Compact headings distinguish workspace, window, layout, and
+  display targets, while the arrow pad names its spatial focus or reorder behavior below the keys.
+  It follows the focused window's resolved interaction
   display and adds rows only when a dense valid configuration would otherwise clip actions.
 - A profile-aware Quick App Shelf with up to four ordered entries, palette selection, Previous/Next
   Window traversal while open, exact-window presentation, and conservative launch/recovery handling.

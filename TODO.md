@@ -218,6 +218,100 @@ smallest useful outcome and acceptance boundary.
   Finder, System Settings, and the unmarked manager probe; tagged Recovery/drawing IDs never entered
   the layout targets. The guest lane proves the exact AX contract and visible one-display
   coexistence, not release signing, multi-display behaviour, or the supported physical-Mac matrix.
+### WR-078 — Label Shortcut Guide actions by target
+
+- **Type:** Shortcut discoverability improvement
+- **Priority:** P2
+- **Status:** Live validation — implemented, automated-test verified, native visual QA passed, and
+  the installed refinement was accepted at the current density; supported-size sweep pending.
+- **Requested:** 24 August 2026.
+- **User-observed context:** The guide labels made it hard for newer users to distinguish workspace
+  navigation from window navigation. “Previous” and “Next” did not say what would be cycled, while
+  arrow actions duplicated the visual weight of ordered window cycling without explaining their
+  spatial behavior. In the first installed labelled guide, the lower headings and actions were not
+  consistently centred within their sections, and the Space keycap left too little room around its
+  word.
+- **Smallest useful outcome:** Keep the existing **Navigate** and **Arrange** family names, then group
+  each visible command under a compact action-and-target heading. Centre “Focus by direction” or
+  “Reorder by direction” beneath the arrow pad; identify workspace switching, ordered window cycling,
+  focused-window arrangement, layout choice, and workspace display movement at a glance.
+- **Acceptance:** Both families preserve the conflict-checked configured action set, arbitrary
+  workspace keys, adaptive dense layouts, local size/position preferences, passive input/focus
+  behavior, and native Light/Dark materials. Focused grouping/layout tests, production offscreen
+  renders at supported densities, full non-hosted verification, and signed live modifier-held use
+  are required.
+- **Implemented:** Navigate and Arrange retain their existing family names and configured bindings.
+  Workspace destinations and the centred spatial arrow pad form the top band; the lower band groups
+  commands as Switch Workspace, Cycle Windows in Order, Arrange Window, Choose Layout, and Move
+  Workspace. Small density shortens only the already-scoped Previous/Next/Last action labels beneath
+  Switch Workspace, avoiding ellipses without losing the target. Lower group headings, action pairs,
+  and rows are now centred within their allocated containers. The Space keycap has dedicated side
+  padding and keeps its label at intrinsic width so the full word remains visible even at Small.
+- **Automated evidence:** On 24 August 2026, all 16 focused Shortcut Guide tests passed, including
+  exact group membership and labels. Repository quick verification then passed all 704 non-hosted
+  tests, and the unsigned universal Debug app built successfully with arm64 and x86_64 slices.
+- **Visual evidence:** All 12 native Small/Medium/Large Light/Dark Navigate and Arrange renders were
+  inspected. The first Small pass exposed clipped workspace action labels and an undersized Arrange
+  arrow-caption column; both were corrected. A later installed pass exposed inconsistent optical
+  centring and an under-padded Space key, which were corrected and checked again across all 12
+  renders. Matched full-view and focused lower-band comparisons have no remaining P0-P2 issue;
+  `design-qa.md` records the evidence.
+- **Installed evidence:** With explicit approval, refined signed universal Debug candidate
+  `9f154f7a6a79-dirty` (CDHash `57ebd6606f3f676f83310258ae0ab9e54371edc6`) is installed and
+  running from `/Applications/WindowRanger.app` as process `88912`. Its strict signature, Apple
+  Development authority, Team ID `44NAD22AK6`, bundle identity, embedded source marker, arm64 and
+  x86_64 slices, running executable path, and retained rollback copy were verified. Fresh session
+  `043436B5-BA16-496B-920A-B8CB5C111770` started the passive modifier monitor and recorded both
+  Navigate and Arrange presentation requests with `panel-visible=true`.
+- **Live validation remaining:** Hold each configured modifier family at Small, Medium, and Large,
+  and confirm the refined lower-group centring and wider Space keycap in the real Liquid Glass panel;
+  also confirm it remains legible, passive, centred on the interaction display, and dismisses
+  immediately on release. The user accepted the installed alignment at the current configured
+  density on 24 August 2026.
+
+### WR-077 — Hide every unambiguous Quick App Shelf entry at startup
+
+- **Type:** Quick App Shelf startup bug
+- **Priority:** P1
+- **Status:** Live validation — implemented, automated-test verified, and signed restart evidence
+  recorded; end-to-end Shelf presentation acceptance pending.
+- **Requested:** 24 August 2026.
+- **User-observed (2026-08-24):** On some WindowRanger starts, Quick Shelf applications remained
+  visible instead of being hidden away.
+- **Diagnostic evidence:** Startup session `6B1D889A-FE1C-4AD6-B621-DE1D2AF09407` claimed visible
+  Ghostty window `917:14423` with `presented=true` and laid it out as a presented Shelf entry. No
+  hide was attempted at startup; the application was hidden successfully only 66 seconds later
+  after another application received focus. The startup policy was therefore deliberately retaining
+  pre-launch visibility rather than encountering a failed Hide request. It also prepared only the
+  selected Shelf entry, leaving other configured entries dependent on persisted ownership.
+- **Expected:** Starting WindowRanger hides every configured Shelf application for which exactly one
+  safe eligible window can be identified. Pre-launch visibility must not implicitly present a Shelf
+  entry or let a nonselected entry join ordinary workspace layout. Externally hidden applications
+  and ambiguous multiple-window sets remain untouched; exact persisted WindowRanger hide ownership
+  remains recoverable.
+- **Implemented:** Startup no longer derives presented state from a Shelf window's pre-launch
+  visibility. It independently claims every configured Shelf entry with one safe eligible window,
+  begins each session hidden, and requests application Hide before ordinary workspace layout. The
+  existing exact persisted-ownership recovery, external-hide separation, deferred/full-screen
+  exclusion, and multiple-window ambiguity boundary remain intact. Startup diagnostics now emit one
+  preparation record per claimed entry and retain pre-launch visibility as evidence without using it
+  to present the entry.
+- **Acceptance:** Focused policy tests cover visible and legacy parked windows, exact persisted hide
+  ownership, every independently selected Shelf entry, unrelated windows, and ambiguous matching
+  windows. The complete non-hosted suite passes. A signed restart with at least two configured Shelf
+  applications confirms both begin hidden and remain available through normal Shelf selection.
+- **Automated evidence:** On 24 August 2026, all 51 focused DropDown App and Quick App Shelf tests
+  passed, followed by test isolation, repository checks, and the complete 702-test non-hosted suite.
+- **Installed evidence:** With explicit approval, signed universal Debug build
+  `9f154f7a6a79-dirty` (CDHash `40b44bb4da1409e4cd4548b78b659bc6fc494271`) was installed and
+  launched from `/Applications/WindowRanger.app`. Its Apple Development signature, Team ID
+  `44NAD22AK6`, bundle identity, embedded source marker, two architectures, and running executable
+  path were verified. Fresh startup session `79368B60-467E-4506-831F-9430A0629DB4` observed both
+  Notes and Ghostty as visible before launch, then prepared each independently with `presented=false`
+  and an accepted Hide request before ordinary layout.
+- **Live validation remaining:** Confirm both entries are visually hidden after this restart and can
+  still be presented normally from the Shelf.
+
 ### WR-075 — Exclude externally hidden applications from active layout geometry
 
 - **Type:** Workspace visibility bug
@@ -1215,11 +1309,11 @@ smallest useful outcome and acceptance boundary.
   disappearance, and newer animation generations clear or restore the session safely. When an
   authoritative refresh replaces the exact Quick App window during a native tab switch, ownership
   follows only one newly admitted same-process window for that bundle; ambiguous replacements still
-  clear the session instead of guessing. Startup now claims one unambiguous configured Quick App
-  before initial workspace layout: a meaningfully visible window is presented immediately on its
-  current display, while an exact WindowRanger-owned window whose application remains hidden stays
-  hidden. Multiple matching
-  windows remain unclaimed.
+  clear the session instead of guessing. Startup now claims every configured Quick App with one
+  unambiguous eligible window before initial workspace layout and always begins that entry hidden;
+  launching WindowRanger never implicitly presents a Shelf entry merely because it was already
+  visible. Exact WindowRanger-owned hidden applications remain hidden, externally hidden
+  applications remain untouched, and multiple matching windows remain unclaimed.
 - **Diagnostic-backed bug:** On 2026-08-14, switching tabs in a presented Ghostty Quick App replaced
   window `1081:94` with `1081:95`. The successful AX snapshot evicted the old identity, cleared the
   Quick App session, and the normal background layout then tiled the replacement into the active

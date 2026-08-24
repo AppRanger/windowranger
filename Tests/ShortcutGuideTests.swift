@@ -155,10 +155,58 @@ final class ShortcutGuideTests: XCTestCase {
         let mixed = ShortcutGuidePresentationGroups(actions: actions)
         XCTAssertEqual(mixed.regularSecondaryActions, actions)
         XCTAssertTrue(mixed.clusteredDirectionalActions.isEmpty)
+        let mixedGroups = ShortcutGuideActionGroupBuilder.build(
+            family: .navigate,
+            actions: actions
+        )
+        XCTAssertEqual(mixedGroups.map(\.kind), [.supporting, .focusWindow, .reorderWindow])
+        XCTAssertEqual(mixedGroups.map(\.title), [nil, "Focus Window", "Reorder Window"])
+        XCTAssertEqual(mixedGroups[1].actions.map(\.title), ["Focus right"])
+        XCTAssertEqual(mixedGroups[2].actions.map(\.title), ["Reorder left"])
 
         let reorderOnly = ShortcutGuidePresentationGroups(actions: [actions[0], actions[2]])
         XCTAssertEqual(reorderOnly.regularSecondaryActions, [actions[2]])
         XCTAssertEqual(reorderOnly.clusteredDirectionalActions, [actions[0]])
+    }
+
+    func testNavigateGuideGroupsNameTheActionAndTarget() throws {
+        let content = try XCTUnwrap(ShortcutGuideContentBuilder.build(
+            family: .navigate,
+            workspaces: [WorkspaceDefinition(name: "1", key: "1")],
+            configuration: HotKeyConfiguration(),
+            runtimeIssues: []
+        ))
+
+        let groups = ShortcutGuideActionGroupBuilder.build(
+            family: content.family,
+            actions: content.secondaryActions
+        )
+
+        XCTAssertEqual(groups.map(\.kind), [.switchWorkspace, .supporting, .cycleWindows])
+        XCTAssertEqual(groups.map(\.title), ["Switch Workspace", nil, "Cycle Windows in Order"])
+        XCTAssertEqual(groups[0].actions.map(\.title), ["Previous Workspace", "Next Workspace", "Last Workspace"])
+        XCTAssertEqual(groups[1].actions.map(\.title), ["Commands", "Quick App"])
+        XCTAssertEqual(groups[2].actions.map(\.title), ["Previous", "Next"])
+    }
+
+    func testArrangeGuideGroupsNameTheActionAndTarget() throws {
+        let content = try XCTUnwrap(ShortcutGuideContentBuilder.build(
+            family: .arrange,
+            workspaces: [WorkspaceDefinition(name: "1", key: "1")],
+            configuration: HotKeyConfiguration(),
+            runtimeIssues: []
+        ))
+
+        let groups = ShortcutGuideActionGroupBuilder.build(
+            family: content.family,
+            actions: content.secondaryActions
+        )
+
+        XCTAssertEqual(groups.map(\.kind), [.arrangeWindow, .chooseLayout, .moveWorkspace])
+        XCTAssertEqual(groups.map(\.title), ["Arrange Window", "Choose Layout", "Move Workspace"])
+        XCTAssertEqual(groups[0].actions.map(\.title), ["Floating", "Smaller", "Larger"])
+        XCTAssertEqual(groups[1].actions.map(\.title), ["Accordion", "Tiled"])
+        XCTAssertEqual(groups[2].actions.map(\.title), ["Next Display"])
     }
 
     func testPreferredInteractionDisplayWinsOverPointerDisplay() {
@@ -276,23 +324,26 @@ final class ShortcutGuideTests: XCTestCase {
             )),
         ]
         for content in contents {
-            for scheme in [ColorScheme.light, .dark] {
-                let name = scheme == .light ? "light" : "dark"
-                let snapshotSize = ShortcutGuideSize.large.panelSize(for: content)
-                let view = ShortcutGuideView(
-                    content: content,
-                    size: .large,
-                    surfaceStyle: .snapshot
-                )
-                .frame(width: snapshotSize.width, height: snapshotSize.height)
-                .environment(\.colorScheme, scheme)
-                let renderer = ImageRenderer(content: view)
-                renderer.proposedSize = ProposedViewSize(snapshotSize)
-                renderer.scale = 2
-                let image = try XCTUnwrap(renderer.cgImage)
-                let data = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
-                try data.write(to: output.appendingPathComponent("windowranger-shortcut-guide-\(content.family.rawValue)-\(name).png"), options: .atomic)
-                XCTAssertGreaterThan(data.count, 10_000)
+            for size in ShortcutGuideSize.allCases {
+                for scheme in [ColorScheme.light, .dark] {
+                    let name = scheme == .light ? "light" : "dark"
+                    let snapshotSize = size.panelSize(for: content)
+                    let view = ShortcutGuideView(
+                        content: content,
+                        size: size,
+                        surfaceStyle: .snapshot
+                    )
+                    .frame(width: snapshotSize.width, height: snapshotSize.height)
+                    .environment(\.colorScheme, scheme)
+                    let renderer = ImageRenderer(content: view)
+                    renderer.proposedSize = ProposedViewSize(snapshotSize)
+                    renderer.scale = 2
+                    let image = try XCTUnwrap(renderer.cgImage)
+                    let data = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+                    let filename = "windowranger-shortcut-guide-\(content.family.rawValue)-\(size.rawValue)-\(name).png"
+                    try data.write(to: output.appendingPathComponent(filename), options: .atomic)
+                    XCTAssertGreaterThan(data.count, 10_000)
+                }
             }
         }
     }

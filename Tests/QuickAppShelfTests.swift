@@ -683,23 +683,25 @@ final class QuickAppShelfTests: XCTestCase {
         ))
     }
 
-    func testSelectedEntryRetainsExactLaunchAndAmbiguityBoundary() {
+    func testEveryShelfEntryRetainsExactStartupAndAmbiguityBoundary() {
         let candidates = [
             DropDownAppStartupCandidate(
                 key: WindowKey(processIdentifier: 1, windowIdentifier: 1),
                 bundleIdentifier: "com.example.one",
                 isMeaningfullyVisible: false,
-                displayIdentifier: nil,
                 wasHiddenByWindowRanger: false
             ),
             DropDownAppStartupCandidate(
                 key: WindowKey(processIdentifier: 2, windowIdentifier: 2),
                 bundleIdentifier: "com.example.two",
                 isMeaningfullyVisible: true,
-                displayIdentifier: "main",
                 wasHiddenByWindowRanger: false
             ),
         ]
+        XCTAssertEqual(
+            DropDownAppStartupPolicy.selection(bundleIdentifier: "com.example.one", candidates: candidates)?.windowKey,
+            WindowKey(processIdentifier: 1, windowIdentifier: 1)
+        )
         XCTAssertEqual(
             DropDownAppStartupPolicy.selection(bundleIdentifier: "com.example.two", candidates: candidates)?.windowKey,
             WindowKey(processIdentifier: 2, windowIdentifier: 2)

@@ -525,20 +525,18 @@ struct DropDownAppStartupCandidate {
     let key: WindowKey
     let bundleIdentifier: String?
     let isMeaningfullyVisible: Bool
-    let displayIdentifier: String?
     let wasHiddenByWindowRanger: Bool
 }
 
 struct DropDownAppStartupSelection: Equatable {
     let windowKey: WindowKey
-    let isPresented: Bool
-    let displayIdentifier: String?
+    let wasMeaningfullyVisible: Bool
     let wasHiddenByWindowRanger: Bool
 }
 
-/// Startup has no exact Quick App session to restore. It may claim a configured application only
-/// when one eligible window is unambiguous; current on-screen visibility decides whether that local
-/// session begins presented or hidden, while exact persisted application-hide ownership remains hidden.
+/// Startup claims each configured Quick App only when one eligible window is unambiguous. A claimed
+/// entry always begins hidden; launching WindowRanger must never present a Shelf app merely because
+/// that application was visible before startup.
 enum DropDownAppStartupPolicy {
     static func selection(
         bundleIdentifier: String,
@@ -550,9 +548,7 @@ enum DropDownAppStartupPolicy {
         guard matching.count == 1, let candidate = matching.first else { return nil }
         return DropDownAppStartupSelection(
             windowKey: candidate.key,
-            isPresented: candidate.isMeaningfullyVisible && !candidate.wasHiddenByWindowRanger,
-            displayIdentifier: candidate.isMeaningfullyVisible && !candidate.wasHiddenByWindowRanger
-                ? candidate.displayIdentifier : nil,
+            wasMeaningfullyVisible: candidate.isMeaningfullyVisible,
             wasHiddenByWindowRanger: candidate.wasHiddenByWindowRanger
         )
     }
@@ -9274,12 +9270,6 @@ final class WorkspaceEngine {
                 performAXWrites: performAXWrites,
                 correlationID: correlationID
             )
-            if performAXWrites, dropDownAppSession?.isPresented == true {
-                reconcilePresentedQuickAppGroup(
-                    correlationID: correlationID,
-                    focusSelected: false
-                )
-            }
         }
 
         let focusedSnapshot = observeFocus ? focusedWindowSnapshot() : nil
@@ -11928,40 +11918,14 @@ final class WorkspaceEngine {
         let persistedSessions = pendingRestoredDropDownAppSessions
         defer { pendingRestoredDropDownAppSessions.removeAll() }
 
-        // Recover every exact hidden shelf owner before selecting the one entry that may be
-        // presented. These sessions remain excluded from ordinary admission and can be reused
-        // without guessing if the user cycles back to them.
-        for configuration in quickAppConfigurations
-        where configuration.bundleIdentifier.caseInsensitiveCompare(
-            dropDownAppConfiguration?.bundleIdentifier ?? ""
-        ) != .orderedSame {
+        // Every unambiguous configured entry begins hidden and outside ordinary layout. Persisted
+        // ownership can recover an already hidden application; externally hidden applications and
+        // ambiguous same-bundle window sets remain untouched.
+        for configuration in quickAppConfigurations {
             let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
-            guard let persisted = persistedSessions[bundleKey],
-                  let target = windows[persisted.windowKey],
-                  target.bundleIdentifier?.caseInsensitiveCompare(configuration.bundleIdentifier) == .orderedSame,
-                  isDropDownApplicationHidden(
-                      processIdentifier: target.processIdentifier,
-                      bundleIdentifier: configuration.bundleIdentifier
-                  ) == true
-            else { continue }
-            quickAppSessions[bundleKey] = DropDownAppSession(
-                windowKey: target.key,
-                bundleIdentifier: configuration.bundleIdentifier,
-                direction: configuration.direction,
-                isAnimationEnabled: configuration.isAnimationEnabled,
-                isPresented: false,
-                isApplicationHiddenByWindowRanger: true,
-                displayIdentifier: persisted.displayIdentifier,
-                previousFocusKey: nil
-            )
-        }
-
-        let persistedHiddenSession = dropDownAppConfiguration.map {
-            persistedSessions[Self.normalizedBundleIdentifier($0.bundleIdentifier)]
-        } ?? nil
-        guard dropDownAppSession == nil,
-              let configuration = dropDownAppConfiguration,
-              let selection = DropDownAppStartupPolicy.selection(
+            let persistedHiddenSession = persistedSessions[bundleKey]
+            guard quickAppSessions[bundleKey] == nil,
+                  let selection = DropDownAppStartupPolicy.selection(
                 bundleIdentifier: configuration.bundleIdentifier,
                 candidates: windows.compactMap { key, tracked in
                     let applicationHidden = isDropDownApplicationHidden(
@@ -11987,74 +11951,57 @@ final class WorkspaceEngine {
                         isMeaningfullyVisible: observedFrame.map {
                             Self.isMeaningfullyVisible($0, displays: displays)
                         } == true,
-                        displayIdentifier: observedFrame.flatMap {
-                            Self.displayPlacement(for: $0, displays: displays)?.displayIdentifier
-                        },
                         wasHiddenByWindowRanger: wasHiddenByWindowRanger
                     )
                 }
               ),
               let target = windows[selection.windowKey]
-        else { return }
+            else { continue }
 
-        let display = selection.displayIdentifier.flatMap { identifier in
-            displays.first { $0.identifier == identifier }
-        } ?? (selection.isPresented ? dropDownTargetDisplay(displays: displays) : nil)
-        dropDownAnimationGeneration &+= 1
-        dropDownAppSession = DropDownAppSession(
-            windowKey: target.key,
-            bundleIdentifier: configuration.bundleIdentifier,
-            direction: configuration.direction,
-            isAnimationEnabled: configuration.isAnimationEnabled,
-            isPresented: selection.isPresented,
-            isApplicationHiddenByWindowRanger: selection.wasHiddenByWindowRanger,
-            displayIdentifier: display?.identifier,
-            previousFocusKey: nil
-        )
+            dropDownAnimationGeneration &+= 1
+            var session = DropDownAppSession(
+                windowKey: target.key,
+                bundleIdentifier: configuration.bundleIdentifier,
+                direction: configuration.direction,
+                isAnimationEnabled: configuration.isAnimationEnabled,
+                isPresented: false,
+                isApplicationHiddenByWindowRanger: selection.wasHiddenByWindowRanger,
+                displayIdentifier: persistedHiddenSession?.displayIdentifier,
+                previousFocusKey: nil
+            )
 
-        var geometryWriteSucceeded: Bool?
-        if performAXWrites {
-            if selection.isPresented, let display {
-                let presented = DropDownAppGeometry.presentedFrame(
-                    in: dropDownAppPresentationBounds(for: display),
-                    sizeFraction: configuration.heightFraction,
-                    direction: configuration.direction
-                )
-                geometryWriteSucceeded = setDropDownAppFrame(presented, target: target)
-            } else {
-                geometryWriteSucceeded = requestDropDownApplicationHidden(
+            var hideRequestDispatched: Bool?
+            if performAXWrites, !selection.wasHiddenByWindowRanger {
+                hideRequestDispatched = requestDropDownApplicationHidden(
                     true,
                     processIdentifier: target.processIdentifier,
                     bundleIdentifier: configuration.bundleIdentifier
                 )
-                if var session = dropDownAppSession {
-                    session.isApplicationHiddenByWindowRanger = geometryWriteSucceeded == true
-                    dropDownAppSession = session
-                }
+                session.isApplicationHiddenByWindowRanger = hideRequestDispatched == true
             }
-        }
+            quickAppSessions[bundleKey] = session
 
-        diagnostics.log(
-            category: "drop-down-app",
-            event: "startup-session-prepared",
-            correlation: correlationID,
-            fields: [
-                "window": Self.diagnosticWindowKey(target.key),
-                "bundle": configuration.bundleIdentifier,
-                "presented": String(selection.isPresented),
-                "display": display?.identifier ?? "none",
-                "geometry-write": geometryWriteSucceeded.map(String.init) ?? "not-requested",
-                "hidden-state": dropDownAppSession?.isPresented == true
-                    ? "visible"
-                    : dropDownAppSession?.isApplicationHiddenByWindowRanger == true
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "startup-session-prepared",
+                correlation: correlationID,
+                fields: [
+                    "window": Self.diagnosticWindowKey(target.key),
+                    "bundle": configuration.bundleIdentifier,
+                    "presented": "false",
+                    "pre-launch-visible": String(selection.wasMeaningfullyVisible),
+                    "display": session.displayIdentifier ?? "none",
+                    "hide-request": hideRequestDispatched.map(String.init) ?? "not-requested",
+                    "hidden-state": session.isApplicationHiddenByWindowRanger
                         ? "application-hidden" : "unverified",
-                "application-hidden-observed": isDropDownApplicationHidden(
-                    processIdentifier: target.processIdentifier,
-                    bundleIdentifier: configuration.bundleIdentifier
-                )
-                    .map(String.init) ?? "unavailable",
-            ]
-        )
+                    "application-hidden-observed": isDropDownApplicationHidden(
+                        processIdentifier: target.processIdentifier,
+                        bundleIdentifier: configuration.bundleIdentifier
+                    )
+                        .map(String.init) ?? "unavailable",
+                ]
+            )
+        }
     }
 
     @discardableResult
