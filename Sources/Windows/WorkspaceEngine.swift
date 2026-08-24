@@ -169,7 +169,7 @@ enum StableLayoutSlotPolicy {
         wasTracked: Bool,
         applicationEnumerationSucceeded: Bool,
         windowWasEnumerated: Bool,
-        disposition: WindowAdmissionDisposition?,
+        isCurrentlyIncludedInLayout: Bool,
         hasReadableFrame: Bool
     ) -> StableLayoutSlotRetentionReason? {
         guard wasTracked else { return nil }
@@ -177,7 +177,7 @@ enum StableLayoutSlotPolicy {
             return .applicationEnumerationUnavailable
         }
         guard windowWasEnumerated,
-              disposition?.admitsNewWindow == true,
+              isCurrentlyIncludedInLayout,
               !hasReadableFrame
         else { return nil }
         return .frameUnavailable
@@ -8903,11 +8903,16 @@ final class WorkspaceEngine {
                 }
                 if let tracked = windows[key],
                    isManagedLayoutParticipant(tracked),
+                   Self.shouldIncludeInLayout(
+                       layoutOverride: tracked.layoutOverride,
+                       admissionDecision: admissionDecision,
+                       rule: resolvedRule(for: tracked.bundleIdentifier)
+                   ),
                    let reason = StableLayoutSlotPolicy.retentionReason(
                        wasTracked: true,
                        applicationEnumerationSucceeded: true,
                        windowWasEnumerated: true,
-                       disposition: admissionDecision.disposition,
+                       isCurrentlyIncludedInLayout: true,
                        hasReadableFrame: observedFrame != nil
                    ) {
                     retainedLayoutSlotReasons[key] = reason
@@ -9143,7 +9148,7 @@ final class WorkspaceEngine {
                    wasTracked: true,
                    applicationEnumerationSucceeded: false,
                    windowWasEnumerated: false,
-                   disposition: tracked.admissionDecision.disposition,
+                   isCurrentlyIncludedInLayout: true,
                    hasReadableFrame: false
                ) {
                 retainedLayoutSlotReasons[key] = reason

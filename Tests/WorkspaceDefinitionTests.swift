@@ -130,7 +130,7 @@ final class WorkspaceDefinitionTests: XCTestCase {
                 wasTracked: true,
                 applicationEnumerationSucceeded: false,
                 windowWasEnumerated: false,
-                disposition: .managedNormal,
+                isCurrentlyIncludedInLayout: true,
                 hasReadableFrame: false
             ),
             .applicationEnumerationUnavailable
@@ -140,36 +140,60 @@ final class WorkspaceDefinitionTests: XCTestCase {
                 wasTracked: true,
                 applicationEnumerationSucceeded: true,
                 windowWasEnumerated: true,
-                disposition: .managedNormal,
+                isCurrentlyIncludedInLayout: true,
                 hasReadableFrame: false
             ),
             .frameUnavailable
         )
 
-        for disposition in [
-            WindowAdmissionDisposition.temporarilyIneligible,
-            .ignoredTransientPopup,
-        ] {
-            XCTAssertNil(StableLayoutSlotPolicy.retentionReason(
-                wasTracked: true,
-                applicationEnumerationSucceeded: true,
-                windowWasEnumerated: true,
-                disposition: disposition,
-                hasReadableFrame: false
-            ))
-        }
+        XCTAssertNil(StableLayoutSlotPolicy.retentionReason(
+            wasTracked: true,
+            applicationEnumerationSucceeded: true,
+            windowWasEnumerated: true,
+            isCurrentlyIncludedInLayout: false,
+            hasReadableFrame: false
+        ))
         XCTAssertNil(StableLayoutSlotPolicy.retentionReason(
             wasTracked: true,
             applicationEnumerationSucceeded: true,
             windowWasEnumerated: false,
-            disposition: .managedNormal,
+            isCurrentlyIncludedInLayout: true,
             hasReadableFrame: false
         ))
         XCTAssertNil(StableLayoutSlotPolicy.retentionReason(
             wasTracked: false,
             applicationEnumerationSucceeded: false,
             windowWasEnumerated: false,
-            disposition: .managedNormal,
+            isCurrentlyIncludedInLayout: true,
+            hasReadableFrame: false
+        ))
+    }
+
+    func testStableLayoutSlotPolicyReleasesUnreadableWindowReclassifiedAsFloatingDialog() {
+        let previousDecision = WorkspaceEngine.layoutDecision(
+            layoutOverride: .automatic,
+            admissionDecision: WindowAdmissionDecision(
+                disposition: .managedNormal,
+                reason: .normalWindow
+            ),
+            rule: .none
+        )
+        let currentDecision = WorkspaceEngine.layoutDecision(
+            layoutOverride: .automatic,
+            admissionDecision: WindowAdmissionDecision(
+                disposition: .managedDialog,
+                reason: .nativeFilePanelIdentifier
+            ),
+            rule: .none
+        )
+
+        XCTAssertTrue(previousDecision.includesInLayout)
+        XCTAssertFalse(currentDecision.includesInLayout)
+        XCTAssertNil(StableLayoutSlotPolicy.retentionReason(
+            wasTracked: true,
+            applicationEnumerationSucceeded: true,
+            windowWasEnumerated: true,
+            isCurrentlyIncludedInLayout: currentDecision.includesInLayout,
             hasReadableFrame: false
         ))
     }
