@@ -153,7 +153,50 @@ struct WindowRefreshReport: Equatable, Sendable {
     let successfullyEnumeratedProcessIdentifiers: Set<pid_t>
     let writeEligibleWindowKeys: Set<WindowKey>
     let deferredWindowKeys: Set<WindowKey>
+    let retainedLayoutSlotWindowKeys: Set<WindowKey>
     let managedWindowCount: Int
+}
+
+enum StableLayoutSlotRetentionReason: String, Equatable, Sendable {
+    case applicationEnumerationUnavailable = "application-enumeration-unavailable"
+    case frameUnavailable = "frame-unavailable"
+}
+
+/// Layout membership and AX write eligibility deliberately differ while an existing participant
+/// is temporarily unreadable. Authoritative lifecycle states still remove it immediately.
+enum StableLayoutSlotPolicy {
+    static func retentionReason(
+        wasTracked: Bool,
+        applicationEnumerationSucceeded: Bool,
+        windowWasEnumerated: Bool,
+        disposition: WindowAdmissionDisposition?,
+        hasReadableFrame: Bool
+    ) -> StableLayoutSlotRetentionReason? {
+        guard wasTracked else { return nil }
+        guard applicationEnumerationSucceeded else {
+            return .applicationEnumerationUnavailable
+        }
+        guard windowWasEnumerated,
+              disposition?.admitsNewWindow == true,
+              !hasReadableFrame
+        else { return nil }
+        return .frameUnavailable
+    }
+
+    static func isAvailableForLayout(
+        isWriteDeferred: Bool,
+        retainsLayoutSlot: Bool,
+        isExplicitlyEligible: Bool = true
+    ) -> Bool {
+        isExplicitlyEligible && (!isWriteDeferred || retainsLayoutSlot)
+    }
+
+    static func transitions<Key: Hashable>(
+        previous: Set<Key>,
+        current: Set<Key>
+    ) -> (entered: Set<Key>, released: Set<Key>) {
+        (current.subtracting(previous), previous.subtracting(current))
+    }
 }
 
 struct FullscreenObservationResolution: Equatable, Sendable {
@@ -1616,6 +1659,7 @@ final class WorkspaceEngine {
     private var lastBackgroundLayoutSignature: String?
     private var lastSolvedTiledFrames: [WindowKey: WindowFrame] = [:]
     private var temporarilyDeferredWindowKeys = Set<WindowKey>()
+    private var retainedLayoutSlotWindowKeys = Set<WindowKey>()
     private var fullscreenSessions: [WindowKey: FullscreenWindowSession] = [:]
     private var fullscreenAuthoritativeFalseCounts: [WindowKey: Int] = [:]
     private var foregroundFullscreenGameSessionKey: WindowKey?
@@ -6736,6 +6780,11 @@ final class WorkspaceEngine {
             guard !isDropDownAppWindow(tracked.key),
                   !isExcludedFromWorkspaceParticipation(tracked),
                   tracked.workspaceID == workspaceID,
+                  StableLayoutSlotPolicy.isAvailableForLayout(
+                      isWriteDeferred: temporarilyDeferredWindowKeys.contains(tracked.key),
+                      retainsLayoutSlot: retainedLayoutSlotWindowKeys.contains(tracked.key),
+                      isExplicitlyEligible: fullscreenSessions[tracked.key] == nil
+                  ),
                   Self.shouldIncludeInLayout(
                       layoutOverride: tracked.layoutOverride,
                       admissionDecision: tracked.admissionDecision,
@@ -8640,6 +8689,7 @@ final class WorkspaceEngine {
         lastObservedFocusedWindow = nil
         lastDiagnosticFocusedWindow = nil
         temporarilyDeferredWindowKeys.removeAll()
+        retainedLayoutSlotWindowKeys.removeAll()
         fullscreenSessions.removeAll()
         fullscreenAuthoritativeFalseCounts.removeAll()
         foregroundFullscreenGameSessionKey = nil
@@ -8674,6 +8724,10 @@ final class WorkspaceEngine {
         if wakeReconciliationState.isSleeping {
             let deferredWindowKeys = Set(windows.keys)
             temporarilyDeferredWindowKeys = deferredWindowKeys
+            let retained = Set(windows.values.compactMap { tracked in
+                isManagedLayoutParticipant(tracked) ? tracked.key : nil
+            })
+            retainedLayoutSlotWindowKeys = retained
             return WindowRefreshReport(
                 displays: displays,
                 topologySignature: topologySignature,
@@ -8681,6 +8735,7 @@ final class WorkspaceEngine {
                 successfullyEnumeratedProcessIdentifiers: [],
                 writeEligibleWindowKeys: [],
                 deferredWindowKeys: deferredWindowKeys,
+                retainedLayoutSlotWindowKeys: retained,
                 managedWindowCount: windows.count
             )
         }
@@ -8689,7 +8744,11 @@ final class WorkspaceEngine {
         lastDisplays = displays
         guard AXIsProcessTrusted() else {
             let required = Set(windows.keys.map(\.processIdentifier))
+            let retained = Set(windows.values.compactMap { tracked in
+                isManagedLayoutParticipant(tracked) ? tracked.key : nil
+            })
             temporarilyDeferredWindowKeys = Set(windows.keys)
+            retainedLayoutSlotWindowKeys = retained
             return WindowRefreshReport(
                 displays: displays,
                 topologySignature: topologySignature,
@@ -8697,6 +8756,7 @@ final class WorkspaceEngine {
                 successfullyEnumeratedProcessIdentifiers: [],
                 writeEligibleWindowKeys: [],
                 deferredWindowKeys: Set(windows.keys),
+                retainedLayoutSlotWindowKeys: retained,
                 managedWindowCount: windows.count
             )
         }
@@ -8726,6 +8786,7 @@ final class WorkspaceEngine {
         var enumeratedWindowKeys = Set<WindowKey>()
         var writeEligibleWindowKeys = Set<WindowKey>()
         var deferredWindowKeys = Set<WindowKey>()
+        var retainedLayoutSlotReasons: [WindowKey: StableLayoutSlotRetentionReason] = [:]
         var observedFrames: [WindowKey: WindowFrame] = [:]
         var evictedIgnoredManagedState = false
 
@@ -8825,6 +8886,17 @@ final class WorkspaceEngine {
                 let observedFrame = AccessibilityWindow.frame(of: element)
                 if let observedFrame {
                     observedFrames[key] = observedFrame
+                }
+                if let tracked = windows[key],
+                   isManagedLayoutParticipant(tracked),
+                   let reason = StableLayoutSlotPolicy.retentionReason(
+                       wasTracked: true,
+                       applicationEnumerationSucceeded: true,
+                       windowWasEnumerated: true,
+                       disposition: admissionDecision.disposition,
+                       hasReadableFrame: observedFrame != nil
+                   ) {
+                    retainedLayoutSlotReasons[key] = reason
                 }
                 reconcileFullscreenSession(
                     key: key,
@@ -9051,6 +9123,17 @@ final class WorkspaceEngine {
             .subtracting(successfullyEnumeratedProcesses)
         for key in windows.keys where deferredProcessIdentifiers.contains(key.processIdentifier) {
             deferredWindowKeys.insert(key)
+            if let tracked = windows[key],
+               isManagedLayoutParticipant(tracked),
+               let reason = StableLayoutSlotPolicy.retentionReason(
+                   wasTracked: true,
+                   applicationEnumerationSucceeded: false,
+                   windowWasEnumerated: false,
+                   disposition: tracked.admissionDecision.disposition,
+                   hasReadableFrame: false
+               ) {
+                retainedLayoutSlotReasons[key] = reason
+            }
         }
 
         let lifecycleTransitionActive = wakeReconciliationState.isSleeping ||
@@ -9261,7 +9344,11 @@ final class WorkspaceEngine {
         }
         writeEligibleWindowKeys = writeEligibleWindowKeys.intersection(windows.keys)
         deferredWindowKeys = deferredWindowKeys.intersection(windows.keys)
+        retainedLayoutSlotReasons = retainedLayoutSlotReasons.filter {
+            windows[$0.key] != nil && deferredWindowKeys.contains($0.key)
+        }
         temporarilyDeferredWindowKeys = deferredWindowKeys
+        updateRetainedLayoutSlots(retainedLayoutSlotReasons, correlationID: correlationID)
 
         if isStartup {
             prepareDropDownAppSessionForStartup(
@@ -9365,6 +9452,7 @@ final class WorkspaceEngine {
             successfullyEnumeratedProcessIdentifiers: successfullyEnumeratedProcesses,
             writeEligibleWindowKeys: writeEligibleWindowKeys,
             deferredWindowKeys: deferredWindowKeys,
+            retainedLayoutSlotWindowKeys: retainedLayoutSlotWindowKeys,
             managedWindowCount: windows.count
         )
     }
@@ -9645,6 +9733,54 @@ final class WorkspaceEngine {
                 layerSource: layerSource
             )
         )
+    }
+
+    private func updateRetainedLayoutSlots(
+        _ reasons: [WindowKey: StableLayoutSlotRetentionReason],
+        correlationID: String?
+    ) {
+        let next = Set(reasons.keys)
+        let transitions = StableLayoutSlotPolicy.transitions(
+            previous: retainedLayoutSlotWindowKeys,
+            current: next
+        )
+        let sortKeys: (WindowKey, WindowKey) -> Bool = { lhs, rhs in
+            if lhs.processIdentifier != rhs.processIdentifier {
+                return lhs.processIdentifier < rhs.processIdentifier
+            }
+            return lhs.windowIdentifier < rhs.windowIdentifier
+        }
+        for key in transitions.entered.sorted(by: sortKeys) {
+            guard let tracked = windows[key], let reason = reasons[key] else { continue }
+            diagnostics.log(
+                category: "window-lifecycle",
+                event: "layout-slot-retained",
+                correlation: correlationID,
+                fields: [
+                    "window": Self.diagnosticWindowKey(key),
+                    "bundle": tracked.bundleIdentifier ?? "unknown",
+                    "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                    "layout": workspaceLayout(for: tracked.workspaceID).rawValue,
+                    "reason": reason.rawValue,
+                    "frame-write": "false",
+                ]
+            )
+        }
+        for key in transitions.released.sorted(by: sortKeys) {
+            guard let tracked = windows[key] else { continue }
+            diagnostics.log(
+                category: "window-lifecycle",
+                event: "layout-slot-released",
+                correlation: correlationID,
+                fields: [
+                    "window": Self.diagnosticWindowKey(key),
+                    "bundle": tracked.bundleIdentifier ?? "unknown",
+                    "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                    "reason": "authoritative-state-observed",
+                ]
+            )
+        }
+        retainedLayoutSlotWindowKeys = next
     }
 
     @discardableResult
@@ -12324,15 +12460,16 @@ final class WorkspaceEngine {
         var positionChanges: [PositionChange] = []
         var frameChanges: [FrameChange] = []
         var expectedLayoutFrames: [WindowKey: WindowFrame] = [:]
-        let writeEligibleWindows = trackedWindows.filter {
+        let layoutAvailableWindows = trackedWindows.filter {
             !isDropDownAppWindow($0.key) &&
             !isExcludedFromWorkspaceParticipation($0) &&
-            FullscreenSessionPolicy.allowsGeometryWrite(
-                hasFullscreenSession: fullscreenSessions[$0.key] != nil,
-                isTemporarilyDeferred: temporarilyDeferredWindowKeys.contains($0.key)
+            StableLayoutSlotPolicy.isAvailableForLayout(
+                isWriteDeferred: temporarilyDeferredWindowKeys.contains($0.key),
+                retainsLayoutSlot: retainedLayoutSlotWindowKeys.contains($0.key),
+                isExplicitlyEligible: fullscreenSessions[$0.key] == nil
             )
         }
-        let windowsByWorkspace = Dictionary(grouping: Array(writeEligibleWindows), by: \.workspaceID)
+        let windowsByWorkspace = Dictionary(grouping: Array(layoutAvailableWindows), by: \.workspaceID)
 
         for (workspaceID, workspaceWindows) in windowsByWorkspace {
             let layout = isWorkspaceActive(workspaceID) ? workspaceLayout(for: workspaceID) : .none
@@ -12509,6 +12646,16 @@ final class WorkspaceEngine {
 
     private func workspaceLayout(for workspaceID: UUID) -> WorkspaceLayout {
         workspaces.first(where: { $0.id == workspaceID })?.layout ?? .none
+    }
+
+    private func isManagedLayoutParticipant(_ tracked: TrackedWindow) -> Bool {
+        workspaceLayout(for: tracked.workspaceID) != .none &&
+            !isExcludedFromWorkspaceParticipation(tracked) &&
+            Self.shouldIncludeInLayout(
+                layoutOverride: tracked.layoutOverride,
+                admissionDecision: tracked.admissionDecision,
+                rule: resolvedRule(for: tracked.bundleIdentifier)
+            )
     }
 
     private func managedLayoutBounds(_ bounds: CGRect) -> CGRect {

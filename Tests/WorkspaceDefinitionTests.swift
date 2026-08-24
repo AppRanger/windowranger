@@ -124,6 +124,97 @@ final class WorkspaceDefinitionTests: XCTestCase {
         ).isEmpty)
     }
 
+    func testStableLayoutSlotPolicyRetainsOnlyTrackedNonAuthoritativeFailures() {
+        XCTAssertEqual(
+            StableLayoutSlotPolicy.retentionReason(
+                wasTracked: true,
+                applicationEnumerationSucceeded: false,
+                windowWasEnumerated: false,
+                disposition: .managedNormal,
+                hasReadableFrame: false
+            ),
+            .applicationEnumerationUnavailable
+        )
+        XCTAssertEqual(
+            StableLayoutSlotPolicy.retentionReason(
+                wasTracked: true,
+                applicationEnumerationSucceeded: true,
+                windowWasEnumerated: true,
+                disposition: .managedNormal,
+                hasReadableFrame: false
+            ),
+            .frameUnavailable
+        )
+
+        for disposition in [
+            WindowAdmissionDisposition.temporarilyIneligible,
+            .ignoredTransientPopup,
+        ] {
+            XCTAssertNil(StableLayoutSlotPolicy.retentionReason(
+                wasTracked: true,
+                applicationEnumerationSucceeded: true,
+                windowWasEnumerated: true,
+                disposition: disposition,
+                hasReadableFrame: false
+            ))
+        }
+        XCTAssertNil(StableLayoutSlotPolicy.retentionReason(
+            wasTracked: true,
+            applicationEnumerationSucceeded: true,
+            windowWasEnumerated: false,
+            disposition: .managedNormal,
+            hasReadableFrame: false
+        ))
+        XCTAssertNil(StableLayoutSlotPolicy.retentionReason(
+            wasTracked: false,
+            applicationEnumerationSucceeded: false,
+            windowWasEnumerated: false,
+            disposition: .managedNormal,
+            hasReadableFrame: false
+        ))
+    }
+
+    func testRetainedLayoutSlotPreservesParticipantButNotGeometryEligibility() {
+        XCTAssertTrue(StableLayoutSlotPolicy.isAvailableForLayout(
+            isWriteDeferred: true,
+            retainsLayoutSlot: true
+        ))
+        XCTAssertFalse(StableLayoutSlotPolicy.isAvailableForLayout(
+            isWriteDeferred: true,
+            retainsLayoutSlot: false
+        ))
+        XCTAssertFalse(StableLayoutSlotPolicy.isAvailableForLayout(
+            isWriteDeferred: true,
+            retainsLayoutSlot: true,
+            isExplicitlyEligible: false
+        ))
+
+        let participants = [false, false, true].filter { isDeferred in
+            StableLayoutSlotPolicy.isAvailableForLayout(
+                isWriteDeferred: isDeferred,
+                retainsLayoutSlot: isDeferred
+            )
+        }
+        XCTAssertEqual(participants.count, 3)
+        XCTAssertEqual(
+            WorkspaceEngine.layoutFrames(
+                .accordion,
+                count: participants.count,
+                in: CGRect(x: 0, y: 0, width: 1_200, height: 800),
+                accordionFocusedIndex: 0
+            ).count,
+            3
+        )
+
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        XCTAssertEqual(StableLayoutSlotPolicy.transitions(previous: [], current: [key]).entered, [key])
+        XCTAssertEqual(StableLayoutSlotPolicy.transitions(previous: [key], current: []).released, [key])
+        XCTAssertFalse(FullscreenSessionPolicy.allowsGeometryWrite(
+            hasFullscreenSession: false,
+            isTemporarilyDeferred: true
+        ))
+    }
+
     func testFreeformDisplayNamePreservesMigrationSafeRawValue() {
         XCTAssertEqual(WorkspaceLayout.none.title, "Freeform")
         XCTAssertEqual(WorkspaceLayout.none.rawValue, "none")

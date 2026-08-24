@@ -59,6 +59,13 @@ position-only AX writes where possible. Their recoverable frames are retained so
 graceful quit, startup recovery and explicit reset can return them to meaningful visible geometry.
 Exact window identities are trusted only inside the same WindowServer session.
 
+Layout membership and Accessibility write eligibility are separate during a transient observation
+gap. A failed application-window enumeration or unreadable frame for an existing Tiled or Accordion
+participant preserves its last stable slot, so readable siblings are not reflowed around the gap;
+the unreadable window itself receives no geometry write. A successful enumeration absence, or an
+authoritative minimized, fullscreen, ignored, floating, or layout-excluded state, releases the slot
+immediately.
+
 ## Window admission and precedence
 
 `AccessibilityWindow.admissionDecision` is the sole discovery boundary. It produces one of five

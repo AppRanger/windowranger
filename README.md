@@ -102,7 +102,10 @@ Window discovery treats a successful per-application Accessibility window enumer
 authoritative lifecycle snapshot for that application. A native tab/window identity absent from a
 successful snapshot is removed immediately from the registry, focus history, Tiled tree, and next
 persisted state, so closed or inactive tab identities cannot leave ghost layout slots. A failed or
-incomplete enumeration is not evidence that a window closed and retains prior state for recovery.
+incomplete enumeration is not evidence that a window closed. Existing Tiled and Accordion
+participants retain their stable layout slots while their geometry writes remain suppressed; an
+authoritative minimized, fullscreen, ignored, floating, or layout-excluded state still leaves the
+layout immediately.
 
 Default shortcuts:
 

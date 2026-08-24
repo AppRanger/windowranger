@@ -1627,6 +1627,28 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-081 — Retain stable layout slots across transient Accessibility read failures
+
+- **Type:** Layout stability bug
+- **Priority:** P1
+- **Status:** Automated implementation complete; signed-app and live-window validation remain.
+- **Requested:** 24 August 2026.
+- **Smallest useful outcome:** Preserve an existing Tiled or Accordion participant when its
+  application enumeration fails or its frame is temporarily unreadable, without writing geometry to
+  that participant or reflowing readable siblings around the observation gap.
+- **Acceptance:** Successful enumeration absence, and authoritative minimized, fullscreen, ignored,
+  floating, or App Rule layout-excluded states release the slot immediately. The change must preserve
+  current window-admission semantics and all geometry-write safety gates.
+- **Automated evidence:** Focused policy and layout coverage distinguishes non-authoritative read
+  failures from authoritative removal/ineligibility and proves a retained slot does not become
+  geometry-write eligible. On 24 August 2026, the focused `WorkspaceDefinitionTests` suite passed
+  118 tests and `./scripts/verify-local-ci.sh --quick` passed all 693 non-hosted tests with test
+  isolation intact.
+- **Remaining validation:** In a signed Debug candidate, exercise ordinary polling and transient
+  dialog activity with multi-window Tiled and Accordion workspaces. Confirm no sibling double reflow,
+  then confirm genuine close, minimize, fullscreen, floating, layout exclusion, workspace switching,
+  and wake still release or retain slots as specified.
+
 ### WR-061 — Quick App Shelf
 
 - **Type:** Feature / corrective overhaul
