@@ -171,6 +171,29 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-083 — Decide the fate of historical whole-application and floating-panel exclusions
+
+- **Type:** Product-policy recovery
+- **Status:** Needs decision; research only, not approved for implementation.
+- **Discovered:** 24 August 2026 while auditing all WindowRanger worktrees after the Beta 8 release.
+- **Historical state:** The dirty, uncommitted worktree
+  `/Users/chris/Developer/windowranger-wr046-stable-layout` predates current `develop`. Its retained
+  layout-slot implementation is superseded by WR-081 and includes the unreadable-dialog retention
+  bug corrected before Beta 8. Preserve it as historical WIP; do not merge that implementation.
+- **Unique proposals still present there:** An Application Rule that leaves an entire application
+  unmanaged, and a generic admission rule that ignores `AXFloatingWindow` and
+  `AXSystemFloatingWindow`, were never incorporated. The current product instead uses narrow,
+  evidence-backed admission and focused-window compatibility rules; a blanket exclusion could omit
+  legitimate windows from management.
+- **Decision boundary:** Decide independently whether a reversible whole-application unmanaged mode
+  is desirable and whether any native floating-panel subrole can be ignored without corroborating
+  metadata. If approved, redesign each proposal from current `develop` with new acceptance criteria,
+  tests, and live validation. Do not revive the stale worktree patch or its reused WR identifiers.
+- **Related stale worktree:** `/Users/chris/Developer/windowranger-wr042-game-input` is fully
+  superseded by the committed WR-047 passive-observation/dedicated-filter design and has no code to
+  recover. Neither historical worktree should be cleaned or removed without explicit maintainer
+  direction.
+
 ### WR-079 — Keep DesktopRanger-owned surfaces outside WindowRanger
 
 - **Type:** Window-admission compatibility and companion-app safety
