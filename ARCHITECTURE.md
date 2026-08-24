@@ -59,21 +59,73 @@ position-only AX writes where possible. Their recoverable frames are retained so
 graceful quit, startup recovery and explicit reset can return them to meaningful visible geometry.
 Exact window identities are trusted only inside the same WindowServer session.
 
+Layout membership and Accessibility write eligibility are separate during a transient observation
+gap. A failed application-window enumeration or unreadable frame for an existing Tiled or Accordion
+participant preserves its last stable slot, so readable siblings are not reflowed around the gap;
+the unreadable window itself receives no geometry write. A successful enumeration absence, or an
+authoritative minimized, fullscreen, ignored, floating, or layout-excluded state, releases the slot
+immediately.
+
 ## Window admission and precedence
 
-`AccessibilityWindow.admissionDecision` is the sole discovery boundary. It produces one of four
+`AccessibilityWindow.admissionDecision` is the sole discovery boundary. It produces one of five
 dispositions: normal managed window, managed dialog (automatically floating), temporarily
-ineligible, or ignored transient/popup. Ignored objects never enter membership, layout, persistence,
-focus cycling or recovery. The verified non-normal-layer Codex pet/panels are excluded here rather
-than patched out later.
+ineligible, ignored persistent companion surface, or ignored transient/popup. Ignored objects never
+enter membership, layout, persistence, focus cycling or recovery. The explicit companion
+disposition keeps cooperative long-lived surfaces distinct from transient UI; verified
+non-normal-layer Codex pet/panels remain excluded as transient objects rather than patched out later.
 
 Built-in compatibility profiles are versioned, declarative corrections for verified application
 surfaces. A profile matches a normalized bundle identifier plus only the role, subrole, layer,
-modal, control-presence, or move/resize evidence needed to distinguish that surface. It produces an
-ordinary admission disposition and records the matched profile identifier in diagnostics. Profiles
-must be backed by a privacy-safe fixture and must not encode a user's workspace assignment or layout
-preference. The bundled registry is intentionally local to the signed app; there is no remotely
-updated exception list.
+modal, control-presence, move/resize evidence, or exact host-owned Accessibility identifier needed
+to distinguish that surface. It produces an ordinary admission disposition and records the matched
+profile identifier in diagnostics. Profiles must be backed by a privacy-safe fixture and must not
+encode a user's workspace assignment or layout preference. The bundled registry is intentionally
+local to the signed app; there is no remotely updated exception list.
+
+The DesktopRanger companion contract is deliberately surface-specific and currently scoped only to
+the proven SurfaceLab identity. WindowRanger reads the AX identifier only for exact bundle ID
+`dev.appranger.DesktopRanger.SurfaceLab` and ignores only its exact
+`dev.appranger.desktopranger.surface.v1` marker. Untagged SurfaceLab manager windows remain eligible
+for ordinary admission. A future production bundle must be added only after its identity is defined
+and independently evidenced. The raw identifier is classifier input, not diagnostic output; logs
+and support snapshots expose only the privacy-safe reason and bundled profile identifier. If a
+previously confirmed marker is temporarily unreadable, WindowRanger keeps the surface ignored; a
+first unavailable read is temporarily ineligible until classification can be completed, while a
+confirmed absent identifier remains an ordinary manageable window. An ignored
+surface that was already tracked is removed from membership, pending restoration, layout, focus,
+full-screen, and transient interaction state through the existing no-frame-write eviction path. If
+it had entered Quick App state, WindowRanger discards that session and restores application
+visibility through a bounded confirmation path without writing the companion surface's frame. An
+unconfirmed unhide leaves a visibility-only recovery record with no window key or geometry; later
+polls retry it, while a newly acquired Quick App session supersedes the old recovery generation.
+The exact PID-and-bundle debt is persisted without window or frame data, retried at startup, and
+receives one final unhide request during an orderly WindowRanger shutdown.
+
+Generic admission performs one-time support reads, including move/resize capability, for an ordinary
+layer-0 standard window with a Close control. When position is authoritatively writable but size is
+authoritatively read-only, the window remains managed but is automatically floating. Visibility
+restoration can therefore return it with a position-only write while Tiled and Accordion solve only
+for windows that can actually accept their assigned frames. Missing, failed, or contradictory
+capability evidence remains managed conservatively and does not trigger this fallback. A completed
+negative probe is retained so the ordinary engine refresh does not repeat failed support reads.
+Proven fixed-size windows use position-only writes for visibility, display reconciliation, Quick App
+transitions, and quit recovery; neither an explicit per-window override nor another frame path can
+force a resize-first operation. If the one-time probe was inconclusive but an initial size write
+later rejects, the engine re-probes that exact candidate once, records the fixed-size decision, and
+immediately completes the requested position-only move and re-solves the affected visible layouts.
+Position or final-size failures do not promote a normal window into this safety classification.
+An otherwise closeless standard window on an unknown or normal layer receives a separate one-time
+dialog-control probe only when both its Full Screen and Close controls are authoritatively absent.
+Affirmative window-level Default and Cancel button relationships classify that surface as a managed
+dialog. AppKit file panels can declare those attributes while returning no relationship values, so
+the same one-time probe also reduces the window's Accessibility identifier to a privacy-safe boolean
+for the exact nonlocalized `open-panel` and `save-panel` identifiers. The raw identifier is neither
+retained nor logged, and the identifier cannot override a window that has ordinary Full Screen or
+Close controls. This covers native Open/Save panels without using localized titles, button labels,
+dimensions, bundle identifiers, child content, document URLs, or paths. Missing, failed, unrelated,
+or contradictory evidence remains conservatively normal. Proven standard-window dialogs are
+position-only and cannot be forced into a resize layout, preserving the application's chosen size.
 
 Effective layout participation follows this order:
 
@@ -81,23 +133,33 @@ Effective layout participation follows this order:
 2. generic admission classifies every unmatched window;
 3. ignored/transient or temporarily unsafe windows are untouched;
 4. a user App Rule that excludes layout remains authoritative for admitted windows;
-5. explicit per-window floating state controls otherwise eligible normal windows;
-6. high-confidence dialog classification automatically floats a dialog;
-7. remaining windows participate in the workspace's Freeform, Tiled or Accordion behavior.
+5. proven fixed-size or standard-window dialog surfaces remain position-only and outside layout;
+6. explicit per-window floating state controls otherwise eligible windows;
+7. other high-confidence dialog classification automatically floats a dialog;
+8. remaining windows participate in the workspace's Freeform, Tiled or Accordion behavior.
 
 Keep-on-all-workspaces rules affect visibility but do not grant a window permission to enter layout
 or focus scopes that it otherwise fails.
+An externally hidden regular application remains enumerated and tracked so its exact workspace,
+restore frame, lifecycle, and WindowServer identity are not confused with termination or an AX
+failure. Its ordinary windows are nevertheless excluded from active layout participants, focus
+candidates/history, and every geometry-write path until AppKit reports the application visible
+again. Hidden state participates in the background-layout signature so visible peers reflow on Hide
+and the retained windows rejoin normal visibility/layout handling on Unhide. Exact Quick App
+application-hide ownership remains governed by its separate session path.
 
 Debug admission evidence is deliberately richer than the active classifier. The cached snapshot
 distinguishes authoritative, unsupported, and unavailable modal, focused, main-window, window-control,
-position-settable, and size-settable observations so representative real-app fixtures can justify a
+Default/Cancel relationship, native-file-panel-identifier, position-settable, and size-settable observations so representative real-app fixtures can justify a
 later rule change. The regular engine poll retains cached support evidence rather than performing
 these extra queries every 0.75 seconds. The exceptions are a surface whose bundle and ordinary
 role/subrole/layer/control evidence already match a compatibility profile that explicitly requires
-support-only evidence, and a layer-0 standard window with a Close control but no Full Screen control
-whose move/resize capability evidence is not yet authoritative. Only those candidates are enriched
+support-only evidence, a layer-0 standard window with a Close control that has not completed its
+one-time move/resize capability probe, and a closeless normal/unknown-layer standard window that has
+not completed its one-time dialog-control probe. Only those candidates are enriched
 before classification. A movable standard candidate that authoritatively cannot resize floats as a
-managed dialog; unavailable or unsupported evidence leaves it conservatively managed as normal.
+managed dialog; unavailable or unsupported evidence leaves it conservatively managed as normal and
+is not retried by the poll.
 An explicit `AXDialog` observed on a known nonzero WindowServer layer is temporarily ineligible for
 admission instead of being placed while its transient layer metadata settles. If the same window
 later reports layer zero with corroborating controls, it enters as an automatically floating dialog;
@@ -292,10 +354,9 @@ watchdog checks eight times after a short launch delay, then fails with explicit
 change, shutdown, newer launch generation, missing installation, launch error, timeout, or multiple
 eligible windows never grants permission to guess a target.
 During startup reconciliation, the engine establishes ownership only for configured shelf entries
-before initial workspace visibility and layout. For each persisted entry, exactly one eligible
-matching window is claimed: its observed pre-layout
-frame determines whether the session begins presented on that display or is converted from a legacy
-off-screen state to application Hide. Crash-restart recovery may reclaim a hidden application only
+before initial workspace visibility and layout. Every configured entry with exactly one eligible
+matching window is claimed hidden, regardless of its pre-launch visibility; launching WindowRanger
+never implicitly presents a Shelf entry. Crash-restart recovery may reclaim a hidden application only
 when the WindowServer-bound marker matches the exact process/window identity and bundle and AppKit
 still reports that application hidden. An ambiguous set is left untouched by Quick App startup
 handling.
@@ -367,7 +428,9 @@ family refreshes both Carbon registration and passive observation. Incompatible 
 failures produce no misleading entries. Its panel never becomes key or main, never activates the
 app, follows the engine's resolved interaction display, and uses macOS 26 Liquid Glass with the
 system HUD material as the older-system fallback. The normal presentation remains one low, wide
-key map; unusually dense valid configurations add rows rather than clipping actions. Enablement,
+key map. Presentation-only groups label the action and its workspace, window, layout, or display
+target without maintaining a second command list; the spatial arrow caption is centred below its
+keys. Unusually dense valid configurations add rows rather than clipping actions. Enablement,
 Small/Medium/Large density and the nine screen anchors are local to one Mac. Shortcut recording,
 protected game sessions, sleep, inactive login sessions, display changes and termination stop the
 passive monitor and clear the panel so a missed modifier release cannot leave it visible.
@@ -394,7 +457,12 @@ command path and keeps the palette open; an observable presentation context adop
 layout token so repeated changes remain valid. A selection made after an inline layout change is
 revalidated against a fresh context; a placement command may adopt the settled placement token only
 when the exact window, workspace, layout, display topology, and profile identity are unchanged.
-Every genuinely different target still fails closed. Exact placement is revalidated and enqueued
+Every genuinely different target still fails closed. For an eligible app owning the captured focused
+window, the same context exposes its active profile's App Rule and App Shelf membership. The add
+commands carry the captured workspace and active-profile identity through dispatch, mutate only the
+active profile, and fail closed if profile selection, membership, or Shelf capacity changes before
+the MainActor write. An App Shelf conversion first proves capacity so it cannot discard an App Rule
+when all four Shelf entries are occupied. Exact placement is revalidated and enqueued
 while the palette still owns a preserved managed-window anchor; a transient nil AX focus during
 dismissal retains that anchor. The engine's serial queue commits placement before palette dismissal
 ends Shelf preservation or restores a Quick App Shelf window or fallback application. The command

@@ -42,14 +42,16 @@ Potential later consumers of the same registry include:
 - application and status menus;
 - the Command Palette and position-focused Placement Halo/Wheel;
 - App Intents and Shortcuts;
-- an optional `windowranger` command-line interface;
+- the planned versioned structured `windowranger` command-line interface;
 - an optional local automation URL scheme.
 
 The first increment resolves this as a distinct search-first presentation of the existing command
 architecture. The former broad wheel is now a position-only Placement Wheel, with the same actions
 available as an inline halo in the palette; both surfaces dispatch through the same typed command
-gateway. App Intents, CLI, and URL automation
-remain later consumers rather than part of this increment.
+gateway. The CLI is now an approved integration direction for DesktopRanger, while its exact schema,
+implementation item, and acceptance evidence remain later work; see
+[WindowRanger integration with DesktopRanger](desktop-ranger-integration.md). App Intents and URL
+automation also remain later consumers rather than part of this increment.
 
 ## 2. Quick App Shelf
 

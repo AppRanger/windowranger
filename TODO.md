@@ -171,6 +171,243 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-079 — Keep DesktopRanger-owned surfaces outside WindowRanger
+
+- **Type:** Window-admission compatibility and companion-app safety
+- **Priority:** P1
+- **Status:** Source implementation, complete automation, and one-display UTM coexistence pass;
+  supported physical-Mac validation remains.
+- **Requested:** 23 August 2026.
+- **User-observed context:** DesktopRanger's persistent desktop, overlay, ordinary drawing, Recovery,
+  and interaction-island surfaces can otherwise look like ordinary application windows to
+  WindowRanger and enter workspace membership, layout, focus, or recovery state.
+- **Smallest useful outcome:** Ignore only host-owned DesktopRanger surfaces carrying the exact
+  Accessibility identifier `dev.appranger.desktopranger.surface.v1` from exact bundle identifier
+  `dev.appranger.DesktopRanger.SurfaceLab`. Untagged SurfaceLab manager windows remain eligible for
+  ordinary management. Do not invent or pre-admit a future production bundle identifier.
+- **Ownership boundary:** DesktopRanger's Swift host owns the marker and plugins cannot create or
+  retag native windows. WindowRanger treats the exact bundle-plus-marker pair as a local,
+  versioned compatibility fact at central admission; it does not add a whole-application exclusion,
+  trust arbitrary third-party markers, or expose arbitrary AX identifiers in diagnostics.
+- **Acceptance:** The exact SurfaceLab bundle with the exact marker is ignored using a persistent
+  companion-surface disposition across representative roles, subroles, and WindowServer layers.
+  Missing markers, prefix/suffix/near matches, and the marker on another bundle stay conservatively
+  admitted. A newly matching surface already in
+  WindowRanger state is evicted from membership, pending restoration, layout, and focus history
+  without an AX frame write. Any matching Quick App session is discarded, its application is made
+  visible through a bounded confirmation path, and no recovery frame is written. An unconfirmed
+  unhide retains visibility-only recovery debt with no window or geometry capability; a new Quick
+  App session supersedes older retry generations. Exact PID-and-bundle debt survives a
+  WindowRanger restart and receives an orderly-shutdown unhide attempt. A transient AX
+  identifier failure never re-admits a previously confirmed surface and fails closed until a first
+  classification can be completed. Focused admission, state-eviction, and Quick App tests plus the
+  complete non-hosted suite pass. A
+  supported physical installed check must repeat the UTM-confirmed AX export and stability through
+  one WindowRanger workspace, layout, and focus cycle while an untagged DesktopRanger manager window
+  remains manageable.
+- **Current candidate evidence (24 August 2026):** After the explicit persistent-surface disposition,
+  SurfaceLab-only identity correction, and late-marker transition coverage, 151 focused admission,
+  eviction, and Quick App tests passed. `./scripts/verify-local-ci.sh --full` passed the complete
+  isolated 698-test suite with no failures, static analysis, unsigned universal Release build, and
+  Stable/Beta DMG smoke verification. In the macOS 26.6.2 build 25G83 UTM guest, the final diagnostic
+  candidate classified exact tagged SurfaceLab Recovery/drawing windows as
+  `ignored-companion-surface` while the unmarked normal manager probe from the same process remained
+  `managed-normal`. Desktop/Floating/Bounded, click-through, interaction-island, Pause All, and the
+  retained Ordinary close → Floating → Ordinary crash sequence passed visibly with both processes
+  alive and no current SurfaceLab crash report. Four native focus cycles targeted exactly Terminal,
+  Finder, System Settings, and the unmarked manager probe; tagged Recovery/drawing IDs never entered
+  the layout targets. The guest lane proves the exact AX contract and visible one-display
+  coexistence, not release signing, multi-display behaviour, or the supported physical-Mac matrix.
+### WR-078 — Label Shortcut Guide actions by target
+
+- **Type:** Shortcut discoverability improvement
+- **Priority:** P2
+- **Status:** Live validation — implemented, automated-test verified, native visual QA passed, and
+  the installed refinement was accepted at the current density; supported-size sweep pending.
+- **Requested:** 24 August 2026.
+- **User-observed context:** The guide labels made it hard for newer users to distinguish workspace
+  navigation from window navigation. “Previous” and “Next” did not say what would be cycled, while
+  arrow actions duplicated the visual weight of ordered window cycling without explaining their
+  spatial behavior. In the first installed labelled guide, the lower headings and actions were not
+  consistently centred within their sections, and the Space keycap left too little room around its
+  word.
+- **Smallest useful outcome:** Keep the existing **Navigate** and **Arrange** family names, then group
+  each visible command under a compact action-and-target heading. Centre “Focus by direction” or
+  “Reorder by direction” beneath the arrow pad; identify workspace switching, ordered window cycling,
+  focused-window arrangement, layout choice, and workspace display movement at a glance.
+- **Acceptance:** Both families preserve the conflict-checked configured action set, arbitrary
+  workspace keys, adaptive dense layouts, local size/position preferences, passive input/focus
+  behavior, and native Light/Dark materials. Focused grouping/layout tests, production offscreen
+  renders at supported densities, full non-hosted verification, and signed live modifier-held use
+  are required.
+- **Implemented:** Navigate and Arrange retain their existing family names and configured bindings.
+  Workspace destinations and the centred spatial arrow pad form the top band; the lower band groups
+  commands as Switch Workspace, Cycle Windows in Order, Arrange Window, Choose Layout, and Move
+  Workspace. Small density shortens only the already-scoped Previous/Next/Last action labels beneath
+  Switch Workspace, avoiding ellipses without losing the target. Lower group headings, action pairs,
+  and rows are now centred within their allocated containers. The Space keycap has dedicated side
+  padding and keeps its label at intrinsic width so the full word remains visible even at Small.
+- **Automated evidence:** On 24 August 2026, all 16 focused Shortcut Guide tests passed, including
+  exact group membership and labels. Repository quick verification then passed all 704 non-hosted
+  tests, and the unsigned universal Debug app built successfully with arm64 and x86_64 slices.
+- **Visual evidence:** All 12 native Small/Medium/Large Light/Dark Navigate and Arrange renders were
+  inspected. The first Small pass exposed clipped workspace action labels and an undersized Arrange
+  arrow-caption column; both were corrected. A later installed pass exposed inconsistent optical
+  centring and an under-padded Space key, which were corrected and checked again across all 12
+  renders. Matched full-view and focused lower-band comparisons have no remaining P0-P2 issue;
+  `design-qa.md` records the evidence.
+- **Installed evidence:** With explicit approval, refined signed universal Debug candidate
+  `9f154f7a6a79-dirty` (CDHash `57ebd6606f3f676f83310258ae0ab9e54371edc6`) is installed and
+  running from `/Applications/WindowRanger.app` as process `88912`. Its strict signature, Apple
+  Development authority, Team ID `44NAD22AK6`, bundle identity, embedded source marker, arm64 and
+  x86_64 slices, running executable path, and retained rollback copy were verified. Fresh session
+  `043436B5-BA16-496B-920A-B8CB5C111770` started the passive modifier monitor and recorded both
+  Navigate and Arrange presentation requests with `panel-visible=true`.
+- **Live validation remaining:** Hold each configured modifier family at Small, Medium, and Large,
+  and confirm the refined lower-group centring and wider Space keycap in the real Liquid Glass panel;
+  also confirm it remains legible, passive, centred on the interaction display, and dismisses
+  immediately on release. The user accepted the installed alignment at the current configured
+  density on 24 August 2026.
+
+### WR-077 — Hide every unambiguous Quick App Shelf entry at startup
+
+- **Type:** Quick App Shelf startup bug
+- **Priority:** P1
+- **Status:** Live validation — implemented, automated-test verified, and signed restart evidence
+  recorded; end-to-end Shelf presentation acceptance pending.
+- **Requested:** 24 August 2026.
+- **User-observed (2026-08-24):** On some WindowRanger starts, Quick Shelf applications remained
+  visible instead of being hidden away.
+- **Diagnostic evidence:** Startup session `6B1D889A-FE1C-4AD6-B621-DE1D2AF09407` claimed visible
+  Ghostty window `917:14423` with `presented=true` and laid it out as a presented Shelf entry. No
+  hide was attempted at startup; the application was hidden successfully only 66 seconds later
+  after another application received focus. The startup policy was therefore deliberately retaining
+  pre-launch visibility rather than encountering a failed Hide request. It also prepared only the
+  selected Shelf entry, leaving other configured entries dependent on persisted ownership.
+- **Expected:** Starting WindowRanger hides every configured Shelf application for which exactly one
+  safe eligible window can be identified. Pre-launch visibility must not implicitly present a Shelf
+  entry or let a nonselected entry join ordinary workspace layout. Externally hidden applications
+  and ambiguous multiple-window sets remain untouched; exact persisted WindowRanger hide ownership
+  remains recoverable.
+- **Implemented:** Startup no longer derives presented state from a Shelf window's pre-launch
+  visibility. It independently claims every configured Shelf entry with one safe eligible window,
+  begins each session hidden, and requests application Hide before ordinary workspace layout. The
+  existing exact persisted-ownership recovery, external-hide separation, deferred/full-screen
+  exclusion, and multiple-window ambiguity boundary remain intact. Startup diagnostics now emit one
+  preparation record per claimed entry and retain pre-launch visibility as evidence without using it
+  to present the entry.
+- **Acceptance:** Focused policy tests cover visible and legacy parked windows, exact persisted hide
+  ownership, every independently selected Shelf entry, unrelated windows, and ambiguous matching
+  windows. The complete non-hosted suite passes. A signed restart with at least two configured Shelf
+  applications confirms both begin hidden and remain available through normal Shelf selection.
+- **Automated evidence:** On 24 August 2026, all 51 focused DropDown App and Quick App Shelf tests
+  passed, followed by test isolation, repository checks, and the complete 702-test non-hosted suite.
+- **Installed evidence:** With explicit approval, signed universal Debug build
+  `9f154f7a6a79-dirty` (CDHash `40b44bb4da1409e4cd4548b78b659bc6fc494271`) was installed and
+  launched from `/Applications/WindowRanger.app`. Its Apple Development signature, Team ID
+  `44NAD22AK6`, bundle identity, embedded source marker, two architectures, and running executable
+  path were verified. Fresh startup session `79368B60-467E-4506-831F-9430A0629DB4` observed both
+  Notes and Ghostty as visible before launch, then prepared each independently with `presented=false`
+  and an accepted Hide request before ordinary layout.
+- **Live validation remaining:** Confirm both entries are visually hidden after this restart and can
+  still be presented normally from the Shelf.
+
+### WR-075 — Exclude externally hidden applications from active layout geometry
+
+- **Type:** Workspace visibility bug
+- **Priority:** P1
+- **Status:** Live validation — implemented and automated-test verified; signed installed-app checks
+  remain.
+- **Requested:** 24 August 2026.
+- **User-observed (2026-08-24):** Workspace 2 visibly shifted from one full-width ChatGPT/Codex
+  window to a two-window Accordion even though TextEdit was hidden and no second application window
+  was visibly presented.
+- **Diagnostic evidence:** Workspace 2 correctly solved one participant until TextEdit exposed
+  window `49996:51782`. After TextEdit became hidden, AppKit reported the application itself as
+  hidden while Accessibility continued to report its unminimized standard window at an on-screen
+  frame. WindowRanger therefore treated that frame as meaningfully visible, retained two Accordion
+  participants, and reduced ChatGPT/Codex by 250 points. Once TextEdit and its window closed, the
+  successful Accessibility snapshot evicted that exact window and ChatGPT/Codex immediately returned
+  to the complete `3832 x 1582` managed bounds.
+- **Expected:** A genuinely windowless application contributes no participant, as it does today. An
+  externally hidden application's enumerated windows remain tracked with their workspace and restore
+  state intact, but do not participate in layout, focus candidates, or geometry writes until the
+  application becomes visible again. Hidden state must trigger a background reflow without treating
+  the application as terminated, moving its hidden windows, or weakening exact Quick App hide
+  ownership.
+- **Implemented:** Externally hidden ordinary applications remain tracked with their workspace and
+  restore state, but are excluded from layout, focus, manual-move reconciliation, and every central
+  geometry-write path. Application visibility is part of the background layout signature, so hide
+  and unhide trigger full visibility reconciliation; an unhidden window assigned to an inactive
+  workspace is parked normally. Quit recovery, wake focus recovery, and the final managed-focus
+  boundary all reject hidden ordinary applications. Exact Quick App sessions retain their existing
+  WindowRanger-owned hide behavior.
+- **Acceptance:** Pure tests cover visible-to-hidden and hidden-to-visible transitions, retained
+  assignment and restore geometry, immediate reflow, focus exclusion, inactive-workspace unhide,
+  Quick App ownership, and application termination while hidden. Signed live validation hides and
+  unhides a normal managed app without leaving an empty Accordion/Tiled slot or losing its workspace.
+- **Automated evidence:** On 24 August 2026, 190 focused admission, geometry, diagnostics, and
+  hidden-application policy tests passed, followed by the complete 700-test non-hosted suite and
+  local project/release checks. Coverage includes visibility-signature reflow, wake-focus exclusion,
+  Quick App separation, and the shared geometry exclusion used by quit recovery.
+- **Installed evidence:** On 24 August 2026, the signed Debug daily candidate
+  `cdd85908c712-dirty` was installed at `/Applications/WindowRanger.app`; its signature verified and
+  the installed process launched from that exact bundle.
+- **Live validation remaining:** Hide and unhide a normal app on active and inactive workspaces.
+  Confirm no empty layout slot remains, the assignment survives, an inactive-workspace unhide does
+  not surface the app, and Quick App hiding is unchanged.
+
+### WR-076 — Keep native file-selection surfaces out of managed layouts
+
+- **Type:** Window-admission bug
+- **Priority:** P1
+- **Status:** Live validation — revised signed Open-panel behavior accepted; ordinary document and
+  Arrange-F checks remain.
+- **Requested:** 24 August 2026.
+- **User-observed (2026-08-24):** Focusing newly launched TextEdit produced its native file Open
+  surface; WindowRanger expanded that surface to almost the full display and inserted it beside the
+  existing ChatGPT/Codex window.
+- **Diagnostic evidence:** TextEdit's Open surface presented as a layer-unknown `AXWindow` /
+  `AXStandardWindow`, not minimized or fullscreen, with Close absent, Minimize and Zoom unavailable,
+  modal state unsupported, and no authoritative move/resize capability evidence. The conservative
+  normal-window fallback admitted it, and the successful frame write changed it from
+  `369,83;3102 x 1380` to `254,34;3582 x 1582` as the second Accordion participant.
+- **Expected:** A native file-selection surface floats at its application-chosen size and remains
+  outside Tiled and Accordion layouts. Classification must use captured, non-textual Accessibility
+  evidence rather than the localized title `Open`, dimensions, a TextEdit-specific exception, or a
+  broad rule that floats ordinary document windows when capability reads are unavailable.
+- **Installed validation failure (2026-08-24):** The first signed candidate still admitted the live
+  TextEdit Open panel as `normal-window`. Fresh diagnostics proved both Default and Cancel
+  relationships returned absent on this macOS build even though the window declared those
+  attributes, so the fixture's affirmative relationships did not match the live surface.
+- **Implemented:** A conservative, one-time Accessibility support probe recognizes only a closeless
+  standard window that either affirmatively exposes both native Default and Cancel button
+  relationships or carries AppKit's exact nonlocalized `open-panel`/`save-panel` Accessibility
+  identifier. The raw identifier is reduced immediately to a privacy-safe boolean and is neither
+  retained nor logged. That surface is admitted as a floating managed dialog and receives
+  position-only safety writes, so it neither consumes a Tiled/Accordion slot nor gets resized.
+  Missing, failed, unrelated, partial, or contradictory evidence falls back to ordinary admission;
+  Arrange F cannot override this protected dialog classification. The rule uses no title, label,
+  path, size, document value, application identity, or bundle-specific exception.
+- **Acceptance:** Capture a deterministic fixture for this exact surface, establish the narrowest
+  source-level admission evidence, and cover native Open/Save panels plus ordinary standard document
+  windows with overlapping incomplete metadata. Signed live validation confirms the panel is neither
+  resized nor counted while ordinary TextEdit documents remain managed.
+- **Automated evidence:** After the installed mismatch, 171 focused tests and the complete 702-test
+  non-hosted suite passed on 24 August 2026. Fixtures now reproduce the live Open panel's absent
+  relationship values and affirmative native-panel identifier, plus Save-panel identifiers,
+  unrelated identifiers, ordinary documents with overlapping controls, failed and partial reads,
+  nonnormal layers, retained support evidence, position-only writes, protected Arrange-F feedback,
+  privacy-safe diagnostics, and snapshot schema migration.
+- **Installed evidence:** The signed Debug daily candidate `cdd85908c712-dirty` was installed and
+  launched from `/Applications/WindowRanger.app` on 24 August 2026. After the first candidate's live
+  mismatch, the identifier-based revision was rebuilt, signature-verified, installed, and launched
+  from the same exact bundle.
+- **Live evidence:** On 24 August 2026, the maintainer accepted the revised signed TextEdit Open-panel
+  behavior after confirming it retained its native floating presentation instead of being controlled
+  as a layout window.
+- **Live validation remaining:** Confirm the same behavior for a native Save panel, an ordinary
+  TextEdit document remains managed, and Arrange F reports the protected-dialog explanation.
 ### WR-071 — Switch profiles for foreground full-screen Game Mode sessions
 
 - **Type:** Automatic profile selection
@@ -219,6 +456,25 @@ smallest useful outcome and acceptance boundary.
   covering the pause-only palette catalogue, forced family-aware escape shortcut, command routing,
   and runtime/local-state boundaries. The unsigned arm64 Debug app builds; signed live window,
   Shelf, display-change, Game Mode, and resume reconciliation checks remain.
+
+### WR-074 — Define the DesktopRanger integration and structured CLI contract
+
+- **Type:** Integration contract and CLI research
+- **Priority:** P2
+- **Status:** Needs decision; product direction is approved, but the public contract is not scoped or
+  implemented.
+- **Source:** `docs/desktop-ranger-integration.md`
+- **Requested outcome:** Define a deliberately small, versioned, non-interactive WindowRanger command
+  contract that lets the DesktopRanger host expose bounded typed operations without giving plugins
+  shell access, private state, or a second workspace engine.
+- **Acceptance:** Choose the initial query/control allowlist, request/response/error envelopes,
+  privacy grants, compatibility and migration policy, same-user authenticated IPC, designated-signing
+  checks, deadlines, cancellation, idempotency, and relaunch/concurrency semantics. Converge every
+  exposed UI and CLI operation on the same validation and engine path. Test missing or incompatible
+  peers, malformed and oversized messages, wrong signer/path substitution, stale or duplicate
+  operations, timeouts, cancellation, late replies, and owner relaunch. Keep the integration
+  unavailable or simulated until signed two-app validation passes without weakening macOS protections
+  or changing the Apple Dock.
 
 ### WR-070 — Add a branded, settings-backed first-run onboarding wizard
 
@@ -1053,11 +1309,11 @@ smallest useful outcome and acceptance boundary.
   disappearance, and newer animation generations clear or restore the session safely. When an
   authoritative refresh replaces the exact Quick App window during a native tab switch, ownership
   follows only one newly admitted same-process window for that bundle; ambiguous replacements still
-  clear the session instead of guessing. Startup now claims one unambiguous configured Quick App
-  before initial workspace layout: a meaningfully visible window is presented immediately on its
-  current display, while an exact WindowRanger-owned window whose application remains hidden stays
-  hidden. Multiple matching
-  windows remain unclaimed.
+  clear the session instead of guessing. Startup now claims every configured Quick App with one
+  unambiguous eligible window before initial workspace layout and always begins that entry hidden;
+  launching WindowRanger never implicitly presents a Shelf entry merely because it was already
+  visible. Exact WindowRanger-owned hidden applications remain hidden, externally hidden
+  applications remain untouched, and multiple matching windows remain unclaimed.
 - **Diagnostic-backed bug:** On 2026-08-14, switching tabs in a presented Ghostty Quick App replaced
   window `1081:94` with `1081:95`. The successful AX snapshot evicted the old identity, cleared the
   Quick App session, and the normal background layout then tiled the replacement into the active
@@ -1371,6 +1627,52 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-081 — Retain stable layout slots across transient Accessibility read failures
+
+- **Type:** Layout stability bug
+- **Priority:** P1
+- **Status:** Automated implementation complete; signed-app and live-window validation remain.
+- **Requested:** 24 August 2026.
+- **Smallest useful outcome:** Preserve an existing Tiled or Accordion participant when its
+  application enumeration fails or its frame is temporarily unreadable, without writing geometry to
+  that participant or reflowing readable siblings around the observation gap.
+- **Acceptance:** Successful enumeration absence, and authoritative minimized, fullscreen, ignored,
+  floating, or App Rule layout-excluded states release the slot immediately. The change must preserve
+  current window-admission semantics and all geometry-write safety gates.
+- **Automated evidence:** Focused policy and layout coverage distinguishes non-authoritative read
+  failures from authoritative removal/ineligibility and proves a retained slot does not become
+  geometry-write eligible. Integration review added hidden-application, visibility/wake, and
+  normal-window-to-floating-dialog regressions before release. On 24 August 2026, the focused
+  `WorkspaceDefinitionTests` suite passed 125 tests, then stable Xcode passed all 723 non-hosted
+  tests, static analysis, the unsigned universal Release build, and both DMG smoke layouts.
+- **Remaining validation:** In a signed Debug candidate, exercise ordinary polling and transient
+  dialog activity with multi-window Tiled and Accordion workspaces. Confirm no sibling double reflow,
+  then confirm genuine close, minimize, fullscreen, floating, layout exclusion, workspace switching,
+  and wake still release or retain slots as specified.
+### WR-080 — Add the current application from Command Palette
+
+- **Type:** Command Palette and application-configuration improvement
+- **Priority:** P2
+- **Status:** Implementation and automated verification complete; signed live validation pending.
+- **Requested:** 23 August 2026 after installing the first Sparkle-capable Beta.
+- **Smallest useful outcome:** For an eligible app owning the captured focused window, Command
+  Palette offers searchable actions for the active profile's normal Applications list and App Shelf.
+  An already assigned destination is omitted, conversion is labelled Move, and the Shelf action is
+  omitted at its four-entry cap. Applications uses the captured workspace as the app's initial rule
+  destination. WindowRanger, non-regular apps, and SurfaceLab's whole-application Shelf visibility
+  restriction are excluded.
+- **Safety boundary:** The palette carries the focused app's exact mutually exclusive membership,
+  then the MainActor write fails closed if membership, capacity, workspace, or active-profile
+  identity changes after dispatch. Editing a different Settings profile does not redirect the
+  action, and a full Shelf cannot discard an existing App Rule.
+- **Automated evidence:** Focused palette, dispatcher, Settings, and Shelf-policy tests cover
+  searchable Add/Move labels, destination omission, capacity changes, exclusive conversion,
+  active-versus-editing profile separation, post-dispatch membership races, stale profile
+  rejection, and the SurfaceLab Shelf restriction. `./scripts/verify-local-ci.sh --quick` passed
+  all 700 non-hosted tests on 24 August 2026.
+- **Live validation remaining:** From an unconfigured ordinary app, verify both palette additions,
+  both conversions, full-Shelf omission, captured workspace assignment, and behavior while Settings
+  edits a different profile.
 ### WR-061 — Quick App Shelf
 
 - **Type:** Feature / corrective overhaul
@@ -1455,6 +1757,13 @@ smallest useful outcome and acceptance boundary.
   Tiled workspace edge and inserted into the split instead of remaining a floating alert. The same
   class of failure has been seen with other Sparkle update alerts. A later Ghostty confirmation
   prompt reproduced the issue under the signed Debug build and produced a complete diagnostic trace.
+- **Additional diagnostic-backed report (2026-08-24):** In workspace 1, Claude and Chrome occupied
+  only the left half of a four-window Tiled layout. Two unminimized Simulator device windows were
+  parked at `(3839, 1568)` and still counted as layout participants. Both were layer-0
+  `AXStandardWindow` surfaces with ordinary document controls, writable positions, and
+  authoritatively read-only sizes. Their rejected initial size writes correctly stopped the frame
+  sequence before position, but that safety behavior left them parked while they continued to
+  reserve two tile slots.
 - **Live evidence:** The signed Debug build classified the ChatGPT document window and updater as
   layer-0 `AXWindow` / `AXStandardWindow` surfaces. The document window exposed a Full Screen
   control. The 602 x 178 updater exposed Close but no Full Screen control; it accepted the requested
@@ -1464,11 +1773,13 @@ smallest useful outcome and acceptance boundary.
   size but accepted the position, and moved from `(1550, 314; 260 x 252)` to
   `(1683, 34; 260 x 252)`. Roughly 3.8 seconds later it reported layer 0 and was correctly floated,
   but its original position had already been lost; its layer then continued to alternate until close.
-- **Expected:** A standard window proven movable but not resizable, with Close and no Full Screen
-  control, floats automatically without using titles, dimensions, Sparkle-specific strings, or a
-  whole-app exclusion. An explicit dialog on a known nonzero transient layer remains untouched until
-  its layer settles. Missing layers or failed capability reads remain conservatively managed as
-  normal, and a rejected resize cannot still move a fixed-size surface.
+- **Expected:** Any ordinary layer-0 standard window proven movable but not resizable, with a Close
+  control, floats automatically without using titles, dimensions, application-specific strings, or
+  a whole-app exclusion. It must return on-screen through a position-only write and must not reserve
+  a Tiled or Accordion slot; resizable windows from the same application remain in layout. An
+  explicit dialog on a known nonzero transient layer remains untouched until its layer settles.
+  Missing layers or failed capability reads remain conservatively managed as normal, and a rejected
+  resize cannot still move a fixed-size surface.
 - **Research result:** AeroSpace's useful pattern is a real-window/dialog/popup classifier backed by
   captured Accessibility fixtures. yabai requires a root window and a narrow role/subrole set while
   recording move/resize capability; Amethyst requires a movable standard window. Preserve
@@ -1484,14 +1795,29 @@ smallest useful outcome and acceptance boundary.
   Settings, logs, and snapshot JSON, and remain separate from personal App Rules. A narrowly gated
   standard window with Close present, Full Screen absent, position settable, and size not settable is
   now admitted as an automatically floating dialog. Capability failures remain normal-window
-  admission, and ordinary document windows do not receive the additional support reads. A known
+  admission. A known
   nonzero-layer `AXDialog` is now deferred until its layer settles rather than being admitted to a
   layout. Frame application stops before position when its initial size write is rejected, preventing
-  fixed-size surfaces from being partially moved after a failed resize.
-- **Automated evidence:** Focused admission and workspace verification passes 119 tests. Local quick
-  verification passes all 559 non-hosted tests, including test-isolation validation; it does not
+  fixed-size surfaces from being partially moved after a failed resize. The 2026-08-24 correction
+  broadens the one-time capability probe to every ordinary layer-0 standard window with a Close
+  control. Authoritative writable-position/read-only-size evidence now floats the exact surface;
+  unsupported, failed, or contradictory reads remain conservative, and a completed negative probe
+  is retained instead of repeated on every refresh. Proven fixed-size surfaces use position-only
+  writes during ordinary restoration, display changes, Quick App transitions, and quit recovery,
+  and an explicit Arrange-F override cannot force them back into a resize-first layout path. If the
+  discovery probe was inconclusive but a later initial size write rejects, a bounded re-probe
+  converts that exact standard window to the same position-only safety path and immediately
+  completes the move, then re-solves the visible layouts so the freed slot is filled in the same
+  refresh. Position and final-size failures do not promote a normal document. This is
+  capability-based rather than a Simulator profile, so other windows in the same app are unaffected
+  when resizable.
+- **Automated evidence:** Focused admission, workspace, diagnostics, and Quick App verification pass
+  218 tests. Local quick verification passes all 693 non-hosted tests, including project
+  regeneration, script and release workflow checks, and test-isolation validation; it does not
   build, launch, sign, install, stop, or automate WindowRanger.app. Fixtures cover the captured
-  ChatGPT document/updater distinction plus unavailable and immovable conservative fallbacks.
+  ChatGPT document/updater distinction, the captured Simulator device-window metadata, a
+  non-Simulator fixed-size standard window, a resizable Simulator window, plus unavailable and
+  immovable conservative fallbacks.
 - **Live validation:** The signed Debug build from this branch kept the ordinary ChatGPT document
   window managed normally, classified the reopened Sparkle updater through the fixed-size path, and
   left the updater floating outside the Tiled tree. The user confirmed the result on 2026-08-14.
@@ -1500,6 +1826,21 @@ smallest useful outcome and acceptance boundary.
   user confirmed the result before proceeding to the Quick App follow-ups. Other applications may
   expose different transient metadata, so the classifier remains fixture-backed and fail-closed
   rather than inferring from titles, dimensions, or broad application exclusions.
+- **Installed diagnostic evidence (2026-08-24):** With explicit maintainer approval, the signed
+  universal Debug candidate at `c5a576c09c43-dirty` replaced the installed daily copy and preserved
+  Beta 7 build 8 as `/Applications/.WindowRanger.previous`. Fresh diagnostics classified both
+  fixed-size Simulator device windows as automatically floating, restored them on-screen at their
+  saved positions using successful position-only writes, and excluded them from the visible Tiled
+  solve. Repeated workspace-1 switches solved exactly two managed windows and applied full-height
+  frames across the complete display bounds to Claude and Chrome. The Simulator windows were parked
+  again only after leaving their own workspace, which is the normal hidden-workspace path rather
+  than the failed-resize state that caused this report.
+- **User-confirmed live result (2026-08-24):** The maintainer confirmed that the installed candidate
+  works well after switching through the affected workspaces: the fixed-size Simulator windows are
+  available as floating surfaces and workspace 1 no longer retains their empty layout slots.
+- **Live validation remaining:** Confirm the debug admission reason is
+  `fixed-size-standard-window` and that a resizable Simulator window still participates normally
+  before treating the broader admission regression as closed.
 
 ### WR-049 — Refine Command Wheel workspace-action icons
 
@@ -1899,6 +2240,31 @@ design notes, but every active candidate must map back to a work item here or be
 
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
+
+### WR-082 — Publish WindowRanger 0.1.0 Beta 8
+
+- **Type:** Beta release preparation
+- **Status:** Candidate preparation and validation in progress.
+- **Requested:** 24 August 2026 after consolidating the completed work left across the WR-051,
+  WR-074 through WR-081 session branches and worktrees.
+- **Smallest useful outcome:** Publish signed, notarized universal Beta `0.1.0-beta.8` as public
+  build `9`, containing the reviewed window-admission, visibility, App Shelf, shortcut-guide,
+  Command Palette, and layout-stability changes. Keep appcast generation and website deployment
+  outside this checkpoint; this release supplies the newer signed artifact for a separately
+  approved packaged-update test.
+- **Acceptance boundary:** Central `develop` owns the single build-9 allocation; the reviewed tree is
+  promoted without force-updating `release/0.1.0`; stable Xcode passes the exact release tree's
+  isolated suite and static analysis, then produces the Developer ID-signed, notarized and stapled
+  DMG/ZIP. The immutable tag, five GitHub assets, checksums, and provenance must round-trip to that
+  exact tree, and the GitHub release must be published as a prerelease. The relevant combined
+  signed-app behavior is exercised in the persistent macOS UTM guest without claiming a clean-user,
+  multi-display, or supported physical-Mac matrix.
+- **Current evidence:** Consolidation review found and corrected retained-layout integration gaps
+  around hidden applications, visibility/wake reconciliation, and a normal window becoming a
+  floating dialog while unreadable, plus a post-dispatch membership race in the new
+  focused-application actions. Stable Xcode passed the exact candidate's 723 non-hosted tests,
+  static analysis, unsigned universal Release build, and both DMG smoke layouts. Guest validation,
+  promotion, signing, notarization, packaging, and publication remain pending.
 
 ### WR-012 — Clean build and package verification
 

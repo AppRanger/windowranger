@@ -4,6 +4,7 @@ import Carbon
 final class CommandPaletteTests: XCTestCase {
     private let focusID = UUID(uuidString: "81000000-0000-0000-0000-000000000001")!
     private let writingID = UUID(uuidString: "81000000-0000-0000-0000-000000000002")!
+    private let profileID = UUID(uuidString: "81000000-0000-0000-0000-000000000003")!
 
     func testPaletteCombinesContextualCommandsAndRegisteredShortcuts() {
         let entries = CommandPaletteIndex.entries(
@@ -429,6 +430,115 @@ final class CommandPaletteTests: XCTestCase {
             "Next Quick App"
         )
         XCTAssertFalse(defaults.contains { $0.destination == .command(.cycleQuickApp(1)) && $0.shortcut != nil })
+    }
+
+    func testCurrentApplicationOffersSearchableApplicationAndShelfActions() {
+        var value = context()
+        value.activeProfileID = profileID
+        value.currentApplication = RadialApplicationOption(
+            bundleIdentifier: "com.example.Editor", displayName: "Editor"
+        )
+        let applicationCommand = WindowManagerCommand.addCurrentApplication(
+            "com.example.Editor", displayName: "Editor", workspaceID: focusID, profileID: profileID,
+            expectedMembership: .none
+        )
+        let shelfCommand = WindowManagerCommand.addCurrentApplicationToQuickAppShelf(
+            "com.example.Editor", displayName: "Editor", profileID: profileID, expectedMembership: .none
+        )
+
+        let defaults = CommandPaletteIndex.entries(
+            context: value, query: "", hotKeyConfiguration: HotKeyConfiguration()
+        )
+        XCTAssertEqual(defaults.first { $0.destination == .command(applicationCommand) }?.title,
+                       "Add Editor to Applications")
+        XCTAssertEqual(defaults.first { $0.destination == .command(shelfCommand) }?.title,
+                       "Add Editor to App Shelf")
+        XCTAssertTrue(CommandPaletteIndex.entries(
+            context: value, query: "current application", hotKeyConfiguration: HotKeyConfiguration()
+        ).contains { $0.destination == .command(applicationCommand) })
+        XCTAssertTrue(CommandPaletteIndex.entries(
+            context: value, query: "quick access", hotKeyConfiguration: HotKeyConfiguration()
+        ).contains { $0.destination == .command(shelfCommand) })
+    }
+
+    func testCurrentApplicationActionsReflectExclusiveMembershipShelfCapacityAndCompanionRestriction() {
+        var value = context()
+        value.activeProfileID = profileID
+        value.currentApplication = RadialApplicationOption(
+            bundleIdentifier: "com.example.Editor", displayName: "Editor"
+        )
+        let applicationCommand = WindowManagerCommand.addCurrentApplication(
+            "com.example.Editor", displayName: "Editor", workspaceID: focusID, profileID: profileID,
+            expectedMembership: .none
+        )
+        let shelfCommand = WindowManagerCommand.addCurrentApplicationToQuickAppShelf(
+            "com.example.Editor", displayName: "Editor", profileID: profileID, expectedMembership: .none
+        )
+
+        value.applicationRuleBundleIdentifiers = ["com.example.editor"]
+        var entries = CommandPaletteIndex.entries(context: value, query: "", hotKeyConfiguration: .init())
+        XCTAssertFalse(entries.contains { $0.destination == .command(applicationCommand) })
+        let ruleToShelfCommand = WindowManagerCommand.addCurrentApplicationToQuickAppShelf(
+            "com.example.Editor", displayName: "Editor", profileID: profileID,
+            expectedMembership: .appRule
+        )
+        XCTAssertEqual(entries.first { $0.destination == .command(ruleToShelfCommand) }?.title,
+                       "Move Editor to App Shelf")
+
+        value.applicationRuleBundleIdentifiers = []
+        value.quickApps = [DropDownAppConfiguration(bundleIdentifier: "com.example.Editor", displayName: "Editor")]
+        entries = CommandPaletteIndex.entries(context: value, query: "", hotKeyConfiguration: .init())
+        let shelfToRuleCommand = WindowManagerCommand.addCurrentApplication(
+            "com.example.Editor", displayName: "Editor", workspaceID: focusID, profileID: profileID,
+            expectedMembership: .quickAppShelf
+        )
+        XCTAssertEqual(entries.first { $0.destination == .command(shelfToRuleCommand) }?.title,
+                       "Move Editor to Applications")
+        XCTAssertFalse(entries.contains { $0.destination == .command(shelfCommand) })
+
+        value.quickApps = (1...QuickAppShelfPolicy.maximumCount).map {
+            DropDownAppConfiguration(bundleIdentifier: "com.example.\($0)", displayName: "App \($0)")
+        }
+        entries = CommandPaletteIndex.entries(context: value, query: "", hotKeyConfiguration: .init())
+        XCTAssertFalse(entries.contains { $0.destination == .command(shelfCommand) })
+
+        value.quickApps = []
+        value.currentApplication = RadialApplicationOption(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab", displayName: "SurfaceLab"
+        )
+        entries = CommandPaletteIndex.entries(context: value, query: "", hotKeyConfiguration: .init())
+        XCTAssertTrue(entries.contains { entry in
+            if case .command(.addCurrentApplication) = entry.destination { return true }
+            return false
+        })
+        XCTAssertFalse(entries.contains { entry in
+            if case .command(.addCurrentApplicationToQuickAppShelf) = entry.destination { return true }
+            return false
+        })
+    }
+
+    func testDispatcherRoutesCurrentApplicationConfigurationCommands() {
+        var applicationRequest: (String, String, UUID, UUID, String)?
+        var shelfRequest: (String, String, UUID, String)?
+        let dispatcher = WindowManagerCommandDispatcher(
+            engine: WorkspaceEngine(workspaces: WorkspaceDefinition.defaults),
+            addCurrentApplication: { applicationRequest = ($0, $1, $2, $3, $5) },
+            addCurrentApplicationToQuickAppShelf: { shelfRequest = ($0, $1, $2, $4) }
+        )
+        dispatcher.dispatch(.addCurrentApplication(
+            "com.example.Editor", displayName: "Editor", workspaceID: focusID, profileID: profileID,
+            expectedMembership: .none
+        ), source: .commandPalette, correlationID: "application-test")
+        dispatcher.dispatch(.addCurrentApplicationToQuickAppShelf(
+            "com.example.Editor", displayName: "Editor", profileID: profileID, expectedMembership: .none
+        ), source: .commandPalette, correlationID: "shelf-test")
+        XCTAssertEqual(applicationRequest?.0, "com.example.Editor")
+        XCTAssertEqual(applicationRequest?.2, focusID)
+        XCTAssertEqual(applicationRequest?.3, profileID)
+        XCTAssertEqual(applicationRequest?.4, "application-test")
+        XCTAssertEqual(shelfRequest?.0, "com.example.Editor")
+        XCTAssertEqual(shelfRequest?.2, profileID)
+        XCTAssertEqual(shelfRequest?.3, "shelf-test")
     }
 
     private func context(

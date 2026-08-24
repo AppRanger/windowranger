@@ -824,6 +824,8 @@ final class SettingsStore: ObservableObject {
         if quickApps != normalizedQuickApps { quickApps = normalizedQuickApps }
         if dropDownApp != normalizedQuickApps.first { dropDownApp = normalizedQuickApps.first }
         refreshResolvedWorkspaceDisplayAssignments()
+        isApplyingProfileActivation = false
+        reconcileSelectedQuickApp()
     }
 
     private func mutateSettingsProfile(_ mutation: (inout WindowManagerProfile) -> Void) {
@@ -859,6 +861,8 @@ final class SettingsStore: ObservableObject {
         if quickApps != normalizedQuickApps { quickApps = normalizedQuickApps }
         if dropDownApp != normalizedQuickApps.first { dropDownApp = normalizedQuickApps.first }
         refreshResolvedWorkspaceDisplayAssignments()
+        isApplyingProfileActivation = false
+        reconcileSelectedQuickApp()
     }
 
     @discardableResult
@@ -1268,10 +1272,10 @@ final class SettingsStore: ObservableObject {
     }
 
     func setSettingsQuickApp(_ application: InstalledApplication) {
+        guard QuickAppShelfPolicy.isEligible(bundleIdentifier: application.bundleIdentifier) else {
+            return
+        }
         mutateSettingsProfile { profile in
-            profile.appRules.removeAll {
-                $0.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame
-            }
             let presentation = profile.quickAppShelfPresentation
             let configuration = DropDownAppConfiguration(
                 bundleIdentifier: application.bundleIdentifier,
@@ -1280,7 +1284,14 @@ final class SettingsStore: ObservableObject {
                 isAnimationEnabled: presentation.isAnimationEnabled,
                 direction: presentation.direction
             )
-            profile.quickApps = QuickAppShelfPolicy.replacing(profile.quickApps, with: configuration)
+            let updatedQuickApps = QuickAppShelfPolicy.replacing(profile.quickApps, with: configuration)
+            guard updatedQuickApps.contains(where: {
+                $0.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame
+            }) else { return }
+            profile.appRules.removeAll {
+                $0.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame
+            }
+            profile.quickApps = updatedQuickApps
             profile.dropDownApp = profile.quickApps.first
         }
     }
@@ -1712,11 +1723,6 @@ final class SettingsStore: ObservableObject {
         defaultWorkspaceID: UUID? = nil
     ) {
         guard !appRules.contains(where: { $0.id == application.id }) else { return }
-        if let quickAppIndex = quickApps.firstIndex(where: {
-            $0.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame
-        }) {
-            removeQuickApp(at: quickAppIndex)
-        }
         var rule = AppRule(
             bundleIdentifier: application.bundleIdentifier,
             displayName: application.displayName
@@ -1726,7 +1732,42 @@ final class SettingsStore: ObservableObject {
            workspaces.contains(where: { $0.id == defaultWorkspaceID }) {
             rule.assignedWorkspaceID = defaultWorkspaceID
         }
-        appRules.append(rule)
+        var profile = activeProfile
+        profile.quickApps.removeAll {
+            $0.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame
+        }
+        profile.dropDownApp = profile.quickApps.first
+        profile.appRules.append(rule)
+        replaceProfile(profile, identifiedBy: activeProfileID)
+    }
+
+    @discardableResult
+    func addCurrentApplicationRule(
+        bundleIdentifier: String,
+        displayName: String,
+        defaultWorkspaceID: UUID,
+        expectedActiveProfileID: UUID,
+        expectedMembership: CurrentApplicationConfigurationMembership
+    ) -> Bool {
+        guard activeProfileID == expectedActiveProfileID,
+              workspaces.contains(where: { $0.id == defaultWorkspaceID }),
+              currentApplicationMembership(bundleIdentifier) == expectedMembership,
+              !appRules.contains(where: {
+                  $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+              })
+        else { return false }
+        addAppRule(
+            for: InstalledApplication(
+                bundleIdentifier: bundleIdentifier,
+                displayName: displayName,
+                bundleURL: NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier),
+                isRunning: true
+            ),
+            defaultWorkspaceID: defaultWorkspaceID
+        )
+        return appRules.contains {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
     }
 
     func removeAppRule(bundleIdentifier: String) {
@@ -1734,8 +1775,8 @@ final class SettingsStore: ObservableObject {
     }
 
     func setDropDownApp(_ application: InstalledApplication) {
-        appRules.removeAll {
-            $0.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame
+        guard QuickAppShelfPolicy.isEligible(bundleIdentifier: application.bundleIdentifier) else {
+            return
         }
         let configuration = DropDownAppConfiguration(
             bundleIdentifier: application.bundleIdentifier,
@@ -1744,7 +1785,62 @@ final class SettingsStore: ObservableObject {
             isAnimationEnabled: quickAppShelfPresentation.isAnimationEnabled,
             direction: quickAppShelfPresentation.direction
         )
-        quickApps = QuickAppShelfPolicy.replacing(quickApps, with: configuration)
+        let updatedQuickApps = QuickAppShelfPolicy.replacing(quickApps, with: configuration)
+        guard updatedQuickApps.contains(where: {
+            $0.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame
+        }) else { return }
+        var profile = activeProfile
+        profile.appRules.removeAll {
+            $0.bundleIdentifier.caseInsensitiveCompare(application.bundleIdentifier) == .orderedSame
+        }
+        profile.quickApps = updatedQuickApps
+        profile.dropDownApp = updatedQuickApps.first
+        replaceProfile(profile, identifiedBy: activeProfileID)
+    }
+
+    @discardableResult
+    func addCurrentApplicationToQuickAppShelf(
+        bundleIdentifier: String,
+        displayName: String,
+        expectedActiveProfileID: UUID,
+        expectedMembership: CurrentApplicationConfigurationMembership
+    ) -> Bool {
+        guard activeProfileID == expectedActiveProfileID,
+              quickApps.count < QuickAppShelfPolicy.maximumCount,
+              currentApplicationMembership(bundleIdentifier) == expectedMembership,
+              !quickApps.contains(where: {
+                  $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+              })
+        else { return false }
+        setDropDownApp(InstalledApplication(
+            bundleIdentifier: bundleIdentifier,
+            displayName: displayName,
+            bundleURL: NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier),
+            isRunning: true
+        ))
+        return quickApps.contains {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
+    }
+
+    /// A palette action is built against one of these mutually exclusive states. Returning nil
+    /// for corrupt/conflicting input makes a late MainActor write fail closed rather than deciding
+    /// which destination to remove.
+    private func currentApplicationMembership(
+        _ bundleIdentifier: String
+    ) -> CurrentApplicationConfigurationMembership? {
+        let hasRule = appRules.contains {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
+        let isOnShelf = quickApps.contains {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
+        switch (hasRule, isOnShelf) {
+        case (false, false): return CurrentApplicationConfigurationMembership.none
+        case (true, false): return .appRule
+        case (false, true): return .quickAppShelf
+        case (true, true): return nil
+        }
     }
 
     func convertAppRuleToQuickApp(bundleIdentifier: String) {
@@ -1783,7 +1879,6 @@ final class SettingsStore: ObservableObject {
                 withBundleIdentifier: configuration.bundleIdentifier
             ).contains(where: { !$0.isTerminated })
         )
-        removeDropDownApp(bundleIdentifier: configuration.bundleIdentifier)
         addAppRule(for: application)
     }
 
@@ -2312,6 +2407,7 @@ final class SettingsStore: ObservableObject {
         dropDownApp = quickApps.first
         refreshResolvedWorkspaceDisplayAssignments()
         isApplyingProfileActivation = false
+        reconcileSelectedQuickApp()
         persistLocalProfileState()
         profileActivationGeneration &+= 1
         profileActivationRequest = ProfileActivationRequest(

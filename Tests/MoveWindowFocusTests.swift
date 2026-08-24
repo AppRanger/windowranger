@@ -55,6 +55,77 @@ final class MoveWindowFocusTests: XCTestCase {
         ))
     }
 
+    func testExternallyHiddenRegularApplicationIsExcludedFromParticipation() {
+        XCTAssertTrue(WorkspaceEngine.isExcludedFromWorkspaceParticipation(
+            isApplicationHidden: true,
+            isDropDownAppWindow: false
+        ))
+        XCTAssertFalse(WorkspaceEngine.isExcludedFromWorkspaceParticipation(
+            isApplicationHidden: false,
+            isDropDownAppWindow: false
+        ))
+    }
+
+    func testHiddenQuickAppRetainsItsExactHiddenSessionOwnership() {
+        XCTAssertFalse(WorkspaceEngine.isExcludedFromWorkspaceParticipation(
+            isApplicationHidden: true,
+            isDropDownAppWindow: true
+        ))
+    }
+
+    func testExternalHideAndUnhideChangeBackgroundLayoutSignature() {
+        let hidden = WorkspaceEngine.backgroundApplicationVisibilityMarker(
+            isApplicationHidden: true,
+            isDropDownAppWindow: false
+        )
+        let visible = WorkspaceEngine.backgroundApplicationVisibilityMarker(
+            isApplicationHidden: false,
+            isDropDownAppWindow: false
+        )
+
+        XCTAssertEqual(hidden, "hidden")
+        XCTAssertEqual(visible, "visible")
+        XCTAssertNotEqual(hidden, visible)
+        XCTAssertTrue(WorkspaceEngine.shouldApplyBackgroundLayout(
+            previousSignature: "window|application-visibility=hidden",
+            currentSignature: "window|application-visibility=visible",
+            isStartup: false
+        ))
+    }
+
+    func testQuickAppVisibilityIsNotPartOfOrdinaryApplicationSignature() {
+        XCTAssertNil(WorkspaceEngine.backgroundApplicationVisibilityMarker(
+            isApplicationHidden: true,
+            isDropDownAppWindow: true
+        ))
+        XCTAssertNil(WorkspaceEngine.backgroundApplicationVisibilityMarker(
+            isApplicationHidden: false,
+            isDropDownAppWindow: true
+        ))
+    }
+
+    func testHiddenRegularApplicationCannotBecomeWakeFocusOrQuitGeometryTarget() {
+        let excluded = WorkspaceEngine.isExcludedFromWorkspaceParticipation(
+            isApplicationHidden: true,
+            isDropDownAppWindow: false
+        )
+        XCTAssertTrue(excluded)
+        XCTAssertFalse(WorkspaceEngine.shouldIncludeInWakeFocusRecovery(
+            isWriteEligible: true,
+            isExcludedFromWorkspaceParticipation: excluded
+        ))
+
+        let unhidden = WorkspaceEngine.isExcludedFromWorkspaceParticipation(
+            isApplicationHidden: false,
+            isDropDownAppWindow: false
+        )
+        XCTAssertFalse(unhidden)
+        XCTAssertTrue(WorkspaceEngine.shouldIncludeInWakeFocusRecovery(
+            isWriteEligible: true,
+            isExcludedFromWorkspaceParticipation: unhidden
+        ))
+    }
+
     func testKeepOnAllWindowDoesNotTriggerMoveFocusBehavior() {
         XCTAssertEqual(disposition(keepsOnAll: true), .unchangedVisible)
     }
