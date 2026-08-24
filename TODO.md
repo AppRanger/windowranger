@@ -2241,31 +2241,6 @@ design notes, but every active candidate must map back to a work item here or be
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
-### WR-082 — Publish WindowRanger 0.1.0 Beta 8
-
-- **Type:** Beta release preparation
-- **Status:** Candidate preparation and validation in progress.
-- **Requested:** 24 August 2026 after consolidating the completed work left across the WR-051,
-  WR-074 through WR-081 session branches and worktrees.
-- **Smallest useful outcome:** Publish signed, notarized universal Beta `0.1.0-beta.8` as public
-  build `9`, containing the reviewed window-admission, visibility, App Shelf, shortcut-guide,
-  Command Palette, and layout-stability changes. Keep appcast generation and website deployment
-  outside this checkpoint; this release supplies the newer signed artifact for a separately
-  approved packaged-update test.
-- **Acceptance boundary:** Central `develop` owns the single build-9 allocation; the reviewed tree is
-  promoted without force-updating `release/0.1.0`; stable Xcode passes the exact release tree's
-  isolated suite and static analysis, then produces the Developer ID-signed, notarized and stapled
-  DMG/ZIP. The immutable tag, five GitHub assets, checksums, and provenance must round-trip to that
-  exact tree, and the GitHub release must be published as a prerelease. The relevant combined
-  signed-app behavior is exercised in the persistent macOS UTM guest without claiming a clean-user,
-  multi-display, or supported physical-Mac matrix.
-- **Current evidence:** Consolidation review found and corrected retained-layout integration gaps
-  around hidden applications, visibility/wake reconciliation, and a normal window becoming a
-  floating dialog while unreadable, plus a post-dispatch membership race in the new
-  focused-application actions. Stable Xcode passed the exact candidate's 723 non-hosted tests,
-  static analysis, unsigned universal Release build, and both DMG smoke layouts. Guest validation,
-  promotion, signing, notarization, packaging, and publication remain pending.
-
 ### WR-012 — Clean build and package verification
 
 - **Type:** Release epic
@@ -2330,6 +2305,37 @@ second copy of that checklist.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-082 — Publish WindowRanger 0.1.0 Beta 8
+
+- **Result:** Published
+  [`v0.1.0-beta.8`](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.8) as a
+  GitHub prerelease on 24 August 2026. The protected annotated tag points to exact release commit
+  `25b8adf4e74ae69c6d5806130db9dccc55545061`; central `develop` owns build `9`, and the
+  [release-branch CI run](https://github.com/AppRanger/windowranger/actions/runs/32775606443) passed
+  723 tests, static analysis, an unsigned universal Release build, and both DMG smoke layouts.
+- **Distribution evidence:** Stable Xcode 26.6 reproduced the 723-test pass and static analysis,
+  then built the Developer ID-signed universal `arm64`/`x86_64` archive. Apple accepted the app
+  (`59191fd9-f67d-4afc-bd0e-9e3abd52cce1`) and DMG
+  (`cac8f0e9-f6a5-45a1-b706-6f47b38dc67b`) notarizations with zero issues; both stapled artifacts
+  passed validation and Gatekeeper. The five public assets round-tripped against commit, build,
+  channel, provenance, and SHA-256 values `9d1dbceb5190a9cabbf6b17c7ad2c7788df5d29078cb7016634fe72096545273`
+  (DMG) and `b8d8f91733daa9199cdb1bc948377146c83bfa48a750d672d3cd0e396a3ed3f3`
+  (ZIP).
+- **Installed validation:** The exact DMG hash was verified and installed in the persistent macOS
+  UTM guest. Its `/Applications` copy reported build `9`, Beta channel, release commit, Developer ID
+  Team `44NAD22AK6`, notarized Gatekeeper acceptance, and CDHash
+  `fe970a016e82eec2b4c074198372ffaae3aa1c35`, matching the distribution build. Live checks passed
+  layout-slot release, fixed-size-window floating, ordinary TextEdit tiling, native file-panel
+  floating, hidden-app slot exclusion, App Shelf startup hiding with retained configuration, and
+  DesktopRanger coexistence: tagged desktop/recovery/island surfaces remained ignored while an
+  unmarked same-bundle window remained manageable. No current-build crash report appeared.
+- **Validation boundary:** Nested UTM input did not transmit held modifier combinations reliably,
+  so the installed Command Palette, Shortcut Guide, and Shelf presentation hotkeys retain automated
+  rather than live shortcut evidence. The guest was reused and received the exact DMG through a
+  narrow host share; this is not pristine browser-download, multi-display, or physical-Mac evidence.
+  Appcast generation, website deployment, and packaged Beta 7-to-Beta 8 update testing remain held
+  for their separately approved checkpoint.
 
 ### WR-073 — Publish WindowRanger 0.1.0 Beta 7 as the Sparkle upgrade baseline
 
