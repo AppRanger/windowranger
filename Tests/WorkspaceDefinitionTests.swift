@@ -188,6 +188,24 @@ final class WorkspaceDefinitionTests: XCTestCase {
             retainsLayoutSlot: true,
             isExplicitlyEligible: false
         ))
+        XCTAssertTrue(StableLayoutSlotPolicy.isAvailableForVisibilityLayout(
+            isWriteDeferred: true,
+            retainsLayoutSlot: true,
+            isExcludedFromWorkspaceParticipation: false,
+            isExplicitlyWriteEligible: false
+        ))
+        XCTAssertFalse(StableLayoutSlotPolicy.isAvailableForVisibilityLayout(
+            isWriteDeferred: true,
+            retainsLayoutSlot: false,
+            isExcludedFromWorkspaceParticipation: false,
+            isExplicitlyWriteEligible: false
+        ))
+        XCTAssertFalse(StableLayoutSlotPolicy.isAvailableForVisibilityLayout(
+            isWriteDeferred: true,
+            retainsLayoutSlot: true,
+            isExcludedFromWorkspaceParticipation: true,
+            isExplicitlyWriteEligible: false
+        ))
 
         let participants = [false, false, true].filter { isDeferred in
             StableLayoutSlotPolicy.isAvailableForLayout(

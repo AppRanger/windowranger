@@ -191,6 +191,20 @@ enum StableLayoutSlotPolicy {
         isExplicitlyEligible && (!isWriteDeferred || retainsLayoutSlot)
     }
 
+    static func isAvailableForVisibilityLayout(
+        isWriteDeferred: Bool,
+        retainsLayoutSlot: Bool,
+        isExcludedFromWorkspaceParticipation: Bool,
+        isExplicitlyWriteEligible: Bool
+    ) -> Bool {
+        isAvailableForLayout(
+            isWriteDeferred: isWriteDeferred,
+            retainsLayoutSlot: retainsLayoutSlot,
+            isExplicitlyEligible: !isExcludedFromWorkspaceParticipation &&
+                (isExplicitlyWriteEligible || retainsLayoutSlot)
+        )
+    }
+
     static func transitions<Key: Hashable>(
         previous: Set<Key>,
         current: Set<Key>
@@ -12373,9 +12387,13 @@ final class WorkspaceEngine {
         let parkingPosition = parkingPosition(displays: displays)
         let activeWorkspaceIDs = activeWorkspaceIDs
         let isEligible: (TrackedWindow) -> Bool = { tracked in
-            !self.temporarilyDeferredWindowKeys.contains(tracked.key) &&
-                !self.isExcludedFromWorkspaceParticipation(tracked) &&
-                (eligibleWindowKeys == nil || eligibleWindowKeys!.contains(tracked.key))
+            StableLayoutSlotPolicy.isAvailableForVisibilityLayout(
+                isWriteDeferred: self.temporarilyDeferredWindowKeys.contains(tracked.key),
+                retainsLayoutSlot: self.retainedLayoutSlotWindowKeys.contains(tracked.key),
+                isExcludedFromWorkspaceParticipation: self.isExcludedFromWorkspaceParticipation(tracked),
+                isExplicitlyWriteEligible: eligibleWindowKeys == nil ||
+                    eligibleWindowKeys!.contains(tracked.key)
+            )
         }
 
         // Restore first, then hide. This ordering is intentional: it minimizes the interval in
@@ -12650,6 +12668,7 @@ final class WorkspaceEngine {
 
     private func isManagedLayoutParticipant(_ tracked: TrackedWindow) -> Bool {
         workspaceLayout(for: tracked.workspaceID) != .none &&
+            !isDropDownAppWindow(tracked.key) &&
             !isExcludedFromWorkspaceParticipation(tracked) &&
             Self.shouldIncludeInLayout(
                 layoutOverride: tracked.layoutOverride,
