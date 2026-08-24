@@ -1641,9 +1641,10 @@ smallest useful outcome and acceptance boundary.
   current window-admission semantics and all geometry-write safety gates.
 - **Automated evidence:** Focused policy and layout coverage distinguishes non-authoritative read
   failures from authoritative removal/ineligibility and proves a retained slot does not become
-  geometry-write eligible. On 24 August 2026, the focused `WorkspaceDefinitionTests` suite passed
-  118 tests and `./scripts/verify-local-ci.sh --quick` passed all 693 non-hosted tests with test
-  isolation intact.
+  geometry-write eligible. Integration review added hidden-application, visibility/wake, and
+  normal-window-to-floating-dialog regressions before release. On 24 August 2026, the focused
+  `WorkspaceDefinitionTests` suite passed 125 tests, then stable Xcode passed all 723 non-hosted
+  tests, static analysis, the unsigned universal Release build, and both DMG smoke layouts.
 - **Remaining validation:** In a signed Debug candidate, exercise ordinary polling and transient
   dialog activity with multi-window Tiled and Accordion workspaces. Confirm no sibling double reflow,
   then confirm genuine close, minimize, fullscreen, floating, layout exclusion, workspace switching,
@@ -2259,10 +2260,11 @@ second copy of that checklist.
   signed-app behavior is exercised in the persistent macOS UTM guest without claiming a clean-user,
   multi-display, or supported physical-Mac matrix.
 - **Current evidence:** Consolidation review found and corrected retained-layout integration gaps
-  around hidden applications and visibility/wake reconciliation, plus a post-dispatch membership
-  race in the new focused-application actions. Focused and quick automation pass; exact-candidate
-  full verification, guest validation, promotion, signing, notarization, packaging, and publication
-  remain pending.
+  around hidden applications, visibility/wake reconciliation, and a normal window becoming a
+  floating dialog while unreadable, plus a post-dispatch membership race in the new
+  focused-application actions. Stable Xcode passed the exact candidate's 723 non-hosted tests,
+  static analysis, unsigned universal Release build, and both DMG smoke layouts. Guest validation,
+  promotion, signing, notarization, packaging, and publication remain pending.
 
 ### WR-012 — Clean build and package verification
 
