@@ -1,5 +1,11 @@
 import Foundation
 
+enum CurrentApplicationConfigurationMembership: Hashable, Sendable {
+    case none
+    case appRule
+    case quickAppShelf
+}
+
 enum WindowManagerCommand: Hashable, Sendable {
     case switchWorkspace(UUID)
     case moveFocusedWindow(UUID)
@@ -13,8 +19,19 @@ enum WindowManagerCommand: Hashable, Sendable {
     case toggleDropDownApp
     case selectQuickApp(String)
     case cycleQuickApp(Int)
-    case addCurrentApplication(String, displayName: String, workspaceID: UUID, profileID: UUID)
-    case addCurrentApplicationToQuickAppShelf(String, displayName: String, profileID: UUID)
+    case addCurrentApplication(
+        String,
+        displayName: String,
+        workspaceID: UUID,
+        profileID: UUID,
+        expectedMembership: CurrentApplicationConfigurationMembership
+    )
+    case addCurrentApplicationToQuickAppShelf(
+        String,
+        displayName: String,
+        profileID: UUID,
+        expectedMembership: CurrentApplicationConfigurationMembership
+    )
     case previousWorkspace
     case resetCurrentWorkspace
     case resetAllWindows
@@ -58,12 +75,13 @@ enum WindowManagerCommand: Hashable, Sendable {
             ["action": "select-quick-app", "bundle": bundleIdentifier]
         case let .cycleQuickApp(offset):
             ["action": "cycle-quick-app", "offset": String(offset)]
-        case let .addCurrentApplication(bundleIdentifier, _, workspaceID, profileID):
+        case let .addCurrentApplication(bundleIdentifier, _, workspaceID, profileID, expectedMembership):
             ["action": "add-current-application", "bundle": bundleIdentifier,
-             "workspace": workspaceID.uuidString, "profile": profileID.uuidString]
-        case let .addCurrentApplicationToQuickAppShelf(bundleIdentifier, _, profileID):
+             "workspace": workspaceID.uuidString, "profile": profileID.uuidString,
+             "expected-membership": String(describing: expectedMembership)]
+        case let .addCurrentApplicationToQuickAppShelf(bundleIdentifier, _, profileID, expectedMembership):
             ["action": "add-current-application-to-quick-app-shelf", "bundle": bundleIdentifier,
-             "profile": profileID.uuidString]
+             "profile": profileID.uuidString, "expected-membership": String(describing: expectedMembership)]
         case .previousWorkspace:
             ["action": "previous-workspace"]
         case .resetCurrentWorkspace:
@@ -147,11 +165,11 @@ final class WindowManagerCommandDispatcher {
         diagnostics: DiagnosticLogger = .disabled,
         selectProfile: @escaping (UUID, String) -> Void = { _, _ in },
         resumeAutomaticProfileSelection: @escaping (String) -> Void = { _ in },
-        addCurrentApplication: @escaping (String, String, UUID, UUID, String) -> Void = {
-            _, _, _, _, _ in
+        addCurrentApplication: @escaping (String, String, UUID, UUID, CurrentApplicationConfigurationMembership, String) -> Void = {
+            _, _, _, _, _, _ in
         },
-        addCurrentApplicationToQuickAppShelf: @escaping (String, String, UUID, String) -> Void = {
-            _, _, _, _ in
+        addCurrentApplicationToQuickAppShelf: @escaping (String, String, UUID, CurrentApplicationConfigurationMembership, String) -> Void = {
+            _, _, _, _, _ in
         },
         setPauseMode: @escaping (Bool, String) -> Void = { _, _ in }
     ) {
@@ -182,10 +200,14 @@ final class WindowManagerCommandDispatcher {
                 engine?.selectQuickApp(bundleIdentifier: bundleIdentifier, correlationID: correlationID)
             case let .cycleQuickApp(offset):
                 engine?.cycleQuickApp(offset: offset, correlationID: correlationID)
-            case let .addCurrentApplication(bundleIdentifier, displayName, workspaceID, profileID):
-                addCurrentApplication(bundleIdentifier, displayName, workspaceID, profileID, correlationID)
-            case let .addCurrentApplicationToQuickAppShelf(bundleIdentifier, displayName, profileID):
-                addCurrentApplicationToQuickAppShelf(bundleIdentifier, displayName, profileID, correlationID)
+            case let .addCurrentApplication(bundleIdentifier, displayName, workspaceID, profileID, expectedMembership):
+                addCurrentApplication(
+                    bundleIdentifier, displayName, workspaceID, profileID, expectedMembership, correlationID
+                )
+            case let .addCurrentApplicationToQuickAppShelf(bundleIdentifier, displayName, profileID, expectedMembership):
+                addCurrentApplicationToQuickAppShelf(
+                    bundleIdentifier, displayName, profileID, expectedMembership, correlationID
+                )
             case .previousWorkspace:
                 engine?.switchToPreviousWorkspace(correlationID: correlationID)
             case .resetCurrentWorkspace: engine?.resetCurrentWorkspace(correlationID: correlationID)

@@ -1746,10 +1746,12 @@ final class SettingsStore: ObservableObject {
         bundleIdentifier: String,
         displayName: String,
         defaultWorkspaceID: UUID,
-        expectedActiveProfileID: UUID
+        expectedActiveProfileID: UUID,
+        expectedMembership: CurrentApplicationConfigurationMembership
     ) -> Bool {
         guard activeProfileID == expectedActiveProfileID,
               workspaces.contains(where: { $0.id == defaultWorkspaceID }),
+              currentApplicationMembership(bundleIdentifier) == expectedMembership,
               !appRules.contains(where: {
                   $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
               })
@@ -1800,10 +1802,12 @@ final class SettingsStore: ObservableObject {
     func addCurrentApplicationToQuickAppShelf(
         bundleIdentifier: String,
         displayName: String,
-        expectedActiveProfileID: UUID
+        expectedActiveProfileID: UUID,
+        expectedMembership: CurrentApplicationConfigurationMembership
     ) -> Bool {
         guard activeProfileID == expectedActiveProfileID,
               quickApps.count < QuickAppShelfPolicy.maximumCount,
+              currentApplicationMembership(bundleIdentifier) == expectedMembership,
               !quickApps.contains(where: {
                   $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
               })
@@ -1816,6 +1820,26 @@ final class SettingsStore: ObservableObject {
         ))
         return quickApps.contains {
             $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
+    }
+
+    /// A palette action is built against one of these mutually exclusive states. Returning nil
+    /// for corrupt/conflicting input makes a late MainActor write fail closed rather than deciding
+    /// which destination to remove.
+    private func currentApplicationMembership(
+        _ bundleIdentifier: String
+    ) -> CurrentApplicationConfigurationMembership? {
+        let hasRule = appRules.contains {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
+        let isOnShelf = quickApps.contains {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
+        switch (hasRule, isOnShelf) {
+        case (false, false): return CurrentApplicationConfigurationMembership.none
+        case (true, false): return .appRule
+        case (false, true): return .quickAppShelf
+        case (true, true): return nil
         }
     }
 

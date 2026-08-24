@@ -225,11 +225,15 @@ enum CommandPaletteIndex {
         let isInQuickAppShelf = context.quickApps.contains {
             $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
         }
+        let membership: CurrentApplicationConfigurationMembership = hasApplicationRule
+            ? .appRule
+            : isInQuickAppShelf ? .quickAppShelf : .none
 
         if !hasApplicationRule {
             let command = WindowManagerCommand.addCurrentApplication(
                 bundleIdentifier, displayName: application.displayName,
-                workspaceID: context.workspaceID, profileID: activeProfileID
+                workspaceID: context.workspaceID, profileID: activeProfileID,
+                expectedMembership: membership
             )
             entries.append(CommandPaletteEntry(
                 id: "current-application:applications:\(normalizedBundleIdentifier)",
@@ -249,7 +253,8 @@ enum CommandPaletteIndex {
            !isInQuickAppShelf,
            context.quickApps.count < QuickAppShelfPolicy.maximumCount {
             let command = WindowManagerCommand.addCurrentApplicationToQuickAppShelf(
-                bundleIdentifier, displayName: application.displayName, profileID: activeProfileID
+                bundleIdentifier, displayName: application.displayName, profileID: activeProfileID,
+                expectedMembership: membership
             )
             entries.append(CommandPaletteEntry(
                 id: "current-application:quick-app-shelf:\(normalizedBundleIdentifier)",

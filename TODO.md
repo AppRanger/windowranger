@@ -1660,15 +1660,15 @@ smallest useful outcome and acceptance boundary.
   omitted at its four-entry cap. Applications uses the captured workspace as the app's initial rule
   destination. WindowRanger, non-regular apps, and SurfaceLab's whole-application Shelf visibility
   restriction are excluded.
-- **Safety boundary:** The palette revalidates focused-app membership, capacity, workspace, and
-  active-profile identity. The MainActor write fails closed if automatic profile selection changes
-  profiles after dispatch. Editing a different Settings profile does not redirect the action, and a
-  full Shelf cannot discard an existing App Rule.
+- **Safety boundary:** The palette carries the focused app's exact mutually exclusive membership,
+  then the MainActor write fails closed if membership, capacity, workspace, or active-profile
+  identity changes after dispatch. Editing a different Settings profile does not redirect the
+  action, and a full Shelf cannot discard an existing App Rule.
 - **Automated evidence:** Focused palette, dispatcher, Settings, and Shelf-policy tests cover
   searchable Add/Move labels, destination omission, capacity changes, exclusive conversion,
-  active-versus-editing profile separation, stale profile rejection, and the SurfaceLab Shelf
-  restriction. `./scripts/verify-local-ci.sh --quick` passed all 699 non-hosted tests on 24 August
-  2026.
+  active-versus-editing profile separation, post-dispatch membership races, stale profile
+  rejection, and the SurfaceLab Shelf restriction. `./scripts/verify-local-ci.sh --quick` passed
+  all 700 non-hosted tests on 24 August 2026.
 - **Live validation remaining:** From an unconfigured ordinary app, verify both palette additions,
   both conversions, full-Shelf omission, captured workspace assignment, and behavior while Settings
   edits a different profile.

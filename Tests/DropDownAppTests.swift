@@ -327,11 +327,12 @@ final class DropDownAppTests: XCTestCase {
         let store = SettingsStore(defaults: defaults, ubiquitousStore: nil)
         let workspaceID = store.workspaces[0].id
         XCTAssertTrue(store.addCurrentApplicationToQuickAppShelf(
-            bundleIdentifier: "com.example.Editor", displayName: "Editor", expectedActiveProfileID: store.activeProfileID
+            bundleIdentifier: "com.example.Editor", displayName: "Editor", expectedActiveProfileID: store.activeProfileID,
+            expectedMembership: .none
         ))
         XCTAssertTrue(store.addCurrentApplicationRule(
             bundleIdentifier: "com.example.Editor", displayName: "Editor", defaultWorkspaceID: workspaceID,
-            expectedActiveProfileID: store.activeProfileID
+            expectedActiveProfileID: store.activeProfileID, expectedMembership: .quickAppShelf
         ))
         XCTAssertTrue(store.quickApps.isEmpty)
         XCTAssertEqual(store.appRules.first?.assignedWorkspaceID, workspaceID)
@@ -341,7 +342,8 @@ final class DropDownAppTests: XCTestCase {
             ))
         }
         XCTAssertFalse(store.addCurrentApplicationToQuickAppShelf(
-            bundleIdentifier: "com.example.Editor", displayName: "Editor", expectedActiveProfileID: store.activeProfileID
+            bundleIdentifier: "com.example.Editor", displayName: "Editor",
+            expectedActiveProfileID: store.activeProfileID, expectedMembership: .appRule
         ))
         XCTAssertEqual(store.quickApps.count, QuickAppShelfPolicy.maximumCount)
         XCTAssertEqual(store.appRules.map(\.bundleIdentifier), ["com.example.Editor"])
@@ -358,18 +360,64 @@ final class DropDownAppTests: XCTestCase {
         store.selectProfileForEditing(editingProfileID)
         XCTAssertTrue(store.addCurrentApplicationRule(
             bundleIdentifier: "com.example.Editor", displayName: "Editor", defaultWorkspaceID: store.workspaces[0].id,
-            expectedActiveProfileID: activeProfileID
+            expectedActiveProfileID: activeProfileID, expectedMembership: .none
         ))
         XCTAssertEqual(store.settingsProfileID, editingProfileID)
         XCTAssertEqual(store.profiles.first(where: { $0.id == activeProfileID })?.appRules.map(\.bundleIdentifier), ["com.example.Editor"])
         store.selectProfile(editingProfileID)
         XCTAssertFalse(store.addCurrentApplicationRule(
             bundleIdentifier: "com.example.Stale", displayName: "Stale", defaultWorkspaceID: store.workspaces[0].id,
-            expectedActiveProfileID: activeProfileID
+            expectedActiveProfileID: activeProfileID, expectedMembership: .none
         ))
         XCTAssertFalse(store.addCurrentApplicationToQuickAppShelf(
-            bundleIdentifier: "com.example.Stale", displayName: "Stale", expectedActiveProfileID: activeProfileID
+            bundleIdentifier: "com.example.Stale", displayName: "Stale",
+            expectedActiveProfileID: activeProfileID, expectedMembership: .none
         ))
+    }
+
+    @MainActor
+    func testCurrentApplicationMembershipGuardRejectsPostDispatchChangesAndPermitsIntendedConversions() throws {
+        let suite = "DropDownAppTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SettingsStore(defaults: defaults, ubiquitousStore: nil)
+        let profileID = store.activeProfileID
+        let workspaceID = store.workspaces[0].id
+        let editor = InstalledApplication(
+            bundleIdentifier: "com.example.Editor", displayName: "Editor", bundleURL: nil, isRunning: true
+        )
+
+        store.setDropDownApp(editor)
+        XCTAssertFalse(store.addCurrentApplicationRule(
+            bundleIdentifier: editor.bundleIdentifier, displayName: editor.displayName,
+            defaultWorkspaceID: workspaceID, expectedActiveProfileID: profileID, expectedMembership: .none
+        ))
+        XCTAssertEqual(store.quickApps.map(\.bundleIdentifier), [editor.bundleIdentifier])
+        XCTAssertTrue(store.appRules.isEmpty)
+
+        XCTAssertTrue(store.addCurrentApplicationRule(
+            bundleIdentifier: editor.bundleIdentifier, displayName: editor.displayName,
+            defaultWorkspaceID: workspaceID, expectedActiveProfileID: profileID,
+            expectedMembership: .quickAppShelf
+        ))
+        XCTAssertTrue(store.quickApps.isEmpty)
+        XCTAssertEqual(store.appRules.map(\.bundleIdentifier), [editor.bundleIdentifier])
+
+        store.removeAppRule(bundleIdentifier: editor.bundleIdentifier)
+        store.addAppRule(for: editor, defaultWorkspaceID: workspaceID)
+        XCTAssertFalse(store.addCurrentApplicationToQuickAppShelf(
+            bundleIdentifier: editor.bundleIdentifier, displayName: editor.displayName,
+            expectedActiveProfileID: profileID, expectedMembership: .none
+        ))
+        XCTAssertTrue(store.quickApps.isEmpty)
+        XCTAssertEqual(store.appRules.map(\.bundleIdentifier), [editor.bundleIdentifier])
+
+        XCTAssertTrue(store.addCurrentApplicationToQuickAppShelf(
+            bundleIdentifier: editor.bundleIdentifier, displayName: editor.displayName,
+            expectedActiveProfileID: profileID, expectedMembership: .appRule
+        ))
+        XCTAssertEqual(store.quickApps.map(\.bundleIdentifier), [editor.bundleIdentifier])
+        XCTAssertTrue(store.appRules.isEmpty)
     }
 
     @MainActor

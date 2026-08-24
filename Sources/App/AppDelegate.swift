@@ -43,22 +43,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         resumeAutomaticProfileSelection: { [weak self] _ in
             Task { @MainActor [weak self] in self?.settingsStore.resumeAutomaticProfileSelection() }
         },
-        addCurrentApplication: { [weak self] bundleIdentifier, displayName, workspaceID, profileID, _ in
+        addCurrentApplication: { [weak self] bundleIdentifier, displayName, workspaceID, profileID, expectedMembership, _ in
             Task { @MainActor [weak self] in
                 self?.settingsStore.addCurrentApplicationRule(
                     bundleIdentifier: bundleIdentifier,
                     displayName: displayName,
                     defaultWorkspaceID: workspaceID,
-                    expectedActiveProfileID: profileID
+                    expectedActiveProfileID: profileID,
+                    expectedMembership: expectedMembership
                 )
             }
         },
-        addCurrentApplicationToQuickAppShelf: { [weak self] bundleIdentifier, displayName, profileID, _ in
+        addCurrentApplicationToQuickAppShelf: { [weak self] bundleIdentifier, displayName, profileID, expectedMembership, _ in
             Task { @MainActor [weak self] in
                 self?.settingsStore.addCurrentApplicationToQuickAppShelf(
                     bundleIdentifier: bundleIdentifier,
                     displayName: displayName,
-                    expectedActiveProfileID: profileID
+                    expectedActiveProfileID: profileID,
+                    expectedMembership: expectedMembership
                 )
             }
         },
