@@ -2240,6 +2240,30 @@ design notes, but every active candidate must map back to a work item here or be
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
+### WR-082 — Publish WindowRanger 0.1.0 Beta 8
+
+- **Type:** Beta release preparation
+- **Status:** Candidate preparation and validation in progress.
+- **Requested:** 24 August 2026 after consolidating the completed work left across the WR-051,
+  WR-074 through WR-081 session branches and worktrees.
+- **Smallest useful outcome:** Publish signed, notarized universal Beta `0.1.0-beta.8` as public
+  build `9`, containing the reviewed window-admission, visibility, App Shelf, shortcut-guide,
+  Command Palette, and layout-stability changes. Keep appcast generation and website deployment
+  outside this checkpoint; this release supplies the newer signed artifact for a separately
+  approved packaged-update test.
+- **Acceptance boundary:** Central `develop` owns the single build-9 allocation; the reviewed tree is
+  promoted without force-updating `release/0.1.0`; stable Xcode passes the exact release tree's
+  isolated suite and static analysis, then produces the Developer ID-signed, notarized and stapled
+  DMG/ZIP. The immutable tag, five GitHub assets, checksums, and provenance must round-trip to that
+  exact tree, and the GitHub release must be published as a prerelease. The relevant combined
+  signed-app behavior is exercised in the persistent macOS UTM guest without claiming a clean-user,
+  multi-display, or supported physical-Mac matrix.
+- **Current evidence:** Consolidation review found and corrected retained-layout integration gaps
+  around hidden applications and visibility/wake reconciliation, plus a post-dispatch membership
+  race in the new focused-application actions. Focused and quick automation pass; exact-candidate
+  full verification, guest validation, promotion, signing, notarization, packaging, and publication
+  remain pending.
+
 ### WR-012 — Clean build and package verification
 
 - **Type:** Release epic
