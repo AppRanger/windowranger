@@ -328,15 +328,16 @@ smallest useful outcome and acceptance boundary.
   a closed incoming app launches without activation so it cannot create the same workspace-focus
   gap. Unrelated activation still abandons or dismisses the transition.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
-  `fcf5f2db0bb4` is installed and running from `/Applications/WindowRanger.app` as PID `89201`.
+  `a17f3d36db2d` is installed and running from `/Applications/WindowRanger.app` as PID `93361`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
   canonical bundle identity, Team ID `44NAD22AK6`, both `x86_64` and `arm64` architectures, running
-  path, and CDHash `1041e9dcfb55f8af2fe3e3e6af14b6107914b749` were verified. Startup session
-  `9F8DE783-A87F-429D-B822-A8197E4F9C6B` prepared Notes as a one-window group and Ghostty as a
+  path, embedded source marker, and CDHash `efd77bd5a51d84d205cebaedc2e858829a375433`
+  were verified. Startup session `C2A3C6BB-3F11-4C24-ACB8-2B1A0700BE7C` prepared Notes as a
+  one-window group and Ghostty as a
   two-window application group, then reached `session/startup-state-ready`. This candidate includes
-  the live Settings propagation fix and WR-086's contextual Shortcut Guide. This is installed
-  startup smoke evidence; the interaction cases above remain for maintainer validation. The
-  previous daily copy remains recoverable at
+  the direct show-focus-hide application handoff, the live Settings propagation fix, and WR-086's
+  contextual Shortcut Guide. This is installed startup smoke evidence; the interaction cases above
+  remain for maintainer validation. The previous daily copy remains recoverable at
   `/Applications/.WindowRanger.previous`.
 
 ### WR-084 — Reconcile transient startup Quick App window ambiguity once
