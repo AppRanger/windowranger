@@ -217,8 +217,8 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Quick App Shelf ownership and interaction change
 - **Priority:** P1
-- **Status:** Direct Shelf app-switch focus handoff, dynamic membership, and focus-loss dismissal
-  live-validated; diagnostic-backed lock/wake state-loss defect and final restoration remain.
+- **Status:** Done — all-window grouping, layouts, navigation, transitions, dynamic membership,
+  focus-loss dismissal, lock/wake preservation, and final restoration are live-validated.
 - **Requested:** 25 August 2026.
 - **User decision:** The Shelf is a temporary workspace containing the eligible windows of its
   configured applications, not a launcher containing one representative window per application.
@@ -383,7 +383,18 @@ smallest useful outcome and acceptance boundary.
   focused lifecycle tests and all 738 non-hosted tests in repository quick verification pass,
   including the observed partial collapse, a fully empty read 125 milliseconds later, the lock
   signal at 160 milliseconds, grace expiry, and ordinary single-application closure. Signed live
-  validation remains pending.
+  validation is accepted below.
+- **Lock-race live result:** On installed candidate `cafbe4002b09`, the maintainer reported the
+  lock/unlock behavior looked good. Diagnostics show the expected staged Accessibility collapse:
+  11 of 15 tracked processes were deferred first, followed 161 milliseconds later by all 15. The
+  screen-lock signal then arrived 47 milliseconds later with all 18 managed windows and the Quick
+  App session retained. Ghostty's lock-driven focus loss hid the two-window group before suspension;
+  wake restored both Notes and Ghostty as hidden application sessions. The first post-unlock Shelf
+  shortcut performed a real unhide and laid out both Ghostty windows, and the next shortcut hid the
+  group normally. No managed window was evicted during the lock transition, and the maintainer
+  confirmed workspace windows retained their correct screens and positions. Wake verification's
+  sole degraded mismatch was a BetterDisplay window retaining its own 1,200-point width after three
+  successful resize requests; it did not alter the accepted Shelf state or workspace ordering.
 - **Installed evidence:** With maintainer approval, signed universal Debug daily candidate
   `cafbe4002b09` is installed and running from `/Applications/WindowRanger.app` as PID `22617`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
@@ -394,8 +405,8 @@ smallest useful outcome and acceptance boundary.
   `session/startup-state-ready`. This candidate includes the direct show-focus-hide application
   handoff, dynamic window-removal relayout, live Settings propagation, WR-086's contextual Shortcut
   Guide, the WR-085 screen-lock suspension fix, and the pre-notification coordinated-collapse
-  grace. This is installed startup smoke evidence; the lock/unlock interaction remains for
-  maintainer validation. The previous daily copy remains recoverable at
+  grace. Startup smoke and the lock/unlock interaction are accepted above. The previous daily copy
+  remains recoverable at
   `/Applications/.WindowRanger.previous`.
 
 ### WR-084 — Reconcile transient startup Quick App window ambiguity once
