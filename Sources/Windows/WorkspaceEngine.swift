@@ -2933,8 +2933,22 @@ final class WorkspaceEngine {
             quickAppSessions[visibleTarget.bundleKey] = session
             _ = setDropDownAppFrame(frame, target: visibleTarget.target)
         }
+        let raiseTargets = visibleTargets.filter { visibleTarget in
+            guard let session = quickAppSessions[visibleTarget.bundleKey] else { return false }
+            return isDropDownApplicationHidden(
+                processIdentifier: visibleTarget.target.processIdentifier,
+                bundleIdentifier: session.bundleIdentifier
+            ) == false
+        }
+        let raiseOrder = QuickAppShelfGroupPolicy.raiseOrder(
+            visibleWindowKeys: raiseTargets.map { $0.target.key },
+            selectedWindowKey: selectedSession.windowKey
+        )
+        for key in raiseOrder {
+            guard let target = windows[key] else { continue }
+            _ = AXUIElementPerformAction(target.element, kAXRaiseAction as CFString)
+        }
         if let selectedTarget = windows[selectedSession.windowKey] {
-            _ = AXUIElementPerformAction(selectedTarget.element, kAXRaiseAction as CFString)
             if focusSelected,
                QuickAppInteractionPolicy.focusesQuickAppAfterShow(
                 commandPalettePresented: commandPalettePresented
@@ -2955,6 +2969,7 @@ final class WorkspaceEngine {
                 "configured-visible-count": String(quickAppShelfPresentation.visibleCount),
                 "presented-app-count": String(visible.count),
                 "presented-count": String(visibleTargets.count),
+                "raised-count": String(raiseOrder.count),
                 "selected-bundle": selected.bundleIdentifier,
                 "display": display.identifier,
             ]

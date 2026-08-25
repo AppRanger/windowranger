@@ -217,7 +217,7 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Quick App Shelf ownership and interaction change
 - **Priority:** P1
-- **Status:** Live settings propagation fix implemented and automated-verified; signed retest pending.
+- **Status:** Neighbour window-ordering fix implemented and automated-verified; signed retest pending.
 - **Requested:** 25 August 2026.
 - **User decision:** The Shelf is a temporary workspace containing the eligible windows of its
   configured applications, not a launcher containing one representative window per application.
@@ -254,10 +254,10 @@ smallest useful outcome and acceptance boundary.
 - **Automated evidence:** 60 focused Quick App tests pass, covering same-process grouping,
   cross-process rejection, stable cycling, exact-member removal, one-for-one native-tab handoff with
   retained group members, legacy persistence, and seven-window Carousel/Accordion geometry at all
-  four edges. The live-settings propagation regression test and all 29 tests in
-  `QuickAppShelfTests` pass. The complete non-hosted suite passes 729 tests with zero failures or
-  skips. Test
-  isolation, shell syntax, release-build registry, Sparkle feed workflow, project generation,
+  four edges. The live-settings propagation and visible-window stacking regression tests, plus all
+  30 tests in `QuickAppShelfTests`, pass. The complete non-hosted suite passes 730 tests with zero
+  failures or skips. Test isolation, shell syntax, release-build registry, Sparkle feed workflow,
+  project generation,
   Release static analysis, unsigned universal Release build, and Stable/Beta DMG build and
   verification all pass (25 August 2026).
 - **Live validation remaining:** Repeat the two-window Ghostty case across direct toggle and
@@ -274,6 +274,14 @@ smallest useful outcome and acceptance boundary.
   subscriptions to discard them. The fix now separates Settings profile-content replacement from
   genuine profile activation, preserving bulk persistence guards while allowing live engine
   subscribers to receive active-profile edits.
+- **Second live defect found:** On the fixed candidate, the maintainer saw Notes alone on first
+  presentation; navigating to the next Shelf window then revealed both Ghostty windows. Diagnostics
+  confirmed Carousel and visible-app count two were active, and the engine laid out Notes plus both
+  Ghostty windows at the correct group stage. The neighbour windows were unhidden and framed but
+  not raised above ordinary desktop windows; navigation made Ghostty frontmost and exposed both.
+  Group layout now raises every visible exact Shelf window after unhide confirmation, keeping the
+  selected window last for deterministic focus and Accordion stacking while hidden neighbours
+  remain staged without being raised.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
   `3c263a750f0f` is installed and running from `/Applications/WindowRanger.app` as PID `65306`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,

@@ -115,6 +115,23 @@ final class QuickAppShelfTests: XCTestCase {
         )
     }
 
+    func testVisibleShelfWindowsRaiseWithSelectedWindowLast() {
+        XCTAssertEqual(
+            QuickAppShelfGroupPolicy.raiseOrder(
+                visibleWindowKeys: ["notes", "ghostty-one", "ghostty-two"],
+                selectedWindowKey: "notes"
+            ),
+            ["ghostty-one", "ghostty-two", "notes"]
+        )
+        XCTAssertEqual(
+            QuickAppShelfGroupPolicy.raiseOrder(
+                visibleWindowKeys: ["notes", "ghostty-one", "ghostty-two"],
+                selectedWindowKey: "ghostty-two"
+            ),
+            ["notes", "ghostty-one", "ghostty-two"]
+        )
+    }
+
     func testApplicationWindowGroupKeepsStableOrderAndRemovesOnlyTheClosedWindow() {
         let first = WindowKey(processIdentifier: 42, windowIdentifier: 100)
         let second = WindowKey(processIdentifier: 42, windowIdentifier: 101)
