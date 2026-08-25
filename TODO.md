@@ -217,8 +217,8 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Quick App Shelf ownership and interaction change
 - **Priority:** P1
-- **Status:** Direct Shelf app-switch focus handoff implemented and automated-verified; signed
-  retest pending.
+- **Status:** Direct Shelf app-switch focus handoff live-validated; remaining application-group and
+  lifecycle retests pending.
 - **Requested:** 25 August 2026.
 - **User decision:** The Shelf is a temporary workspace containing the eligible windows of its
   configured applications, not a launcher containing one representative window per application.
@@ -265,11 +265,10 @@ smallest useful outcome and acceptance boundary.
   Release static analysis, unsigned universal Release build, and Stable/Beta DMG build and
   verification all pass (25 August 2026).
 - **Live validation remaining:** Repeat the two-window Ghostty case across direct toggle and
-  restart. Then check both layouts, app-wide hide/show, Previous/Next
-  and arrow navigation, adding and closing one Ghostty window while presented, and final restoration
-  to the original workspaces and frames. With a one-app visible count, rapidly press Previous/Next
-  through the last window and across applications; every press must remain Shelf-owned while the
-  outgoing app hides and the incoming app appears.
+  restart. Then check both layouts, app-wide hide/show, Previous/Next and arrow navigation, adding
+  and closing one Ghostty window while presented, focus-loss dismissal, lock/wake, and final
+  restoration to the original workspaces and frames. Direct rapid switching across configured
+  applications is accepted below.
 - **Live defect found:** The maintainer confirmed both Ghostty windows appeared, but the Shelf kept
   using Accordion and appeared to show only one configured application even though the active
   profile saved Carousel with a visible-app count of two and both Notes and Ghostty were open.
@@ -327,6 +326,12 @@ smallest useful outcome and acceptance boundary.
   an already-active or palette-owned presentation completes without waiting for a notification, and
   a closed incoming app launches without activation so it cannot create the same workspace-focus
   gap. Unrelated activation still abandons or dismisses the transition.
+- **Direct-focus live result:** The maintainer reported the installed direct handoff worked well.
+  Its diagnostic trace recorded three clean Ghostty/Notes transfers with no abandoned handoff:
+  show-focus-hide completion took about 0.19 to 0.28 seconds, the incoming target activated, and the
+  outgoing application then confirmed hidden. No ordinary workspace focus was observed between
+  Shelf applications. This accepts the one-visible-app rapid application-switch and workspace-focus
+  containment regression; Notes' own activation can still visibly trail the initial transfer.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
   `a17f3d36db2d` is installed and running from `/Applications/WindowRanger.app` as PID `93361`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
