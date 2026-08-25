@@ -313,11 +313,11 @@ smallest useful outcome and acceptance boundary.
   only that exact preceding process for two seconds and clears as soon as the incoming Shelf app
   activates. Unrelated application activation and expired handoffs still dismiss the Shelf.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
-  `44026336506e` is installed and running from `/Applications/WindowRanger.app` as PID `81651`.
+  `93e7fa6df391` is installed and running from `/Applications/WindowRanger.app` as PID `86574`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
   canonical bundle identity, Team ID `44NAD22AK6`, both `x86_64` and `arm64` architectures, running
-  path, and CDHash `844c49d3102e45c7342d5191b55434fceb13c194` were verified. Startup session
-  `50FD655D-EE9B-4253-8A8C-D06960C918EF` prepared Notes as a one-window group and Ghostty as a
+  path, and CDHash `a5522128121d0cc07581a1937769d5da678365ca` were verified. Startup session
+  `70405C22-02A6-4B2B-915C-DBBA890D9410` prepared Notes as a one-window group and Ghostty as a
   two-window application group, then reached `session/startup-state-ready`. This candidate includes
   the live Settings propagation fix and WR-086's contextual Shortcut Guide. This is installed
   startup smoke evidence; the interaction cases above remain for maintainer validation. The
