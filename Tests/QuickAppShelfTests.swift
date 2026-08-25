@@ -132,6 +132,29 @@ final class QuickAppShelfTests: XCTestCase {
         )
     }
 
+    func testPresentedShelfActivationAlwaysRestacksEvenWhenSelectionIsUnchanged() {
+        XCTAssertEqual(
+            QuickAppInteractionPolicy.presentedActivationDecision(
+                activatedBundleIdentifier: "com.apple.Notes",
+                selectedBundleIdentifier: "com.apple.notes"
+            ),
+            QuickAppInteractionPolicy.PresentedActivationDecision(
+                selectsActivatedConfiguration: false,
+                reconcilesPresentedGroup: true
+            )
+        )
+        XCTAssertEqual(
+            QuickAppInteractionPolicy.presentedActivationDecision(
+                activatedBundleIdentifier: "com.mitchellh.ghostty",
+                selectedBundleIdentifier: "com.apple.Notes"
+            ),
+            QuickAppInteractionPolicy.PresentedActivationDecision(
+                selectsActivatedConfiguration: true,
+                reconcilesPresentedGroup: true
+            )
+        )
+    }
+
     func testApplicationWindowGroupKeepsStableOrderAndRemovesOnlyTheClosedWindow() {
         let first = WindowKey(processIdentifier: 42, windowIdentifier: 100)
         let second = WindowKey(processIdentifier: 42, windowIdentifier: 101)

@@ -217,7 +217,8 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Quick App Shelf ownership and interaction change
 - **Priority:** P1
-- **Status:** Neighbour window-ordering fix implemented and automated-verified; signed retest pending.
+- **Status:** Post-activation Shelf restacking fix implemented and automated-verified; signed retest
+  pending.
 - **Requested:** 25 August 2026.
 - **User decision:** The Shelf is a temporary workspace containing the eligible windows of its
   configured applications, not a launcher containing one representative window per application.
@@ -254,8 +255,9 @@ smallest useful outcome and acceptance boundary.
 - **Automated evidence:** 60 focused Quick App tests pass, covering same-process grouping,
   cross-process rejection, stable cycling, exact-member removal, one-for-one native-tab handoff with
   retained group members, legacy persistence, and seven-window Carousel/Accordion geometry at all
-  four edges. The live-settings propagation and visible-window stacking regression tests, plus all
-  30 tests in `QuickAppShelfTests`, pass. The complete non-hosted suite passes 730 tests with zero
+  four edges. The live-settings propagation, visible-window stacking, and post-activation
+  restacking regression tests, plus all 31 tests in `QuickAppShelfTests`, pass. The complete
+  non-hosted suite passes 731 tests with zero
   failures or skips. Test isolation, shell syntax, release-build registry, Sparkle feed workflow,
   project generation,
   Release static analysis, unsigned universal Release build, and Stable/Beta DMG build and
@@ -282,6 +284,13 @@ smallest useful outcome and acceptance boundary.
   Group layout now raises every visible exact Shelf window after unhide confirmation, keeping the
   selected window last for deterministic focus and Accordion stacking while hidden neighbours
   remain staged without being raised.
+- **Retest refinement:** Candidate `e76ac3c48cb2` worked when Ghostty was selected first, but still
+  showed Notes alone when Notes was selected first. Its trace recorded all three windows being
+  raised before Notes finished becoming frontmost. Unlike navigation to another Shelf app,
+  activation of the already-selected app did not run a post-activation group reconciliation, so
+  the final Notes activation could undo the neighbour stacking. The fix now restacks the group
+  after every presented Shelf app activation; selection changes only when the activated app
+  differs.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
   `e76ac3c48cb2` is installed and running from `/Applications/WindowRanger.app` as PID `77363`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,

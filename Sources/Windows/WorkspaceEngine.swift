@@ -975,6 +975,23 @@ struct IgnoredQuickAppVisibilityRecovery: Codable, Equatable, Sendable {
 }
 
 enum QuickAppInteractionPolicy {
+    struct PresentedActivationDecision: Equatable {
+        let selectsActivatedConfiguration: Bool
+        let reconcilesPresentedGroup: Bool
+    }
+
+    static func presentedActivationDecision(
+        activatedBundleIdentifier: String,
+        selectedBundleIdentifier: String?
+    ) -> PresentedActivationDecision {
+        PresentedActivationDecision(
+            selectsActivatedConfiguration: selectedBundleIdentifier.map {
+                $0.caseInsensitiveCompare(activatedBundleIdentifier) != .orderedSame
+            } ?? true,
+            reconcilesPresentedGroup: true
+        )
+    }
+
     static func preservesPresentedShelfForActivation(
         activatedProcessIdentifier: pid_t,
         ownProcessIdentifier: pid_t,
@@ -5984,13 +6001,19 @@ final class WorkspaceEngine {
             if let dropDownSession = self.quickAppSessions.values.first(where: {
                 $0.isPresented && $0.windowKey.processIdentifier == processIdentifier
             }) {
+                let decision = QuickAppInteractionPolicy.presentedActivationDecision(
+                    activatedBundleIdentifier: dropDownSession.bundleIdentifier,
+                    selectedBundleIdentifier: self.dropDownAppConfiguration?.bundleIdentifier
+                )
                 if let selected = self.quickAppConfigurations.first(where: {
                     $0.bundleIdentifier.caseInsensitiveCompare(
                         dropDownSession.bundleIdentifier
                     ) == .orderedSame
-                }), selected != self.dropDownAppConfiguration {
+                }), decision.selectsActivatedConfiguration {
                     self.dropDownAppConfiguration = selected
                     self.onQuickAppSelectionChanged?(selected.bundleIdentifier)
+                }
+                if decision.reconcilesPresentedGroup {
                     self.reconcilePresentedQuickAppGroup(
                         correlationID: nil,
                         focusSelected: false
