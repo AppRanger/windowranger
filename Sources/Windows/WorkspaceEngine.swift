@@ -373,6 +373,50 @@ enum WindowEnumerationLifecycle {
     }
 }
 
+/// A screen lock can make still-running applications lose their Accessibility windows in stages
+/// before macOS delivers the distributed lock notification. Preserve a coordinated collapse across
+/// multiple applications for a short grace period, while keeping a single application's successful
+/// absence authoritative immediately.
+struct CoordinatedWindowEnumerationCollapseState {
+    static let graceDuration: TimeInterval = 0.5
+
+    private var deferralDeadline: Date?
+
+    mutating func processIdentifiersToDefer(
+        requiredProcessIdentifiers: Set<pid_t>,
+        successfullyEnumeratedProcessIdentifiers: Set<pid_t>,
+        enumeratedWindowProcessIdentifiers: Set<pid_t>,
+        isLifecycleTransitionActive: Bool,
+        at now: Date = Date()
+    ) -> Set<pid_t> {
+        let successfullyEmptyProcessIdentifiers = requiredProcessIdentifiers
+            .intersection(successfullyEnumeratedProcessIdentifiers)
+            .subtracting(enumeratedWindowProcessIdentifiers)
+        let isCoordinatedCollapse = requiredProcessIdentifiers.count >= 2 &&
+            successfullyEmptyProcessIdentifiers.count >= 2 &&
+            successfullyEmptyProcessIdentifiers.count * 2 >= requiredProcessIdentifiers.count
+
+        guard isCoordinatedCollapse else {
+            deferralDeadline = nil
+            return []
+        }
+        if isLifecycleTransitionActive {
+            deferralDeadline = nil
+            return successfullyEmptyProcessIdentifiers
+        }
+        if let deferralDeadline {
+            guard now < deferralDeadline else {
+                self.deferralDeadline = nil
+                return []
+            }
+            return successfullyEmptyProcessIdentifiers
+        }
+
+        deferralDeadline = now.addingTimeInterval(Self.graceDuration)
+        return successfullyEmptyProcessIdentifiers
+    }
+}
+
 struct PostSleepWindowRecoveryUpdate: Equatable, Sendable {
     let protectedWindowKeys: Set<WindowKey>
     let newlyRecoveredWindowKeys: Set<WindowKey>
@@ -1904,6 +1948,8 @@ final class WorkspaceEngine {
     private var lastWakeCompletionDate = Date.distantPast
     private var lastWakeCompletedTopologySignature: String?
     private var consecutiveGlobalEmptySnapshots = 0
+    private var coordinatedWindowEnumerationCollapseState =
+        CoordinatedWindowEnumerationCollapseState()
     private var postSleepWindowRecoveryState = PostSleepWindowRecoveryState()
     private let stateStore: WorkspaceStateStore
     private let diagnostics: DiagnosticLogger
@@ -9705,28 +9751,20 @@ final class WorkspaceEngine {
             )
         }
 
-        let deferredProcessIdentifiers = requiredProcessIdentifiers
-            .subtracting(successfullyEnumeratedProcesses)
-        for key in windows.keys where deferredProcessIdentifiers.contains(key.processIdentifier) {
-            deferredWindowKeys.insert(key)
-            if let tracked = windows[key],
-               isManagedLayoutParticipant(tracked),
-               let reason = StableLayoutSlotPolicy.retentionReason(
-                   wasTracked: true,
-                   applicationEnumerationSucceeded: false,
-                   windowWasEnumerated: false,
-                   isCurrentlyIncludedInLayout: true,
-                   hasReadableFrame: false
-               ) {
-                retainedLayoutSlotReasons[key] = reason
-            }
-        }
-
         let lifecycleTransitionActive = screenSessionLifecycleState.isSuspended ||
             wakeReconciliationState.isSleeping ||
             wakeReconciliationState.isPending ||
             wasPostSleepWindowRecoveryActive ||
             postSleepWindowRecoveryState.isActive
+        let coordinatedEmptyProcessIdentifiers =
+            coordinatedWindowEnumerationCollapseState.processIdentifiersToDefer(
+                requiredProcessIdentifiers: requiredProcessIdentifiers,
+                successfullyEnumeratedProcessIdentifiers: successfullyEnumeratedProcesses,
+                enumeratedWindowProcessIdentifiers: Set(
+                    enumeratedWindowKeys.map(\.processIdentifier)
+                ),
+                isLifecycleTransitionActive: lifecycleTransitionActive
+            )
         let deferredGlobalEmptySnapshot = WindowEnumerationLifecycle
             .shouldDeferGlobalEmptySnapshot(
                 trackedWindowCount: trackedWindowKeysBeforeEnumeration.count,
@@ -9745,6 +9783,24 @@ final class WorkspaceEngine {
         } else {
             consecutiveGlobalEmptySnapshots = 0
         }
+        if !coordinatedEmptyProcessIdentifiers.isEmpty {
+            successfullyEnumeratedProcesses.subtract(coordinatedEmptyProcessIdentifiers)
+            diagnostics.log(
+                category: "window-lifecycle",
+                event: "coordinated-enumeration-collapse-deferred",
+                correlation: correlationID,
+                fields: [
+                    "deferred-process-count": String(
+                        coordinatedEmptyProcessIdentifiers.count
+                    ),
+                    "required-process-count": String(requiredProcessIdentifiers.count),
+                    "lifecycle-transition": String(lifecycleTransitionActive),
+                    "grace-milliseconds": String(Int(
+                        CoordinatedWindowEnumerationCollapseState.graceDuration * 1_000
+                    )),
+                ]
+            )
+        }
         if deferredGlobalEmptySnapshot {
             successfullyEnumeratedProcesses.subtract(requiredProcessIdentifiers)
             deferredWindowKeys.formUnion(trackedWindowKeysBeforeEnumeration)
@@ -9760,6 +9816,23 @@ final class WorkspaceEngine {
                     "consecutive-count": String(consecutiveGlobalEmptySnapshots),
                 ]
             )
+        }
+
+        let deferredProcessIdentifiers = requiredProcessIdentifiers
+            .subtracting(successfullyEnumeratedProcesses)
+        for key in windows.keys where deferredProcessIdentifiers.contains(key.processIdentifier) {
+            deferredWindowKeys.insert(key)
+            if let tracked = windows[key],
+               isManagedLayoutParticipant(tracked),
+               let reason = StableLayoutSlotPolicy.retentionReason(
+                   wasTracked: true,
+                   applicationEnumerationSucceeded: false,
+                   windowWasEnumerated: false,
+                   isCurrentlyIncludedInLayout: true,
+                   hasReadableFrame: false
+               ) {
+                retainedLayoutSlotReasons[key] = reason
+            }
         }
 
         if !quickAppSessions.isEmpty,

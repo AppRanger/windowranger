@@ -106,8 +106,11 @@ not an installable macOS app.
 Window discovery treats a successful per-application Accessibility window enumeration as the
 authoritative lifecycle snapshot for that application. A native tab/window identity absent from a
 successful snapshot is removed immediately from the registry, focus history, Tiled tree, and next
-persisted state, so closed or inactive tab identities cannot leave ghost layout slots. A failed or
-incomplete enumeration is not evidence that a window closed. Existing Tiled and Accordion
+persisted state, so closed or inactive tab identities cannot leave ghost layout slots. The narrow
+exception is a coordinated successful-empty collapse across at least half of multiple still-running
+applications: WindowRanger defers that cohort for 500 milliseconds so a slightly later screen-lock
+signal can establish the lifecycle boundary. A failed or incomplete enumeration is not evidence
+that a window closed. Existing Tiled and Accordion
 participants retain their stable layout slots while their geometry writes remain suppressed; an
 authoritative minimized, fullscreen, ignored, floating, or layout-excluded state still leaves the
 layout immediately.

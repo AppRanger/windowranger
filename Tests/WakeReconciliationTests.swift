@@ -298,6 +298,76 @@ final class WakeReconciliationTests: XCTestCase {
         ))
     }
 
+    func testCoordinatedPartialCollapseWaitsForDelayedScreenLockSignal() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let required: Set<pid_t> = [10, 11, 12, 13, 14, 15]
+        var state = CoordinatedWindowEnumerationCollapseState()
+
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [14, 15],
+            isLifecycleTransitionActive: false,
+            at: start
+        ), [10, 11, 12, 13])
+
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [],
+            isLifecycleTransitionActive: false,
+            at: start.addingTimeInterval(0.125)
+        ), required)
+
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [],
+            isLifecycleTransitionActive: true,
+            at: start.addingTimeInterval(0.16)
+        ), required)
+    }
+
+    func testCoordinatedCollapseGraceExpiresWhileFullyActive() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let required: Set<pid_t> = [10, 11, 12, 13]
+        var state = CoordinatedWindowEnumerationCollapseState()
+
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [12, 13],
+            isLifecycleTransitionActive: false,
+            at: start
+        ), [10, 11])
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [12, 13],
+            isLifecycleTransitionActive: false,
+            at: start.addingTimeInterval(
+                CoordinatedWindowEnumerationCollapseState.graceDuration + 0.001
+            )
+        ), [])
+    }
+
+    func testSingleApplicationAbsenceRemainsImmediatelyAuthoritative() {
+        var state = CoordinatedWindowEnumerationCollapseState()
+
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: [10, 11, 12, 13],
+            successfullyEnumeratedProcessIdentifiers: [10, 11, 12, 13],
+            enumeratedWindowProcessIdentifiers: [11, 12, 13],
+            isLifecycleTransitionActive: false
+        ), [])
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: [10],
+            successfullyEnumeratedProcessIdentifiers: [10],
+            enumeratedWindowProcessIdentifiers: [],
+            isLifecycleTransitionActive: false
+        ), [])
+    }
+
     func testOneReturningApplicationDoesNotReleaseOtherPreSleepWindows() {
         let start = Date(timeIntervalSince1970: 1_000)
         let first = WindowKey(processIdentifier: 10, windowIdentifier: 100)

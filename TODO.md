@@ -362,9 +362,28 @@ smallest useful outcome and acceptance boundary.
   source alongside the existing system, display-sleep, and fast-user-switch signals. Lock enters the
   existing write-suppressed suspension path immediately; unlock starts the same bounded fresh-AX
   reconciliation, and any independently observed sleep/session source must still receive its own
-  matching resume. All 46 focused lifecycle tests, all 735 non-hosted tests in repository quick
-  verification, and an unsigned universal Debug app build pass; signed lock/unlock validation is
-  pending.
+  matching resume. The first candidate passed all 46 focused lifecycle tests, all 735 non-hosted
+  tests in repository quick verification, and an unsigned universal Debug app build; its signed
+  lock/unlock validation exposed the notification-order race below.
+- **Lock/wake retest defect:** On installed candidate `599076fda783`, the maintainer confirmed every
+  workspace window retained its correct screen and exact position after lock/unlock, accepting the
+  layout-order preservation part of the fix. Ghostty remained visible after unlock until the Shelf
+  shortcut was invoked twice. Diagnostics show the Shelf was presented with both Ghostty windows at
+  `15:37:51Z`; a successful-empty Accessibility collapse across multiple still-running applications
+  evicted both Ghostty identities and cleared its Shelf session at `15:37:59.787Z`. The distributed
+  screen-lock notification arrived 157 milliseconds later. Wake therefore restored only the
+  retained hidden Notes session and preserved visible Ghostty focus. The first later shortcut logged
+  `shown` with zero unhide attempts because Ghostty was already visible; the second hid it normally.
+- **Lock-race follow-up implemented:** A successful-empty collapse spanning at least half of
+  multiple still-running tracked applications is now non-authoritative for a bounded 500-millisecond
+  grace period, allowing the delayed screen-lock signal to enter the existing suspension boundary.
+  The cohort can expand from a partial to a global collapse during that grace. If no lifecycle
+  signal arrives, the collapse becomes authoritative after the grace; disappearance in only one
+  application remains immediate. Diagnostics record the deferred process count and grace. All 49
+  focused lifecycle tests and all 738 non-hosted tests in repository quick verification pass,
+  including the observed partial collapse, a fully empty read 125 milliseconds later, the lock
+  signal at 160 milliseconds, grace expiry, and ordinary single-application closure. Signed live
+  validation remains pending.
 - **Installed evidence:** With maintainer approval, signed universal Debug daily candidate
   `599076fda783` is installed and running from `/Applications/WindowRanger.app` as PID `18275`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,

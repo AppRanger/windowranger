@@ -261,9 +261,13 @@ Sleep/wake and display notifications are coalesced through generation-tokened re
 AppKit workspace signals cover system/display sleep and fast-user switching; the distributed macOS
 screen-lock and screen-unlock notifications provide the separate ordinary-lock boundary that those
 workspace signals do not guarantee. Every observed suspension source must receive its matching
-resume signal before reconciliation begins. Display topology resolves first, fresh AX elements are
-acquired second, and visibility/layout is applied once the snapshot is stable. Bounded retries
-handle temporarily incomplete enumeration.
+resume signal before reconciliation begins. Because Accessibility windows can disappear just before
+the distributed lock notification arrives, a successful-empty collapse spanning at least half of
+multiple still-running tracked applications receives a 500-millisecond grace period. Single-app
+closure remains immediately authoritative; a coordinated collapse that remains fully active after
+the grace period is accepted. Display topology resolves first, fresh AX elements are acquired
+second, and visibility/layout is applied once the snapshot is stable. Bounded retries handle
+temporarily incomplete enumeration.
 After the layout solve, expected Tiled and Accordion frames are read back because a successful AX
 write does not prove that the receiving app retained it. Only mismatched, still-eligible split
 windows are retried, for a bounded number of attempts; a newer lifecycle signal supersedes the
