@@ -199,11 +199,11 @@ smallest useful outcome and acceptance boundary.
   compact labels, two-line traversal actions, headings, arrow axis, spacing, and semantic contrast
   have no unresolved P0-P2 issue. `design-qa.md` records the boundary and evidence.
 - **Installed evidence:** With maintainer approval, signed universal Debug daily candidate
-  `3c263a750f0f` (CDHash `b0f4401b3f794808f9a65b28b5d0b4e6a5713653`) is installed and
-  running from `/Applications/WindowRanger.app` as PID `65306`. Its strict signature, Apple
+  `e76ac3c48cb2` (CDHash `3470ca4891045d54cb5454f6d8e397fc1f103897`) is installed and
+  running from `/Applications/WindowRanger.app` as PID `77363`. Its strict signature, Apple
   Development authority, Team ID `44NAD22AK6`, canonical bundle identity, embedded source marker,
   `x86_64` and `arm64` architectures, running path, and exact built/installed executable and Debug
-  dylib hashes were verified. Startup session `6C9748D5-9F71-43BB-A673-1CCDB9E1C5B0` reached
+  dylib hashes were verified. Startup session `8767EC61-5A8C-43AC-AE37-763A2E1E5167` reached
   `startup-state-ready` and prepared Notes as a one-window group and Ghostty as a two-window group.
   The previous daily remains recoverable at `/Applications/.WindowRanger.previous`.
 - **Live validation needed:** With a multi-window Ghostty Shelf open, hold Navigate and confirm the
@@ -283,11 +283,11 @@ smallest useful outcome and acceptance boundary.
   selected window last for deterministic focus and Accordion stacking while hidden neighbours
   remain staged without being raised.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
-  `3c263a750f0f` is installed and running from `/Applications/WindowRanger.app` as PID `65306`.
+  `e76ac3c48cb2` is installed and running from `/Applications/WindowRanger.app` as PID `77363`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
   canonical bundle identity, Team ID `44NAD22AK6`, both `x86_64` and `arm64` architectures, running
-  path, and CDHash `b0f4401b3f794808f9a65b28b5d0b4e6a5713653` were verified. Startup session
-  `6C9748D5-9F71-43BB-A673-1CCDB9E1C5B0` prepared Notes as a one-window group and Ghostty as a
+  path, and CDHash `3470ca4891045d54cb5454f6d8e397fc1f103897` were verified. Startup session
+  `8767EC61-5A8C-43AC-AE37-763A2E1E5167` prepared Notes as a one-window group and Ghostty as a
   two-window application group, then reached `session/startup-state-ready`. This candidate includes
   the live Settings propagation fix and WR-086's contextual Shortcut Guide. This is installed
   startup smoke evidence; the interaction cases above remain for maintainer validation. The
