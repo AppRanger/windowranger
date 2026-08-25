@@ -1002,9 +1002,10 @@ enum QuickAppInteractionPolicy {
 
     static func routesWindowCycleToShelf(
         shelfIsPresented: Bool,
-        configuredAppCount: Int
+        configuredAppCount: Int,
+        transitionInProgress: Bool
     ) -> Bool {
-        shelfIsPresented && configuredAppCount > 0
+        (shelfIsPresented || transitionInProgress) && configuredAppCount > 0
     }
 
     static func routesDirectionalFocusToShelf(
@@ -4494,7 +4495,8 @@ final class WorkspaceEngine {
             guard let self, offset != 0 else { return }
             if QuickAppInteractionPolicy.routesWindowCycleToShelf(
                 shelfIsPresented: self.isQuickAppShelfPresented,
-                configuredAppCount: self.quickAppConfigurations.count
+                configuredAppCount: self.quickAppConfigurations.count,
+                transitionInProgress: self.quickAppTransition != .idle
             ) {
                 self.diagnostics.log(
                     category: "focus-cycle",

@@ -508,19 +508,28 @@ final class QuickAppShelfTests: XCTestCase {
     func testWindowCycleRoutesThroughPresentedShelf() {
         XCTAssertTrue(QuickAppInteractionPolicy.routesWindowCycleToShelf(
             shelfIsPresented: true,
-            configuredAppCount: 3
+            configuredAppCount: 3,
+            transitionInProgress: false
         ))
         XCTAssertTrue(QuickAppInteractionPolicy.routesWindowCycleToShelf(
             shelfIsPresented: true,
-            configuredAppCount: 1
+            configuredAppCount: 1,
+            transitionInProgress: false
+        ))
+        XCTAssertTrue(QuickAppInteractionPolicy.routesWindowCycleToShelf(
+            shelfIsPresented: false,
+            configuredAppCount: 3,
+            transitionInProgress: true
+        ), "A rapid Shelf cycle must remain contained between outgoing and incoming apps.")
+        XCTAssertFalse(QuickAppInteractionPolicy.routesWindowCycleToShelf(
+            shelfIsPresented: false,
+            configuredAppCount: 3,
+            transitionInProgress: false
         ))
         XCTAssertFalse(QuickAppInteractionPolicy.routesWindowCycleToShelf(
             shelfIsPresented: false,
-            configuredAppCount: 3
-        ))
-        XCTAssertFalse(QuickAppInteractionPolicy.routesWindowCycleToShelf(
-            shelfIsPresented: true,
-            configuredAppCount: 0
+            configuredAppCount: 0,
+            transitionInProgress: true
         ))
     }
 

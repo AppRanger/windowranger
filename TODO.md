@@ -217,8 +217,8 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Quick App Shelf ownership and interaction change
 - **Priority:** P1
-- **Status:** Post-activation Shelf restacking fix implemented and automated-verified; signed retest
-  pending.
+- **Status:** Rapid Shelf-cycle transition containment implemented and automated-verified; signed
+  retest pending.
 - **Requested:** 25 August 2026.
 - **User decision:** The Shelf is a temporary workspace containing the eligible windows of its
   configured applications, not a launcher containing one representative window per application.
@@ -255,8 +255,9 @@ smallest useful outcome and acceptance boundary.
 - **Automated evidence:** 60 focused Quick App tests pass, covering same-process grouping,
   cross-process rejection, stable cycling, exact-member removal, one-for-one native-tab handoff with
   retained group members, legacy persistence, and seven-window Carousel/Accordion geometry at all
-  four edges. The live-settings propagation, visible-window stacking, and post-activation
-  restacking regression tests, plus all 31 tests in `QuickAppShelfTests`, pass. The complete
+  four edges. The live-settings propagation, visible-window stacking, post-activation restacking,
+  and rapid transition containment regression tests, plus all 31 tests in `QuickAppShelfTests`,
+  pass. The complete
   non-hosted suite passes 731 tests with zero
   failures or skips. Test isolation, shell syntax, release-build registry, Sparkle feed workflow,
   project generation,
@@ -265,7 +266,9 @@ smallest useful outcome and acceptance boundary.
 - **Live validation remaining:** Repeat the two-window Ghostty case across direct toggle and
   restart. Then check both layouts, app-wide hide/show, Previous/Next
   and arrow navigation, adding and closing one Ghostty window while presented, and final restoration
-  to the original workspaces and frames.
+  to the original workspaces and frames. With a one-app visible count, rapidly press Previous/Next
+  through the last window and across applications; every press must remain Shelf-owned while the
+  outgoing app hides and the incoming app appears.
 - **Live defect found:** The maintainer confirmed both Ghostty windows appeared, but the Shelf kept
   using Accordion and appeared to show only one configured application even though the active
   profile saved Carousel with a visible-app count of two and both Notes and Ghostty were open.
@@ -291,6 +294,16 @@ smallest useful outcome and acceptance boundary.
   the final Notes activation could undo the neighbour stacking. The fix now restacks the group
   after every presented Shelf app activation; selection changes only when the activated app
   differs.
+- **Rapid-cycle live defect:** The maintainer exercised settings and navigation across one- and
+  two-app Carousel and Accordion configurations. Diagnostics confirmed those settings, both
+  Notes-first and Ghostty-first presentation, exact-window arrow navigation, post-activation
+  restacking, and contextual guide updates all worked. With one visible app, however, a rapid third
+  Next Window press landed after Ghostty had hidden and before Notes finished showing. Window
+  cycling only recognised a currently presented Shelf, so that press escaped into the ordinary
+  workspace cycle and its activation immediately closed the incoming Notes Shelf. Window cycling
+  now remains routed to the Shelf for the complete hide/show transition, matching directional
+  focus; repeated presses advance from the pending app selection and cannot target workspace
+  windows during the gap.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
   `39aa7f7fab01` is installed and running from `/Applications/WindowRanger.app` as PID `78706`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
