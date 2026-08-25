@@ -341,8 +341,10 @@ smallest useful outcome and acceptance boundary.
   changed signal into the shared group layout, while hidden-session pruning remains write-free.
   The authoritative pruning path now preserves that signal, logs the exact group count change, and
   invokes the shared layout only for a presented session. Policy regression coverage passes, as do
-  all 732 non-hosted tests in quick local verification; signed-app close-and-resize validation is
-  pending.
+  all 732 non-hosted tests in quick local verification.
+- **Dynamic-membership live result:** On installed candidate `f412302c01bc`, the maintainer
+  confirmed that opening a third Ghostty window laid out the enlarged group correctly and closing
+  it immediately resized the two survivors. This accepts the presented add/remove membership case.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
   `f412302c01bc` is installed and running from `/Applications/WindowRanger.app` as PID `97843`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
