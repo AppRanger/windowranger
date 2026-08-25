@@ -199,11 +199,11 @@ smallest useful outcome and acceptance boundary.
   compact labels, two-line traversal actions, headings, arrow axis, spacing, and semantic contrast
   have no unresolved P0-P2 issue. `design-qa.md` records the boundary and evidence.
 - **Installed evidence:** With maintainer approval, signed universal Debug daily candidate
-  `dc0852080593-dirty` (CDHash `06abf113e02d263b3c2b05d742bbe047cb5f1071`) is installed and
-  running from `/Applications/WindowRanger.app` as PID `61807`. Its strict signature, Apple
+  `51c9fb776f29` (CDHash `6b6a4554e85658fc05f295ea12d9f4612a7cc2ac`) is installed and
+  running from `/Applications/WindowRanger.app` as PID `63019`. Its strict signature, Apple
   Development authority, Team ID `44NAD22AK6`, canonical bundle identity, embedded source marker,
   `x86_64` and `arm64` architectures, running path, and exact built/installed executable and Debug
-  dylib hashes were verified. Startup session `B5BE3562-31DF-4BBA-9D63-D7DF670D57EF` reached
+  dylib hashes were verified. Startup session `B5DBE21F-AD08-4C69-80BD-3A7DECAA3A8D` reached
   `startup-state-ready` and prepared Ghostty as one hidden two-window Shelf application group. The
   previous daily remains recoverable at `/Applications/.WindowRanger.previous`.
 - **Live validation needed:** With a multi-window Ghostty Shelf open, hold Navigate and confirm the
@@ -263,11 +263,11 @@ smallest useful outcome and acceptance boundary.
   and arrow navigation, adding and closing one Ghostty window while presented, and final restoration
   to the original workspaces and frames.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
-  `dc0852080593-dirty` is installed and running from `/Applications/WindowRanger.app` as PID `61807`.
+  `51c9fb776f29` is installed and running from `/Applications/WindowRanger.app` as PID `63019`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
   canonical bundle identity, Team ID `44NAD22AK6`, both `x86_64` and `arm64` architectures, running
-  path, and CDHash `06abf113e02d263b3c2b05d742bbe047cb5f1071` were verified. Startup session
-  `B5BE3562-31DF-4BBA-9D63-D7DF670D57EF` prepared Ghostty as one two-window application group and
+  path, and CDHash `6b6a4554e85658fc05f295ea12d9f4612a7cc2ac` were verified. Startup session
+  `B5DBE21F-AD08-4C69-80BD-3A7DECAA3A8D` prepared Ghostty as one two-window application group and
   reached `session/startup-state-ready`. This newer candidate also contains WR-086's contextual
   Shortcut Guide. This is installed startup smoke evidence; the interaction cases above remain for
   maintainer validation. The previous daily copy remains recoverable at
