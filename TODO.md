@@ -319,11 +319,11 @@ smallest useful outcome and acceptance boundary.
   roughly another half-second. Activation now performs only the required frame/raise restack;
   topology and membership remain owned by the existing refresh and lifecycle paths.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
-  `93e7fa6df391` is installed and running from `/Applications/WindowRanger.app` as PID `86574`.
+  `fcf5f2db0bb4` is installed and running from `/Applications/WindowRanger.app` as PID `89201`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
   canonical bundle identity, Team ID `44NAD22AK6`, both `x86_64` and `arm64` architectures, running
-  path, and CDHash `a5522128121d0cc07581a1937769d5da678365ca` were verified. Startup session
-  `70405C22-02A6-4B2B-915C-DBBA890D9410` prepared Notes as a one-window group and Ghostty as a
+  path, and CDHash `1041e9dcfb55f8af2fe3e3e6af14b6107914b749` were verified. Startup session
+  `9F8DE783-A87F-429D-B822-A8197E4F9C6B` prepared Notes as a one-window group and Ghostty as a
   two-window application group, then reached `session/startup-state-ready`. This candidate includes
   the live Settings propagation fix and WR-086's contextual Shortcut Guide. This is installed
   startup smoke evidence; the interaction cases above remain for maintainer validation. The
