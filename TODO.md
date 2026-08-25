@@ -312,6 +312,12 @@ smallest useful outcome and acceptance boundary.
   command to reach ordinary workspace cycling. A bounded selection-focus handoff now preserves
   only that exact preceding process for two seconds and clears as soon as the incoming Shelf app
   activates. Unrelated application activation and expired handoffs still dismiss the Shelf.
+- **App-switch latency follow-up:** The maintainer confirmed the handoff candidate worked but felt
+  very slow. Its trace measured about 35 ms for cycling between Ghostty windows, about 0.4 seconds
+  to switch applications into Ghostty, and about 1.1 seconds to switch into Notes. Notes had already
+  been shown and activated before a redundant post-activation full membership reconciliation added
+  roughly another half-second. Activation now performs only the required frame/raise restack;
+  topology and membership remain owned by the existing refresh and lifecycle paths.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
   `93e7fa6df391` is installed and running from `/Applications/WindowRanger.app` as PID `86574`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,

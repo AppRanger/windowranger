@@ -140,7 +140,7 @@ final class QuickAppShelfTests: XCTestCase {
             ),
             QuickAppInteractionPolicy.PresentedActivationDecision(
                 selectsActivatedConfiguration: false,
-                reconcilesPresentedGroup: true
+                restacksPresentedGroup: true
             )
         )
         XCTAssertEqual(
@@ -150,7 +150,7 @@ final class QuickAppShelfTests: XCTestCase {
             ),
             QuickAppInteractionPolicy.PresentedActivationDecision(
                 selectsActivatedConfiguration: true,
-                reconcilesPresentedGroup: true
+                restacksPresentedGroup: true
             )
         )
     }

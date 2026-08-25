@@ -977,7 +977,7 @@ struct IgnoredQuickAppVisibilityRecovery: Codable, Equatable, Sendable {
 enum QuickAppInteractionPolicy {
     struct PresentedActivationDecision: Equatable {
         let selectsActivatedConfiguration: Bool
-        let reconcilesPresentedGroup: Bool
+        let restacksPresentedGroup: Bool
     }
 
     static func presentedActivationDecision(
@@ -988,7 +988,7 @@ enum QuickAppInteractionPolicy {
             selectsActivatedConfiguration: selectedBundleIdentifier.map {
                 $0.caseInsensitiveCompare(activatedBundleIdentifier) != .orderedSame
             } ?? true,
-            reconcilesPresentedGroup: true
+            restacksPresentedGroup: true
         )
     }
 
@@ -2929,6 +2929,22 @@ final class WorkspaceEngine {
             display: display,
             correlationID: correlationID,
             focusSelected: focusSelected
+        )
+    }
+
+    private func restackPresentedQuickAppGroup(correlationID: String?) {
+        guard let selectedSession = dropDownAppSession,
+              selectedSession.isPresented
+        else { return }
+        let displays = Self.activeDisplays()
+        guard let display = selectedSession.displayIdentifier.flatMap({ identifier in
+            displays.first { $0.identifier == identifier }
+        }) ?? dropDownTargetDisplay(displays: displays)
+        else { return }
+        layoutPresentedQuickAppGroup(
+            display: display,
+            correlationID: correlationID,
+            focusSelected: false
         )
     }
 
@@ -6080,11 +6096,8 @@ final class WorkspaceEngine {
                     self.dropDownAppConfiguration = selected
                     self.onQuickAppSelectionChanged?(selected.bundleIdentifier)
                 }
-                if decision.reconcilesPresentedGroup {
-                    self.reconcilePresentedQuickAppGroup(
-                        correlationID: nil,
-                        focusSelected: false
-                    )
+                if decision.restacksPresentedGroup {
+                    self.restackPresentedQuickAppGroup(correlationID: nil)
                 }
                 self.diagnostics.log(
                     category: "drop-down-app",
