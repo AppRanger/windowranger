@@ -2247,6 +2247,33 @@ struct WorkspaceSettingsView: View {
                 }
                 .pickerStyle(.segmented)
 
+                LabeledContent("Copy Layout") {
+                    Menu("Choose Workspace…") {
+                        ForEach(store.settingsWorkspaces.filter { $0.id != workspace.id }) { source in
+                            Button {
+                                store.copySettingsLayout(
+                                    from: source.id,
+                                    to: workspace.id,
+                                    undoManager: undoManager
+                                )
+                            } label: {
+                                Label(
+                                    "\(source.name) — \(source.layout.title)",
+                                    systemImage: source.layout.systemImage
+                                )
+                            }
+                        }
+                    }
+                    .disabled(store.settingsWorkspaces.count <= 1)
+                    .help("Copy another workspace's layout style and geometry")
+                }
+                Text(
+                    "Copies the layout style, orientation, gaps and padding from another workspace. "
+                        + "Its name, key, Home Display, app rules and window membership stay unchanged."
+                )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 if store.settingsUsesLegacyLayoutGeometry(for: workspace.id), workspace.layout != .none {
                     Label(
                         "This workspace is preserving its pre-upgrade geometry.",

@@ -1745,6 +1745,78 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(restored.layoutConfiguration?.accordionPadding, 175)
     }
 
+    @MainActor
+    func testWorkspaceCanCopyAnotherWorkspaceLayoutWithoutCopyingIdentityAndCanUndo() throws {
+        let defaults = isolatedDefaults()
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        var source = workspaceA
+        source.layout = .tiled
+        source.layoutConfiguration = WorkspaceLayoutConfiguration(
+            orientation: .vertical,
+            accordionPadding: 135,
+            gaps: WorkspaceLayoutGaps(
+                innerHorizontal: 7,
+                innerVertical: 9,
+                outerTop: 11,
+                outerRight: 13,
+                outerBottom: 15,
+                outerLeft: 17
+            )
+        )
+        var destination = workspaceB
+        destination.layout = .accordion
+        destination.layoutConfiguration = .aeroSpaceUserDefaults
+        store.workspaces = [source, destination]
+        let destinationRole = store.addDisplayRole(name: "Destination Display")
+        store.assignWorkspace(destination.id, toRole: destinationRole)
+        let undo = UndoManager()
+
+        store.copySettingsLayout(
+            from: source.id,
+            to: destination.id,
+            undoManager: undo
+        )
+
+        let copied = try XCTUnwrap(store.settingsWorkspaces.first { $0.id == destination.id })
+        XCTAssertEqual(copied.name, destination.name)
+        XCTAssertEqual(copied.key, destination.key)
+        XCTAssertEqual(copied.layout, .tiled)
+        XCTAssertEqual(copied.layoutConfiguration, source.layoutConfiguration)
+        XCTAssertEqual(store.settingsRoleID(for: destination.id), destinationRole)
+        XCTAssertTrue(undo.canUndo)
+
+        undo.undo()
+        let restored = try XCTUnwrap(store.settingsWorkspaces.first { $0.id == destination.id })
+        XCTAssertEqual(restored.layout, .accordion)
+        XCTAssertEqual(restored.layoutConfiguration, .aeroSpaceUserDefaults)
+        XCTAssertEqual(restored.name, destination.name)
+        XCTAssertEqual(store.settingsRoleID(for: destination.id), destinationRole)
+
+        let activeSnapshot = store.workspaces
+        let inactiveProfileID = try XCTUnwrap(store.duplicateProfile(store.activeProfileID))
+        XCTAssertEqual(store.settingsProfileID, inactiveProfileID)
+        XCTAssertNotEqual(store.activeProfileID, inactiveProfileID)
+        let inactiveSource = store.settingsWorkspaces[0]
+        let inactiveDestination = store.settingsWorkspaces[1]
+        store.setSettingsLayout(.accordion, for: inactiveSource.id)
+        store.copySettingsLayout(
+            from: inactiveSource.id,
+            to: inactiveDestination.id,
+            undoManager: nil
+        )
+
+        XCTAssertEqual(
+            store.settingsWorkspaces.first { $0.id == inactiveDestination.id }?.layout,
+            .accordion
+        )
+        XCTAssertEqual(store.workspaces, activeSnapshot)
+    }
+
     func testReleaseSearchNeverExposesDebugOnlyControls() {
         XCTAssertTrue(SettingsCatalog.search("logs", includeDebug: false).isEmpty)
         XCTAssertFalse(SettingsCatalog.search("logs", includeDebug: true).isEmpty)

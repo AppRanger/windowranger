@@ -1,18 +1,19 @@
 # Future workspace systems — decision brief
 
-Status: **Research only for pinned-display mode, named arrangements, the optional overview, and
-reusable layout presets.** Section 4 also distinguishes those unapproved preset/editor ideas from
-the Tiled placement and direct-manipulation behavior that is already implemented and tested.
+Status: **Research only for pinned-display mode, the optional overview, Tiled templates, and profile
+activation restoration.** Named arrangements were resolved against because Profiles already own
+that product boundary. Section 4 distinguishes unapproved template/editor ideas from the Tiled
+placement and direct-manipulation behavior that is already implemented and tested.
 
-This brief scopes four adjacent concepts without turning them into one feature. It preserves the
+This brief scopes adjacent concepts without turning them into one feature. It preserves the
 current product boundaries: profiles are reusable configuration rather than window snapshots;
 Unified and Independent Displays remain the only built display modes; and layouts remain Freeform,
 Tiled, and Accordion.
 
 The related [Omarchy-inspired research](omarchy-inspired-ideas.md) is reconciled through the same
-canonical queue rather than forming a second roadmap. Temporary window groups plus reversible desk
-restore map to the named-arrangements decision; workspace personalities map to the existing layout
-and preset decision. Searchable commands and the Quick App Shelf have their own queue entries.
+canonical queue rather than forming a second roadmap. Profiles own reusable environments; Tiled
+templates own topology only; profile activation may later reconcile or launch configured apps.
+Searchable commands and the Quick App Shelf have their own queue entries.
 
 ## Shared platform evidence
 
@@ -85,62 +86,21 @@ workspace moves, profile changes, wake, menu presentation, and no rewrite of syn
 
 ## 2. Named whole-desk arrangements
 
-### Product distinction and value
+### Resolved boundary — 25 August 2026
 
-An arrangement would capture a recoverable **desired desk state** for the apps/windows that exist,
-whereas a profile defines how WindowRanger behaves over time. Examples are “Writing session”,
-“Customer call”, or “Presentation”. Applying one could place eligible current windows into chosen
-workspaces/displays/layout slots. It must not turn transient AX/WindowServer IDs into durable data.
-An Omarchy-inspired temporary window group is the session-only first stage of this same identity
-model, not a separate persistence system. A reusable group recipe is an arrangement.
+Do not add a separate named-arrangement object or Settings destination. A Writing, Coding, Customer
+Call, or Presentation environment is already a Profile: it owns named workspaces, Application Rules,
+workspace layouts, abstract display roles, and explicit or automatic activation. Capturing the same
+assignments and layouts in a second object would create competing ownership, persistence, sync,
+preview, and activation paths.
 
-### Model and persistence implications
+The useful parts now have narrower homes:
 
-A conservative first model could contain stable app bundle IDs, abstract display roles, destination
-workspace identities or semantic workspace names, layout choice/geometry, and optional per-app
-placement slots. It should not contain window titles, document paths/URLs, raw monitor IDs, or exact
-window IDs. That means multiple same-app windows cannot be matched perfectly without a new, explicit
-privacy-sensitive identity policy.
-
-It is unresolved whether arrangements belong inside a profile, form a separate synced library, or
-remain local. A synced arrangement can reference profile workspace/role IDs only if its ownership
-and deletion/migration rules are explicit.
-
-### Interaction
-
-Creation needs a preview of what reusable information will be saved. Apply should show a diff-like
-summary, offer merge versus replace only if both semantics are deliberately specified, validate all
-targets first, then run one generation-tokened transition with a bounded rollback/Undo record. The
-Command Palette could list arrangements later, but not before Settings makes scope and consequences
-clear.
-
-### Failure and recovery
-
-- Missing apps/windows are reported and skipped; no stale identity is resurrected.
-- Extra open windows need a settled retain/move/ignore policy.
-- Minimized, full-screen, ignored, deferred, dialog, floating, keep-on-all, and app-rule precedence
-  remains authoritative.
-- Missing display roles use safe fallback without rewriting the arrangement.
-- An interrupted apply must leave every managed window visible and recoverable, with the prior desk
-  state available to Undo when identities are still valid in the same WindowServer session.
-
-### Dependencies and tests
-
-Depends on portable profile-style validation/remapping, profile transitions, reset/recovery,
-transactional layout commits, app-rule precedence, and a native preview. Tests need multiple same-app
-windows, missing/extra apps, rule conflicts, display fallback, changed WindowServer session,
-mid-transaction rejection, Undo safety, and strict exclusion of titles/paths/raw IDs from coding and
-diagnostics.
-
-### Product decisions still required
-
-1. Does apply only rearrange open windows, or may it launch applications?
-2. Is matching by bundle ID sufficient, and how are multiple windows of one app ordered?
-3. Are arrangements owned by one profile, global and synced, or local to a Mac?
-4. Which data is captured: workspace membership, display role, layout mode, tree/order/weights,
-   Freeform frames, floating overrides, and/or app-rule changes?
-5. Are unmatched current windows retained, sent to an overflow workspace, or left untouched?
-6. Is apply always additive/merge, always replace, or a previewed choice?
+- copying ordinary layout settings between workspaces is a direct Workspace Settings action;
+- optional recovery and launch of profile-configured apps belongs to profile activation;
+- reusable 2x2 or asymmetric geometry belongs to Tiled topology templates;
+- a future temporary group must prove a genuinely session-only interaction before receiving its own
+  model.
 
 ## 3. Optional visual workspace/stage overview
 
@@ -189,14 +149,15 @@ side effects. Live tests must separately verify system permission copy and captu
 5. Is the overview global, per interaction display, or one panel per display?
 6. Does click switch only, and does drag send-only by default with a modifier for follow?
 
-## 4. Layout presets and current direct manipulation
+## 4. Tiled templates and current direct manipulation
 
 ### Current boundary
 
 These are separate capabilities and must not be treated as one future feature:
 
-1. **Layout presets — research only:** named reusable geometry/topology templates independent of
-   live window IDs.
+1. **Tiled templates — research only:** reusable normalized geometry/topology independent of live
+   window IDs, such as four equal slots in a 2x2 grid or one large slot on the left with two stacked
+   on the right.
 2. **Manual split resizing — implemented:** resizing a focused Tiled window adjusts the nearest
    compatible divider, clamps it to safe minimum geometry, and reflows the affected tree.
 3. **Title-bar drag-to-swap — implemented:** a position-only drag holds the focused tile in place
@@ -206,32 +167,36 @@ These are separate capabilities and must not be treated as one future feature:
 
 The three implemented behaviors have deterministic tree and engine coverage. Their feel and
 Accessibility behavior with real third-party windows remain part of the signed-app validation
-boundary; test evidence alone does not close that work. Presets remain the only feature proposal in
+boundary; test evidence alone does not close that work. Templates remain the only feature proposal in
 this section. The existing radial Tiled Place contract supplies an important invariant for any
 future editor: preview makes zero AX writes; commit validates the same captured context and applies
 one normal layout transaction.
 
 ### Model and persistence implications
 
-A preset can store a versioned normalized split topology, orientation/ratios, gaps/padding, minimum
-participant rules, and a deterministic policy for too few/many windows. It cannot store live window
-identities. It remains undecided whether presets are global, profile-owned, or copied into a
-workspace on selection. Migrating an existing flat Tiled workspace must preserve its current visual
-arrangement until a preset or direct action is deliberately applied.
+A template can store a versioned normalized split topology, semantic slots, ratios, gaps/padding,
+and a required participant count. It cannot store applications or live window identities. The
+recommended first boundary is Tiled-only, a small built-in set, and an exact-count requirement: the
+action is unavailable with a clear explanation when the workspace does not contain the right number
+of eligible windows. Current windows fill slots deterministically in layout order. A custom builder
+should embed its resulting topology in the workspace rather than create another named library;
+selecting a built-in likewise copies its topology into the workspace. Migrating an existing flat
+Tiled workspace must preserve its current visual arrangement until a template or direct action is
+deliberately applied.
 
-Omarchy-inspired “workspace personalities” must also resolve through this existing layout model.
-Grid and Columns are candidate Tiled presets; Focus, Presentation, and Transient require separately
-defined behavior and lifecycle policy, not a parallel workspace-mode enum.
+Profiles already provide broader Writing and Coding personalities. Grid, Columns, 2x2, and
+master/detail arrangements are candidate Tiled templates; behavior such as Presentation or
+Transient needs a separately justified lifecycle policy, not a parallel workspace-mode enum.
 
 Current direct manipulation changes the WindowServer-session layout tree/order/weights. Durable
 cross-session tree persistence would require stable semantic slots rather than window IDs and
-remains a later preset decision.
+remains a later template decision.
 
 ### Interaction and platform feasibility
 
 Current manual split resizing and drag-to-swap reconcile Accessibility frame observations from the
 focused Tiled window; they do not expose app-owned divider handles or an overview/editor. The radial
-placement preview is a nonactivating WindowRanger overlay. A future preset editor could add explicit
+placement preview is a nonactivating WindowRanger overlay. A future template builder could add explicit
 handles, ghost frames, or native in-app drag/drop, but that UI is neither implemented nor approved.
 
 Every gesture should capture window/workspace/display/topology generation, keep focus on the exact
@@ -244,23 +209,54 @@ focus, display change, sleep, and profile/workspace change discard the preview.
 The implemented manipulation paths depend on the pure Tiled tree, transaction/diff layout
 application, focus verification, nonactivating placement preview, and bounded Undo. Existing tests
 cover divider selection/clamping, drag target selection, swap/insertion topology, contextual
-exclusions, preview zero-write, single commit, and stale-context cancellation. Presets still need
+exclusions, preview zero-write, single commit, and stale-context cancellation. Templates still need
 separate participant-count, aspect-ratio, persistence, migration, and editor tests after their
 product boundary is decided.
 
 ### Product decisions still required
 
-1. Are presets global, profile-owned, or embedded per workspace?
-2. Which initial presets are worth naming, and how do they handle extra/fewer windows?
-3. Does Freeform gain snap presets, or are presets Tiled-only initially?
-4. Which topology, participant policy, or semantic slot state can persist without guessing window
+1. Should participation continue to count every eligible window, or deliberately use at most one
+   window from each application?
+2. Which initial built-ins are worth naming beyond 2x2 and large-left/two-right?
+3. Should an exact-count template adapt after a window opens or closes, or fall back to ordinary
+   Tiled behavior until its count matches again?
+4. How does a user inspect and change deterministic slot order without binding apps to templates?
+5. Which topology, participant policy, or semantic slot state can persist without guessing window
    identity?
+
+## 5. Profile activation restoration and launch
+
+Profiles can become more complete environments without introducing arrangements. Two independent,
+per-profile options are worth refining:
+
+1. **Restore configured apps:** when the user explicitly applies a profile, reconcile running apps
+   covered by enabled Application Rules with explicit workspace assignments. Move their eligible
+   windows through the normal admission/rule path. Do not reveal every profile workspace at once;
+   only the workspace or workspaces made active by the profile appear on screen.
+2. **Launch missing configured apps:** after explicit manual profile activation, open configured
+   applications that are not running. Newly discovered windows enter through the same normal
+   admission/rule path, without focusing each app as it launches.
+
+Both options should default off. Quick Apps remain Shelf-owned and are not launch targets. The first
+increment should not launch apps for automatic display, dock, topology, or Game Mode profile
+switches; those can happen without the user intending to start a work session. Protected full-screen
+sessions and the existing ignored/deferred/floating safety rules remain authoritative.
+
+### Product decisions still required
+
+1. Does restore unhide or deminimize eligible windows, or only correct workspace/display placement?
+2. How should launch order, duplicate instances, failure, timeout, and partial completion be shown?
+3. What happens when another profile is applied while launches or delayed window discovery are in
+   progress?
+4. Should automatic activation ever gain a separate launch permission after manual behavior is
+   proven?
+5. What is the Undo boundary when app launch itself cannot be safely reversed?
 
 ## Recommended research order
 
-1. Prototype a pure metadata overview model and a pure layout-preset resolver in tests/offscreen UI.
-2. Resolve pinned-mode ownership and all-pinned semantics before changing the display-mode enum.
-3. Define arrangement capture/apply data and privacy boundaries before any “Save Desk” UI.
+1. Resolve manual profile-activation restoration and launch semantics before changing activation.
+2. Prototype a pure Tiled-template resolver and accessible offscreen builder in tests/offscreen UI.
+3. Resolve pinned-mode ownership and all-pinned semantics before changing the display-mode enum.
 4. If thumbnails remain desirable, perform an isolated ScreenCaptureKit permission/parked-window
    feasibility spike with no integration into normal startup.
 5. Consider an explicit overlay editor only if the current native resize, drag-to-swap, and radial

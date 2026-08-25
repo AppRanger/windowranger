@@ -391,7 +391,9 @@ Each workspace key produces read-only summaries of the exact derived commands: N
 switches to it and Arrange-key sends the focused window there. Add and Duplicate resolve a
 unique name and supported key automatically. Drag reorder, context-menu and VoiceOver Move Up/Down,
 safe deletion, native Undo for **Reset This Workspace**, and **Restore WindowRanger Defaults** all
-use the same profile-backed storage path. Displays is a current destination; saved or deep-linked
+use the same profile-backed storage path. **Copy Layout** copies another workspace's layout style,
+orientation, gaps, and padding without changing identity, display home, app rules, or window
+membership. Displays is a current destination; saved or deep-linked
 legacy Layouts selections open Workspaces instead of leaving a stale destination.
 
 ## Command Palette and Window Placement

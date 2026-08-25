@@ -57,6 +57,7 @@ Command Palette retain their existing destinations.
 | Automatic / Horizontal / Vertical orientation | Tiled and Accordion inspector state |
 | Inner gaps and outer screen padding | Tiled-only inspector controls |
 | Accordion visible-edge padding | Accordion-only inspector control |
+| Copy another workspace's layout | Inspector Layout action; copies style and geometry only |
 | Reset current workspace windows | Inspector Repair section, retaining the existing active-workspace safety command |
 | Workspace shortcut summaries | Inspector General section |
 
@@ -101,6 +102,9 @@ intentionally omitted.
 - **Accordion:** orientation and visible-edge padding only.
 - Pre-upgrade workspaces with nil layout configuration retain their existing appearance until the
   user explicitly adopts current built-in geometry, preserving the existing migration boundary.
+- **Copy Layout** chooses another workspace in the same edited profile and copies only its layout
+  style and reusable geometry. Destination identity, role assignment, app rules, and live membership
+  remain unchanged. The copy participates in native Undo and creates no named preset library.
 
 ### Repair and reset
 

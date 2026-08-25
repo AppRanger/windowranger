@@ -171,6 +171,64 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-087 — Copy a workspace layout without creating a preset library
+
+- **Type:** Workspace Settings convenience
+- **Priority:** P2
+- **Status:** Done — implemented, automated/visual-build verified, installed, and interaction-validated.
+- **Requested:** 25 August 2026.
+- **Decision:** The first named layout-preset and desk-arrangement experiment duplicated Profiles,
+  Application Rules, and workspace layout settings. Remove that extra persistence/UI surface and
+  retain only the useful low-level action.
+- **Smallest useful outcome:** In a workspace's Layout inspector, choose another workspace in the
+  edited profile and copy its Freeform, Tiled, or Accordion style plus orientation, gaps, and
+  padding. Preserve destination identity, Home Display, app rules, and live window membership.
+- **Acceptance:** The action is unavailable with one workspace, uses the same active/inactive
+  profile editing boundary as other workspace settings, applies to the live engine when editing the
+  active profile, persists normally, and participates in native Undo. It creates no named object,
+  sync schema, import/export content, or second Settings destination.
+- **Automated evidence:** Repository quick verification passes all 739 non-hosted tests with zero
+  failures. Focused coverage proves layout style/configuration copy, preservation of destination
+  identity and Home Display, native Undo, and isolation when editing an inactive profile. The
+  universal unsigned Debug app builds successfully.
+- **Visual evidence:** The Light and Dark production Workspace Settings renders contain the native
+  **Copy Layout** menu in the existing Layout section with clear scope copy and no extra destination;
+  the Light render was inspected at Retina resolution. The broader renderer was stopped after these
+  required pages were written because it continued through unrelated Settings destinations.
+- **Installed evidence:** With maintainer approval, signed universal Debug daily candidate
+  `135628eaca62-dirty` (CDHash `1065a60f4a482b1dd6b1b435a2b02ef442e6c057`) is installed and
+  running from `/Applications/WindowRanger.app` as PID `62473`. Strict signature, Apple Development
+  authority, Team ID `44NAD22AK6`, bundle identity, both architectures, exact built/installed
+  executable and Debug dylib hashes, and running path were verified. Startup session
+  `15F94716-C2D0-415E-A49F-C855F4E276B7` reached `startup-state-ready`; Notes and both Ghostty
+  windows were prepared as Shelf groups. The previous daily remains recoverable at
+  `/Applications/.WindowRanger.previous`.
+- **Live result:** The maintainer confirmed the installed **Copy Layout** action appears to work when
+  copying between workspaces; the destination accepted the selected layout without an observed
+  interaction problem. Automated coverage closes inactive-profile isolation, preservation of
+  destination identity and Home Display, profile-backed persistence, and native Undo through the
+  same mutation path.
+
+### WR-088 — Optionally restore and launch configured apps when applying a profile
+
+- **Type:** Profile activation research
+- **Priority:** P2
+- **Status:** Needs decision — user concept recorded for refinement, not approved for implementation.
+- **Requested:** 25 August 2026.
+- **Product value:** Profiles should be able to feel like complete Writing or Coding environments,
+  not merely rules that wait for applications to appear. Two independent per-profile options could
+  recover eligible windows from configured applications and launch configured applications that
+  are not running.
+- **Recommended starting boundary:** Consider only enabled Application Rules with an explicit
+  workspace assignment as configured launch targets. Keep Quick Apps under Shelf control. Default
+  both options off, launch only after an explicit manual **Use Profile** action, never focus or
+  activate each launched app, and route delayed windows through the normal rule/admission path.
+- **Decisions required:** Define “back to the screen” when a profile contains inactive workspaces;
+  decide hidden versus minimized handling; decide whether automatic dock/topology/Game Mode changes
+  may ever launch apps; specify launch order, failure/timeout feedback, multi-display behavior,
+  duplicate instances, protected full-screen sessions, and how Undo/profile supersession cancels
+  pending launches.
+
 ### WR-086 — Make Shortcut Guide contextual while Quick App Shelf is open
 
 - **Type:** Shortcut Guide and Quick App Shelf integration
@@ -2502,14 +2560,18 @@ design notes, but every active candidate must map back to a work item here or be
 
 ### WR-008 — Named whole-desk arrangements
 
-- **Type:** Feature research
-- **Status:** Needs decision
+- **Type:** Resolved product decision
+- **Status:** Superseded by Profiles on 25 August 2026; do not implement as a separate feature.
 - **Sources:** `docs/future-workspace-systems-decisions.md` and
   `docs/omarchy-inspired-ideas.md`
-- **Decision:** Launch behavior, same-app window matching, ownership/sync, captured data, unmatched
-  windows, and merge versus replace semantics. Treat temporary window groups as the first
-  session-only stage of this model; restoration preview, unmatched-window reporting, and bounded
-  Undo are safety requirements rather than separate feature systems.
+- **Decision:** A named arrangement was a partial Profile: it stored application-to-workspace
+  assignments and workspace layouts through a second persistence, preview, and activation path.
+  Profiles already own named reusable workspaces, Application Rules, layouts, display roles, and
+  manual/automatic activation. The narrower arrangement semantics did not justify the overlapping
+  concept or Settings surface.
+- **Result:** The uncommitted experiment was removed before entering the profile schema. Profile
+  activation improvements belong in WR-088. A future temporary group must demonstrate a distinct
+  session-only interaction rather than reintroducing a partial Profile under another name.
 
 ### WR-009 — Optional workspace/stage overview
 
@@ -2519,17 +2581,26 @@ design notes, but every active candidate must map back to a work item here or be
 - **Decision:** Whether metadata-only is valuable first; whether thumbnails justify Screen
   Recording permission; placeholder/cache privacy; panel scope; click and drag semantics.
 
-### WR-010 — Reusable layout presets
+### WR-010 — Tiled layout templates and builder
 
 - **Type:** Feature research
-- **Status:** Needs decision
+- **Status:** Needs decision — narrowed on 25 August 2026 to topology templates inside Tiled only.
 - **Sources:** `docs/future-workspace-systems-decisions.md` and
   `docs/omarchy-inspired-ideas.md`
-- **Decision:** Global/profile/workspace ownership, initial presets and participant policy,
-  Tiled-only versus Freeform, and what topology can persist without guessing window identity.
-  Resolve Omarchy-inspired workspace personalities through the existing per-workspace layout model:
-  Grid/Columns are candidate Tiled presets, while Focus, Presentation, and Transient need explicit
-  behavior and lifecycle boundaries rather than a parallel workspace-mode system.
+- **Concept:** A Tiled workspace may select a built-in or custom normalized split topology, such as
+  four equal windows in a 2x2 grid or one large window on the left with two stacked on the right. A
+  visual builder edits semantic slots and ratios, not application identities or live window IDs. Applying
+  a template assigns the workspace's current eligible windows deterministically by layout order.
+- **Recommended first boundary:** Tiled only; ship a small built-in template set; require the exact
+  participant count and disable application with a clear count mismatch rather than guessing.
+  A custom topology is created through an offscreen builder preview and embedded in that workspace,
+  with no separate named template library. Built-in selection likewise copies its topology into the
+  workspace. WR-087 remains the simple way to copy the resulting layout to another workspace.
+- **Decisions required:** Confirm eligible-window counting rather than one-window-per-app; choose the
+  built-in templates and names; define the persisted normalized split-tree schema; exact-count versus
+  adaptive behavior after a window opens/closes; deterministic slot ordering and manual reassignment;
+  minimum sizes, aspect-ratio/display changes, Undo, migration, sync/import bounds, and builder
+  accessibility.
 
 ### WR-019 — Separate the local Xcode development identity
 

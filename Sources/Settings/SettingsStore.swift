@@ -1185,6 +1185,30 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    func copySettingsLayout(
+        from sourceWorkspaceID: UUID,
+        to destinationWorkspaceID: UUID,
+        undoManager: UndoManager?
+    ) {
+        guard sourceWorkspaceID != destinationWorkspaceID,
+              let source = settingsProfile.workspaces.first(where: {
+                  $0.id == sourceWorkspaceID
+              }),
+              let destination = settingsProfile.workspaces.first(where: {
+                  $0.id == destinationWorkspaceID
+              })
+        else { return }
+        var updated = destination
+        updated.layout = source.layout
+        updated.layoutConfiguration = source.layoutConfiguration
+        setSettingsWorkspaceDefinition(
+            updated,
+            profileID: settingsProfileID,
+            actionName: "Copy Workspace Layout",
+            undoManager: undoManager
+        )
+    }
+
     func settingsLayoutConfiguration(for workspaceID: UUID) -> WorkspaceLayoutConfiguration {
         settingsProfile.workspaces.first(where: { $0.id == workspaceID })?.layoutConfiguration
             ?? .aeroSpaceUserDefaults
