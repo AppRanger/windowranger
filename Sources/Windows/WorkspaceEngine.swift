@@ -626,6 +626,14 @@ enum QuickAppApplicationWindowPolicy {
         orderedWindowKeys.filter { $0 != key }
     }
 
+    static func presentedMembershipChanged(
+        previousWindowKeys: [WindowKey],
+        currentWindowKeys: [WindowKey],
+        isPresented: Bool
+    ) -> Bool {
+        isPresented && previousWindowKeys != currentWindowKeys
+    }
+
     static func cycleTarget(
         in orderedWindowKeys: [WindowKey],
         selectedWindowKey: WindowKey,
@@ -9790,6 +9798,7 @@ final class WorkspaceEngine {
             enumeratedWindowKeys: enumeratedWindowKeys
         )
         let removedTrackedWindows = windows.filter { removedTrackedWindowKeys.contains($0.key) }
+        var presentedQuickAppMembershipRemoved = false
         if !removedTrackedWindowKeys.isEmpty {
             let sessionBundleKeys = Array(quickAppSessions.keys)
             let newlyTrackedWindowKeys = Set(windows.keys).subtracting(
@@ -9815,12 +9824,38 @@ final class WorkspaceEngine {
                     }
                 }
                 if var session = quickAppSessions[bundleKey] {
+                    let previousKeys = session.windowKeys
                     let retainedKeys = session.windowKeys.filter {
                         !removedTrackedWindowKeys.contains($0)
                     }
                     if !retainedKeys.isEmpty {
                         session.synchronizeWindowKeys(retainedKeys)
                         quickAppSessions[bundleKey] = session
+                        let membershipChanged = QuickAppApplicationWindowPolicy
+                            .presentedMembershipChanged(
+                                previousWindowKeys: previousKeys,
+                                currentWindowKeys: session.windowKeys,
+                                isPresented: session.isPresented
+                            )
+                        presentedQuickAppMembershipRemoved =
+                            presentedQuickAppMembershipRemoved || membershipChanged
+                        if previousKeys != session.windowKeys {
+                            diagnostics.log(
+                                category: "drop-down-app",
+                                event: "application-window-group-updated",
+                                correlation: correlationID,
+                                fields: [
+                                    "bundle": session.bundleIdentifier,
+                                    "previous-window-count": String(previousKeys.count),
+                                    "window-count": String(session.windowKeys.count),
+                                    "added-window-count": "0",
+                                    "removed-window-count": String(
+                                        Set(previousKeys).subtracting(session.windowKeys).count
+                                    ),
+                                    "presented": String(session.isPresented),
+                                ]
+                            )
+                        }
                         continue
                     }
                 }
@@ -9916,9 +9951,11 @@ final class WorkspaceEngine {
                 )
             }
         }
-        let presentedQuickAppMembershipChanged = reconcileQuickAppSessionWindowSets(
+        let presentedQuickAppMembershipReconciled = reconcileQuickAppSessionWindowSets(
             correlationID: correlationID
         )
+        let presentedQuickAppMembershipChanged = presentedQuickAppMembershipRemoved ||
+            presentedQuickAppMembershipReconciled
         if performAXWrites, presentedQuickAppMembershipChanged {
             reconcilePresentedQuickAppGroup(
                 correlationID: correlationID,

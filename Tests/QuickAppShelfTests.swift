@@ -171,6 +171,21 @@ final class QuickAppShelfTests: XCTestCase {
             QuickAppApplicationWindowPolicy.removing(second, from: [second, first, third]),
             [first, third]
         )
+        XCTAssertTrue(QuickAppApplicationWindowPolicy.presentedMembershipChanged(
+            previousWindowKeys: [second, first, third],
+            currentWindowKeys: [first, third],
+            isPresented: true
+        ))
+        XCTAssertFalse(QuickAppApplicationWindowPolicy.presentedMembershipChanged(
+            previousWindowKeys: [second, first, third],
+            currentWindowKeys: [first, third],
+            isPresented: false
+        ))
+        XCTAssertFalse(QuickAppApplicationWindowPolicy.presentedMembershipChanged(
+            previousWindowKeys: [first, third],
+            currentWindowKeys: [first, third],
+            isPresented: true
+        ))
         XCTAssertNil(QuickAppApplicationWindowPolicy.orderedWindowKeys(
             candidates: [first, WindowKey(processIdentifier: 43, windowIdentifier: 103)]
         ))

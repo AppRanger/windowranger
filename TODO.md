@@ -332,6 +332,17 @@ smallest useful outcome and acceptance boundary.
   outgoing application then confirmed hidden. No ordinary workspace focus was observed between
   Shelf applications. This accepts the one-visible-app rapid application-switch and workspace-focus
   containment regression; Notes' own activation can still visibly trail the initial transfer.
+- **Dynamic-removal live defect:** Adding a third Ghostty window while the Shelf was presented
+  worked and immediately laid out all three windows. Closing it removed the exact member, but the
+  two survivors kept their three-window Carousel frames until the Shelf was hidden and shown again.
+  Diagnostics confirmed the authoritative enumeration path pruned the closed key from the session
+  before the general group reconciler ran; the reconciler then saw an already-current two-window
+  membership and omitted the required relayout. Presented membership pruning must carry its own
+  changed signal into the shared group layout, while hidden-session pruning remains write-free.
+  The authoritative pruning path now preserves that signal, logs the exact group count change, and
+  invokes the shared layout only for a presented session. Policy regression coverage passes, as do
+  all 732 non-hosted tests in quick local verification; signed-app close-and-resize validation is
+  pending.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
   `a17f3d36db2d` is installed and running from `/Applications/WindowRanger.app` as PID `93361`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
