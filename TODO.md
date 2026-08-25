@@ -217,8 +217,8 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Quick App Shelf ownership and interaction change
 - **Priority:** P1
-- **Status:** Direct Shelf app-switch focus handoff live-validated; remaining application-group and
-  lifecycle retests pending.
+- **Status:** Direct Shelf app-switch focus handoff, dynamic membership, and focus-loss dismissal
+  live-validated; remaining lifecycle and restoration retests pending.
 - **Requested:** 25 August 2026.
 - **User decision:** The Shelf is a temporary workspace containing the eligible windows of its
   configured applications, not a launcher containing one representative window per application.
@@ -266,9 +266,9 @@ smallest useful outcome and acceptance boundary.
   verification all pass (25 August 2026).
 - **Live validation remaining:** Repeat the two-window Ghostty case across direct toggle and
   restart. Then check both layouts, app-wide hide/show, Previous/Next and arrow navigation, adding
-  and closing one Ghostty window while presented, focus-loss dismissal, lock/wake, and final
-  restoration to the original workspaces and frames. Direct rapid switching across configured
-  applications is accepted below.
+  and closing one Ghostty window while presented, lock/wake, and final restoration to the original
+  workspaces and frames. Direct rapid switching across configured applications, dynamic membership,
+  and focus-loss dismissal are accepted below.
 - **Live defect found:** The maintainer confirmed both Ghostty windows appeared, but the Shelf kept
   using Accordion and appeared to show only one configured application even though the active
   profile saved Carousel with a visible-app count of two and both Notes and Ghostty were open.
@@ -345,6 +345,10 @@ smallest useful outcome and acceptance boundary.
 - **Dynamic-membership live result:** On installed candidate `f412302c01bc`, the maintainer
   confirmed that opening a third Ghostty window laid out the enlarged group correctly and closing
   it immediately resized the two survivors. This accepts the presented add/remove membership case.
+- **Focus-loss live result:** The maintainer confirmed that intentionally focusing an unrelated
+  application dismissed the Shelf, hid both Ghostty windows together, retained the unrelated
+  application's focus without flicker, and reopened the two-window group correctly. This accepts
+  focus-loss dismissal and the immediate app-wide hide/reopen path.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
   `f412302c01bc` is installed and running from `/Applications/WindowRanger.app` as PID `97843`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
