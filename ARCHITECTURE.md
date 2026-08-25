@@ -258,8 +258,12 @@ or ambiguous physical display falls back safely without rewriting the synced hom
 therefore restore the original role.
 
 Sleep/wake and display notifications are coalesced through generation-tokened reconciliation.
-Display topology resolves first, fresh AX elements are acquired second, and visibility/layout is
-applied once the snapshot is stable. Bounded retries handle temporarily incomplete enumeration.
+AppKit workspace signals cover system/display sleep and fast-user switching; the distributed macOS
+screen-lock and screen-unlock notifications provide the separate ordinary-lock boundary that those
+workspace signals do not guarantee. Every observed suspension source must receive its matching
+resume signal before reconciliation begins. Display topology resolves first, fresh AX elements are
+acquired second, and visibility/layout is applied once the snapshot is stable. Bounded retries
+handle temporarily incomplete enumeration.
 After the layout solve, expected Tiled and Accordion frames are read back because a successful AX
 write does not prove that the receiving app retained it. Only mismatched, still-eligible split
 windows are retried, for a bounded number of attempts; a newer lifecycle signal supersedes the

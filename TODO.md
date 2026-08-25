@@ -357,7 +357,14 @@ smallest useful outcome and acceptance boundary.
   retained Notes only because its unhide was still pending. About four seconds later, readmission
   rebuilt workspace layouts from fresh discovery: the two Accordion windows on workspace 2 swapped
   positions, as did the two Tiled windows on the secondary display. Lock must enter the existing
-  suspension boundary before empty snapshots can erase exact membership and layout order.
+  suspension boundary before empty snapshots can erase exact membership and layout order. The app
+  now observes macOS's distributed screen-lock and screen-unlock notifications as a paired lifecycle
+  source alongside the existing system, display-sleep, and fast-user-switch signals. Lock enters the
+  existing write-suppressed suspension path immediately; unlock starts the same bounded fresh-AX
+  reconciliation, and any independently observed sleep/session source must still receive its own
+  matching resume. All 46 focused lifecycle tests, all 735 non-hosted tests in repository quick
+  verification, and an unsigned universal Debug app build pass; signed lock/unlock validation is
+  pending.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
   `f412302c01bc` is installed and running from `/Applications/WindowRanger.app` as PID `97843`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,

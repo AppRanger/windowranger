@@ -9722,7 +9722,8 @@ final class WorkspaceEngine {
             }
         }
 
-        let lifecycleTransitionActive = wakeReconciliationState.isSleeping ||
+        let lifecycleTransitionActive = screenSessionLifecycleState.isSuspended ||
+            wakeReconciliationState.isSleeping ||
             wakeReconciliationState.isPending ||
             wasPostSleepWindowRecoveryActive ||
             postSleepWindowRecoveryState.isActive

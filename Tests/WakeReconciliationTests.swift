@@ -202,6 +202,41 @@ final class WakeReconciliationTests: XCTestCase {
         XCTAssertTrue(state.receive(.screensWake))
     }
 
+    func testScreenLockWaitsForDistributedUnlockBeforeRecovery() {
+        var state = ScreenSessionLifecycleState()
+        state.suspend(.screenLocked)
+
+        XCTAssertFalse(state.receive(.sessionBecameActive))
+        XCTAssertEqual(state.suspensionSources, [.screenLocked])
+        XCTAssertTrue(state.receive(.screenUnlocked))
+        XCTAssertFalse(state.isSuspended)
+    }
+
+    func testScreenLockNotificationsUseTheMacOSDistributedNames() {
+        XCTAssertEqual(
+            ScreenLockLifecycleNotifications.locked.rawValue,
+            "com.apple.screenIsLocked"
+        )
+        XCTAssertEqual(
+            ScreenLockLifecycleNotifications.unlocked.rawValue,
+            "com.apple.screenIsUnlocked"
+        )
+    }
+
+    func testLockedGlobalEmptySnapshotCannotEvictTrackedWindows() {
+        var state = ScreenSessionLifecycleState()
+        state.suspend(.screenLocked)
+
+        XCTAssertTrue(WindowEnumerationLifecycle.shouldDeferGlobalEmptySnapshot(
+            trackedWindowCount: 14,
+            requiredProcessIdentifiers: [10, 11, 12],
+            successfullyEnumeratedProcessIdentifiers: [10, 11, 12],
+            enumeratedWindowCount: 0,
+            isLifecycleTransitionActive: state.isSuspended,
+            consecutiveGlobalEmptySnapshots: 4
+        ))
+    }
+
     func testFirstGlobalEmptySnapshotDefersRatherThanEvictingEveryTrackedWindow() {
         XCTAssertTrue(WindowEnumerationLifecycle.shouldDeferGlobalEmptySnapshot(
             trackedWindowCount: 13,

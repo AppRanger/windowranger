@@ -7,12 +7,19 @@ enum WakeReconciliationSource: String, CaseIterable, Equatable, Sendable {
     case systemWake = "system-wake"
     case screensWake = "screens-wake"
     case sessionBecameActive = "session-became-active"
+    case screenUnlocked = "screen-unlocked"
     case displayConfigurationChanged = "display-configuration-changed"
 }
 
 enum ScreenSessionSuspensionSource: String, Equatable, Sendable {
     case screensSleep = "screens-did-sleep"
     case sessionResignedActive = "session-resigned-active"
+    case screenLocked = "screen-locked"
+}
+
+enum ScreenLockLifecycleNotifications {
+    static let locked = Notification.Name("com.apple.screenIsLocked")
+    static let unlocked = Notification.Name("com.apple.screenIsUnlocked")
 }
 
 struct ScreenSessionLifecycleState: Equatable, Sendable {
@@ -32,6 +39,8 @@ struct ScreenSessionLifecycleState: Equatable, Sendable {
             suspensionSources.remove(.screensSleep)
         case .sessionBecameActive:
             suspensionSources.remove(.sessionResignedActive)
+        case .screenUnlocked:
+            suspensionSources.remove(.screenLocked)
         case .displayConfigurationChanged:
             break
         }

@@ -147,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingMenuBarWorkspaceLabelUpdate: DispatchWorkItem?
     private var pendingMenuBarDisplayIconUpdate: DispatchWorkItem?
     private var pendingMenuBarHighlightUpdate: DispatchWorkItem?
+    private var screenLockNotificationsRegistered = false
     private let tiledPlacementUndoManager = UndoManager()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -291,6 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         let workspaceNotifications = NSWorkspace.shared.notificationCenter
+        registerScreenLockNotifications()
         workspaceNotifications.publisher(for: NSWorkspace.willSleepNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
@@ -631,6 +633,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingMenuBarDisplayIconUpdate = nil
         pendingMenuBarHighlightUpdate?.cancel()
         pendingMenuBarHighlightUpdate = nil
+        unregisterScreenLockNotifications()
         tiledPlacementUndoManager.removeAllActions()
         hotKeyManager.cancelDirectionalMoveGesture(reason: "application-terminating")
         workspaceSwipeController.shutdown()
@@ -662,6 +665,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forceCommandPaletteEscapeHatch: isPauseModeEnabled
         )
         settingsStore.setHotKeyRuntimeIssues(report.runtimeIssues)
+    }
+
+    private func registerScreenLockNotifications() {
+        guard !screenLockNotificationsRegistered else { return }
+        screenLockNotificationsRegistered = true
+        let center = DistributedNotificationCenter.default()
+        center.addObserver(
+            self,
+            selector: #selector(screenDidLock(_:)),
+            name: ScreenLockLifecycleNotifications.locked,
+            object: nil,
+            suspensionBehavior: .deliverImmediately
+        )
+        center.addObserver(
+            self,
+            selector: #selector(screenDidUnlock(_:)),
+            name: ScreenLockLifecycleNotifications.unlocked,
+            object: nil,
+            suspensionBehavior: .deliverImmediately
+        )
+    }
+
+    private func unregisterScreenLockNotifications() {
+        guard screenLockNotificationsRegistered else { return }
+        screenLockNotificationsRegistered = false
+        DistributedNotificationCenter.default().removeObserver(
+            self,
+            name: ScreenLockLifecycleNotifications.locked,
+            object: nil
+        )
+        DistributedNotificationCenter.default().removeObserver(
+            self,
+            name: ScreenLockLifecycleNotifications.unlocked,
+            object: nil
+        )
+    }
+
+    @objc private func screenDidLock(_ notification: Notification) {
+        hotKeyManager.cancelDirectionalMoveGesture(reason: "screen-locked")
+        workspaceSwipeController.setSuppressed(true, reason: "session-inactive")
+        commandPaletteController.dismiss(reason: "screen-locked")
+        commandFeedbackPresenter.dismiss(reason: "screen-locked")
+        stopShortcutGuideObservation()
+        focusedWindowHighlightPresenter.setSuppressed(true, reason: "screen-locked")
+        engine.prepareForScreenSleep(source: .screenLocked)
+    }
+
+    @objc private func screenDidUnlock(_ notification: Notification) {
+        reconcileAfterWake(source: .screenUnlocked)
     }
 
     private func updateShortcutGuideActivation() {
@@ -987,7 +1039,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .systemWake, .screensWake:
             workspaceSwipeController.setSuppressed(false, reason: "system-sleep")
             workspaceSwipeController.setSuppressed(false, reason: "screen-sleep")
-        case .sessionBecameActive:
+        case .sessionBecameActive, .screenUnlocked:
             workspaceSwipeController.setSuppressed(false, reason: "system-sleep")
             workspaceSwipeController.setSuppressed(false, reason: "session-inactive")
         case .displayConfigurationChanged:
