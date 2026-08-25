@@ -375,6 +375,33 @@ final class QuickAppShelfTests: XCTestCase {
         )
     }
 
+    func testApplicationSwitchHandoffWaitsForIncomingActivation() {
+        XCTAssertEqual(
+            QuickAppApplicationSwitchPolicy.activationDisposition(
+                activatedProcessIdentifier: 202,
+                incomingProcessIdentifier: 202,
+                outgoingProcessIdentifier: 101
+            ),
+            .incoming
+        )
+        XCTAssertEqual(
+            QuickAppApplicationSwitchPolicy.activationDisposition(
+                activatedProcessIdentifier: 101,
+                incomingProcessIdentifier: 202,
+                outgoingProcessIdentifier: 101
+            ),
+            .outgoing
+        )
+        XCTAssertEqual(
+            QuickAppApplicationSwitchPolicy.activationDisposition(
+                activatedProcessIdentifier: 303,
+                incomingProcessIdentifier: 202,
+                outgoingProcessIdentifier: 101
+            ),
+            .unrelated
+        )
+    }
+
     func testIgnoredCompanionDiscardResetsQuickAppWithoutAFrameWrite() {
         let bundleKey = "dev.appranger.desktopranger.surfacelab"
 
@@ -488,6 +515,10 @@ final class QuickAppShelfTests: XCTestCase {
         XCTAssertTrue(QuickAppInteractionPolicy.activatesApplicationForLaunch(
             commandPalettePresented: false
         ))
+        XCTAssertFalse(QuickAppInteractionPolicy.activatesApplicationForLaunch(
+            commandPalettePresented: false,
+            applicationSwitchInProgress: true
+        ))
         XCTAssertTrue(QuickAppInteractionPolicy.focusesQuickAppAfterShow(
             commandPalettePresented: false
         ))
@@ -530,36 +561,6 @@ final class QuickAppShelfTests: XCTestCase {
             shelfIsPresented: false,
             configuredAppCount: 0,
             transitionInProgress: true
-        ))
-    }
-
-    func testSelectionHandoffOnlyPreservesTheExpectedPreviousApplicationDuringGrace() {
-        let now = Date(timeIntervalSince1970: 1_000)
-        let deadline = now.addingTimeInterval(2)
-
-        XCTAssertTrue(QuickAppInteractionPolicy.preservesSelectionHandoffForActivation(
-            activatedProcessIdentifier: 100,
-            previousProcessIdentifier: 100,
-            handoffDeadline: deadline,
-            now: now
-        ))
-        XCTAssertFalse(QuickAppInteractionPolicy.preservesSelectionHandoffForActivation(
-            activatedProcessIdentifier: 300,
-            previousProcessIdentifier: 100,
-            handoffDeadline: deadline,
-            now: now
-        ), "An unrelated activation must still dismiss an incoming Shelf.")
-        XCTAssertFalse(QuickAppInteractionPolicy.preservesSelectionHandoffForActivation(
-            activatedProcessIdentifier: 100,
-            previousProcessIdentifier: 100,
-            handoffDeadline: deadline,
-            now: deadline
-        ), "The previous application must not be protected after the handoff grace expires.")
-        XCTAssertFalse(QuickAppInteractionPolicy.preservesSelectionHandoffForActivation(
-            activatedProcessIdentifier: 100,
-            previousProcessIdentifier: nil,
-            handoffDeadline: deadline,
-            now: now
         ))
     }
 

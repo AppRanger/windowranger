@@ -217,7 +217,7 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Quick App Shelf ownership and interaction change
 - **Priority:** P1
-- **Status:** Shelf app-switch focus handoff protection implemented and automated-verified; signed
+- **Status:** Direct Shelf app-switch focus handoff implemented and automated-verified; signed
   retest pending.
 - **Requested:** 25 August 2026.
 - **User decision:** The Shelf is a temporary workspace containing the eligible windows of its
@@ -318,6 +318,15 @@ smallest useful outcome and acceptance boundary.
   been shown and activated before a redundant post-activation full membership reconciliation added
   roughly another half-second. Activation now performs only the required frame/raise restack;
   topology and membership remain owned by the existing refresh and lifecycle paths.
+- **Direct-focus follow-up:** The maintainer confirmed Notes still takes noticeably longer than
+  Ghostty to become frontmost and observed the ordinary workspace app receive focus between the
+  outgoing Shelf app hiding and Notes activating. Application switches now reverse that order: the
+  outgoing Shelf app remains presented and frontmost while the incoming application's exact windows
+  are staged and unhidden, focus transfers directly to the incoming Shelf app, and only its observed
+  activation permits the outgoing app to hide. Rapid requests remain queued until that activation,
+  an already-active or palette-owned presentation completes without waiting for a notification, and
+  a closed incoming app launches without activation so it cannot create the same workspace-focus
+  gap. Unrelated activation still abandons or dismisses the transition.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
   `fcf5f2db0bb4` is installed and running from `/Applications/WindowRanger.app` as PID `89201`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
