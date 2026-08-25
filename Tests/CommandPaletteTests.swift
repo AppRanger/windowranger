@@ -78,6 +78,29 @@ final class CommandPaletteTests: XCTestCase {
         XCTAssertEqual(requested?.1, "pause-test")
     }
 
+    func testDispatcherPreservesCommandSourceForQuickAppRecoveryBoundary() {
+        var received: [(WindowManagerCommand, WindowManagerCommandSource)] = []
+        let dispatcher = WindowManagerCommandDispatcher(
+            sourceAwareExecutor: { command, _, source in
+                received.append((command, source))
+            }
+        )
+
+        dispatcher.dispatch(
+            .toggleDropDownApp,
+            source: .commandPalette,
+            correlationID: "palette-quick-app"
+        )
+        dispatcher.dispatch(
+            .toggleDropDownApp,
+            source: .hotkey,
+            correlationID: "hotkey-quick-app"
+        )
+
+        XCTAssertEqual(received.map(\.0), [.toggleDropDownApp, .toggleDropDownApp])
+        XCTAssertEqual(received.map(\.1), [.commandPalette, .hotkey])
+    }
+
     func testPaletteDoesNotInventAChordForAnUnassignedCommand() {
         var configuration = HotKeyConfiguration()
         configuration.setKeyCode(nil, for: .nextWindow)

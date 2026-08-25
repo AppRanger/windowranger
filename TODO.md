@@ -171,6 +171,54 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-084 — Reconcile transient startup Quick App window ambiguity once
+
+- **Type:** Quick App post-login recovery bug
+- **Priority:** P1
+- **Status:** Live validation — implemented and automated-test verified; signed post-reboot Ghostty
+  validation remains.
+- **Requested:** 25 August 2026.
+- **User-observed and diagnostic-supported:** After the 24 August reboot, Ghostty and WindowRanger
+  launched 15 seconds apart. The user reported multiple-window feedback on the first direct Quick
+  App attempt. Diagnostics do not retain that feedback text, but show four shortcuts at 08:10 local
+  time displaying feedback without selecting a target. Focusing Ghostty caused its next successful
+  Accessibility snapshot to evict window identities `1442:116` and `1442:120`; 2.6 seconds later,
+  the shortcut unambiguously presented `1442:125` at the expected frame.
+- **Expected:** Preserve the exact-window safety boundary for genuine multi-window applications,
+  while handling applications that publish transient login-restoration Accessibility windows until
+  their first activation. A direct shortcut may activate such an already-running application once,
+  but must never guess a target or repeatedly steal focus.
+- **Implemented:** Startup records only configured Quick Apps with more than one eligible candidate.
+  Their first direct hotkey toggle, when the candidate PID and exact window identities still match
+  that immutable startup fingerprint and the application remains inactive, consumes the marker,
+  activates the existing process without a reopen request, and performs a bounded sequence of
+  read-only window refreshes. Exactly one surviving candidate continues through the ordinary Quick
+  App claim and presentation path; zero or multiple candidates retain explicit feedback. Command
+  Palette and shelf-selection commands, changed candidate sets, cross-process ambiguity, active
+  applications, later ambiguity, configuration and profile changes, cancellation, pause, sleep, and
+  shutdown do not gain a guessing path. The focus that preceded recovery is retained for the normal
+  hide-and-restore interaction.
+- **Automated evidence:** Test isolation passes; 35 focused Quick App tests and 22 Command Palette
+  tests pass, including command-source propagation, the exact-startup-fingerprint boundary, one-shot
+  activation, exact-one resolution, and bounded retry exhaustion. The complete non-hosted suite
+  passes with 727 tests and zero failures, together with project generation, release-ledger, Sparkle
+  feed-ordering, and local quick-verification checks (25 August 2026).
+- **Signed-build evidence:** The universal signed Debug daily copy `e0d7a5a259e2-dirty` was installed
+  on 25 August 2026 with the previous copy retained for rollback. PID `21412` remained running after
+  startup; signature validation passed, no fresh WindowRanger crash report or macOS error/fault was
+  present, and diagnostics reached `session/startup-state-ready`. Ghostty window `1442:1339` was
+  admitted normally and prepared as the single hidden Quick App. This is startup smoke evidence, not
+  a reproduction of the post-reboot ambiguity or the recovery path. The user subsequently reported
+  that the installed copy seemed to be working; the reboot-specific acceptance case remains pending.
+- **Acceptance:** Pure tests cover startup candidate counting, command-source and exact-fingerprint
+  boundaries, the one-shot activation boundary, Command Palette/active/cross-process exclusions,
+  exact-one resolution, bounded zero/multiple retries, and exhaustion. Focused Quick App tests and
+  the complete non-hosted suite pass. Lifecycle/configuration invalidation is code-reviewed but is
+  not claimed as live behavior until the signed-app test. A signed build is restarted with Ghostty
+  restored at login; the first direct shortcut resolves without a manual focus step, while a genuine
+  two-window Ghostty set still reports ambiguity after one bounded attempt and a later shortcut does
+  not activate it again.
+
 ### WR-083 — Decide the fate of historical whole-application and floating-panel exclusions
 
 - **Type:** Product-policy recovery

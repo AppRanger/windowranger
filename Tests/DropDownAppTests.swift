@@ -666,23 +666,32 @@ final class DropDownAppTests: XCTestCase {
         let first = WindowKey(processIdentifier: 42, windowIdentifier: 100)
         let second = WindowKey(processIdentifier: 42, windowIdentifier: 101)
 
+        let ambiguousCandidates = [
+            DropDownAppStartupCandidate(
+                key: first,
+                bundleIdentifier: "com.mitchellh.ghostty",
+                isMeaningfullyVisible: true,
+                wasHiddenByWindowRanger: false
+            ),
+            DropDownAppStartupCandidate(
+                key: second,
+                bundleIdentifier: "com.mitchellh.ghostty",
+                isMeaningfullyVisible: true,
+                wasHiddenByWindowRanger: false
+            ),
+        ]
+
         XCTAssertNil(DropDownAppStartupPolicy.selection(
             bundleIdentifier: "com.mitchellh.ghostty",
-            candidates: [
-                DropDownAppStartupCandidate(
-                    key: first,
-                    bundleIdentifier: "com.mitchellh.ghostty",
-                    isMeaningfullyVisible: true,
-                    wasHiddenByWindowRanger: false
-                ),
-                DropDownAppStartupCandidate(
-                    key: second,
-                    bundleIdentifier: "com.mitchellh.ghostty",
-                    isMeaningfullyVisible: true,
-                    wasHiddenByWindowRanger: false
-                ),
-            ]
+            candidates: ambiguousCandidates
         ))
+        XCTAssertEqual(
+            DropDownAppStartupPolicy.matchingCandidateCount(
+                bundleIdentifier: "COM.MITCHELLH.GHOSTTY",
+                candidates: ambiguousCandidates
+            ),
+            2
+        )
         XCTAssertNil(DropDownAppStartupPolicy.selection(
             bundleIdentifier: "com.mitchellh.ghostty",
             candidates: [DropDownAppStartupCandidate(
@@ -692,6 +701,110 @@ final class DropDownAppTests: XCTestCase {
                 wasHiddenByWindowRanger: false
             )]
         ))
+    }
+
+    func testStartupAmbiguityRecoveryIsOneSafeDirectActivationOpportunity() {
+        XCTAssertTrue(DropDownAppStartupAmbiguityRecoveryPolicy.shouldAttempt(
+            wasAmbiguousAtStartup: true,
+            commandSource: .hotkey,
+            commandPalettePresented: false,
+            startupFingerprintMatches: true,
+            applicationIsActive: false
+        ))
+        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.shouldAttempt(
+            wasAmbiguousAtStartup: false,
+            commandSource: .hotkey,
+            commandPalettePresented: false,
+            startupFingerprintMatches: true,
+            applicationIsActive: false
+        ))
+        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.shouldAttempt(
+            wasAmbiguousAtStartup: true,
+            commandSource: .commandPalette,
+            commandPalettePresented: false,
+            startupFingerprintMatches: true,
+            applicationIsActive: false
+        ))
+        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.shouldAttempt(
+            wasAmbiguousAtStartup: true,
+            commandSource: .hotkey,
+            commandPalettePresented: true,
+            startupFingerprintMatches: true,
+            applicationIsActive: false
+        ))
+        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.shouldAttempt(
+            wasAmbiguousAtStartup: true,
+            commandSource: .hotkey,
+            commandPalettePresented: false,
+            startupFingerprintMatches: false,
+            applicationIsActive: false
+        ))
+        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.shouldAttempt(
+            wasAmbiguousAtStartup: true,
+            commandSource: .hotkey,
+            commandPalettePresented: false,
+            startupFingerprintMatches: true,
+            applicationIsActive: true
+        ))
+    }
+
+    func testStartupAmbiguityRecoveryRequiresTheExactStartupWindowFingerprint() {
+        let first = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let second = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+        let replacement = WindowKey(processIdentifier: 42, windowIdentifier: 102)
+
+        XCTAssertTrue(DropDownAppStartupAmbiguityRecoveryPolicy.startupFingerprintMatches(
+            startupProcessIdentifier: 42,
+            startupWindowKeys: [first, second],
+            currentProcessIdentifiers: [42],
+            currentWindowKeys: [first, second]
+        ))
+        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.startupFingerprintMatches(
+            startupProcessIdentifier: 42,
+            startupWindowKeys: [first, second],
+            currentProcessIdentifiers: [42],
+            currentWindowKeys: [first, replacement]
+        ))
+        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.startupFingerprintMatches(
+            startupProcessIdentifier: 42,
+            startupWindowKeys: [first, second],
+            currentProcessIdentifiers: [42, 43],
+            currentWindowKeys: [first, second]
+        ))
+    }
+
+    func testStartupAmbiguityRecoveryWaitsForExactlyOneWindowAndStopsAtItsBound() {
+        XCTAssertEqual(
+            DropDownAppStartupAmbiguityRecoveryPolicy.disposition(
+                availableWindowCount: 1,
+                remainingAttempts: 8
+            ),
+            .resolveToggle
+        )
+        XCTAssertEqual(
+            DropDownAppStartupAmbiguityRecoveryPolicy.disposition(
+                availableWindowCount: 0,
+                remainingAttempts: 8
+            ),
+            .retry(remainingAttempts: 7)
+        )
+        XCTAssertEqual(
+            DropDownAppStartupAmbiguityRecoveryPolicy.disposition(
+                availableWindowCount: 3,
+                remainingAttempts: 8
+            ),
+            .retry(remainingAttempts: 7)
+        )
+        XCTAssertEqual(
+            DropDownAppStartupAmbiguityRecoveryPolicy.disposition(
+                availableWindowCount: 2,
+                remainingAttempts: 1
+            ),
+            .exhausted
+        )
+        XCTAssertEqual(DropDownAppStartupAmbiguityRecoveryPolicy.initialDelay, 0.2)
+        XCTAssertEqual(DropDownAppStartupAmbiguityRecoveryPolicy.retryDelay, 0.15)
+        XCTAssertEqual(DropDownAppStartupAmbiguityRecoveryPolicy.maximumAttempts, 8)
     }
 
     func testStartupRecoversOnlyTheExactWindowRangerHiddenQuickAppAsHidden() {

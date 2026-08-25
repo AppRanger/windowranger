@@ -294,7 +294,15 @@ its current display, while an exact WindowRanger-owned window whose application 
 hidden. The hidden ownership marker is local to the current WindowServer session and is discarded
 rather than applied to a different window identity. Legacy minimized-window markers do not grant
 permission to unhide an application. Multiple matching windows remain
-ordinary managed windows rather than being guessed between.
+ordinary managed windows rather than being guessed between. If those multiple identities were
+already present in WindowRanger's startup snapshot, the first direct Quick App toggle may activate
+the inactive application once and briefly re-enumerate it without Accessibility writes. The direct
+hotkey must still see the exact process and window identities recorded in that snapshot; any changed
+candidate set, Quick App settings or profile change, pause, or sleep invalidates the opportunity.
+This covers applications that retain transient login-restoration window objects until first
+activated, even when that first interaction is much later. WindowRanger still proceeds only when
+exactly one eligible window remains; Command Palette and shelf selection actions, later ambiguities,
+and a genuine multi-window result continue to avoid repeated activation or guessing.
 If the configured app has no available window, pressing the Quick App shortcut normally opens and
 activates it so apps that create a window only when foregrounded receive their normal reopen request.
 Palette-owned shelf previews launch without taking keyboard focus from the palette.

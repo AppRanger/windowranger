@@ -359,7 +359,15 @@ matching window is claimed hidden, regardless of its pre-launch visibility; laun
 never implicitly presents a Shelf entry. Crash-restart recovery may reclaim a hidden application only
 when the WindowServer-bound marker matches the exact process/window identity and bundle and AppKit
 still reports that application hidden. An ambiguous set is left untouched by Quick App startup
-handling.
+handling. The first direct hotkey toggle of an inactive application that was ambiguous in that
+startup snapshot may activate the existing process once and run a bounded sequence of read-only
+refreshes. The current candidate PID and exact window-key set must match the immutable startup
+fingerprint; configuration, profile, pause, and sleep boundaries invalidate it. This gives
+applications such as Ghostty an opportunity to discard transient login-restoration AX window
+identities without imposing a wall-clock expiry that would miss a much later first interaction. The
+marker is consumed before activation, Command Palette and shelf-selection commands never use this
+path, and the engine claims a window only if an authoritative refresh leaves exactly one eligible
+candidate; zero or multiple survivors preserve the ordinary no-guess boundary.
 
 ## UI and focus safety
 

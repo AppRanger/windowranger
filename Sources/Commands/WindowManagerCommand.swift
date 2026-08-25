@@ -138,7 +138,7 @@ enum WindowManagerCommand: Hashable, Sendable {
     }
 }
 
-enum WindowManagerCommandSource: String, Sendable {
+enum WindowManagerCommandSource: String, Equatable, Sendable {
     case hotkey
     case commandPalette = "command-palette"
     case radialMenu = "radial-menu"
@@ -154,8 +154,13 @@ enum WindowManagerCommandDispatchResult: Equatable, Sendable {
 /// operation switch here means a visual command cannot quietly diverge from its keyboard twin.
 final class WindowManagerCommandDispatcher {
     typealias Executor = (WindowManagerCommand, String) -> Void
+    typealias SourceAwareExecutor = (
+        WindowManagerCommand,
+        String,
+        WindowManagerCommandSource
+    ) -> Void
 
-    private let executor: Executor
+    private let executor: SourceAwareExecutor
     private let diagnostics: DiagnosticLogger
     private let lock = NSLock()
     private var activeCorrelations = Set<String>()
@@ -173,7 +178,8 @@ final class WindowManagerCommandDispatcher {
         },
         setPauseMode: @escaping (Bool, String) -> Void = { _, _ in }
     ) {
-        self.init(diagnostics: diagnostics) { [weak engine] command, correlationID in
+        self.init(diagnostics: diagnostics, sourceAwareExecutor: {
+            [weak engine] command, correlationID, source in
             switch command {
             case let .switchWorkspace(id):
                 engine?.switchToWorkspace(id, correlationID: correlationID)
@@ -195,7 +201,7 @@ final class WindowManagerCommandDispatcher {
                 )
             case .toggleFloating: engine?.toggleFocusedWindowFloating()
             case .toggleDropDownApp:
-                engine?.toggleDropDownApp(correlationID: correlationID)
+                engine?.toggleDropDownApp(source: source, correlationID: correlationID)
             case let .selectQuickApp(bundleIdentifier):
                 engine?.selectQuickApp(bundleIdentifier: bundleIdentifier, correlationID: correlationID)
             case let .cycleQuickApp(offset):
@@ -262,12 +268,22 @@ final class WindowManagerCommandDispatcher {
             case let .setPauseMode(isPaused):
                 setPauseMode(isPaused, correlationID)
             }
-        }
+        })
     }
 
     init(diagnostics: DiagnosticLogger = .disabled, executor: @escaping Executor) {
         self.diagnostics = diagnostics
-        self.executor = executor
+        self.executor = { command, correlationID, _ in
+            executor(command, correlationID)
+        }
+    }
+
+    init(
+        diagnostics: DiagnosticLogger = .disabled,
+        sourceAwareExecutor: @escaping SourceAwareExecutor
+    ) {
+        self.diagnostics = diagnostics
+        self.executor = sourceAwareExecutor
     }
 
     @discardableResult
@@ -301,7 +317,7 @@ final class WindowManagerCommandDispatcher {
             correlation: correlationID,
             fields: command.diagnosticFields.merging(["source": source.rawValue]) { _, new in new }
         )
-        executor(command, correlationID)
+        executor(command, correlationID, source)
         return .dispatched
     }
 }
