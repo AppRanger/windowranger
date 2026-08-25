@@ -218,7 +218,7 @@ smallest useful outcome and acceptance boundary.
 - **Type:** Quick App Shelf ownership and interaction change
 - **Priority:** P1
 - **Status:** Direct Shelf app-switch focus handoff, dynamic membership, and focus-loss dismissal
-  live-validated; remaining lifecycle and restoration retests pending.
+  live-validated; diagnostic-backed lock/wake state-loss defect and final restoration remain.
 - **Requested:** 25 August 2026.
 - **User decision:** The Shelf is a temporary workspace containing the eligible windows of its
   configured applications, not a launcher containing one representative window per application.
@@ -349,6 +349,15 @@ smallest useful outcome and acceptance boundary.
   application dismissed the Shelf, hid both Ghostty windows together, retained the unrelated
   application's focus without flicker, and reopened the two-window group correctly. This accepts
   focus-loss dismissal and the immediate app-wide hide/reopen path.
+- **Lock/wake live defect:** The maintainer initially confirmed the windows returned on their
+  correct screens after locking and unlocking, then noticed that some positions had changed.
+  Diagnostics show no coordinated session-suspension signal. At `15:16:39Z`, the first global-empty
+  Accessibility snapshot was deferred, but the following successful empty per-application
+  snapshots evicted all 14 tracked windows, cleared the two-window Ghostty Shelf session, and
+  retained Notes only because its unhide was still pending. About four seconds later, readmission
+  rebuilt workspace layouts from fresh discovery: the two Accordion windows on workspace 2 swapped
+  positions, as did the two Tiled windows on the secondary display. Lock must enter the existing
+  suspension boundary before empty snapshots can erase exact membership and layout order.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
   `f412302c01bc` is installed and running from `/Applications/WindowRanger.app` as PID `97843`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
