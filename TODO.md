@@ -344,16 +344,17 @@ smallest useful outcome and acceptance boundary.
   all 732 non-hosted tests in quick local verification; signed-app close-and-resize validation is
   pending.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
-  `a17f3d36db2d` is installed and running from `/Applications/WindowRanger.app` as PID `93361`.
+  `f412302c01bc` is installed and running from `/Applications/WindowRanger.app` as PID `97843`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
   canonical bundle identity, Team ID `44NAD22AK6`, both `x86_64` and `arm64` architectures, running
-  path, embedded source marker, and CDHash `efd77bd5a51d84d205cebaedc2e858829a375433`
-  were verified. Startup session `C2A3C6BB-3F11-4C24-ACB8-2B1A0700BE7C` prepared Notes as a
+  path, embedded source marker, and CDHash `ce46a4711c3a99a441371eb6b816c03551d51bb4`
+  were verified. Startup session `97DD07D8-8ED7-4C3F-BFD5-2BA9396467D4` prepared Notes as a
   one-window group and Ghostty as a
   two-window application group, then reached `session/startup-state-ready`. This candidate includes
-  the direct show-focus-hide application handoff, the live Settings propagation fix, and WR-086's
-  contextual Shortcut Guide. This is installed startup smoke evidence; the interaction cases above
-  remain for maintainer validation. The previous daily copy remains recoverable at
+  the direct show-focus-hide application handoff, the dynamic window-removal relayout fix, the live
+  Settings propagation fix, and WR-086's contextual Shortcut Guide. This is installed startup smoke
+  evidence; the interaction cases above remain for maintainer validation. The previous daily copy
+  remains recoverable at
   `/Applications/.WindowRanger.previous`.
 
 ### WR-084 — Reconcile transient startup Quick App window ambiguity once
