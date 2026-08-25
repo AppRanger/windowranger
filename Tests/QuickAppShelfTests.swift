@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 
 final class QuickAppShelfTests: XCTestCase {
@@ -1031,6 +1032,33 @@ final class QuickAppShelfTests: XCTestCase {
         XCTAssertTrue(store.quickApps.allSatisfy { expected.applying(to: $0) == $0 })
         XCTAssertEqual(store.activeProfile.quickAppShelfPresentation, expected)
         XCTAssertTrue(store.activeProfile.quickApps.allSatisfy { expected.applying(to: $0) == $0 })
+    }
+
+    @MainActor
+    func testActiveSettingsShelfEditPublishesAsLiveConfigurationChange() {
+        let suite = "QuickAppShelfTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        var received: [QuickAppShelfPresentation] = []
+        let cancellable = store.$quickAppShelfPresentation
+            .dropFirst()
+            .filter { _ in store.isApplyingProfileActivation == false }
+            .sink { received.append($0) }
+
+        var presentation = store.quickAppShelfPresentation
+        presentation.layoutStyle = .carousel
+        presentation.visibleCount = 2
+        store.setSettingsQuickAppShelfPresentation(presentation)
+
+        XCTAssertEqual(received, [presentation])
+        withExtendedLifetime(cancellable) {}
     }
 
     func testShelfPresentationRoundTripsThroughProfileExport() throws {

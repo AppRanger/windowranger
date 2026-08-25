@@ -177,7 +177,7 @@ final class SettingsStore: ObservableObject {
                 quickApps = normalized
                 return
             }
-            if !isApplyingProfileActivation {
+            if !isApplyingBulkProfileContent {
                 let first = normalized.first
                 if dropDownApp != first { dropDownApp = first }
                 reconcileSelectedQuickApp()
@@ -305,6 +305,10 @@ final class SettingsStore: ObservableObject {
     private let diagnostics: DiagnosticLogger
     private var isApplyingRemoteChange = false
     private(set) var isApplyingProfileActivation = false
+    private var isReplacingProfileContent = false
+    private var isApplyingBulkProfileContent: Bool {
+        isApplyingProfileActivation || isReplacingProfileContent
+    }
     private var profileActivationGeneration: UInt64 = 0
     private var iCloudObserver: NSObjectProtocol?
     private var screenObserver: NSObjectProtocol?
@@ -811,8 +815,8 @@ final class SettingsStore: ObservableObject {
         persistProfileLibrary()
 
         guard proposed.id == activeProfileID else { return }
-        isApplyingProfileActivation = true
-        defer { isApplyingProfileActivation = false }
+        isReplacingProfileContent = true
+        defer { isReplacingProfileContent = false }
         if workspaces != normalized.workspaces { workspaces = normalized.workspaces }
         if multiDisplayMode != normalized.displayMode { multiDisplayMode = normalized.displayMode }
         if appRules != normalized.appRules { appRules = normalized.appRules }
@@ -824,7 +828,7 @@ final class SettingsStore: ObservableObject {
         if quickApps != normalizedQuickApps { quickApps = normalizedQuickApps }
         if dropDownApp != normalizedQuickApps.first { dropDownApp = normalizedQuickApps.first }
         refreshResolvedWorkspaceDisplayAssignments()
-        isApplyingProfileActivation = false
+        isReplacingProfileContent = false
         reconcileSelectedQuickApp()
     }
 
@@ -848,8 +852,8 @@ final class SettingsStore: ObservableObject {
         profiles = updated
         persistProfileLibrary()
         guard profileID == activeProfileID else { return }
-        isApplyingProfileActivation = true
-        defer { isApplyingProfileActivation = false }
+        isReplacingProfileContent = true
+        defer { isReplacingProfileContent = false }
         if workspaces != normalized.workspaces { workspaces = normalized.workspaces }
         if multiDisplayMode != normalized.displayMode { multiDisplayMode = normalized.displayMode }
         if appRules != normalized.appRules { appRules = normalized.appRules }
@@ -861,7 +865,7 @@ final class SettingsStore: ObservableObject {
         if quickApps != normalizedQuickApps { quickApps = normalizedQuickApps }
         if dropDownApp != normalizedQuickApps.first { dropDownApp = normalizedQuickApps.first }
         refreshResolvedWorkspaceDisplayAssignments()
-        isApplyingProfileActivation = false
+        isReplacingProfileContent = false
         reconcileSelectedQuickApp()
     }
 
@@ -2217,7 +2221,7 @@ final class SettingsStore: ObservableObject {
     // MARK: - Persistence and activation internals
 
     private func activeProfileContentDidChange() {
-        guard !isApplyingProfileActivation, !workspaces.isEmpty,
+        guard !isApplyingBulkProfileContent, !workspaces.isEmpty,
               let index = profiles.firstIndex(where: { $0.id == activeProfileID })
         else { return }
         var updated = profiles

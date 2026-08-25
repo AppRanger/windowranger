@@ -217,7 +217,7 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Quick App Shelf ownership and interaction change
 - **Priority:** P1
-- **Status:** Implementation and automated verification complete; signed live validation pending.
+- **Status:** Live settings propagation fix implemented and automated-verified; signed retest pending.
 - **Requested:** 25 August 2026.
 - **User decision:** The Shelf is a temporary workspace containing the eligible windows of its
   configured applications, not a launcher containing one representative window per application.
@@ -254,7 +254,9 @@ smallest useful outcome and acceptance boundary.
 - **Automated evidence:** 60 focused Quick App tests pass, covering same-process grouping,
   cross-process rejection, stable cycling, exact-member removal, one-for-one native-tab handoff with
   retained group members, legacy persistence, and seven-window Carousel/Accordion geometry at all
-  four edges. The complete non-hosted suite passes 725 tests with zero failures or skips. Test
+  four edges. The live-settings propagation regression test and all 29 tests in
+  `QuickAppShelfTests` pass. The complete non-hosted suite passes 729 tests with zero failures or
+  skips. Test
   isolation, shell syntax, release-build registry, Sparkle feed workflow, project generation,
   Release static analysis, unsigned universal Release build, and Stable/Beta DMG build and
   verification all pass (25 August 2026).
@@ -262,6 +264,16 @@ smallest useful outcome and acceptance boundary.
   restart. Then check both layouts, app-wide hide/show, Previous/Next
   and arrow navigation, adding and closing one Ghostty window while presented, and final restoration
   to the original workspaces and frames.
+- **Live defect found:** The maintainer confirmed both Ghostty windows appeared, but the Shelf kept
+  using Accordion and appeared to show only one configured application even though the active
+  profile saved Carousel with a visible-app count of two and both Notes and Ghostty were open.
+  Diagnostics from installed candidate `51c9fb776f29` confirmed the running engine continued to
+  report `style=accordion`; it later admitted all three windows from both applications, so the
+  saved profile and multi-application admission were intact. Active Settings profile edits were
+  incorrectly marked as profile activation while publishing, causing AppDelegate's live-engine
+  subscriptions to discard them. The fix now separates Settings profile-content replacement from
+  genuine profile activation, preserving bulk persistence guards while allowing live engine
+  subscribers to receive active-profile edits.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
   `51c9fb776f29` is installed and running from `/Applications/WindowRanger.app` as PID `63019`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
