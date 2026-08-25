@@ -175,8 +175,8 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Shortcut Guide and Quick App Shelf integration
 - **Priority:** P2
-- **Status:** Live validation — implemented, automated-test verified, visually checked, and installed;
-  signed interaction acceptance pending.
+- **Status:** Done — implemented, automated-test verified, visually checked, installed, and
+  interaction-validated with the multi-window Ghostty Shelf.
 - **Requested:** 25 August 2026.
 - **User-observed context:** The normal Shortcut Guide can remain visible while the Shelf is open,
   but its generic window labels and full directional/action set do not describe what those keys do
@@ -199,19 +199,21 @@ smallest useful outcome and acceptance boundary.
   compact labels, two-line traversal actions, headings, arrow axis, spacing, and semantic contrast
   have no unresolved P0-P2 issue. `design-qa.md` records the boundary and evidence.
 - **Installed evidence:** With maintainer approval, signed universal Debug daily candidate
-  `44026336506e` (CDHash `844c49d3102e45c7342d5191b55434fceb13c194`) is installed and
-  running from `/Applications/WindowRanger.app` as PID `81651`. Its strict signature, Apple
+  `cafbe4002b09` (CDHash `4802cb0367835554f90bd4f91b7f1810c19b9e82`) is installed and
+  running from `/Applications/WindowRanger.app` as PID `22617`. Its strict signature, Apple
   Development authority, Team ID `44NAD22AK6`, canonical bundle identity, embedded source marker,
   `x86_64` and `arm64` architectures, running path, and exact built/installed executable and Debug
-  dylib hashes were verified. Startup session `50FD655D-EE9B-4253-8A8C-D06960C918EF` reached
+  dylib hashes were verified. Startup session `C930CA8B-ADA7-4D6D-9A84-9B266EC91EE9` reached
   `startup-state-ready` and prepared Notes as a one-window group and Ghostty as a two-window group.
   The previous daily remains recoverable at `/Applications/.WindowRanger.previous`.
-- **Live validation needed:** With a multi-window Ghostty Shelf open, hold Navigate and confirm the
-  compact guide appears opposite the Shelf, says Quick App Shelf, Hide Shelf, Previous/Next Shelf
-  Window, and Focus Shelf Window, shows only the usable arrow axis, remains click-through, and
-  dismisses on release. While continuing to hold Navigate, toggle the Shelf and confirm the guide
-  changes context immediately. Hold Arrange while the Shelf is open and confirm no misleading guide
-  appears. Confirm the Focus Border remains on the selected Shelf window without visual conflict.
+- **Live result:** The maintainer confirmed the installed guide works as expected: with the
+  two-window Ghostty Shelf open it appeared opposite the top Shelf with the correct Quick App Shelf
+  labels and Left/Right axis, remained click-through, dismissed on release, preserved the selected
+  window's Focus Border, and showed no Arrange guide. While Navigate remained held, each Shelf
+  open/close updated the guide immediately. Diagnostics corroborate the same-display context switch:
+  the ordinary Navigate guide reported 11 secondary actions, each presented Shelf group reported
+  two Ghostty windows and changed the guide to nine, and each hide returned it to 11 without a
+  modifier release. No Arrange-family presentation was requested during the acceptance sequence.
 
 ### WR-085 — Treat each Quick App as an all-window Shelf group
 
