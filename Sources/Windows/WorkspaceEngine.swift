@@ -667,6 +667,24 @@ enum DropDownAppStartupAmbiguityRecoveryPolicy {
         guard remainingAttempts > 1 else { return .exhausted }
         return .retry(remainingAttempts: remainingAttempts - 1)
     }
+
+    /// The activation used to reconcile a startup-ambiguous app is deliberately observational.
+    /// In particular, do not let its notification turn the normal activation refresh writable
+    /// before the bounded recovery has finished resolving the app's replacement AX windows.
+    static func shouldDeferActivationReconciliation(
+        activatedProcessIdentifier: pid_t,
+        pendingRecoveryProcessIdentifier: pid_t?
+    ) -> Bool {
+        pendingRecoveryProcessIdentifier == activatedProcessIdentifier
+    }
+
+    /// The timer must not race the recovery watchdog with an input-independent layout pass.
+    /// Once the pending recovery is cleared, its ordinary writable reconciliation resumes.
+    static func shouldDeferBackgroundReconciliation(
+        hasPendingStartupAmbiguityRecovery: Bool
+    ) -> Bool {
+        hasPendingStartupAmbiguityRecovery
+    }
 }
 
 struct PersistedDropDownAppSession: Codable, Equatable, Sendable {
@@ -1628,6 +1646,9 @@ final class WorkspaceEngine {
         let displayName: String
         let generation: UInt64
         let kind: PendingDropDownAppWindowResolutionKind
+        /// Known only for startup ambiguity recovery. A normal application launch has no
+        /// trustworthy process identity until AppKit creates it.
+        let recoveryProcessIdentifier: pid_t?
     }
 
     private struct PendingQuickAppPresentationContext {
@@ -1906,9 +1927,15 @@ final class WorkspaceEngine {
                     focusedGameObservation: focusedGameObservation,
                     timeSinceBroadRefresh: Date().timeIntervalSince(self.lastBroadWindowRefreshDate)
                 ) else { return }
+                let recoveryRefreshIsReadOnly = DropDownAppStartupAmbiguityRecoveryPolicy
+                    .shouldDeferBackgroundReconciliation(
+                        hasPendingStartupAmbiguityRecovery:
+                            self.pendingDropDownAppLaunch?.kind == .startupAmbiguityRecovery
+                    )
                 self.refreshWindows(
-                    followExternalFocus: !self.isWindowManagementPaused,
-                    performAXWrites: !self.isWindowManagementPaused
+                    followExternalFocus: !self.isWindowManagementPaused && !recoveryRefreshIsReadOnly,
+                    performAXWrites: !self.isWindowManagementPaused && !recoveryRefreshIsReadOnly,
+                    observeFocus: !recoveryRefreshIsReadOnly
                 )
                 self.persistState(preservingPendingRestores: Date() < self.startupGraceDeadline)
                 self.emitState()
@@ -2663,7 +2690,8 @@ final class WorkspaceEngine {
             bundleIdentifier: configuration.bundleIdentifier,
             displayName: configuration.displayName,
             generation: generation,
-            kind: .startupAmbiguityRecovery
+            kind: .startupAmbiguityRecovery,
+            recoveryProcessIdentifier: processIdentifier
         )
         pendingQuickAppPresentationContext = PendingQuickAppPresentationContext(
             previousFocusKey: interactionFocusedWindowSnapshot()?.key
@@ -3143,7 +3171,8 @@ final class WorkspaceEngine {
             bundleIdentifier: configuration.bundleIdentifier,
             displayName: configuration.displayName,
             generation: generation,
-            kind: .applicationLaunch
+            kind: .applicationLaunch,
+            recoveryProcessIdentifier: nil
         )
         quickAppTransition = .launching(
             Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
@@ -5950,6 +5979,31 @@ final class WorkspaceEngine {
                     event: "app-owned-activation-ignored",
                     fields: ["reason": "excluded-from-managed-focus-observation"]
                 )
+                return
+            }
+            let pendingRecoveryProcessIdentifier: pid_t?
+            if self.pendingDropDownAppLaunch?.kind == .startupAmbiguityRecovery {
+                pendingRecoveryProcessIdentifier = self.pendingDropDownAppLaunch?.recoveryProcessIdentifier
+            } else {
+                pendingRecoveryProcessIdentifier = nil
+            }
+            if DropDownAppStartupAmbiguityRecoveryPolicy.shouldDeferActivationReconciliation(
+                activatedProcessIdentifier: processIdentifier,
+                pendingRecoveryProcessIdentifier: pendingRecoveryProcessIdentifier
+            ) {
+                // This is the activation WindowRanger requested solely to let the ambiguous app
+                // settle its restored AX windows. The recovery watchdog owns the next steps and
+                // performs a bounded read-only refresh; do not let this notification arrange or
+                // park windows before it has determined whether exactly one candidate survives.
+                self.diagnostics.log(
+                    category: "drop-down-app",
+                    event: "startup-ambiguity-activation-refresh-deferred",
+                    fields: [
+                        "process": String(processIdentifier),
+                        "bundle": self.pendingDropDownAppLaunch?.bundleIdentifier ?? "unknown",
+                    ]
+                )
+                self.refreshWindows(performAXWrites: false, observeFocus: false)
                 return
             }
             if let dropDownSession = self.quickAppSessions.values.first(where: {

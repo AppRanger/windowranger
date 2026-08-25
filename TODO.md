@@ -192,17 +192,21 @@ smallest useful outcome and acceptance boundary.
   Their first direct hotkey toggle, when the candidate PID and exact window identities still match
   that immutable startup fingerprint and the application remains inactive, consumes the marker,
   activates the existing process without a reopen request, and performs a bounded sequence of
-  read-only window refreshes. Exactly one surviving candidate continues through the ordinary Quick
-  App claim and presentation path; zero or multiple candidates retain explicit feedback. Command
+  read-only window refreshes. The matching application-activation notification is also restricted
+  to read-only, no-focus-observation reconciliation until the bounded recovery completes, so it
+  cannot arrange or hide a transient candidate first. Exactly one surviving candidate continues
+  through the ordinary Quick App claim and presentation path; zero or multiple candidates retain
+  explicit feedback. Command
   Palette and shelf-selection commands, changed candidate sets, cross-process ambiguity, active
   applications, later ambiguity, configuration and profile changes, cancellation, pause, sleep, and
   shutdown do not gain a guessing path. The focus that preceded recovery is retained for the normal
   hide-and-restore interaction.
-- **Automated evidence:** Test isolation passes; 35 focused Quick App tests and 22 Command Palette
+- **Automated evidence:** Test isolation passes; 37 focused Quick App tests and 22 Command Palette
   tests pass, including command-source propagation, the exact-startup-fingerprint boundary, one-shot
-  activation, exact-one resolution, and bounded retry exhaustion. The complete non-hosted suite
-  passes with 727 tests and zero failures, together with project generation, release-ledger, Sparkle
-  feed-ordering, and local quick-verification checks (25 August 2026).
+  activation, read-only activation reconciliation, exact-one resolution, and bounded retry
+  exhaustion. The complete non-hosted suite passes with 729 tests and zero failures, together with
+  project generation, release-ledger, Sparkle feed-ordering, and local quick-verification checks
+  (25 August 2026).
 - **Signed-build evidence:** The universal signed Debug daily copy `e0d7a5a259e2-dirty` was installed
   on 25 August 2026 with the previous copy retained for rollback. PID `21412` remained running after
   startup; signature validation passed, no fresh WindowRanger crash report or macOS error/fault was

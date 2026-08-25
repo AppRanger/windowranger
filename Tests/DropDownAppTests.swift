@@ -807,6 +807,44 @@ final class DropDownAppTests: XCTestCase {
         XCTAssertEqual(DropDownAppStartupAmbiguityRecoveryPolicy.maximumAttempts, 8)
     }
 
+    func testStartupAmbiguityActivationDefersOnlyThePendingRecoveryProcess() {
+        XCTAssertTrue(
+            DropDownAppStartupAmbiguityRecoveryPolicy.shouldDeferActivationReconciliation(
+                activatedProcessIdentifier: 42,
+                pendingRecoveryProcessIdentifier: 42
+            )
+        )
+        XCTAssertFalse(
+            DropDownAppStartupAmbiguityRecoveryPolicy.shouldDeferActivationReconciliation(
+                activatedProcessIdentifier: 43,
+                pendingRecoveryProcessIdentifier: 42
+            ),
+            "Other application activations must retain normal reconciliation while recovery runs."
+        )
+        XCTAssertFalse(
+            DropDownAppStartupAmbiguityRecoveryPolicy.shouldDeferActivationReconciliation(
+                activatedProcessIdentifier: 42,
+                pendingRecoveryProcessIdentifier: nil
+            ),
+            "Completion or invalidation must immediately restore normal activation reconciliation."
+        )
+    }
+
+    func testStartupAmbiguityRecoveryMakesBackgroundRefreshReadOnlyUntilCleared() {
+        XCTAssertTrue(
+            DropDownAppStartupAmbiguityRecoveryPolicy.shouldDeferBackgroundReconciliation(
+                hasPendingStartupAmbiguityRecovery: true
+            ),
+            "The periodic refresh must not write while the recovery watchdog is pending."
+        )
+        XCTAssertFalse(
+            DropDownAppStartupAmbiguityRecoveryPolicy.shouldDeferBackgroundReconciliation(
+                hasPendingStartupAmbiguityRecovery: false
+            ),
+            "Completion or invalidation must restore the timer's ordinary writable refresh."
+        )
+    }
+
     func testStartupRecoversOnlyTheExactWindowRangerHiddenQuickAppAsHidden() {
         let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
 
