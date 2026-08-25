@@ -88,8 +88,12 @@ not an installable macOS app.
   using a passive bottom key map by default and deriving every visible action from the active
   profile's conflict-checked shortcuts. Compact headings distinguish workspace, window, layout, and
   display targets, while the arrow pad names its spatial focus or reorder behavior below the keys.
-  It follows the focused window's resolved interaction
-  display and adds rows only when a dense valid configuration would otherwise clip actions.
+  While the Quick App Shelf is open, Navigate changes to a compact Shelf-specific guide on the
+  Shelf display: it keeps valid workspace and Commands actions, relabels Shelf traversal and hide,
+  shows only the Shelf's usable arrow axis, and moves to the opposite screen edge. Arrange has no
+  truthful Shelf-window actions, so its guide stays hidden in that context. It otherwise follows
+  the focused window's resolved interaction display and adds rows only when a dense valid
+  configuration would otherwise clip actions.
 - A profile-aware Quick App Shelf with up to four ordered entries, palette selection, Previous/Next
   Window traversal while open, exact-window presentation, and conservative launch/recovery handling.
 - Extensible per-application rules for workspace routing, visibility on every workspace, layout exclusion, and conservative secondary-window floating.
@@ -253,18 +257,20 @@ both. Exact
 open-window IDs, workspace membership, frames, and focus remain local session state and are not
 copied into a profile.
 
-The profile Quick App Shelf presents one or more coordinated Quake-style exact-window overlays. It
-can use non-overlapping Carousel cards or an overlapping Accordion, with a configured maximum of one
-to four visible apps. That maximum applies only to configured apps that already expose one
-unambiguous available window; WindowRanger never launches extra apps merely to fill the shelf. The
-explicitly selected app retains the existing bounded launch behaviour.
+The profile Quick App Shelf is a temporary workspace containing the eligible admitted windows of
+its configured applications. It can use non-overlapping Carousel cards or an overlapping Accordion,
+with a configured maximum of one to four visible apps. Every eligible window from each visible
+application's one running process participates in that layout; the maximum counts applications,
+not windows. WindowRanger never launches extra apps merely to fill the shelf. The explicitly
+selected app retains the existing bounded launch behaviour.
 
 The regular shortcut defaults to Navigate-Backtick and toggles the currently selected entry.
 The Command Palette can show a specific entry or select the previous/next entry in the stable
 configured order. Selection is remembered locally
 for each profile without reordering its synced shelf. Opening the Command Palette keeps an already
 presented shelf visible. While the shelf is presented, the normal Previous Window and Next Window
-shortcuts temporarily cycle through shelf entries instead of the underlying workspace; moving to an
+shortcuts temporarily cycle through each app's windows and then the configured app order instead of
+the underlying workspace; moving to an
 already visible neighbour promotes it without closing the shelf. Navigate plus an arrow instead
 uses the visible Shelf geometry to focus the nearest entry in that direction, making the Shelf a
 contained temporary workspace. Reaching either end of the Shelf's visual axis wraps to its opposite
@@ -277,38 +283,31 @@ screen width. Carousel divides the shelf across the other axis, while Accordion 
 edge of each overlapping neighbour and keeps the selected window foremost. Every edge animation
 collapses within the selected display, so a neighbouring monitor
 never becomes an off-screen travel path. With animation disabled, WindowRanger applies the final
-frame directly. Pressing the shortcut again or focusing another app uses macOS Hide for the Quick
-App's application, avoiding the Dock minimize animation; showing it prepares the final or collapsed
-frame before unhiding the application. Because Hide is application-wide, any other windows belonging
-to that app follow the same hidden state. When the focused-window border is enabled, Quick App uses
+frames directly. Pressing the shortcut again or focusing another app uses macOS Hide for each
+presented Quick App application, avoiding the Dock minimize animation; showing prepares the Shelf
+frames before unhiding the application. Because Hide is application-wide, every owned window from
+that app shares one visibility transition while retaining its own exact frame and workspace restore
+state. When the focused-window border is enabled, Quick App uses
 the same four-point screen-edge clearance as managed layouts so the complete border remains visible;
 toggling the border setting updates an already presented Quick App immediately. While owned,
-that window stays outside normal workspace layout, reset, focus cycling, and frame persistence.
-If a native tab switch replaces the app's exact Accessibility window identity, WindowRanger keeps
-the Quick App session only when the same authoritative refresh finds one newly admitted replacement
-from the same process and no second eligible window for that bundle. It transfers the prior local
-workspace and restore state to that replacement; an ambiguous transition clears the session rather
-than claiming an unrelated window. On startup, one unambiguous matching window is claimed before
-ordinary workspace layout: an on-screen window moves directly to its configured Quick App frame on
-its current display, while an exact WindowRanger-owned window whose application remains hidden stays
-hidden. The hidden ownership marker is local to the current WindowServer session and is discarded
-rather than applied to a different window identity. Legacy minimized-window markers do not grant
-permission to unhide an application. Multiple matching windows remain
-ordinary managed windows rather than being guessed between. If those multiple identities were
-already present in WindowRanger's startup snapshot, the first direct Quick App toggle may activate
-the inactive application once and briefly re-enumerate it without Accessibility writes. The direct
-hotkey must still see the exact process and window identities recorded in that snapshot; any changed
-candidate set, Quick App settings or profile change, pause, or sleep invalidates the opportunity.
-This covers applications that retain transient login-restoration window objects until first
-activated, even when that first interaction is much later. WindowRanger still proceeds only when
-exactly one eligible window remains; Command Palette and shelf selection actions, later ambiguities,
-and a genuine multi-window result continue to avoid repeated activation or guessing.
+those windows stay outside normal workspace layout, reset, ordinary focus cycling, and frame
+persistence. A newly admitted eligible same-process window joins its application's exact Shelf
+group; closing one member releases only that window while another member remains. Native-tab
+replacement may transfer the removed window's local restore state only through the existing exact,
+authoritative same-process handoff boundary. On startup, every eligible matching window from one
+process is claimed before ordinary workspace layout and the application begins hidden. Exact
+WindowRanger-owned windows whose application remains hidden retain that ownership. The hidden
+ownership marker is local to the current WindowServer session and is discarded rather than applied
+to a different window identity. Legacy minimized-window markers do not grant permission to unhide
+an application. Matching windows from multiple processes remain ambiguous and fail closed because
+one application-level visibility transition cannot govern them truthfully.
 If the configured app has no available window, pressing the Quick App shortcut normally opens and
 activates it so apps that create a window only when foregrounded receive their normal reopen request.
 Palette-owned shelf previews launch without taking keyboard focus from the palette.
-WindowRanger waits briefly for one eligible window, then claims and presents that window before
-ordinary layout can move it. A missing installation, launch failure, timeout, or
-multiple eligible windows produces clear feedback instead of guessing or retrying indefinitely.
+WindowRanger waits briefly for at least one eligible window, then claims every matching window from
+that application process before ordinary layout can move them. A missing installation, launch
+failure, timeout, or matching windows split across multiple processes produces clear feedback
+instead of guessing or retrying indefinitely.
 Profiles can choose different ordered shelves and shared shelf presentation. These are managed in
 the dedicated Quick App Shelf Settings section, while shortcuts remain global preferences. Existing
 profiles migrate the first configured Quick App's presentation to the shared shelf setting.
@@ -317,8 +316,8 @@ profile's normal Applications list or App Shelf. Moving between those destinatio
 explicitly because one profile never stores the same app in both. A companion host whose tagged
 surfaces are ignored cannot enter App Shelf because Shelf visibility controls an entire application
 process.
-WindowRanger omits ambiguous neighbours and still reports a clear no-op rather than guessing when
-the explicitly selected app has multiple eligible windows.
+WindowRanger omits neighbours whose matching windows span multiple processes and reports a clear
+no-op rather than trying to control those separate application lifecycles as one Shelf entry.
 
 Profile definitions are stored as one versioned value and sync atomically through iCloud when sync is
 enabled. New installations start local-only until **Sync settings with iCloud** is explicitly enabled.

@@ -171,12 +171,113 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-086 — Make Shortcut Guide contextual while Quick App Shelf is open
+
+- **Type:** Shortcut Guide and Quick App Shelf integration
+- **Priority:** P2
+- **Status:** Live validation — implemented, automated-test verified, visually checked, and installed;
+  signed interaction acceptance pending.
+- **Requested:** 25 August 2026.
+- **User-observed context:** The normal Shortcut Guide can remain visible while the Shelf is open,
+  but its generic window labels and full directional/action set do not describe what those keys do
+  to Shelf-owned windows.
+- **Smallest useful outcome:** Present a compact Shelf-specific Navigate guide on the Shelf display,
+  positioned at the opposite screen edge. Keep valid workspace switching and Commands, label the
+  toggle as Hide Shelf, name Previous/Next Shelf Window explicitly, and show only the Shelf layout
+  axis. Suppress Arrange because those focused-window operations do not act on Shelf-owned windows.
+- **Acceptance:** Opening or closing the Shelf while Navigate is held refreshes the visible guide
+  without requiring a modifier release. Top/Bottom Shelves expose Left/Right focus; Left/Right
+  Shelves expose Up/Down. The guide remains conflict-checked, passive, display-correct, adaptive for
+  dense workspace bindings, and leaves Focus Border behavior unchanged. Focused policy/grouping
+  tests, repository quick verification, a signed daily install, and live modifier-held use with an
+  open multi-window Shelf are required.
+- **Automated evidence:** All 19 focused Shortcut Guide tests pass, including Shelf filtering,
+  relabeling, axis choice, compact density, opposite-edge placement, and Arrange suppression. Test
+  isolation and repository quick verification pass all 728 non-hosted tests with zero failures.
+- **Visual evidence:** All six Small/Medium/Large Light/Dark Shelf-context production-view renders
+  were generated. Small Dark and Medium Light were inspected at original Retina resolution; the
+  compact labels, two-line traversal actions, headings, arrow axis, spacing, and semantic contrast
+  have no unresolved P0-P2 issue. `design-qa.md` records the boundary and evidence.
+- **Installed evidence:** With maintainer approval, signed universal Debug daily candidate
+  `dc0852080593-dirty` (CDHash `06abf113e02d263b3c2b05d742bbe047cb5f1071`) is installed and
+  running from `/Applications/WindowRanger.app` as PID `61807`. Its strict signature, Apple
+  Development authority, Team ID `44NAD22AK6`, canonical bundle identity, embedded source marker,
+  `x86_64` and `arm64` architectures, running path, and exact built/installed executable and Debug
+  dylib hashes were verified. Startup session `B5BE3562-31DF-4BBA-9D63-D7DF670D57EF` reached
+  `startup-state-ready` and prepared Ghostty as one hidden two-window Shelf application group. The
+  previous daily remains recoverable at `/Applications/.WindowRanger.previous`.
+- **Live validation needed:** With a multi-window Ghostty Shelf open, hold Navigate and confirm the
+  compact guide appears opposite the Shelf, says Quick App Shelf, Hide Shelf, Previous/Next Shelf
+  Window, and Focus Shelf Window, shows only the usable arrow axis, remains click-through, and
+  dismisses on release. While continuing to hold Navigate, toggle the Shelf and confirm the guide
+  changes context immediately. Hold Arrange while the Shelf is open and confirm no misleading guide
+  appears. Confirm the Focus Border remains on the selected Shelf window without visual conflict.
+
+### WR-085 — Treat each Quick App as an all-window Shelf group
+
+- **Type:** Quick App Shelf ownership and interaction change
+- **Priority:** P1
+- **Status:** Implementation and automated verification complete; signed live validation pending.
+- **Requested:** 25 August 2026.
+- **User decision:** The Shelf is a temporary workspace containing the eligible windows of its
+  configured applications, not a launcher containing one representative window per application.
+- **Smallest useful outcome:** A configured Shelf application with multiple admitted standard
+  windows owns, presents, lays out, focuses, hides, restores, and persists every one of those exact
+  windows. The existing visible-count setting continues to bound configured applications; all
+  eligible windows belonging to each visible application participate in Carousel or Accordion.
+- **Safety boundary:** Application Hide remains one application-level transition. Ignored/transient
+  surfaces, deferred windows, full-screen windows, and windows from another process remain excluded;
+  admitted dialog and fixed-size safety still preserve their position-only geometry boundary.
+  Newly admitted same-process windows join the existing application group; removal releases only
+  that exact window unless the group becomes empty. Every owned window keeps its prior workspace,
+  frame, layout order, and restore state. Legacy one-window persisted sessions continue to decode.
+- **Interaction boundary:** Directional focus and Previous/Next Window can select each visible Shelf
+  window without relaying out the group merely to change focus. Application selection and the
+  configured application order remain stable, while diagnostics distinguish visible applications
+  from visible windows.
+- **Acceptance:** Startup and an ordinary direct toggle claim two genuine same-process Ghostty
+  windows without ambiguity feedback; both windows receive deterministic Carousel and Accordion
+  frames, remain outside normal workspace layout while owned, follow application-wide hide/show,
+  and restore safely when Shelf ownership ends. Adding and closing a Ghostty window updates only
+  that application group. Multi-process ambiguity still fails closed. Focused policy, geometry,
+  persistence, navigation, lifecycle, and full non-hosted verification pass before signed live
+  validation.
+- **Implemented:** Shelf sessions now retain a deterministic exact-window group per application.
+  Startup, direct selection, launched-window discovery, visible neighbours, refresh admission,
+  removal, ignored-surface eviction, native-tab replacement, persistence, wake recovery, hide/show,
+  configuration cleanup, and restoration operate on that group. Carousel and Accordion flatten all
+  windows from the visible configured applications; the visible-count setting still counts apps.
+  Directional focus targets every presented window, while Previous/Next traverses the stable window
+  order before moving to the next configured app. Hidden applications are staged into their final
+  Shelf frames before Unhide, and a presented app's newly admitted window triggers immediate group
+  layout. The superseded WR-084 one-window startup recovery has been removed.
+- **Automated evidence:** 60 focused Quick App tests pass, covering same-process grouping,
+  cross-process rejection, stable cycling, exact-member removal, one-for-one native-tab handoff with
+  retained group members, legacy persistence, and seven-window Carousel/Accordion geometry at all
+  four edges. The complete non-hosted suite passes 725 tests with zero failures or skips. Test
+  isolation, shell syntax, release-build registry, Sparkle feed workflow, project generation,
+  Release static analysis, unsigned universal Release build, and Stable/Beta DMG build and
+  verification all pass (25 August 2026).
+- **Live validation remaining:** Repeat the two-window Ghostty case across direct toggle and
+  restart. Then check both layouts, app-wide hide/show, Previous/Next
+  and arrow navigation, adding and closing one Ghostty window while presented, and final restoration
+  to the original workspaces and frames.
+- **Installed evidence:** With maintainer approval, signed Debug daily candidate
+  `dc0852080593-dirty` is installed and running from `/Applications/WindowRanger.app` as PID `61807`.
+  The built and installed executable and Debug dylib match exactly; strict signature validation,
+  canonical bundle identity, Team ID `44NAD22AK6`, both `x86_64` and `arm64` architectures, running
+  path, and CDHash `06abf113e02d263b3c2b05d742bbe047cb5f1071` were verified. Startup session
+  `B5BE3562-31DF-4BBA-9D63-D7DF670D57EF` prepared Ghostty as one two-window application group and
+  reached `session/startup-state-ready`. This newer candidate also contains WR-086's contextual
+  Shortcut Guide. This is installed startup smoke evidence; the interaction cases above remain for
+  maintainer validation. The previous daily copy remains recoverable at
+  `/Applications/.WindowRanger.previous`.
+
 ### WR-084 — Reconcile transient startup Quick App window ambiguity once
 
 - **Type:** Quick App post-login recovery bug
 - **Priority:** P1
-- **Status:** Live validation — implemented and automated-test verified; signed post-reboot Ghostty
-  validation remains.
+- **Status:** Superseded by WR-085; the one-window recovery path is no longer active.
 - **Requested:** 25 August 2026.
 - **User-observed and diagnostic-supported:** After the 24 August reboot, Ghostty and WindowRanger
   launched 15 seconds apart. The user reported multiple-window feedback on the first direct Quick
@@ -184,11 +285,11 @@ smallest useful outcome and acceptance boundary.
   time displaying feedback without selecting a target. Focusing Ghostty caused its next successful
   Accessibility snapshot to evict window identities `1442:116` and `1442:120`; 2.6 seconds later,
   the shortcut unambiguously presented `1442:125` at the expected frame.
-- **Expected:** Preserve the exact-window safety boundary for genuine multi-window applications,
+- **Prior expected behavior:** Preserve the exact-window safety boundary for genuine multi-window applications,
   while handling applications that publish transient login-restoration Accessibility windows until
   their first activation. A direct shortcut may activate such an already-running application once,
   but must never guess a target or repeatedly steal focus.
-- **Implemented:** Startup records only configured Quick Apps with more than one eligible candidate.
+- **Prior implementation (superseded):** Startup recorded only configured Quick Apps with more than one eligible candidate.
   Their first direct hotkey toggle, when the candidate PID and exact window identities still match
   that immutable startup fingerprint and the application remains inactive, consumes the marker,
   activates the existing process without a reopen request, and performs a bounded sequence of
@@ -201,7 +302,7 @@ smallest useful outcome and acceptance boundary.
   applications, later ambiguity, configuration and profile changes, cancellation, pause, sleep, and
   shutdown do not gain a guessing path. The focus that preceded recovery is retained for the normal
   hide-and-restore interaction.
-- **Automated evidence:** Test isolation passes; 37 focused Quick App tests and 22 Command Palette
+- **Prior automated evidence:** Test isolation passed; 37 focused Quick App tests and 22 Command Palette
   tests pass, including command-source propagation, the exact-startup-fingerprint boundary, one-shot
   activation, read-only activation reconciliation, exact-one resolution, and bounded retry
   exhaustion. The complete non-hosted suite passes with 729 tests and zero failures, together with
@@ -214,7 +315,7 @@ smallest useful outcome and acceptance boundary.
   admitted normally and prepared as the single hidden Quick App. This is startup smoke evidence, not
   a reproduction of the post-reboot ambiguity or the recovery path. The user subsequently reported
   that the installed copy seemed to be working; the reboot-specific acceptance case remains pending.
-- **Acceptance:** Pure tests cover startup candidate counting, command-source and exact-fingerprint
+- **Superseded acceptance:** Pure tests covered startup candidate counting, command-source and exact-fingerprint
   boundaries, the one-shot activation boundary, Command Palette/active/cross-process exclusions,
   exact-one resolution, bounded zero/multiple retries, and exhaustion. Focused Quick App tests and
   the complete non-hosted suite pass. Lifecycle/configuration invalidation is code-reviewed but is
@@ -222,6 +323,11 @@ smallest useful outcome and acceptance boundary.
   restored at login; the first direct shortcut resolves without a manual focus step, while a genuine
   two-window Ghostty set still reports ambiguity after one bounded attempt and a later shortcut does
   not activate it again.
+- **Live validation update (25 August 2026):** With both genuine Ghostty windows already present,
+  restarting WindowRanger and invoking the direct shortcut reported the expected ambiguity. The
+  maintainer then chose WR-085's all-window application-group model, which supersedes genuine
+  same-process multi-window ambiguity as a desired final behavior. WR-085 removes the one-shot
+  startup-ambiguity recovery and its tests; only cross-process ambiguity still fails closed.
 
 ### WR-083 — Decide the fate of historical whole-application and floating-panel exclusions
 

@@ -154,6 +154,39 @@ final result: passed
 
 ---
 
+# WR-086 Quick App Shelf Shortcut Guide Design QA
+
+## Scope and evidence
+
+- `.build/shortcut-guide-wr086/` contains Small, Medium, and Large Light/Dark renders of the
+  production Shortcut Guide view in its top-Shelf context, alongside the unchanged Navigate and
+  Arrange states.
+- The runtime deliberately resolves Medium to Small and Large to Medium while the Shelf is open;
+  Small remains Small. This keeps the common candidate at 680 x 190 points in the free strip
+  opposite a horizontal Shelf while preserving adaptive extra rows for dense workspace bindings.
+- The fixture uses five workspaces and the complete conflict-free default Navigate set. Its
+  snapshot material is deterministic, while layout, typography, keycaps, labels, and sizing are the
+  production hierarchy.
+
+## Review result
+
+- The header says **Quick App Shelf**; the lower groups distinguish **Switch Workspace** and
+  **Cycle Shelf Windows**; the toggle says **Hide Shelf**; ordered traversal says **Previous Shelf
+  Window** and **Next Shelf Window**; and the spatial caption says **Focus Shelf Window**.
+- The top-Shelf render contains only Left and Right focus keys. Policy tests separately prove that a
+  side Shelf contains only Up and Down and that every edge chooses the opposite guide anchor.
+- Small Dark and Medium Light were inspected at original Retina resolution. All labels remain
+  complete, the two-line Shelf traversal labels are balanced within their group, separators and
+  headings retain the accepted WR-078 alignment, and native Light/Dark semantic contrast remains
+  legible. No P0, P1, or P2 visual issue remains.
+- Live Liquid Glass compositing, free-strip placement against the actual configured Shelf size, the
+  held-modifier transition as the Shelf opens/closes, and coexistence with Focus Border remain the
+  signed installed-app validation boundary.
+
+final result: passed
+
+---
+
 # First-run Onboarding Mission Control Design QA
 
 ## Scope and evidence

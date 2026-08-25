@@ -189,6 +189,149 @@ final class ShortcutGuideTests: XCTestCase {
         XCTAssertEqual(groups[2].actions.map(\.title), ["Previous", "Next"])
     }
 
+    func testOpenShelfGuideKeepsOnlyTruthfulNavigateActionsForItsAxis() throws {
+        let primary = ShortcutGuideAction(
+            id: "workspace",
+            kind: .workspaceSwitch(UUID()),
+            title: "Writing",
+            keyLabel: "W",
+            isDirectional: false
+        )
+        let actionDefinitions: [(ConfigurableHotKeyAction, String)] = [
+            (.previousWorkspace, "Previous Workspace"),
+            (.commandWheel, "Commands"),
+            (.toggleDropDownApp, "Quick App"),
+            (.previousWindow, "Previous"),
+            (.nextWindow, "Next"),
+            (.focusLeft, "Focus Left"),
+            (.focusRight, "Focus Right"),
+            (.focusUp, "Focus Up"),
+            (.focusDown, "Focus Down"),
+            (.toggleFloating, "Floating"),
+        ]
+        let directionalActions: Set<ConfigurableHotKeyAction> = [
+            .focusLeft, .focusRight, .focusUp, .focusDown,
+        ]
+        let actions = actionDefinitions.enumerated().map { index, value in
+            ShortcutGuideAction(
+                id: "action-\(index)",
+                kind: .global(value.0),
+                title: value.1,
+                keyLabel: String(index),
+                isDirectional: directionalActions.contains(value.0)
+            )
+        }
+        let base = ShortcutGuideContent(
+            family: .navigate,
+            primaryActions: [primary],
+            secondaryActions: actions
+        )
+
+        let contextual = try XCTUnwrap(
+            ShortcutGuideShelfPresentationPolicy.contextualContent(
+                from: base,
+                direction: .top
+            )
+        )
+
+        XCTAssertEqual(contextual.presentationContext, .quickAppShelf)
+        XCTAssertEqual(contextual.primaryActions, [primary])
+        XCTAssertEqual(
+            contextual.secondaryActions.compactMap { action -> ConfigurableHotKeyAction? in
+                guard case let .global(value) = action.kind else { return nil }
+                return value
+            },
+            [
+                .previousWorkspace, .commandWheel, .toggleDropDownApp,
+                .previousWindow, .nextWindow, .focusLeft, .focusRight,
+            ]
+        )
+        XCTAssertEqual(
+            contextual.secondaryActions.map(\.title),
+            [
+                "Previous Workspace", "Commands", "Hide Shelf",
+                "Previous Shelf Window", "Next Shelf Window", "Focus Left", "Focus Right",
+            ]
+        )
+        let groups = ShortcutGuideActionGroupBuilder.build(
+            family: contextual.family,
+            actions: contextual.secondaryActions,
+            presentationContext: contextual.presentationContext
+        )
+        XCTAssertEqual(groups.map(\.kind), [.switchWorkspace, .supporting, .cycleShelfWindows])
+        XCTAssertEqual(groups.map(\.title), ["Switch Workspace", nil, "Cycle Shelf Windows"])
+    }
+
+    func testSideShelfGuideUsesVerticalFocusAxisAndOppositeEdge() throws {
+        let focusActions: [ConfigurableHotKeyAction] = [
+            .focusLeft, .focusRight, .focusUp, .focusDown,
+        ]
+        let base = ShortcutGuideContent(
+            family: .navigate,
+            primaryActions: [],
+            secondaryActions: focusActions.enumerated().map { index, value in
+                ShortcutGuideAction(
+                    id: "focus-\(index)",
+                    kind: .global(value),
+                    title: value.title,
+                    keyLabel: String(index),
+                    isDirectional: true
+                )
+            }
+        )
+        let contextual = try XCTUnwrap(
+            ShortcutGuideShelfPresentationPolicy.contextualContent(
+                from: base,
+                direction: .left
+            )
+        )
+        XCTAssertEqual(
+            contextual.secondaryActions.map(\.kind),
+            [.global(.focusUp), .global(.focusDown)]
+        )
+        XCTAssertEqual(
+            ShortcutGuideShelfPresentationPolicy.position(opposite: .left),
+            .centerTrailing
+        )
+        XCTAssertEqual(
+            ShortcutGuideShelfPresentationPolicy.position(opposite: .right),
+            .centerLeading
+        )
+        XCTAssertEqual(
+            ShortcutGuideShelfPresentationPolicy.position(opposite: .top),
+            .bottomCenter
+        )
+        XCTAssertEqual(
+            ShortcutGuideShelfPresentationPolicy.position(opposite: .bottom),
+            .topCenter
+        )
+        XCTAssertEqual(ShortcutGuideShelfPresentationPolicy.compactSize(for: .small), .small)
+        XCTAssertEqual(ShortcutGuideShelfPresentationPolicy.compactSize(for: .medium), .small)
+        XCTAssertEqual(ShortcutGuideShelfPresentationPolicy.compactSize(for: .large), .medium)
+    }
+
+    func testOpenShelfSuppressesArrangeGuide() {
+        let content = ShortcutGuideContent(
+            family: .arrange,
+            primaryActions: [],
+            secondaryActions: [
+                ShortcutGuideAction(
+                    id: "floating",
+                    kind: .global(.toggleFloating),
+                    title: "Floating",
+                    keyLabel: "F",
+                    isDirectional: false
+                ),
+            ]
+        )
+        XCTAssertNil(
+            ShortcutGuideShelfPresentationPolicy.contextualContent(
+                from: content,
+                direction: .top
+            )
+        )
+    }
+
     func testArrangeGuideGroupsNameTheActionAndTarget() throws {
         let content = try XCTUnwrap(ShortcutGuideContentBuilder.build(
             family: .arrange,
@@ -309,27 +452,36 @@ final class ShortcutGuideTests: XCTestCase {
         let workspaces = (1...5).map { value in
             WorkspaceDefinition(name: String(value), key: String(value))
         }
-        let contents = try [
-            XCTUnwrap(ShortcutGuideContentBuilder.build(
-                family: .navigate,
-                workspaces: workspaces,
-                configuration: HotKeyConfiguration(),
-                runtimeIssues: []
-            )),
-            XCTUnwrap(ShortcutGuideContentBuilder.build(
-                family: .arrange,
-                workspaces: workspaces,
-                configuration: HotKeyConfiguration(),
-                runtimeIssues: []
-            )),
+        let navigate = try XCTUnwrap(ShortcutGuideContentBuilder.build(
+            family: .navigate,
+            workspaces: workspaces,
+            configuration: HotKeyConfiguration(),
+            runtimeIssues: []
+        ))
+        let arrange = try XCTUnwrap(ShortcutGuideContentBuilder.build(
+            family: .arrange,
+            workspaces: workspaces,
+            configuration: HotKeyConfiguration(),
+            runtimeIssues: []
+        ))
+        let shelf = try XCTUnwrap(
+            ShortcutGuideShelfPresentationPolicy.contextualContent(
+                from: navigate,
+                direction: .top
+            )
+        )
+        let contents = [
+            (name: "navigate", content: navigate),
+            (name: "arrange", content: arrange),
+            (name: "quick-app-shelf", content: shelf),
         ]
-        for content in contents {
+        for entry in contents {
             for size in ShortcutGuideSize.allCases {
                 for scheme in [ColorScheme.light, .dark] {
                     let name = scheme == .light ? "light" : "dark"
-                    let snapshotSize = size.panelSize(for: content)
+                    let snapshotSize = size.panelSize(for: entry.content)
                     let view = ShortcutGuideView(
-                        content: content,
+                        content: entry.content,
                         size: size,
                         surfaceStyle: .snapshot
                     )
@@ -340,7 +492,7 @@ final class ShortcutGuideTests: XCTestCase {
                     renderer.scale = 2
                     let image = try XCTUnwrap(renderer.cgImage)
                     let data = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
-                    let filename = "windowranger-shortcut-guide-\(content.family.rawValue)-\(size.rawValue)-\(name).png"
+                    let filename = "windowranger-shortcut-guide-\(entry.name)-\(size.rawValue)-\(name).png"
                     try data.write(to: output.appendingPathComponent(filename), options: .atomic)
                     XCTAssertGreaterThan(data.count, 10_000)
                 }

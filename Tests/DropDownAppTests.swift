@@ -476,16 +476,23 @@ final class DropDownAppTests: XCTestCase {
     func testQuickAppFollowsOneNewSameProcessNativeTabWindow() throws {
         let previous = WindowKey(processIdentifier: 42, windowIdentifier: 100)
         let replacement = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+        let retainedGroupMember = WindowKey(processIdentifier: 42, windowIdentifier: 99)
 
         let result = DropDownAppWindowHandoffPolicy.replacementWindowKey(
             sessionWindowKey: previous,
             sessionBundleIdentifier: "com.mitchellh.ghostty",
             removedWindowKeys: [previous],
             newlyTrackedWindowKeys: [replacement],
-            availableWindows: [DropDownAppWindowHandoffCandidate(
-                key: replacement,
-                bundleIdentifier: "com.mitchellh.ghostty"
-            )]
+            availableWindows: [
+                DropDownAppWindowHandoffCandidate(
+                    key: retainedGroupMember,
+                    bundleIdentifier: "com.mitchellh.ghostty"
+                ),
+                DropDownAppWindowHandoffCandidate(
+                    key: replacement,
+                    bundleIdentifier: "com.mitchellh.ghostty"
+                ),
+            ]
         )
 
         XCTAssertEqual(result, replacement)
@@ -662,7 +669,7 @@ final class DropDownAppTests: XCTestCase {
         )
     }
 
-    func testStartupDoesNotClaimAmbiguousOrUnrelatedQuickAppWindows() {
+    func testStartupClaimsEverySameProcessWindowAndRejectsCrossProcessGroups() {
         let first = WindowKey(processIdentifier: 42, windowIdentifier: 100)
         let second = WindowKey(processIdentifier: 42, windowIdentifier: 101)
 
@@ -681,10 +688,10 @@ final class DropDownAppTests: XCTestCase {
             ),
         ]
 
-        XCTAssertNil(DropDownAppStartupPolicy.selection(
+        XCTAssertEqual(DropDownAppStartupPolicy.selections(
             bundleIdentifier: "com.mitchellh.ghostty",
             candidates: ambiguousCandidates
-        ))
+        )?.map(\.windowKey), [first, second])
         XCTAssertEqual(
             DropDownAppStartupPolicy.matchingCandidateCount(
                 bundleIdentifier: "COM.MITCHELLH.GHOSTTY",
@@ -692,7 +699,7 @@ final class DropDownAppTests: XCTestCase {
             ),
             2
         )
-        XCTAssertNil(DropDownAppStartupPolicy.selection(
+        XCTAssertNil(DropDownAppStartupPolicy.selections(
             bundleIdentifier: "com.mitchellh.ghostty",
             candidates: [DropDownAppStartupCandidate(
                 key: first,
@@ -701,148 +708,17 @@ final class DropDownAppTests: XCTestCase {
                 wasHiddenByWindowRanger: false
             )]
         ))
-    }
 
-    func testStartupAmbiguityRecoveryIsOneSafeDirectActivationOpportunity() {
-        XCTAssertTrue(DropDownAppStartupAmbiguityRecoveryPolicy.shouldAttempt(
-            wasAmbiguousAtStartup: true,
-            commandSource: .hotkey,
-            commandPalettePresented: false,
-            startupFingerprintMatches: true,
-            applicationIsActive: false
+        let otherProcess = WindowKey(processIdentifier: 43, windowIdentifier: 102)
+        XCTAssertNil(DropDownAppStartupPolicy.selections(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            candidates: ambiguousCandidates + [DropDownAppStartupCandidate(
+                key: otherProcess,
+                bundleIdentifier: "com.mitchellh.ghostty",
+                isMeaningfullyVisible: true,
+                wasHiddenByWindowRanger: false
+            )]
         ))
-        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.shouldAttempt(
-            wasAmbiguousAtStartup: false,
-            commandSource: .hotkey,
-            commandPalettePresented: false,
-            startupFingerprintMatches: true,
-            applicationIsActive: false
-        ))
-        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.shouldAttempt(
-            wasAmbiguousAtStartup: true,
-            commandSource: .commandPalette,
-            commandPalettePresented: false,
-            startupFingerprintMatches: true,
-            applicationIsActive: false
-        ))
-        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.shouldAttempt(
-            wasAmbiguousAtStartup: true,
-            commandSource: .hotkey,
-            commandPalettePresented: true,
-            startupFingerprintMatches: true,
-            applicationIsActive: false
-        ))
-        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.shouldAttempt(
-            wasAmbiguousAtStartup: true,
-            commandSource: .hotkey,
-            commandPalettePresented: false,
-            startupFingerprintMatches: false,
-            applicationIsActive: false
-        ))
-        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.shouldAttempt(
-            wasAmbiguousAtStartup: true,
-            commandSource: .hotkey,
-            commandPalettePresented: false,
-            startupFingerprintMatches: true,
-            applicationIsActive: true
-        ))
-    }
-
-    func testStartupAmbiguityRecoveryRequiresTheExactStartupWindowFingerprint() {
-        let first = WindowKey(processIdentifier: 42, windowIdentifier: 100)
-        let second = WindowKey(processIdentifier: 42, windowIdentifier: 101)
-        let replacement = WindowKey(processIdentifier: 42, windowIdentifier: 102)
-
-        XCTAssertTrue(DropDownAppStartupAmbiguityRecoveryPolicy.startupFingerprintMatches(
-            startupProcessIdentifier: 42,
-            startupWindowKeys: [first, second],
-            currentProcessIdentifiers: [42],
-            currentWindowKeys: [first, second]
-        ))
-        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.startupFingerprintMatches(
-            startupProcessIdentifier: 42,
-            startupWindowKeys: [first, second],
-            currentProcessIdentifiers: [42],
-            currentWindowKeys: [first, replacement]
-        ))
-        XCTAssertFalse(DropDownAppStartupAmbiguityRecoveryPolicy.startupFingerprintMatches(
-            startupProcessIdentifier: 42,
-            startupWindowKeys: [first, second],
-            currentProcessIdentifiers: [42, 43],
-            currentWindowKeys: [first, second]
-        ))
-    }
-
-    func testStartupAmbiguityRecoveryWaitsForExactlyOneWindowAndStopsAtItsBound() {
-        XCTAssertEqual(
-            DropDownAppStartupAmbiguityRecoveryPolicy.disposition(
-                availableWindowCount: 1,
-                remainingAttempts: 8
-            ),
-            .resolveToggle
-        )
-        XCTAssertEqual(
-            DropDownAppStartupAmbiguityRecoveryPolicy.disposition(
-                availableWindowCount: 0,
-                remainingAttempts: 8
-            ),
-            .retry(remainingAttempts: 7)
-        )
-        XCTAssertEqual(
-            DropDownAppStartupAmbiguityRecoveryPolicy.disposition(
-                availableWindowCount: 3,
-                remainingAttempts: 8
-            ),
-            .retry(remainingAttempts: 7)
-        )
-        XCTAssertEqual(
-            DropDownAppStartupAmbiguityRecoveryPolicy.disposition(
-                availableWindowCount: 2,
-                remainingAttempts: 1
-            ),
-            .exhausted
-        )
-        XCTAssertEqual(DropDownAppStartupAmbiguityRecoveryPolicy.initialDelay, 0.2)
-        XCTAssertEqual(DropDownAppStartupAmbiguityRecoveryPolicy.retryDelay, 0.15)
-        XCTAssertEqual(DropDownAppStartupAmbiguityRecoveryPolicy.maximumAttempts, 8)
-    }
-
-    func testStartupAmbiguityActivationDefersOnlyThePendingRecoveryProcess() {
-        XCTAssertTrue(
-            DropDownAppStartupAmbiguityRecoveryPolicy.shouldDeferActivationReconciliation(
-                activatedProcessIdentifier: 42,
-                pendingRecoveryProcessIdentifier: 42
-            )
-        )
-        XCTAssertFalse(
-            DropDownAppStartupAmbiguityRecoveryPolicy.shouldDeferActivationReconciliation(
-                activatedProcessIdentifier: 43,
-                pendingRecoveryProcessIdentifier: 42
-            ),
-            "Other application activations must retain normal reconciliation while recovery runs."
-        )
-        XCTAssertFalse(
-            DropDownAppStartupAmbiguityRecoveryPolicy.shouldDeferActivationReconciliation(
-                activatedProcessIdentifier: 42,
-                pendingRecoveryProcessIdentifier: nil
-            ),
-            "Completion or invalidation must immediately restore normal activation reconciliation."
-        )
-    }
-
-    func testStartupAmbiguityRecoveryMakesBackgroundRefreshReadOnlyUntilCleared() {
-        XCTAssertTrue(
-            DropDownAppStartupAmbiguityRecoveryPolicy.shouldDeferBackgroundReconciliation(
-                hasPendingStartupAmbiguityRecovery: true
-            ),
-            "The periodic refresh must not write while the recovery watchdog is pending."
-        )
-        XCTAssertFalse(
-            DropDownAppStartupAmbiguityRecoveryPolicy.shouldDeferBackgroundReconciliation(
-                hasPendingStartupAmbiguityRecovery: false
-            ),
-            "Completion or invalidation must restore the timer's ordinary writable refresh."
-        )
     }
 
     func testStartupRecoversOnlyTheExactWindowRangerHiddenQuickAppAsHidden() {

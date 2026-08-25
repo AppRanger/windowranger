@@ -141,6 +141,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var fullscreenGameSession: FullscreenGameSessionSnapshot?
     private var isForegroundDeclaredGameApplication = false
     private var shortcutGuideObservationGeneration = ShortcutGuideObservationGeneration()
+    private var activeShortcutGuideModifierFamily: ShortcutFamily?
+    private var presentedShortcutGuideShelfContext: ShortcutGuideShelfRuntimeContext?
     private var pendingMenuBarPresentationUpdate: DispatchWorkItem?
     private var pendingMenuBarWorkspaceLabelUpdate: DispatchWorkItem?
     private var pendingMenuBarDisplayIconUpdate: DispatchWorkItem?
@@ -168,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.focusedWindowHighlightPresenter.updateWorkspaceContexts(
                 state.focusedWindowHighlightWorkspaceContexts
             )
+            self.refreshShortcutGuideForShelfTransitionIfNeeded()
         }
         engine.onQuickAppSelectionChanged = { [weak self] bundleIdentifier in
             Task { @MainActor [weak self] in
@@ -720,13 +723,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func stopShortcutGuideObservation() {
         _ = shortcutGuideObservationGeneration.advance()
+        activeShortcutGuideModifierFamily = nil
+        presentedShortcutGuideShelfContext = nil
         shortcutGuideModifierMonitor.stop()
         shortcutGuideController.stop()
+    }
+
+    private func refreshShortcutGuideForShelfTransitionIfNeeded() {
+        guard let family = activeShortcutGuideModifierFamily else { return }
+        let shelfContext = engine.currentShortcutGuideShelfContext()
+        guard shelfContext != presentedShortcutGuideShelfContext else { return }
+        shortcutGuideModifierFamilyDidChange(family)
     }
 
     private func shortcutGuideModifierFamilyDidChange(
         _ family: ShortcutFamily?
     ) {
+        activeShortcutGuideModifierFamily = family
+        if family == nil {
+            presentedShortcutGuideShelfContext = nil
+        }
         diagnostics.log(
             category: "shortcut-guide",
             event: "modifier-family-changed",
@@ -746,7 +762,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             workspaces: settingsStore.workspaces,
             includeCommandWheel: settingsStore.radialMenuEnabled
         )
-        guard let content = ShortcutGuideContentBuilder.build(
+        guard let baseContent = ShortcutGuideContentBuilder.build(
             family: family,
             workspaces: settingsStore.workspaces,
             configuration: settingsStore.hotKeyConfiguration,
@@ -761,11 +777,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             return
         }
-        let displayIdentifier = engine.currentInteractionDisplayIdentifier()
+        let shelfContext = engine.currentShortcutGuideShelfContext()
+        presentedShortcutGuideShelfContext = shelfContext
+        let content: ShortcutGuideContent
+        if let shelfContext {
+            guard let contextualContent = ShortcutGuideShelfPresentationPolicy.contextualContent(
+                from: baseContent,
+                direction: shelfContext.direction
+            ) else {
+                shortcutGuideController.dismiss()
+                diagnostics.log(
+                    category: "shortcut-guide",
+                    event: "shelf-content-unavailable",
+                    fields: ["family": family.rawValue]
+                )
+                return
+            }
+            content = contextualContent
+        } else {
+            content = baseContent
+        }
+        let displayIdentifier = shelfContext?.displayIdentifier
+            ?? engine.currentInteractionDisplayIdentifier()
+        let size = shelfContext.map { _ in
+            ShortcutGuideShelfPresentationPolicy.compactSize(
+                for: settingsStore.shortcutGuideSize
+            )
+        } ?? settingsStore.shortcutGuideSize
+        let position = shelfContext.map {
+            ShortcutGuideShelfPresentationPolicy.position(opposite: $0.direction)
+        } ?? settingsStore.shortcutGuidePosition
         shortcutGuideController.present(
             content,
-            size: settingsStore.shortcutGuideSize,
-            position: settingsStore.shortcutGuidePosition,
+            size: size,
+            position: position,
             preferredDisplayIdentifier: displayIdentifier
         )
         diagnostics.log(
@@ -773,6 +818,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             event: "presentation-requested",
             fields: [
                 "family": family.rawValue,
+                "context": shelfContext == nil ? "workspace" : "quick-app-shelf",
                 "primary-actions": String(content.primaryActions.count),
                 "secondary-actions": String(content.secondaryActions.count),
                 "display": String(displayIdentifier.prefix(12)),
