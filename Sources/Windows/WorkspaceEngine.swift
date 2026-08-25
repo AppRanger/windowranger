@@ -1000,6 +1000,18 @@ enum QuickAppInteractionPolicy {
         commandPalettePresented && activatedProcessIdentifier == ownProcessIdentifier
     }
 
+    static func preservesSelectionHandoffForActivation(
+        activatedProcessIdentifier: pid_t,
+        previousProcessIdentifier: pid_t?,
+        handoffDeadline: Date,
+        now: Date
+    ) -> Bool {
+        guard now < handoffDeadline,
+              let previousProcessIdentifier
+        else { return false }
+        return activatedProcessIdentifier == previousProcessIdentifier
+    }
+
     static func routesWindowCycleToShelf(
         shelfIsPresented: Bool,
         configuredAppCount: Int,
@@ -1747,6 +1759,11 @@ final class WorkspaceEngine {
         let correlationID: String
     }
 
+    private struct QuickAppSelectionFocusHandoff {
+        let previousProcessIdentifier: pid_t?
+        let deadline: Date
+    }
+
     private enum ManualTiledMoveReconciliation: Equatable {
         case none
         case dragInProgress
@@ -1802,6 +1819,7 @@ final class WorkspaceEngine {
     private var pendingQuickAppPresentationContext: PendingQuickAppPresentationContext?
     private var pendingQuickAppSelection: PendingQuickAppSelection?
     private var pendingQuickAppHideAfterPresentation = false
+    private var quickAppSelectionFocusHandoff: QuickAppSelectionFocusHandoff?
     private var quickAppTransition: QuickAppTransitionPhase = .idle
     private var quickAppNeighborVisibilityGeneration: [String: UInt64] = [:]
     private var ignoredQuickAppVisibilityRecoveryGeneration: UInt64 = 0
@@ -2031,6 +2049,7 @@ final class WorkspaceEngine {
                 self.cancelPendingDropDownAppLaunch()
                 self.pendingQuickAppSelection = nil
                 self.pendingQuickAppHideAfterPresentation = false
+                self.quickAppSelectionFocusHandoff = nil
                 self.quickAppTransition = .idle
                 self.directionalMoveGestureContext = nil
                 self.manualTiledDragSession = nil
@@ -2184,6 +2203,7 @@ final class WorkspaceEngine {
             cancelPendingDropDownAppLaunch()
             pendingQuickAppSelection = nil
             pendingQuickAppHideAfterPresentation = false
+            quickAppSelectionFocusHandoff = nil
             quickAppTransition = .idle
             invalidateFocusWorkForLifecycle()
             persistState(preservingPendingRestores: true, waitForCompletion: true)
@@ -2600,6 +2620,12 @@ final class WorkspaceEngine {
         case .cancelLaunchAndBegin:
             cancelPendingDropDownAppLaunch()
         case .queueLatest:
+            if let handoff = quickAppSelectionFocusHandoff {
+                quickAppSelectionFocusHandoff = QuickAppSelectionFocusHandoff(
+                    previousProcessIdentifier: handoff.previousProcessIdentifier,
+                    deadline: Date().addingTimeInterval(2.0)
+                )
+            }
             pendingQuickAppSelection = PendingQuickAppSelection(
                 bundleIdentifier: configuration.bundleIdentifier,
                 correlationID: correlationID
@@ -2609,6 +2635,10 @@ final class WorkspaceEngine {
             return
         }
         if isQuickAppShelfPresented {
+            quickAppSelectionFocusHandoff = QuickAppSelectionFocusHandoff(
+                previousProcessIdentifier: dropDownAppSession?.previousFocusKey?.processIdentifier,
+                deadline: Date().addingTimeInterval(2.0)
+            )
             pendingQuickAppSelection = PendingQuickAppSelection(
                 bundleIdentifier: configuration.bundleIdentifier,
                 correlationID: correlationID
@@ -5974,11 +6004,45 @@ final class WorkspaceEngine {
                 activatedProcessIdentifier: processIdentifier,
                 ownProcessIdentifier: self.ownProcessIdentifier,
                 commandPalettePresented: self.commandPalettePresented
-            ) || self.quickAppSessions.values.contains {
+            )
+            let activationTargetsPresentedShelf = self.quickAppSessions.values.contains {
                 $0.isPresented && $0.windowKey.processIdentifier == processIdentifier
             }
+            if activationTargetsPresentedShelf {
+                if self.quickAppSelectionFocusHandoff != nil {
+                    self.diagnostics.log(
+                        category: "drop-down-app",
+                        event: "selection-focus-handoff-completed",
+                        fields: ["process": String(processIdentifier)]
+                    )
+                }
+                self.quickAppSelectionFocusHandoff = nil
+            }
+            let handoffNow = Date()
+            let preservesSelectionHandoff = self.quickAppSelectionFocusHandoff.map {
+                QuickAppInteractionPolicy.preservesSelectionHandoffForActivation(
+                    activatedProcessIdentifier: processIdentifier,
+                    previousProcessIdentifier: $0.previousProcessIdentifier,
+                    handoffDeadline: $0.deadline,
+                    now: handoffNow
+                )
+            } ?? false
+            if let handoff = self.quickAppSelectionFocusHandoff,
+               handoffNow >= handoff.deadline {
+                self.quickAppSelectionFocusHandoff = nil
+            }
+            if preservesSelectionHandoff {
+                self.diagnostics.log(
+                    category: "drop-down-app",
+                    event: "selection-focus-handoff-preserved",
+                    fields: ["process": String(processIdentifier)]
+                )
+            }
+            let preservesShelf = preservesPresentedShelf ||
+                activationTargetsPresentedShelf ||
+                preservesSelectionHandoff
             if self.isQuickAppShelfPresented,
-               !preservesPresentedShelf {
+               !preservesShelf {
                 self.hideDropDownApp(
                     restorePreviousFocus: false,
                     reason: "another-app-focused",
@@ -5986,7 +6050,8 @@ final class WorkspaceEngine {
                 )
             } else if case .showing = self.quickAppTransition,
                       let dropDownSession = self.dropDownAppSession,
-                      dropDownSession.windowKey.processIdentifier != processIdentifier {
+                      dropDownSession.windowKey.processIdentifier != processIdentifier,
+                      !preservesSelectionHandoff {
                 self.pendingQuickAppHideAfterPresentation = true
             }
             guard Self.shouldProcessApplicationActivation(
@@ -11452,6 +11517,7 @@ final class WorkspaceEngine {
             emitCommandFeedback("No display is available for the Quick App.", correlationID: correlationID)
             pendingQuickAppPresentationContext = nil
             pendingQuickAppHideAfterPresentation = false
+            quickAppSelectionFocusHandoff = nil
             quickAppTransition = .idle
             continuePendingQuickAppSelectionIfPossible()
             return
@@ -11532,6 +11598,7 @@ final class WorkspaceEngine {
                 ]
             )
             pendingQuickAppHideAfterPresentation = false
+            quickAppSelectionFocusHandoff = nil
             quickAppTransition = .idle
             continuePendingQuickAppSelectionIfPossible()
             return
@@ -11623,6 +11690,7 @@ final class WorkspaceEngine {
                 ]
             )
             pendingQuickAppHideAfterPresentation = false
+            quickAppSelectionFocusHandoff = nil
             quickAppTransition = .idle
             continuePendingQuickAppSelectionIfPossible()
             return
@@ -11780,6 +11848,9 @@ final class WorkspaceEngine {
         reason: String,
         correlationID: String?
     ) {
+        if reason != "quick-app-selection" {
+            quickAppSelectionFocusHandoff = nil
+        }
         guard var session = dropDownAppSession,
               session.isPresented,
               let target = windows[session.windowKey]
@@ -12213,6 +12284,7 @@ final class WorkspaceEngine {
                 pendingQuickAppSelection = nil
             }
             pendingQuickAppHideAfterPresentation = false
+            quickAppSelectionFocusHandoff = nil
 
             _ = nextQuickAppNeighborVisibilityGeneration(bundleKey: bundleKey)
             quickAppSessions.removeValue(forKey: bundleKey)
@@ -12452,6 +12524,7 @@ final class WorkspaceEngine {
             pendingQuickAppSelection = nil
         }
         pendingQuickAppHideAfterPresentation = false
+        quickAppSelectionFocusHandoff = nil
         switch quickAppTransition {
         case let .launching(activeKey) where activeKey == bundleKey,
              let .showing(activeKey) where activeKey == bundleKey,
@@ -12524,6 +12597,7 @@ final class WorkspaceEngine {
             pendingRestoredDropDownAppSessions.removeAll()
             pendingQuickAppSelection = nil
             pendingQuickAppHideAfterPresentation = false
+            quickAppSelectionFocusHandoff = nil
             quickAppTransition = .idle
             return
         }
@@ -12537,6 +12611,7 @@ final class WorkspaceEngine {
         pendingRestoredDropDownAppSessions.removeAll()
         pendingQuickAppSelection = nil
         pendingQuickAppHideAfterPresentation = false
+        quickAppSelectionFocusHandoff = nil
         quickAppTransition = .idle
     }
 

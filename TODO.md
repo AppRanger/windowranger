@@ -217,7 +217,7 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Quick App Shelf ownership and interaction change
 - **Priority:** P1
-- **Status:** Rapid Shelf-cycle transition containment implemented and automated-verified; signed
+- **Status:** Shelf app-switch focus handoff protection implemented and automated-verified; signed
   retest pending.
 - **Requested:** 25 August 2026.
 - **User decision:** The Shelf is a temporary workspace containing the eligible windows of its
@@ -252,13 +252,14 @@ smallest useful outcome and acceptance boundary.
   order before moving to the next configured app. Hidden applications are staged into their final
   Shelf frames before Unhide, and a presented app's newly admitted window triggers immediate group
   layout. The superseded WR-084 one-window startup recovery has been removed.
-- **Automated evidence:** 60 focused Quick App tests pass, covering same-process grouping,
+- **Automated evidence:** 61 focused Quick App tests pass, covering same-process grouping,
   cross-process rejection, stable cycling, exact-member removal, one-for-one native-tab handoff with
   retained group members, legacy persistence, and seven-window Carousel/Accordion geometry at all
   four edges. The live-settings propagation, visible-window stacking, post-activation restacking,
-  and rapid transition containment regression tests, plus all 31 tests in `QuickAppShelfTests`,
+  rapid transition containment, and selection-focus handoff regression tests, plus all 32 tests in
+  `QuickAppShelfTests`,
   pass. The complete
-  non-hosted suite passes 731 tests with zero
+  non-hosted suite passes 732 tests with zero
   failures or skips. Test isolation, shell syntax, release-build registry, Sparkle feed workflow,
   project generation,
   Release static analysis, unsigned universal Release build, and Stable/Beta DMG build and
@@ -304,6 +305,13 @@ smallest useful outcome and acceptance boundary.
   now remains routed to the Shelf for the complete hide/show transition, matching directional
   focus; repeated presses advance from the pending app selection and cannot target workspace
   windows during the gap.
+- **Selection-handoff live defect:** On candidate `44026336506e`, Next Shelf Window correctly
+  changed Notes to Ghostty and laid out both Ghostty windows, but hiding Notes briefly reactivated
+  the window that preceded the Shelf. The incoming show treated that expected rebound as competing
+  focus, immediately hid Ghostty with `another-app-focused-during-show`, and allowed the following
+  command to reach ordinary workspace cycling. A bounded selection-focus handoff now preserves
+  only that exact preceding process for two seconds and clears as soon as the incoming Shelf app
+  activates. Unrelated application activation and expired handoffs still dismiss the Shelf.
 - **Installed evidence:** With maintainer approval, signed Debug daily candidate
   `44026336506e` is installed and running from `/Applications/WindowRanger.app` as PID `81651`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,

@@ -533,6 +533,36 @@ final class QuickAppShelfTests: XCTestCase {
         ))
     }
 
+    func testSelectionHandoffOnlyPreservesTheExpectedPreviousApplicationDuringGrace() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let deadline = now.addingTimeInterval(2)
+
+        XCTAssertTrue(QuickAppInteractionPolicy.preservesSelectionHandoffForActivation(
+            activatedProcessIdentifier: 100,
+            previousProcessIdentifier: 100,
+            handoffDeadline: deadline,
+            now: now
+        ))
+        XCTAssertFalse(QuickAppInteractionPolicy.preservesSelectionHandoffForActivation(
+            activatedProcessIdentifier: 300,
+            previousProcessIdentifier: 100,
+            handoffDeadline: deadline,
+            now: now
+        ), "An unrelated activation must still dismiss an incoming Shelf.")
+        XCTAssertFalse(QuickAppInteractionPolicy.preservesSelectionHandoffForActivation(
+            activatedProcessIdentifier: 100,
+            previousProcessIdentifier: 100,
+            handoffDeadline: deadline,
+            now: deadline
+        ), "The previous application must not be protected after the handoff grace expires.")
+        XCTAssertFalse(QuickAppInteractionPolicy.preservesSelectionHandoffForActivation(
+            activatedProcessIdentifier: 100,
+            previousProcessIdentifier: nil,
+            handoffDeadline: deadline,
+            now: now
+        ))
+    }
+
     func testDirectionalFocusStaysInsidePresentedShelf() {
         XCTAssertTrue(QuickAppInteractionPolicy.routesDirectionalFocusToShelf(
             shelfIsPresented: true,
