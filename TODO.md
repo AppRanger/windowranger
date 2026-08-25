@@ -365,19 +365,18 @@ smallest useful outcome and acceptance boundary.
   matching resume. All 46 focused lifecycle tests, all 735 non-hosted tests in repository quick
   verification, and an unsigned universal Debug app build pass; signed lock/unlock validation is
   pending.
-- **Installed evidence:** With maintainer approval, signed Debug daily candidate
-  `f412302c01bc` is installed and running from `/Applications/WindowRanger.app` as PID `97843`.
+- **Installed evidence:** With maintainer approval, signed universal Debug daily candidate
+  `599076fda783` is installed and running from `/Applications/WindowRanger.app` as PID `18275`.
   The built and installed executable and Debug dylib match exactly; strict signature validation,
   canonical bundle identity, Team ID `44NAD22AK6`, both `x86_64` and `arm64` architectures, running
-  path, embedded source marker, and CDHash `ce46a4711c3a99a441371eb6b816c03551d51bb4`
-  were verified. Startup session `97DD07D8-8ED7-4C3F-BFD5-2BA9396467D4` prepared Notes as a
-  one-window group and Ghostty as a
-  two-window application group, then reached `session/startup-state-ready`. This candidate includes
-  the direct show-focus-hide application handoff, the dynamic window-removal relayout fix, the live
-  Settings propagation fix, and WR-086's contextual Shortcut Guide. This is installed startup smoke
-  evidence; the interaction cases above remain for maintainer validation. The previous daily copy
-  remains recoverable at
-  `/Applications/.WindowRanger.previous`.
+  path, embedded source marker, and CDHash `ab3bb15b64c35e0894b3e0b65af09a262664c30d`
+  were verified. Startup session `FBC0987F-16BB-474A-8A7F-D71B0C929F96` prepared Notes as a
+  one-window group and Ghostty as a two-window application group, then reached
+  `session/startup-state-ready`. This candidate includes the direct show-focus-hide application
+  handoff, dynamic window-removal relayout, live Settings propagation, WR-086's contextual Shortcut
+  Guide, and the WR-085 screen-lock suspension fix. This is installed startup smoke evidence; the
+  lock/unlock interaction remains for maintainer validation. The previous daily copy remains
+  recoverable at `/Applications/.WindowRanger.previous`.
 
 ### WR-084 — Reconcile transient startup Quick App window ambiguity once
 
