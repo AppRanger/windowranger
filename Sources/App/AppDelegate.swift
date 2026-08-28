@@ -54,6 +54,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
             }
         },
+        removeCurrentApplication: { [weak self] bundleIdentifier, profileID, expectedMembership, _ in
+            Task { @MainActor [weak self] in
+                self?.settingsStore.removeCurrentApplicationRule(
+                    bundleIdentifier: bundleIdentifier,
+                    expectedActiveProfileID: profileID,
+                    expectedMembership: expectedMembership
+                )
+            }
+        },
         addCurrentApplicationToQuickAppShelf: { [weak self] bundleIdentifier, displayName, profileID, expectedMembership, _ in
             Task { @MainActor [weak self] in
                 self?.settingsStore.addCurrentApplicationToQuickAppShelf(

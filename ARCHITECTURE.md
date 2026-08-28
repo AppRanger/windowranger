@@ -528,8 +528,11 @@ window, the same context exposes its active profile's App Rule and App Shelf mem
 commands carry the captured workspace and active-profile identity through dispatch, mutate only the
 active profile, and fail closed if profile selection, membership, or Shelf capacity changes before
 the MainActor write. An App Shelf conversion first proves capacity so it cannot discard an App Rule
-when all four Shelf entries are occupied. Exact placement is revalidated and enqueued
-while the palette still owns a preserved managed-window anchor; a transient nil AX focus during
+when all four Shelf entries are occupied. A focused-app removal command carries the same active
+profile and exact App Rule membership, then deletes only that rule; aliases may expose the inverse
+action for an Add search, but the presented title remains explicitly destructive. Exact placement
+is revalidated and enqueued while the palette still owns a preserved managed-window anchor; a
+transient nil AX focus during
 dismissal retains that anchor. The engine's serial queue commits placement before palette dismissal
 ends Shelf preservation or restores a Quick App Shelf window or fallback application. The command
 results, workspace layout, and focused-window placement remain separate interaction

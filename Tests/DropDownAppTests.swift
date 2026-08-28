@@ -373,6 +373,59 @@ final class DropDownAppTests: XCTestCase {
             bundleIdentifier: "com.example.Stale", displayName: "Stale",
             expectedActiveProfileID: activeProfileID, expectedMembership: .none
         ))
+        XCTAssertFalse(store.removeCurrentApplicationRule(
+            bundleIdentifier: "com.example.Editor",
+            expectedActiveProfileID: activeProfileID,
+            expectedMembership: .appRule
+        ))
+        XCTAssertEqual(
+            store.profiles.first(where: { $0.id == activeProfileID })?.appRules.map(\.bundleIdentifier),
+            ["com.example.Editor"]
+        )
+    }
+
+    @MainActor
+    func testCurrentApplicationRemovalRequiresExactActiveAppRuleMembership() throws {
+        let suite = "DropDownAppTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SettingsStore(defaults: defaults, ubiquitousStore: nil)
+        let profileID = store.activeProfileID
+        let editor = InstalledApplication(
+            bundleIdentifier: "com.example.Editor",
+            displayName: "Editor",
+            bundleURL: nil,
+            isRunning: true
+        )
+
+        XCTAssertFalse(store.removeCurrentApplicationRule(
+            bundleIdentifier: editor.bundleIdentifier,
+            expectedActiveProfileID: profileID,
+            expectedMembership: .appRule
+        ))
+
+        store.addAppRule(for: editor, defaultWorkspaceID: store.workspaces[0].id)
+        XCTAssertFalse(store.removeCurrentApplicationRule(
+            bundleIdentifier: editor.bundleIdentifier,
+            expectedActiveProfileID: profileID,
+            expectedMembership: .none
+        ))
+        XCTAssertEqual(store.appRules.map(\.bundleIdentifier), [editor.bundleIdentifier])
+
+        XCTAssertTrue(store.removeCurrentApplicationRule(
+            bundleIdentifier: editor.bundleIdentifier,
+            expectedActiveProfileID: profileID,
+            expectedMembership: .appRule
+        ))
+        XCTAssertTrue(store.appRules.isEmpty)
+
+        store.setDropDownApp(editor)
+        XCTAssertFalse(store.removeCurrentApplicationRule(
+            bundleIdentifier: editor.bundleIdentifier,
+            expectedActiveProfileID: profileID,
+            expectedMembership: .appRule
+        ))
+        XCTAssertEqual(store.quickApps.map(\.bundleIdentifier), [editor.bundleIdentifier])
     }
 
     @MainActor

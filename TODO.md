@@ -171,6 +171,61 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-097 — Remove the focused application from Applications via Command Palette
+
+- **Type:** Command Palette and application-configuration improvement
+- **Priority:** P2
+- **Status:** Live validation — implemented, documented, reviewed, focused and complete automated
+  verification passed, unsigned universal build passed, and signed daily build installed;
+  maintainer acceptance remains.
+- **Requested:** 28 August 2026 after confirming WR-080 already adds the focused application to
+  the active profile's Applications list.
+- **Smallest useful outcome:** When the Command Palette was captured from a regular external app
+  that already has an Application Rule in the active profile, offer **Remove <App> from
+  Applications**. Removing deletes that profile rule only; it does not quit the app or close its
+  windows, and the engine resumes its normal no-rule behavior for those windows.
+- **Discoverability:** Index the removal action under both `remove` and `add`, as well as current-app,
+  application, settings, and rule terms. A user who searches for Add because they do not know the
+  app is already configured therefore sees the truthful inverse action with an **Already in
+  Applications** explanation rather than an empty result.
+- **Safety boundary:** Capture the app's bundle identity, active profile, and exact `.appRule`
+  membership in the palette command. The MainActor mutation must fail closed if the active profile
+  or mutually exclusive Application/Shelf membership changes before dispatch. Removing a Quick App
+  or a rule from a profile merely being edited in Settings is out of scope.
+- **Functionality boundary:** Preserve WR-080's existing Add/Move entries, Shelf capacity and
+  exclusivity behavior, focused-app eligibility, current-workspace capture, command dismissal, and
+  engine App Rule reconciliation. Do not infer app-wide rules from one window's floating or layout
+  override.
+- **Acceptance:** Focused index tests prove the Remove entry appears only for `.appRule`, typing
+  `remove` or `add` finds it, and existing Add/Move alternatives remain correct. Dispatcher and
+  SettingsStore tests prove exact routing, active-profile ownership, intended removal, and rejection
+  after profile or membership changes. Run the focused suites, complete non-hosted verification,
+  skeptical review, unsigned universal build, then a separately approved signed daily install and
+  live Command Palette removal check.
+- **Implemented:** The palette now emits one typed removal command only for captured `.appRule`
+  membership. The command carries the bundle identifier, active profile, and expected membership
+  through the shared dispatcher to a MainActor SettingsStore guard, then removes only the active
+  profile's rule. Removing an assignment-only rule leaves existing windows in their current
+  workspace; future/reset/reopened windows no longer inherit that pin. Removing Keep on all,
+  layout exclusion, or secondary-window floating resumes ordinary engine policy immediately and
+  may therefore park or relayout affected windows as the existing Settings removal path already
+  does. `add`, `remove`, and `delete` all find the explicitly titled removal entry.
+- **Automated evidence:** All 57 focused Command Palette and Quick App/Application configuration
+  tests pass. The complete non-hosted suite passes 766/766, repository quick verification passes,
+  and the unsigned Debug app builds with both `arm64` and `x86_64` architectures. Coverage includes
+  entry visibility, inverse `add` alias discovery, dispatcher arguments, successful removal, stale
+  profile rejection, wrong/no-rule membership rejection, and Quick App preservation.
+- **Review evidence:** Skeptical review found no blocking correctness or safety issue. It confirmed
+  exhaustive command routing, duplicate stale-context guards, active-versus-editing profile
+  ownership, App Rule/Shelf exclusivity, and existing engine reconciliation after removal.
+- **Install evidence:** Signed universal Debug candidate `a249b813213a-dirty` was installed and
+  relaunched from `/Applications/WindowRanger.app` as PID `72409` on 28 August 2026. Strict deep
+  signature verification passed under Team `44NAD22AK6`, the executable contains `arm64` and
+  `x86_64`, its CDHash is `57cb96411b78fc5f7fdbcaf4b5e2a9bfa7266aec`, and diagnostics session
+  `848371A5-6D41-4B69-A5EA-D2E0FBAF0B75` reached startup ready without an observed failure, error,
+  or timeout. The previous clean daily build remains recoverable at
+  `/Applications/.WindowRanger.previous`.
+
 ### WR-096 — Suppress unchanged periodic engine-state callbacks
 
 - **Type:** Runtime CPU and main-thread invalidation optimisation
@@ -222,7 +277,10 @@ smallest useful outcome and acceptance boundary.
   `/Applications/WindowRanger.app` on 28 August 2026. The installed executable is universal
   `arm64`/`x86_64`, signed by Team `44NAD22AK6` with CDHash
   `963be4627461ea84f5d9dcdf62a824d22add81ca`, and began diagnostics session
-  `3879290D-9D65-4AD8-8510-FCBECC8597C1` without an observed startup failure.
+  `3879290D-9D65-4AD8-8510-FCBECC8597C1` without an observed startup failure. After the accepted
+  change was committed, clean checkpoint `a249b813213a` was rebuilt, installed, and relaunched as
+  PID `57120`; its universal signature verifies under Team `44NAD22AK6`, its CDHash is
+  `2159ae80e6a20bb3c09fbb4cd8e6bc03d9f69feb`, and its embedded source marker has no dirty suffix.
 - **Live evidence:** The maintainer exercised the installed candidate and reported no issue. A
   subsequent five-second runtime sample observed periodic `emitState(force:)` construction once but
   none of its main-thread callback consumers, consistent with identical settled state stopping at
@@ -434,9 +492,8 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Diagnostic-backed performance bug
 - **Priority:** P0
-- **Status:** Live validation — the static-rendering correction is implemented, reviewed,
-  automated-test verified, installed, and performance-verified; maintainer interaction acceptance
-  remains.
+- **Status:** Done — the static-rendering correction is implemented, reviewed, automated-test
+  verified, installed, performance-verified, and maintainer interaction accepted on 28 August 2026.
 - **Reported:** 28 August 2026 during the deep CPU and memory optimisation audit.
 - **Observed:** The installed signed Debug daily copy sustained about 46% of one CPU core while
   otherwise idle. A three-second process sample attributed 561 of 1,231 sampled main-thread stacks
@@ -464,9 +521,10 @@ smallest useful outcome and acceptance boundary.
   before the change, with a 364 MB launch peak versus 380 MB before it. The process RSS snapshot was
   about 96 MB versus 53 MB before it, so memory has no demonstrated regression in physical footprint
   but still needs a longer, like-for-like baseline before drawing an RSS conclusion.
-- **Live validation remaining:** Exercise Compact, Medium, and Full; every Full workspace click and
-  hover/Shelf path; primary/right/control menu opening; menu-bar item ordering; VoiceOver; and
-  Light/Dark appearance before marking this Done.
+- **Live result:** The maintainer completed the menu-bar validation and reported that all tested
+  behavior worked correctly. The optimisation chain was subsequently reinstalled from clean
+  checkpoint `a249b813213a`, preserving the accepted static-rendering implementation with a clean
+  embedded source marker.
 
 ### WR-089 — Preview manual Tiled resize and move with glass tiles
 

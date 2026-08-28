@@ -549,6 +549,22 @@ final class CommandPaletteTests: XCTestCase {
         value.applicationRuleBundleIdentifiers = ["com.example.editor"]
         var entries = CommandPaletteIndex.entries(context: value, query: "", hotKeyConfiguration: .init())
         XCTAssertFalse(entries.contains { $0.destination == .command(applicationCommand) })
+        let removalCommand = WindowManagerCommand.removeCurrentApplication(
+            "com.example.Editor", profileID: profileID, expectedMembership: .appRule
+        )
+        XCTAssertEqual(entries.first { $0.destination == .command(removalCommand) }?.title,
+                       "Remove Editor from Applications")
+        XCTAssertEqual(entries.first { $0.destination == .command(removalCommand) }?.detail,
+                       "Already in Applications · Remove application rule")
+        XCTAssertTrue(CommandPaletteIndex.entries(
+            context: value, query: "remove current application", hotKeyConfiguration: .init()
+        ).contains { $0.destination == .command(removalCommand) })
+        XCTAssertTrue(CommandPaletteIndex.entries(
+            context: value, query: "add editor", hotKeyConfiguration: .init()
+        ).contains { $0.destination == .command(removalCommand) })
+        XCTAssertTrue(CommandPaletteIndex.entries(
+            context: value, query: "add", hotKeyConfiguration: .init()
+        ).contains { $0.destination == .command(removalCommand) })
         let ruleToShelfCommand = WindowManagerCommand.addCurrentApplicationToQuickAppShelf(
             "com.example.Editor", displayName: "Editor", profileID: profileID,
             expectedMembership: .appRule
@@ -565,6 +581,7 @@ final class CommandPaletteTests: XCTestCase {
         )
         XCTAssertEqual(entries.first { $0.destination == .command(shelfToRuleCommand) }?.title,
                        "Move Editor to Applications")
+        XCTAssertFalse(entries.contains { $0.destination == .command(removalCommand) })
         XCTAssertFalse(entries.contains { $0.destination == .command(shelfCommand) })
 
         value.quickApps = (1...QuickAppShelfPolicy.maximumCount).map {
@@ -590,10 +607,12 @@ final class CommandPaletteTests: XCTestCase {
 
     func testDispatcherRoutesCurrentApplicationConfigurationCommands() {
         var applicationRequest: (String, String, UUID, UUID, String)?
+        var removalRequest: (String, UUID, CurrentApplicationConfigurationMembership, String)?
         var shelfRequest: (String, String, UUID, String)?
         let dispatcher = WindowManagerCommandDispatcher(
             engine: WorkspaceEngine(workspaces: WorkspaceDefinition.defaults),
             addCurrentApplication: { applicationRequest = ($0, $1, $2, $3, $5) },
+            removeCurrentApplication: { removalRequest = ($0, $1, $2, $3) },
             addCurrentApplicationToQuickAppShelf: { shelfRequest = ($0, $1, $2, $4) }
         )
         dispatcher.dispatch(.addCurrentApplication(
@@ -603,6 +622,9 @@ final class CommandPaletteTests: XCTestCase {
         dispatcher.dispatch(.addCurrentApplicationToQuickAppShelf(
             "com.example.Editor", displayName: "Editor", profileID: profileID, expectedMembership: .none
         ), source: .commandPalette, correlationID: "shelf-test")
+        dispatcher.dispatch(.removeCurrentApplication(
+            "com.example.Editor", profileID: profileID, expectedMembership: .appRule
+        ), source: .commandPalette, correlationID: "removal-test")
         XCTAssertEqual(applicationRequest?.0, "com.example.Editor")
         XCTAssertEqual(applicationRequest?.2, focusID)
         XCTAssertEqual(applicationRequest?.3, profileID)
@@ -610,6 +632,10 @@ final class CommandPaletteTests: XCTestCase {
         XCTAssertEqual(shelfRequest?.0, "com.example.Editor")
         XCTAssertEqual(shelfRequest?.2, profileID)
         XCTAssertEqual(shelfRequest?.3, "shelf-test")
+        XCTAssertEqual(removalRequest?.0, "com.example.Editor")
+        XCTAssertEqual(removalRequest?.1, profileID)
+        XCTAssertEqual(removalRequest?.2, .appRule)
+        XCTAssertEqual(removalRequest?.3, "removal-test")
     }
 
     private func context(

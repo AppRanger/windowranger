@@ -323,10 +323,12 @@ Profiles can choose different ordered shelves and shared shelf presentation. The
 the dedicated Quick App Shelf Settings section, while shortcuts remain global preferences. Existing
 profiles migrate the first configured Quick App's presentation to the shared shelf setting.
 For the app that owns the focused window, Command Palette can add it directly to the active
-profile's normal Applications list or App Shelf. Moving between those destinations is labelled
-explicitly because one profile never stores the same app in both. A companion host whose tagged
-surfaces are ignored cannot enter App Shelf because Shelf visibility controls an entire application
-process.
+profile's normal Applications list or App Shelf. When it already has an Application Rule, the
+palette can remove that rule; searches for either Add or Remove expose the explicitly labelled
+inverse action with an Already in Applications explanation. Moving between Applications and Shelf
+is labelled explicitly because one profile never stores the same app in both. A companion host
+whose tagged surfaces are ignored cannot enter App Shelf because Shelf visibility controls an
+entire application process.
 WindowRanger omits neighbours whose matching windows span multiple processes and reports a clear
 no-op rather than trying to control those separate application lifecycles as one Shelf entry.
 

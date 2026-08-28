@@ -1798,6 +1798,22 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    @discardableResult
+    func removeCurrentApplicationRule(
+        bundleIdentifier: String,
+        expectedActiveProfileID: UUID,
+        expectedMembership: CurrentApplicationConfigurationMembership
+    ) -> Bool {
+        guard activeProfileID == expectedActiveProfileID,
+              expectedMembership == .appRule,
+              currentApplicationMembership(bundleIdentifier) == expectedMembership
+        else { return false }
+        removeAppRule(bundleIdentifier: bundleIdentifier)
+        return !appRules.contains {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }
+    }
+
     func removeAppRule(bundleIdentifier: String) {
         appRules.removeAll { $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame }
     }

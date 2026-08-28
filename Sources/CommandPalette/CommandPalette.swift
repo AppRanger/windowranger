@@ -247,6 +247,21 @@ enum CommandPaletteIndex {
                 destination: .command(command),
                 searchTerms: ["current app", "application", "applications", "settings", "rule", "add", "move", bundleIdentifier]
             ))
+        } else {
+            let command = WindowManagerCommand.removeCurrentApplication(
+                bundleIdentifier, profileID: activeProfileID, expectedMembership: membership
+            )
+            entries.append(CommandPaletteEntry(
+                id: "current-application:applications:remove:\(normalizedBundleIdentifier)",
+                title: "Remove \(application.displayName) from Applications",
+                detail: "Already in Applications · Remove application rule",
+                shortcut: nil, systemImage: "minus.circle", section: .application,
+                destination: .command(command),
+                searchTerms: [
+                    "current app", "application", "applications", "settings", "rule",
+                    "add", "remove", "delete", bundleIdentifier,
+                ]
+            ))
         }
 
         if QuickAppShelfPolicy.isEligible(bundleIdentifier: bundleIdentifier),

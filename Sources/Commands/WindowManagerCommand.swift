@@ -26,6 +26,11 @@ enum WindowManagerCommand: Hashable, Sendable {
         profileID: UUID,
         expectedMembership: CurrentApplicationConfigurationMembership
     )
+    case removeCurrentApplication(
+        String,
+        profileID: UUID,
+        expectedMembership: CurrentApplicationConfigurationMembership
+    )
     case addCurrentApplicationToQuickAppShelf(
         String,
         displayName: String,
@@ -78,6 +83,10 @@ enum WindowManagerCommand: Hashable, Sendable {
         case let .addCurrentApplication(bundleIdentifier, _, workspaceID, profileID, expectedMembership):
             ["action": "add-current-application", "bundle": bundleIdentifier,
              "workspace": workspaceID.uuidString, "profile": profileID.uuidString,
+             "expected-membership": String(describing: expectedMembership)]
+        case let .removeCurrentApplication(bundleIdentifier, profileID, expectedMembership):
+            ["action": "remove-current-application", "bundle": bundleIdentifier,
+             "profile": profileID.uuidString,
              "expected-membership": String(describing: expectedMembership)]
         case let .addCurrentApplicationToQuickAppShelf(bundleIdentifier, _, profileID, expectedMembership):
             ["action": "add-current-application-to-quick-app-shelf", "bundle": bundleIdentifier,
@@ -173,6 +182,9 @@ final class WindowManagerCommandDispatcher {
         addCurrentApplication: @escaping (String, String, UUID, UUID, CurrentApplicationConfigurationMembership, String) -> Void = {
             _, _, _, _, _, _ in
         },
+        removeCurrentApplication: @escaping (String, UUID, CurrentApplicationConfigurationMembership, String) -> Void = {
+            _, _, _, _ in
+        },
         addCurrentApplicationToQuickAppShelf: @escaping (String, String, UUID, CurrentApplicationConfigurationMembership, String) -> Void = {
             _, _, _, _, _ in
         },
@@ -209,6 +221,10 @@ final class WindowManagerCommandDispatcher {
             case let .addCurrentApplication(bundleIdentifier, displayName, workspaceID, profileID, expectedMembership):
                 addCurrentApplication(
                     bundleIdentifier, displayName, workspaceID, profileID, expectedMembership, correlationID
+                )
+            case let .removeCurrentApplication(bundleIdentifier, profileID, expectedMembership):
+                removeCurrentApplication(
+                    bundleIdentifier, profileID, expectedMembership, correlationID
                 )
             case let .addCurrentApplicationToQuickAppShelf(bundleIdentifier, displayName, profileID, expectedMembership):
                 addCurrentApplicationToQuickAppShelf(
