@@ -69,12 +69,13 @@ enum SettingsCategory: String, CaseIterable, Identifiable, Codable, Sendable {
         }
     }
 
-    /// Appearance and Layouts were visible destinations in earlier builds. Keep their
+    /// Appearance, Profile Switching, and Layouts were visible destinations in earlier builds. Keep their
     /// raw values decodable for saved selection/deep links, but route them to the destination that
     /// now owns their controls.
     var canonicalDestination: SettingsCategory {
         switch self {
         case .appearance: .menuBar
+        case .profileSwitching: .profiles
         case .layouts: .workspaces
         default: self
         }
@@ -148,7 +149,7 @@ enum SettingsCatalog {
         SettingsSearchEntry(id: "focus-follows-move", category: .behavior, title: "Focus follows moved window", description: "Choose whether sending a window also opens its destination workspace and focuses it there.", synonyms: ["move and follow", "send only", "workspace move focus"]),
         SettingsSearchEntry(id: "workspace-swipe", category: .behavior, title: "Swipe between workspaces", description: "Use a local three- or four-finger horizontal trackpad gesture to move between workspaces with wraparound.", synonyms: ["trackpad", "gesture", "three fingers", "four fingers", "previous workspace", "next workspace", "loop"]),
         SettingsSearchEntry(id: "auto-unhide-apps", category: .behavior, title: "Automatically unhide applications", description: "Opt in to unhiding a hidden app when WindowRanger explicitly focuses one of its managed windows.", synonyms: ["hidden apps", "compatibility", "CFG-13"]),
-        SettingsSearchEntry(id: "profile-switching-triggers", category: .profileSwitching, title: "Automatic profile switching", description: "Choose this Mac's Game Mode, default, exact display, and docked or undocked profile mappings.", synonyms: ["game", "full screen", "dock", "topology", "automatic selection", "manual override", "manual pin", "PRF-02", "PRF-06"]),
+        SettingsSearchEntry(id: "profile-switching-triggers", category: .profiles, title: "Automatic profile switching", description: "Choose when the selected profile is used for this Mac's Game Mode, default, exact display, and docked or undocked contexts.", synonyms: ["game", "full screen", "dock", "topology", "automatic selection", "manual override", "manual pin", "PRF-02", "PRF-06"]),
         SettingsSearchEntry(id: "display-roles", category: .displays, title: "Display roles", description: "Name reusable display roles in the selected profile and bind them to this Mac's physical monitors.", synonyms: ["monitor fingerprint", "local display", "primary display", "display role", "PRF-04", "PRF-05"]),
         SettingsSearchEntry(id: "workspace-names", category: .workspaces, title: "Workspace names and keys", description: "Edit the ordered virtual workspaces stored in the current profile.", synonyms: ["spaces", "virtual desktops", "profile workspaces"]),
         SettingsSearchEntry(id: "workspace-defaults", category: .workspaces, title: SettingsCopy.restoreWindowManagerDefaultsTitle, description: "Restore WindowRanger's built-in workspace names, order, keys, and layout choices.", synonyms: ["built-in defaults", "reset workspaces", "factory settings"]),
@@ -191,7 +192,7 @@ enum SettingsCatalog {
 
     static func availableCategories(includeDebug: Bool) -> [SettingsCategory] {
         SettingsCategory.allCases.filter {
-            $0 != .appearance && $0 != .layouts
+            $0 != .appearance && $0 != .profileSwitching && $0 != .layouts
                 && (includeDebug || $0 != .diagnostics)
         }
     }

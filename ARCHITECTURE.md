@@ -260,13 +260,17 @@ previews deterministic additive names, and performs one profile-library mutation
 The transport file never becomes a second authoritative configuration source.
 
 Settings exposes this ownership boundary directly. Profiles owns the reusable library, inline
-profile name/icon editing, and explicit activation; Profile Switching owns this Mac's local selection rules; Displays owns the selected
+profile name/icon editing, explicit activation, and the profile-centric editor for this Mac's local
+selection rules. The standalone legacy Profile Switching destination resolves to Profiles. Displays owns the selected
 profile's display mode and role definitions alongside this Mac's physical display bindings.
 Workspaces, Displays, Applications, and Quick App Shelf share an explicit Settings edit target.
 Selecting, creating, or duplicating a library profile changes only that edit
 target; mutations are persisted into that reusable definition and do not publish live engine values
-unless the target is active. The full-row sidebar selector changes only that edit target; **Use
-Profile** remains in Profile Status as the explicit local manual-pin and engine activation boundary.
+unless the target is active. The top profile tabs and full-row sidebar selector change only that edit
+target; **Use Profile** remains the explicit local manual-pin and engine activation boundary.
+Automatic-use rows invert the existing single-owner local mappings without changing their persisted
+schema or priority. Default always retains an owner, optional contexts may be cleared, and assigning
+the current display topology reuses and reassigns an existing exact match rather than duplicating it.
 Menu Bar exposes the separate profile-owned display-role icons alongside
 its global presentation controls, while Focus Border owns local application-specific appearance
 overrides. Removing an App Rule or converting it to a Quick App never deletes the independent local

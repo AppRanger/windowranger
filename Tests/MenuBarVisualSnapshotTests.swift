@@ -479,9 +479,25 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
         let currentProfileID = store.activeProfileID
         store.renameProfile(currentProfileID, to: "Current Setup")
         store.setSettingsProfileIconStyle(.desktop)
-        _ = store.createProfile(named: "Travel", source: .scratch)
+        let travelProfileID = try XCTUnwrap(
+            store.createProfile(named: "Travel", source: .scratch)
+        )
         store.setSettingsProfileIconStyle(.travel)
+        let gameProfileID = try XCTUnwrap(
+            store.createProfile(named: "Game Room", source: .scratch)
+        )
+        store.setSettingsProfileIconStyle(.home)
+        let studioProfileID = try XCTUnwrap(
+            store.createProfile(named: "Studio With External Displays", source: .scratch)
+        )
+        store.setSettingsProfileIconStyle(.work)
         store.selectProfile(currentProfileID)
+        store.setDefaultProfile(currentProfileID)
+        store.setGameModeProfile(gameProfileID)
+        store.setDockedProfile(studioProfileID)
+        store.setUndockedProfile(travelProfileID)
+        _ = store.assignCurrentDisplaySetup(to: studioProfileID)
+        store.selectProfileForEditing(travelProfileID)
         store.setFocusedWindowHighlightCornerRadiusOverride(
             14,
             for: "com.apple.Terminal",
@@ -512,7 +528,6 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             .updates,
             .sync,
             .behavior,
-            .profileSwitching,
             .menuBar,
             .focusBorder,
             .displays,
@@ -633,7 +648,6 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             SettingsCategory.general,
             .sync,
             .behavior,
-            .profileSwitching,
             .menuBar,
             .focusBorder,
             .displays,

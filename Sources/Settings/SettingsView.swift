@@ -162,7 +162,6 @@ struct SettingsView: View {
                             sidebarRow(.sync)
                             sidebarRow(.behavior)
                             sidebarRow(.profiles)
-                            sidebarRow(.profileSwitching)
                         }
                         Section("Appearance") {
                             sidebarRow(.menuBar)
@@ -268,10 +267,8 @@ struct SettingsView: View {
                     )
                 case .updates:
                     UpdateSettingsView(updateController: updateController)
-                case .profiles:
+                case .profiles, .profileSwitching:
                     ProfilesSettingsView(store: store)
-                case .profileSwitching:
-                    ProfileSwitchingSettingsView(store: store)
                 case .displays:
                     DisplaysSettingsView(store: store)
                 case .workspaces, .layouts:
@@ -1060,6 +1057,48 @@ private struct GeneralSettingsView: View {
 
 }
 
+enum ProfileAutomaticContext: CaseIterable, Identifiable, Sendable {
+    case localDefault
+    case gameMode
+    case docked
+    case undocked
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .localDefault: "Make default"
+        case .gameMode: "Use during Game Mode"
+        case .docked: "Use when docked"
+        case .undocked: "Use when undocked"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .localDefault: "Used when no higher-priority automatic rule matches."
+        case .gameMode: "Used for a foreground full-screen game that declares macOS Game Mode support."
+        case .docked: "Used on a portable Mac while an external display is connected."
+        case .undocked: "Used on a portable Mac with only its built-in display."
+        }
+    }
+
+    var permitsNoOwner: Bool { self != .localDefault }
+}
+
+enum ProfileAutomaticAssignmentPolicy {
+    static func replacementOwner(
+        currentOwner: UUID?,
+        selectedProfileID: UUID,
+        context: ProfileAutomaticContext
+    ) -> UUID? {
+        if currentOwner == selectedProfileID {
+            return context.permitsNoOwner ? nil : selectedProfileID
+        }
+        return selectedProfileID
+    }
+}
+
 private struct ProfilesSettingsView: View {
     @ObservedObject var store: SettingsStore
     @Environment(\.undoManager) private var undoManager
@@ -1068,7 +1107,6 @@ private struct ProfilesSettingsView: View {
     @State private var pendingProfileImport: ProfileImportPlan?
     @State private var transferNotice: ProfileTransferNotice?
     @State private var isCreatingProfile = false
-    @State private var showsCompactDetails = false
 
     init(store: SettingsStore) {
         self.store = store
@@ -1079,7 +1117,16 @@ private struct ProfilesSettingsView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            responsiveContent(for: SettingsDetailLayout.resolve(availableWidth: geometry.size.width))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    profileTabStrip
+                    profileInspector(
+                        layout: SettingsDetailLayout.resolve(availableWidth: geometry.size.width)
+                    )
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
         }
         .confirmationDialog(
             "Delete this profile?",
@@ -1145,204 +1192,353 @@ private struct ProfilesSettingsView: View {
     }
 
     @ViewBuilder
-    private func responsiveContent(for layout: SettingsDetailLayout) -> some View {
+    private func profileInspector(layout: SettingsDetailLayout) -> some View {
         switch layout {
         case .wide:
-            HStack(spacing: 0) {
-                profileListColumn()
-                    .frame(width: SettingsWindowMetrics.masterListWidth)
-                    .frame(maxHeight: .infinity)
-                Divider()
-                profileStatusForm
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            HStack(alignment: .top, spacing: 16) {
+                profileIdentityPanel
+                    .frame(width: 280)
+                automaticUsePanel
+                    .frame(maxWidth: .infinity)
             }
         case .compact:
-            VStack(spacing: 0) {
-                if showsCompactDetails {
-                    SettingsCompactDetailHeader(
-                        backTitle: "Profiles",
-                        title: store.settingsProfile.name,
-                        goBack: { showsCompactDetails = false }
-                    )
-                    Divider()
-                    profileStatusForm
-                } else {
-                    profileListColumn(showsDisclosure: true)
-                }
+            VStack(alignment: .leading, spacing: 16) {
+                profileIdentityPanel
+                automaticUsePanel
             }
         }
     }
 
-    private func profileListColumn(showsDisclosure: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Profile Library")
-                    .font(.headline)
-                Text("Reusable configurations that can sync or be exported.")
-                    .font(.caption)
+    private var profileTabStrip: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                ForEach(store.profiles) { profile in
+                    profileTab(profile)
+                }
+                Button {
+                    isCreatingProfile = true
+                } label: {
+                    VStack(spacing: 7) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 25, weight: .medium))
+                        Text("Add Profile")
+                            .font(.caption)
+                    }
                     .foregroundStyle(.secondary)
+                    .frame(width: 96, height: 82)
+                    .contentShape(RoundedRectangle(cornerRadius: 9))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add profile")
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(8)
+        }
+        .scrollIndicators(.hidden)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Profiles")
+    }
+
+    private func profileTab(_ profile: WindowManagerProfile) -> some View {
+        let isSelected = profile.id == store.settingsProfileID
+        let context = profileContextLabel(profile.id)
+        return Button {
+            store.selectProfileForEditing(profile.id)
+        } label: {
+            VStack(spacing: 5) {
+                Image(systemName: profile.iconStyle.systemImage)
+                    .font(.system(size: 28, weight: .medium))
+                    .frame(height: 32)
+                    .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                Text(profile.name)
+                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if let context {
+                    Text(context)
+                        .font(.caption2.weight(.medium))
+                        .lineLimit(1)
+                        .foregroundStyle(profile.id == store.activeProfileID ? Color.accentColor : .secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.quaternary, in: Capsule())
+                } else {
+                    Text(" ")
+                        .font(.caption2)
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(width: 132, height: 82)
+            .contentShape(RoundedRectangle(cornerRadius: 9))
+            .background(
+                isSelected ? Color.accentColor.opacity(0.12) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 9)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5)
+            }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Use Profile") {
+                store.selectProfileForEditing(profile.id)
+                store.activateSettingsProfile()
+            }
+            .disabled(profile.id == store.activeProfileID)
+            Button("Duplicate") { _ = store.duplicateProfile(profile.id) }
+            Divider()
+            Button("Delete", role: .destructive) {
+                pendingProfileDeletion = profile.id
+            }
+            .disabled(store.profiles.count == 1)
+        }
+        .accessibilityLabel(profileTabAccessibilityLabel(profile))
+        .accessibilityHint("Selects this profile for editing without activating it")
+    }
+
+    private var profileIdentityPanel: some View {
+        profileSettingsPanel("Profile identity") {
+            ProfileIdentityEditor(store: store, presentation: .prominent)
 
             Divider()
 
-            List(selection: Binding(
-                get: { Optional(store.settingsProfileID) },
-                set: { profileID in
-                    if let profileID {
-                        if profileID != store.settingsProfileID {
-                            store.selectProfileForEditing(profileID)
-                        }
-                        if showsDisclosure { showsCompactDetails = true }
+            LabeledContent("Active on this Mac", value: store.activeProfile.name)
+            LabeledContent("Selection mode", value: store.activeProfileSelectionReason.title)
+
+            if store.isEditingActiveProfile {
+                Label("This profile is active", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(Color.accentColor)
+                if store.manualPinnedProfileID != nil {
+                    Button("Resume Automatic", systemImage: "arrow.triangle.2.circlepath") {
+                        store.resumeAutomaticProfileSelection()
                     }
                 }
-            )) {
-                ForEach(store.profiles) { profile in
-                    profileListRow(profile, showsDisclosure: showsDisclosure)
-                        .tag(profile.id)
-                        .onTapGesture {
-                            if profile.id != store.settingsProfileID {
-                                store.selectProfileForEditing(profile.id)
-                            }
-                            if showsDisclosure { showsCompactDetails = true }
-                        }
-                        .contextMenu {
-                            Button("Use Profile") {
-                                store.selectProfileForEditing(profile.id)
-                                store.activateSettingsProfile()
-                            }
-                                .disabled(profile.id == store.activeProfileID)
-                            Divider()
-                            Button("Delete", role: .destructive) {
-                                pendingProfileDeletion = profile.id
-                            }
-                            .disabled(store.profiles.count == 1)
-                        }
+            } else {
+                Button("Use \(store.settingsProfile.name)", systemImage: "checkmark.circle") {
+                    store.activateSettingsProfile()
                 }
+                .buttonStyle(.borderedProminent)
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .environment(
-                \.defaultMinListRowHeight,
-                SettingsWindowMetrics.masterRowMinimumHeight
-            )
+
+            Text("Selecting a tab chooses what to edit. Use Profile activates it and pins it on this Mac until automatic selection resumes.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Divider()
 
-            HStack(spacing: 8) {
-                SettingsMasterActionButton(systemImage: "plus") { isCreatingProfile = true }
-                .help("New profile")
-                .accessibilityLabel("New profile")
-
-                SettingsMasterActionButton(systemImage: "trash", role: .destructive) {
+            VStack(alignment: .leading, spacing: 8) {
+                Button("Duplicate Profile", systemImage: "plus.square.on.square") {
+                    _ = store.duplicateProfile(store.settingsProfileID)
+                }
+                Button("Import Profiles…", systemImage: "square.and.arrow.down") {
+                    prepareProfileImport()
+                }
+                Button("Export All Profiles…", systemImage: "square.and.arrow.up") {
+                    exportProfiles()
+                }
+                Button("Delete Profile", systemImage: "trash", role: .destructive) {
                     pendingProfileDeletion = store.settingsProfileID
                 }
                 .disabled(store.profiles.count == 1)
-                .help("Delete selected profile")
-                .accessibilityLabel("Delete selected profile")
-
-                Spacer()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, SettingsWindowMetrics.masterActionRowVerticalPadding)
+            .buttonStyle(.borderless)
+        }
+    }
+
+    private var automaticUsePanel: some View {
+        profileSettingsPanel("Automatic use on this Mac") {
+            Text("Choose when \(store.settingsProfile.name) owns each exclusive local context.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach(ProfileAutomaticContext.allCases) { context in
+                automaticAssignmentRow(context)
+                if context != .undocked { Divider() }
+            }
 
             Divider()
 
-            SettingsActionRow(
-                title: "Import or export library",
-                description: "Import adds reusable profiles without changing the active profile or this Mac's local bindings. Export includes every profile."
-            ) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) {
-                        Button("Import…", systemImage: "square.and.arrow.down") {
-                            prepareProfileImport()
-                        }
-                        Button("Export All…", systemImage: "square.and.arrow.up") {
-                            exportProfiles()
-                        }
-                    }
-                    VStack(alignment: .trailing, spacing: 8) {
-                        Button("Import…", systemImage: "square.and.arrow.down") {
-                            prepareProfileImport()
-                        }
-                        Button("Export All…", systemImage: "square.and.arrow.up") {
-                            exportProfiles()
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-        }
-        .background(Color(nsColor: .controlBackgroundColor))
-    }
-
-    private var profileStatusForm: some View {
-        Form {
-            Section("Profile Status") {
-                ProfileIdentityEditor(store: store)
-                LabeledContent("Active on this Mac", value: store.activeProfile.name)
-                LabeledContent("Selection mode", value: store.activeProfileSelectionReason.title)
-                if !store.isEditingActiveProfile {
-                    Button("Use \(store.settingsProfile.name)", systemImage: "checkmark.circle") {
-                        store.activateSettingsProfile()
-                    }
-                    Text("Selecting a profile in the library only chooses what to edit. Use Profile changes the desktop to that profile and pins it on this Mac.")
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Exact display setups")
+                        .font(.headline)
+                    Text("Use a profile for a specific conservative monitor arrangement.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text("Set local automatic selection rules in Profile Switching. Configure this profile's displays, workspaces, applications, and shelf in their own sections.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Assign Connected Displays", systemImage: "display.2") {
+                    _ = store.assignCurrentDisplaySetup(to: store.settingsProfileID)
+                }
+                .disabled(store.connectedDisplays.isEmpty)
+                .help("Use \(store.settingsProfile.name) for the currently connected display arrangement")
             }
+
+            if store.exactProfileTriggers.isEmpty {
+                Text("No exact display setup mappings on this Mac.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(store.exactProfileTriggers) { trigger in
+                    exactDisplayTriggerRow(trigger)
+                }
+            }
+
+            Divider()
+
+            Text("Reusable profile settings may sync or be exported. The active profile and every automatic assignment shown here stay local to this Mac.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .formStyle(.grouped)
     }
 
-    private func profileListRow(
-        _ profile: WindowManagerProfile,
-        showsDisclosure: Bool
-    ) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: profile.iconStyle.systemImage)
-                .frame(width: 18)
-                .foregroundStyle(profile.id == store.activeProfileID ? Color.accentColor : .secondary)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(profile.name)
-                    .fontWeight(.medium)
+    private func automaticAssignmentRow(_ context: ProfileAutomaticContext) -> some View {
+        let ownerID = automaticOwnerID(for: context)
+        let isSelected = ownerID == store.settingsProfileID
+        let ownerName = ownerID.flatMap(profileName) ?? "Not assigned"
+        return Button {
+            let replacement = ProfileAutomaticAssignmentPolicy.replacementOwner(
+                currentOwner: ownerID,
+                selectedProfileID: store.settingsProfileID,
+                context: context
+            )
+            setAutomaticOwner(replacement, for: context)
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(context.title)
+                        .foregroundStyle(.primary)
+                    Text(context.explanation)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                Text(ownerName)
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
                     .lineLimit(1)
-                Text(profileSummary(profile))
-                    .font(.caption)
+            }
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(context.title), \(ownerName)")
+        .accessibilityHint(isSelected && context.permitsNoOwner
+            ? "Removes this automatic assignment"
+            : isSelected ? "Already assigned to this profile" : "Assigns this context to \(store.settingsProfile.name)")
+    }
+
+    private func exactDisplayTriggerRow(_ trigger: ExactProfileTrigger) -> some View {
+        let isSelected = trigger.profileID == store.settingsProfileID
+        let ownerName = profileName(trigger.profileID) ?? "Unknown profile"
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: "display.2")
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(trigger.name)
+                    Text("\(trigger.displayPins.count) conservative monitor identities")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Text(ownerName)
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
                     .lineLimit(1)
-            }
-            Spacer()
-            if profile.id == store.activeProfileID {
-                Text("Active")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Color.accentColor.opacity(0.12), in: Capsule())
-                    .accessibilityHidden(true)
-            }
-            if showsDisclosure {
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
+                if !isSelected {
+                    Button("Use Here") {
+                        store.setExactTrigger(trigger.id, profileID: store.settingsProfileID)
+                    }
+                }
+                Button(role: .destructive) {
+                    store.removeExactTrigger(trigger.id)
+                } label: {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.borderless)
+                .help("Remove this display setup mapping")
+                .accessibilityLabel("Remove \(trigger.name)")
             }
         }
-        .padding(.vertical, 3)
-        .frame(minHeight: SettingsWindowMetrics.masterRowMinimumHeight)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(profile.name), \(profileSummary(profile))")
-        .accessibilityHint(showsDisclosure
-            ? "Opens profile details"
-            : profile.id == store.activeProfileID ? "Active profile; selects it for editing" : "Selects this profile for editing")
+        .padding(.vertical, 4)
+    }
+
+    private func profileSettingsPanel<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+            Divider()
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        }
+    }
+
+    private func automaticOwnerID(for context: ProfileAutomaticContext) -> UUID? {
+        switch context {
+        case .localDefault: store.defaultProfileID
+        case .gameMode: store.gameModeProfileID
+        case .docked: store.dockedProfileID
+        case .undocked: store.undockedProfileID
+        }
+    }
+
+    private func setAutomaticOwner(_ profileID: UUID?, for context: ProfileAutomaticContext) {
+        switch context {
+        case .localDefault:
+            if let profileID { store.setDefaultProfile(profileID) }
+        case .gameMode:
+            store.setGameModeProfile(profileID)
+        case .docked:
+            store.setDockedProfile(profileID)
+        case .undocked:
+            store.setUndockedProfile(profileID)
+        }
+    }
+
+    private func profileName(_ profileID: UUID) -> String? {
+        store.profiles.first(where: { $0.id == profileID })?.name
+    }
+
+    private func profileContextLabel(_ profileID: UUID) -> String? {
+        var labels: [String] = []
+        if profileID == store.activeProfileID { labels.append("Active") }
+        if profileID == store.defaultProfileID { labels.append("Default") }
+        if profileID == store.gameModeProfileID { labels.append("Game Mode") }
+        if profileID == store.dockedProfileID { labels.append("Docked") }
+        if profileID == store.undockedProfileID { labels.append("Undocked") }
+        if labels.isEmpty,
+           store.exactProfileTriggers.contains(where: { $0.profileID == profileID }) {
+            labels.append("Display setup")
+        }
+        guard !labels.isEmpty else { return nil }
+        let visible = labels.prefix(2).joined(separator: " · ")
+        return labels.count > 2 ? "\(visible) +\(labels.count - 2)" : visible
+    }
+
+    private func profileTabAccessibilityLabel(_ profile: WindowManagerProfile) -> String {
+        let context = profileContextLabel(profile.id).map { ", \($0)" } ?? ""
+        let selected = profile.id == store.settingsProfileID ? ", selected for editing" : ""
+        return "\(profile.name)\(context)\(selected)"
     }
 
     private func prepareProfileImport() {
@@ -1378,126 +1574,6 @@ private struct ProfilesSettingsView: View {
         }
     }
 
-    private func profileSummary(_ profile: WindowManagerProfile) -> String {
-        let workspaceLabel = profile.workspaces.count == 1 ? "workspace" : "workspaces"
-        let roleLabel = profile.displayRoles.count == 1 ? "display role" : "display roles"
-        let ruleLabel = profile.appRules.count == 1 ? "app rule" : "app rules"
-        let quickAppCount = profile.quickApps.count
-        let quickAppLabel: String = if quickAppCount == 0 {
-            ""
-        } else {
-            " · \(quickAppCount) Quick App\(quickAppCount == 1 ? "" : "s")"
-        }
-        return "\(profile.workspaces.count) \(workspaceLabel) · "
-            + "\(profile.displayRoles.count) \(roleLabel) · "
-            + "\(profile.appRules.count) \(ruleLabel)"
-            + quickAppLabel
-    }
-
-}
-
-private struct ProfileSwitchingSettingsView: View {
-    @ObservedObject var store: SettingsStore
-
-    var body: some View {
-        Form {
-            Section("Active on This Mac") {
-                LabeledContent("Active profile", value: store.activeProfile.name)
-                LabeledContent("Selection mode", value: store.activeProfileSelectionReason.title)
-                if store.manualPinnedProfileID != nil {
-                    Button("Resume Automatic", systemImage: "arrow.triangle.2.circlepath") {
-                        store.resumeAutomaticProfileSelection()
-                    }
-                    Text("The active profile remains pinned on this Mac until automatic selection resumes.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Automatic selection uses exact display setups, dock state, then this Mac's default profile.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Section("Automatic Selection on This Mac") {
-                profilePicker("Default profile", selection: Binding(
-                    get: { Optional(store.defaultProfileID) },
-                    set: { if let id = $0 { store.setDefaultProfile(id) } }
-                ), permitsNone: false)
-                profilePicker("During Game Mode", selection: Binding(
-                    get: { store.gameModeProfileID },
-                    set: { store.setGameModeProfile($0) }
-                ))
-                Text("Uses this profile while a foreground full-screen game that explicitly supports macOS Game Mode is active. Game Mode takes priority over display rules, but not a manually selected profile.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                profilePicker("When docked", selection: Binding(
-                    get: { store.dockedProfileID },
-                    set: { store.setDockedProfile($0) }
-                ))
-                profilePicker("When undocked", selection: Binding(
-                    get: { store.undockedProfileID },
-                    set: { store.setUndockedProfile($0) }
-                ))
-                Text("Dock rules apply to portable Macs. Desktop Macs fall through to an exact display setup or the local default.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Divider()
-                HStack {
-                    Text("Exact display setups").font(.headline)
-                    Spacer()
-                    Button("Map to Active Profile", systemImage: "display.2") {
-                        _ = store.addExactTriggerForCurrentDisplays(profileID: store.activeProfileID)
-                    }
-                    .disabled(store.connectedDisplays.isEmpty)
-                }
-                if store.exactProfileTriggers.isEmpty {
-                    Text("No exact display setup mappings on this Mac.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(store.exactProfileTriggers) { trigger in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(trigger.name)
-                                Text("\(trigger.displayPins.count) conservative monitor identities")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Picker("Profile", selection: Binding(
-                                get: { trigger.profileID },
-                                set: { store.setExactTrigger(trigger.id, profileID: $0) }
-                            )) {
-                                ForEach(store.profiles) { profile in Text(profile.name).tag(profile.id) }
-                            }
-                            .labelsHidden()
-                            .frame(width: 170)
-                            Button(role: .destructive) { store.removeExactTrigger(trigger.id) } label: {
-                                Image(systemName: "minus.circle")
-                            }
-                            .buttonStyle(.borderless)
-                        }
-                    }
-                }
-                Text("Automatic selection rules and the active profile are local to this Mac. Viewing this section never changes the profile being edited elsewhere in Settings.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    @ViewBuilder
-    private func profilePicker(
-        _ title: String,
-        selection: Binding<UUID?>,
-        permitsNone: Bool = true
-    ) -> some View {
-        Picker(title, selection: selection) {
-            if permitsNone { Text("Not assigned").tag(nil as UUID?) }
-            ForEach(store.profiles) { profile in Text(profile.name).tag(Optional(profile.id)) }
-        }
-    }
 }
 
 private struct DisplaysSettingsView: View {
@@ -1622,35 +1698,91 @@ private struct DisplaysSettingsView: View {
 }
 
 private struct ProfileIdentityEditor: View {
+    enum Presentation {
+        case formRows
+        case prominent
+    }
+
     @ObservedObject var store: SettingsStore
+    let presentation: Presentation
     @State private var draftName: String
     @State private var draftProfileID: UUID
     @FocusState private var isNameFocused: Bool
 
-    init(store: SettingsStore) {
+    init(store: SettingsStore, presentation: Presentation = .formRows) {
         self.store = store
+        self.presentation = presentation
         _draftName = State(initialValue: store.settingsProfile.name)
         _draftProfileID = State(initialValue: store.settingsProfileID)
     }
 
     var body: some View {
         Group {
-            Picker("Icon", selection: Binding(
-                get: { store.settingsProfile.iconStyle },
-                set: { store.setSettingsProfileIconStyle($0) }
-            )) {
-                ForEach(ProfileIconStyle.allCases) { iconStyle in
-                    Label(iconStyle.title, systemImage: iconStyle.systemImage)
-                        .tag(iconStyle)
+            switch presentation {
+            case .formRows:
+                Picker("Icon", selection: Binding(
+                    get: { store.settingsProfile.iconStyle },
+                    set: { store.setSettingsProfileIconStyle($0) }
+                )) {
+                    ForEach(ProfileIconStyle.allCases) { iconStyle in
+                        Label(iconStyle.title, systemImage: iconStyle.systemImage)
+                            .tag(iconStyle)
+                    }
+                }
+                .pickerStyle(.menu)
+                .help("Choose the icon shown for this profile in Settings.")
+
+                nameField
+            case .prominent:
+                VStack(spacing: 12) {
+                    Menu {
+                        ForEach(ProfileIconStyle.allCases) { iconStyle in
+                            Button {
+                                store.setSettingsProfileIconStyle(iconStyle)
+                            } label: {
+                                Label {
+                                    Text(iconStyle.title)
+                                } icon: {
+                                    Image(systemName: iconStyle == store.settingsProfile.iconStyle
+                                        ? "checkmark"
+                                        : iconStyle.systemImage)
+                                }
+                            }
+                        }
+                    } label: {
+                        VStack(spacing: 7) {
+                            ZStack(alignment: .bottomTrailing) {
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(Color.primary.opacity(0.06))
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                                Image(systemName: store.settingsProfile.iconStyle.systemImage)
+                                    .font(.system(size: 48, weight: .medium))
+                                Image(systemName: "chevron.down.circle.fill")
+                                    .font(.title3)
+                                    .symbolRenderingMode(.hierarchical)
+                                    .foregroundStyle(.secondary)
+                                    .padding(7)
+                            }
+                            .frame(width: 104, height: 104)
+                            Text("Change Icon")
+                                .font(.caption)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .help("Choose the icon shown for this profile in Settings.")
+                    .accessibilityLabel("Profile icon, \(store.settingsProfile.iconStyle.title)")
+
+                    nameField
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.center)
+                        .font(.title3.weight(.semibold))
+                        .accessibilityLabel("Profile name")
                 }
             }
-            .pickerStyle(.menu)
-            .help("Choose the icon shown for this profile in Settings.")
-
-            TextField("Name", text: $draftName)
-                .focused($isNameFocused)
-                .onSubmit { commitDraftName() }
-                .help("Rename the profile being edited.")
         }
         .onChange(of: isNameFocused) { wasFocused, isFocused in
             if wasFocused && !isFocused { commitDraftName() }
@@ -1666,6 +1798,13 @@ private struct ProfileIdentityEditor: View {
                 draftName = name
             }
         }
+    }
+
+    private var nameField: some View {
+        TextField("Name", text: $draftName)
+            .focused($isNameFocused)
+            .onSubmit { commitDraftName() }
+            .help("Rename the profile being edited.")
     }
 
     private func commitDraftName() {

@@ -23,10 +23,10 @@ typography, and SF Symbols; the bitmap is not shipped.
 
 The Settings window has three visible regions while Workspaces is selected:
 
-1. **Settings sidebar:** General, Sync, Behavior, Profiles, Profile Switching, Menu Bar, Focus Border,
+1. **Settings sidebar:** General, Sync, Behavior, Profiles, Menu Bar, Focus Border,
    Displays, Workspaces, Applications, Quick App Shelf, Shortcuts, Command Palette, and Debug-only
-   Diagnostics. Appearance and Layouts are retained only as legacy destination aliases and resolve
-   to their current owners.
+   Diagnostics. Appearance, Profile Switching, and Layouts are retained only as legacy destination
+   aliases and resolve to their current owners.
 2. **Editing-profile context:** a full-row icon-and-name selector sits in the sidebar above the four
    profile-owned destinations. Selecting a profile changes the Settings edit target without affecting
    the desktop; Profile Status owns name/icon editing and the separate **Use Profile** action that
@@ -37,7 +37,7 @@ The Settings window has three visible regions while Workspaces is selected:
    summaries, layout-specific controls, reusable-setting reset, and active-workspace window repair.
 
 General owns permissions and startup. Sync owns iCloud scope and status. Profiles owns the reusable
-library and explicit activation, while Profile Switching owns this Mac's automatic selection rules.
+library, explicit activation, and this Mac's profile-centric automatic selection assignments.
 Displays owns the selected profile's display mode and role names plus this Mac's physical bindings.
 Menu Bar owns global
 presentation plus the editing profile's display-role icon choices. Focus Border owns local border
@@ -149,8 +149,8 @@ only saved or deep-linked Layouts destinations to Workspaces.
 
 Search routes workspace names/keys, home display, layout type, orientation, gaps, padding, and
 workspace reset to Workspaces. Display mode, role definitions, and physical bindings route to
-Displays; profile name/icon and activation route to Profiles; profile display-role menu-bar icons
-route to Menu Bar; and automatic selection routes to Profile Switching. A dynamic workspace-name
+Displays; profile name/icon, activation, and automatic selection route to Profiles; profile
+display-role menu-bar icons route to Menu Bar. A dynamic workspace-name
 result selects that exact UUID. Global commands route to Shortcuts. Release search never
 exposes Debug-only Diagnostics.
 

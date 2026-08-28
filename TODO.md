@@ -1715,8 +1715,9 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Settings information-architecture improvement
 - **Priority:** P1
-- **Status:** Live validation — the ownership pass is implemented and verified in isolation; a
-  signed install still needs the maintainer's interaction check.
+- **Status:** Live validation — the selected profile-tabs follow-up is implemented, rendered, fully
+  verified, installed, and accepted for its core interaction; optional visual polish and a dedicated
+  keyboard/VoiceOver interaction pass remain before marking the broader Settings item Done.
 - **Requested:** 21 August 2026.
 - **Smallest useful outcome:** Keep General focused on permissions and startup; give Sync, Menu Bar,
   and Focus Border their own destinations; and move recovery, focus-following moves, trackpad
@@ -1771,6 +1772,30 @@ smallest useful outcome and acceptance boundary.
   submenu before showing the profiles, so it does not behave like a direct drop-down. Keep native
   picker selection and checkmarks, but render its choices inline in the outer menu so one click
   exposes the profile list without an intermediate navigation level.
+- **Eighth user-observed follow-up:** Replace the Profile Library master list with top tabs showing
+  a large icon and profile name, plus a trailing add-profile tab. Combine Profiles and Profile
+  Switching into one destination so the selected profile can be edited and assigned to this Mac's
+  Default, Game Mode, docked, undocked, and exact-display contexts in one place. Complete this
+  Profiles interaction before applying any similar tab treatment to Workspaces. The maintainer
+  selected visual direction 3: a restrained icon-tab strip with context badges above a compact
+  identity/status inspector and wider profile-centric automatic-use editor.
+- **Eighth follow-up boundary:** Preserve the reusable/synced profile library and existing Mac-local
+  `LocalProfileState` schema. Tab selection, creation, and duplication change only the Settings edit
+  target; **Use Profile** remains the explicit activation/manual-pin action. Automatic assignments
+  remain ordered and single-owner, may re-evaluate the live profile, and must preserve the selected
+  Settings tab. Default cannot be unassigned; optional Game Mode, docked, and undocked assignments
+  can be assigned to or removed from the selected profile while naming any current owner. Exact
+  display setups remain individually reassignable/removable, and the current topology targets the
+  selected rather than implicitly active profile. Keep the sidebar editing-profile selector for
+  Displays, Workspaces, Applications, and Quick App Shelf; do not redesign those pages in this pass.
+- **Eighth follow-up acceptance:** Remove the standalone Profile Switching sidebar destination while
+  preserving its saved-selection and search routes through Profiles. The tab strip remains usable
+  with long names, many profiles, minimum Settings width, keyboard focus, and VoiceOver. Focused
+  coverage proves single-owner assignment/removal, creation selection without activation,
+  edit-target preservation during automatic activation, exact-topology reassignment, legacy
+  routing, and merged search. Render the production screen at wide, compact, Light, Dark, inactive,
+  and several-profile states; compare it with selected direction 3; then run the complete non-hosted
+  gate and unsigned universal build before requesting a signed daily install.
 - **Implemented:** Added General, Sync, Behavior, Menu Bar, and Focus Border destinations; collected
   reusable feature configuration beneath Configuration and global input surfaces beneath Controls.
   Settings search opens the owning destination. Saved Appearance selections resolve to Menu Bar,
@@ -1786,14 +1811,39 @@ smallest useful outcome and acceptance boundary.
   icons follow cloning, iCloud persistence, and portable transfer; older documents default safely
   to the generic profile symbol. Inactive edits persist reusable profile identity, workspaces,
   applications, shelf, display-role definitions/icons, and local role bindings without changing the
-  live engine or selection state. Profiles is now the reusable library and explicit activation
-  surface; Profile Switching owns this Mac's automatic
-  rules; Displays owns the editing profile's display mode and role definitions plus this Mac's
+  live engine or selection state. Profiles now combines the reusable library, explicit activation,
+  and this Mac's profile-centric automatic-use assignments; the legacy Profile Switching route
+  resolves there. Displays owns the editing profile's display mode and role definitions plus this Mac's
   physical bindings. Menu Bar remains the only editor for the editing profile's display-role icon
   choices. Sync lists the supported synced and always-local
   categories and explains why a reliable synced-device list is unavailable. Focus Border owns
   local per-application corner-radius overrides independently of profile App Rules and Quick Apps;
   removing or converting an App Rule no longer erases that local correction.
+- **Profile-tabs implementation:** Replaced the Profile Library master list with a horizontally
+  scrolling icon/name tab strip and trailing add tab. The selected profile's prominent identity and
+  explicit activation remain separate from a wider automatic-use panel for Default, Game Mode,
+  docked, undocked, and exact display contexts. Checked optional rows remove their assignment;
+  unchecked rows move the exclusive assignment to the selected profile; Default always keeps an
+  owner. Current-display assignment reuses and moves an existing exact topology instead of creating
+  a duplicate. The local persistence schema and the edit-target/active-profile boundary are unchanged.
+- **Profile-tabs automated evidence:** The complete non-hosted suite passes 782 tests. Focused
+  coverage proves legacy routing, merged search, single-owner assignment/removal policy, edit-target
+  preservation, and exact-topology reassignment without duplication. Production Profiles renders
+  pass in wide and minimum-width compact layouts, Light and Dark appearance, four-profile,
+  long-name, and inactive-selected-profile states; comparison with selected direction 3 found no
+  remaining structural mismatch after restoring the prominent native icon editor. Release static
+  analysis passes, the unsigned Release app builds as universal `x86_64 arm64`, and unsigned
+  Stable/Beta DMG smoke verification passes. The signed universal Debug daily candidate
+  `4649547db928-dirty` was installed and launched from `/Applications/WindowRanger.app` on
+  28 August 2026. Its Apple Development signature, Team ID `44NAD22AK6`, canonical bundle
+  identifier, embedded source marker, architectures, running executable path, and byte-for-byte
+  match with the just-built executable and debug/preview libraries were verified.
+- **Profile-tabs live evidence:** On 28 August 2026, the maintainer reported the signed candidate
+  working and supplied active- and inactive-tab screenshots. They confirm that the selected tab,
+  active profile, Default/docked/undocked ownership, explicit **Use Profile** action, and exact
+  display-setup ownership remain visibly distinct. The first visual direction is accepted as a good
+  functional starting point; unspecified refinement is intentionally deferred until the related
+  Workspaces direction is explored rather than guessed into this checkpoint.
 - **Automated evidence:** The revised Settings/navigation selection passes 131 focused tests. The
   final profile-icon refinement passes 46 focused profile, transfer, and rendering tests, and the
   complete non-hosted suite passes 649 tests, including inactive-profile editing across workspaces,
@@ -1811,7 +1861,7 @@ smallest useful outcome and acceptance boundary.
   profile context, split profile ownership, Sync inventory, Menu Bar role icons, Focus Border
   overrides, and Quick App Shelf. The unsigned Debug app builds successfully as a universal
   `x86_64 arm64` binary.
-- **Ownership-redistribution automated evidence:** Profiles is limited to the reusable library and
+- **Superseded ownership-redistribution automated evidence:** Profiles was limited to the reusable library and
   explicit activation; Profile Switching owns this Mac's automatic rules; Displays owns the edited
   profile's Unified/Independent mode and role definitions plus local physical bindings; Workspaces
   retains workspace definitions, layouts, and Home Display assignments. Settings search and legacy

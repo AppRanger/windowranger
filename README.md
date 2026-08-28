@@ -356,17 +356,23 @@ Automatic selection resolves in a fixed order: a manual pin; this Mac's profile 
 full-screen declared-game session; an exact known display topology; a generic docked or undocked
 rule on portable Macs; then this Mac's default profile. A manual selection
 cannot be cleared by wake, timers, or later display events—choose **Resume Automatic** in Profile
-Switching Settings or the app menu to release it. A portable Mac with only its built-in display is undocked; a
+Settings or the app menu to release it. A portable Mac with only its built-in display is undocked; a
 portable Mac with an external display is docked. Desktop Macs skip that generic distinction.
 
-Profiles Settings is the reusable library: it can create a profile from the current reusable
-configuration, duplicate, edit its name and icon in Profile Status, safely delete, import, and
-export profiles. The icon follows the reusable profile into the Settings selector, cloning, sync,
-and portable transfer. Selecting, creating, or duplicating a library profile chooses it for editing
-without changing the live desktop. **Use Profile** remains in Profile Status as the explicit action
-that activates the edited profile and pins it on this Mac until automatic selection resumes. Profile
-Switching owns this Mac's Game Mode, default, docked, undocked, and exact
-display-setup rules. Displays owns the selected profile's Unified or Independent mode and abstract
+Profiles Settings combines the reusable library with this Mac's automatic-use assignments. Large
+icon-and-name tabs select what to edit, a trailing add tab creates another reusable profile, and the
+selected profile can be duplicated, renamed, safely deleted, imported, or exported. Its icon follows
+the reusable profile into the Settings selector, cloning, sync, and portable transfer. Selecting,
+creating, or duplicating a profile changes only the Settings edit target; **Use Profile** remains the
+explicit action that activates it and pins it on this Mac until automatic selection resumes.
+
+The same Profiles page assigns the selected profile to this Mac's Default, Game Mode, docked,
+undocked, and exact display-setup contexts. Each context has one owner: moving an assignment from
+another profile is explicit, Default cannot be unassigned, and the optional assignments can be
+removed by selecting their checked row again. Assigning the current display setup moves an existing
+matching topology instead of creating a duplicate. These assignments remain local even though the
+reusable profile definitions may sync or be exported. Displays owns the selected profile's Unified
+or Independent mode and abstract
 display-role names alongside this Mac's physical monitor bindings. Workspaces, Applications, Quick
 App Shelf, Displays, and profile-owned Menu Bar icons all follow the independent Settings edit
 selection. Switching profiles first recovers eligible managed

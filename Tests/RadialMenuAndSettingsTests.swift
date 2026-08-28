@@ -1380,6 +1380,24 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             "menuBar"
         )
         XCTAssertFalse(available.contains(.appearance))
+
+        let profileSwitchingDefaults = isolatedDefaults()
+        profileSwitchingDefaults.set(
+            SettingsCategory.profileSwitching.rawValue,
+            forKey: "settings.selectedCategory.v1"
+        )
+        let profileSwitchingModel = SettingsNavigationModel(
+            defaults: profileSwitchingDefaults,
+            includeDebug: false
+        )
+        XCTAssertEqual(profileSwitchingModel.selectedCategory, .profiles)
+        XCTAssertEqual(
+            profileSwitchingDefaults.string(forKey: "settings.selectedCategory.v1"),
+            SettingsCategory.profiles.rawValue
+        )
+        profileSwitchingModel.select(.profileSwitching)
+        XCTAssertEqual(profileSwitchingModel.selectedCategory, .profiles)
+        XCTAssertFalse(available.contains(.profileSwitching))
     }
 
     func testWorkspaceSearchRoutesConfigurationAndDynamicIdentityToWorkspaces() {
@@ -1404,7 +1422,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertNotNil(dynamic?.workspaceID)
     }
 
-    func testProfileSwitchingAndDisplaysSearchRouteToTheirOwnSections() {
+    func testProfilesOwnIdentityAndAutomaticUseSearchWhileDisplaysStaySeparate() {
         for query in ["profile name", "profile icon", "editing profile identity"] {
             XCTAssertEqual(
                 SettingsCatalog.search(query, includeDebug: false).first?.category,
@@ -1415,8 +1433,8 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         for query in ["manual profile pin", "docked topology", "automatic selection"] {
             XCTAssertEqual(
                 SettingsCatalog.search(query, includeDebug: false).first?.category,
-                .profileSwitching,
-                "Expected Profile Switching routing for \(query)"
+                .profiles,
+                "Expected Profiles routing for \(query)"
             )
         }
         for query in ["Independent Displays", "monitor fingerprint role", "display workspace behavior"] {
@@ -1424,6 +1442,50 @@ final class RadialMenuAndSettingsTests: XCTestCase {
                 SettingsCatalog.search(query, includeDebug: false).first?.category,
                 .displays,
                 "Expected Displays routing for \(query)"
+            )
+        }
+    }
+
+    func testProfileAutomaticAssignmentPolicyKeepsDefaultOwnedAndTogglesOptionalContexts() {
+        let currentOwner = UUID()
+        let selectedProfileID = UUID()
+
+        XCTAssertEqual(
+            ProfileAutomaticAssignmentPolicy.replacementOwner(
+                currentOwner: currentOwner,
+                selectedProfileID: selectedProfileID,
+                context: .localDefault
+            ),
+            selectedProfileID
+        )
+        XCTAssertEqual(
+            ProfileAutomaticAssignmentPolicy.replacementOwner(
+                currentOwner: selectedProfileID,
+                selectedProfileID: selectedProfileID,
+                context: .localDefault
+            ),
+            selectedProfileID
+        )
+
+        for context in [
+            ProfileAutomaticContext.gameMode,
+            .docked,
+            .undocked,
+        ] {
+            XCTAssertEqual(
+                ProfileAutomaticAssignmentPolicy.replacementOwner(
+                    currentOwner: currentOwner,
+                    selectedProfileID: selectedProfileID,
+                    context: context
+                ),
+                selectedProfileID
+            )
+            XCTAssertNil(
+                ProfileAutomaticAssignmentPolicy.replacementOwner(
+                    currentOwner: selectedProfileID,
+                    selectedProfileID: selectedProfileID,
+                    context: context
+                )
             )
         }
     }

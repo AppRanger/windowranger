@@ -755,6 +755,26 @@ final class SettingsStore: ObservableObject {
         setGenericProfile(profileID, docked: false)
     }
 
+    /// Assigns the currently connected display topology to the selected Settings profile. If the
+    /// same topology is already known, move that exclusive mapping instead of creating a duplicate.
+    @discardableResult
+    func assignCurrentDisplaySetup(to profileID: UUID) -> UUID? {
+        guard profiles.contains(where: { $0.id == profileID }), !connectedDisplays.isEmpty
+        else { return nil }
+        if let existing = localProfileState.exactTriggers.first(where: {
+            ProfileTriggerResolver.exactTopologyMatches(
+                $0.displayPins,
+                displays: connectedDisplays
+            )
+        }) {
+            if existing.profileID != profileID {
+                setExactTrigger(existing.id, profileID: profileID)
+            }
+            return existing.id
+        }
+        return addExactTriggerForCurrentDisplays(profileID: profileID)
+    }
+
     @discardableResult
     func addExactTriggerForCurrentDisplays(profileID: UUID? = nil) -> UUID? {
         let targetID = profileID ?? activeProfileID
@@ -2416,7 +2436,7 @@ final class SettingsStore: ObservableObject {
     }
 
     /// Editing this Mac's automatic rules may legitimately activate a different profile, but the
-    /// Profile Switching pane must not silently replace the reusable profile selected elsewhere in
+    /// combined Profiles page must not silently replace the reusable profile selected for editing in
     /// Settings. External topology changes retain the established follow-active behavior.
     private func evaluateAutomaticProfileSelectionPreservingSettingsTarget(source: String) {
         let editingProfileID = settingsProfileID
