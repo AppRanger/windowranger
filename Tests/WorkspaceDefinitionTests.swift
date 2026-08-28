@@ -82,6 +82,108 @@ final class WorkspaceDefinitionTests: XCTestCase {
         )
     }
 
+    func testPeriodicStateEmissionSkipsOnlyAnIdenticalPreviouslyScheduledState() {
+        let workspaceID = UUID(uuidString: "A0000000-0000-0000-0000-000000000001")!
+        let otherWorkspaceID = UUID(uuidString: "A0000000-0000-0000-0000-000000000002")!
+        let profileID = UUID(uuidString: "B0000000-0000-0000-0000-000000000001")!
+        let state = WorkspaceEngineState(
+            currentWorkspaceID: workspaceID,
+            activeWorkspaceIDs: [workspaceID],
+            previousWorkspaceID: nil,
+            managedWindowCount: 2,
+            accessibilityGranted: true,
+            profileID: profileID
+        )
+        let changedStates = [
+            WorkspaceEngineState(
+                currentWorkspaceID: otherWorkspaceID,
+                activeWorkspaceIDs: [otherWorkspaceID],
+                previousWorkspaceID: workspaceID,
+                managedWindowCount: 2,
+                accessibilityGranted: true,
+                profileID: profileID
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 3,
+                accessibilityGranted: true,
+                profileID: profileID
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 2,
+                accessibilityGranted: false,
+                profileID: profileID
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 2,
+                accessibilityGranted: true,
+                profileID: UUID(uuidString: "B0000000-0000-0000-0000-000000000002")!,
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 2,
+                accessibilityGranted: true,
+                profileID: profileID,
+                activeWorkspaceIDByDisplay: ["display": workspaceID]
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 2,
+                accessibilityGranted: true,
+                profileID: profileID,
+                focusedWindowHighlightWorkspaceContexts: [
+                    WindowKey(processIdentifier: 42, windowIdentifier: 7):
+                        FocusedWindowHighlightWorkspaceContext(layout: .tiled, windowCount: 2),
+                ]
+            ),
+        ]
+
+        for changedState in changedStates {
+            var gate = WorkspaceEngineStateEmissionGate()
+            XCTAssertTrue(gate.shouldSchedule(state, force: false))
+            XCTAssertFalse(gate.shouldSchedule(state, force: false))
+            XCTAssertTrue(gate.shouldSchedule(changedState, force: false))
+            XCTAssertTrue(gate.shouldSchedule(state, force: false))
+        }
+    }
+
+    func testExplicitStateEmissionRemainsAForcedBroadInvalidation() {
+        let workspaceID = UUID(uuidString: "A0000000-0000-0000-0000-000000000001")!
+        let state = WorkspaceEngineState(
+            currentWorkspaceID: workspaceID,
+            activeWorkspaceIDs: [workspaceID],
+            previousWorkspaceID: nil,
+            managedWindowCount: 0,
+            accessibilityGranted: true
+        )
+
+        var gate = WorkspaceEngineStateEmissionGate()
+        XCTAssertTrue(gate.shouldSchedule(state, force: false))
+        XCTAssertTrue(gate.shouldSchedule(state, force: true))
+        XCTAssertFalse(gate.shouldSchedule(state, force: false))
+
+        let changedState = WorkspaceEngineState(
+            currentWorkspaceID: workspaceID,
+            activeWorkspaceIDs: [workspaceID],
+            previousWorkspaceID: nil,
+            managedWindowCount: 1,
+            accessibilityGranted: true
+        )
+        XCTAssertTrue(gate.shouldSchedule(changedState, force: false))
+    }
+
     func testLegacyWorkspaceDefinitionMigratesToNoneLayout() throws {
         let id = WorkspaceDefinition.defaults[0].id
         let json = """

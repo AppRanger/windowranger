@@ -171,6 +171,65 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-096 — Suppress unchanged periodic engine-state callbacks
+
+- **Type:** Runtime CPU and main-thread invalidation optimisation
+- **Priority:** P1
+- **Status:** Done — implemented, reviewed, automated-test verified, signed daily build installed,
+  runtime-sampled, and maintainer live acceptance recorded on 28 August 2026.
+- **Requested:** 28 August 2026 as the second remaining optimisation after WR-095.
+- **Smallest useful outcome:** Continue constructing the compact public engine state on every broad
+  refresh so Accessibility trust and externally caused changes are detected, but do not enqueue its
+  main-thread observer when it is semantically equal to the last scheduled state.
+  Preserve every explicit engine mutation as a forced broad invalidation.
+- **Functionality boundary:** Do not change refresh cadence, Accessibility discovery, layout,
+  persistence, state contents, command validation, menu presentation, Settings workspace utility
+  visibility, active-profile recording, focus-highlight contexts, or Shelf guide behavior. Only the
+  periodic timer may suppress an identical state; startup and all command, configuration,
+  lifecycle, wake, display, focus, Quick App, and recovery call sites retain their existing forced
+  callback.
+- **Risk:** Medium. The callback fans out to menu-bar rebuild, Settings visibility, Command Palette
+  revalidation, local active-workspace recording, focus-highlight contexts, and Shelf-guide refresh.
+  Comparing only `WorkspaceEngineState` at every call would be unsafe because it omits some derived
+  command/UI context. Confining equality suppression to the timer preserves those broader explicit
+  invalidations and narrows the remaining risk to an externally caused state change missing from
+  the state model. The timer therefore retains forced callbacks while Command Palette is presented,
+  preserving its periodic stale-context safety net for external focus and frame changes that are
+  intentionally absent from the compact state.
+- **Acceptance:** Pure policy coverage proves first/changed periodic states schedule, an identical
+  periodic state skips, and an explicit identical state remains forced. Audit every observer and
+  emission call site, run the focused and complete non-hosted suites, unsigned universal build,
+  skeptical review, and separately approved signed daily install. Live-check workspace membership,
+  Accessibility status, menu labels, Settings visibility, Command Palette context, focus highlight,
+  Quick App Shelf/guide, layouts, fullscreen return, wake, and display changes. Confirm a settled
+  sample no longer shows timer-driven identical observer work before comparing whole-process CPU.
+- **Implemented:** The engine remembers the last state scheduled to the main queue. Its 0.75-second
+  timer requests equality-aware emission; the first or changed state still schedules normally, while
+  an identical state stops before dispatch when Command Palette is closed. While the palette is
+  presented, the timer retains its previous forced callback so same-workspace external focus/frame
+  changes continue to revalidate its richer command token. Every other existing `emitState()` call
+  keeps forced semantics by default, preserving broad derived-context invalidation for explicit
+  work.
+- **Automated evidence:** The state-emission gate has direct coverage for its first, identical,
+  changed, returned, and forced-state transitions, including each public state field independently;
+  focused `WorkspaceDefinitionTests` pass 129/129. The complete quick suite passes 765/765 and the
+  unsigned Debug app builds for both `arm64` and `x86_64`.
+- **Review evidence:** The callback consumer and emission-call-site audit confirmed that only the
+  timer opts into equality suppression. Skeptical review initially found that unconditional timer
+  suppression could stale Command Palette's richer external-focus/frame context; the palette-open
+  forced-emission exception corrected that blocker, and re-review found no remaining blocker.
+- **Install evidence:** Signed Debug daily build `191b010f31b4-dirty` installed and relaunched from
+  `/Applications/WindowRanger.app` on 28 August 2026. The installed executable is universal
+  `arm64`/`x86_64`, signed by Team `44NAD22AK6` with CDHash
+  `963be4627461ea84f5d9dcdf62a824d22add81ca`, and began diagnostics session
+  `3879290D-9D65-4AD8-8510-FCBECC8597C1` without an observed startup failure.
+- **Live evidence:** The maintainer exercised the installed candidate and reported no issue. A
+  subsequent five-second runtime sample observed periodic `emitState(force:)` construction once but
+  none of its main-thread callback consumers, consistent with identical settled state stopping at
+  the gate. A separate ten-sample operational reading averaged 5.55% CPU and ranged from roughly
+  155-177 MB resident memory while the session contained active workspace interactions; this is a
+  checkpoint only, not evidence that WR-096 changed whole-process CPU or memory by that amount.
+
 ### WR-095 — Reuse refresh frame observations in background layout signatures
 
 - **Type:** Runtime CPU and Accessibility-read optimisation

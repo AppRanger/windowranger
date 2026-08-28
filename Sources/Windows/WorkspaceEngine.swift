@@ -1534,6 +1534,19 @@ struct WorkspaceEngineState: Equatable {
     }
 }
 
+struct WorkspaceEngineStateEmissionGate {
+    private var lastScheduledState: WorkspaceEngineState?
+
+    mutating func shouldSchedule(
+        _ state: WorkspaceEngineState,
+        force: Bool
+    ) -> Bool {
+        guard force || lastScheduledState != state else { return false }
+        lastScheduledState = state
+        return true
+    }
+}
+
 /// Immutable derived lookups for the engine's active workspace and app-rule configuration.
 /// Replacing the source arrays/maps replaces this value as one unit on the engine queue.
 struct WorkspaceEngineLookupIndex {
@@ -2040,6 +2053,7 @@ final class WorkspaceEngine {
     private var fullscreenAuthoritativeFalseCounts: [WindowKey: Int] = [:]
     private var foregroundFullscreenGameSessionKey: WindowKey?
     private var lastEmittedFullscreenGameSession: FullscreenGameSessionSnapshot?
+    private var stateEmissionGate = WorkspaceEngineStateEmissionGate()
     private var declaredGameByBundleIdentifier: [String: Bool] = [:]
     private var gameModeEligibilityByBundleIdentifier: [String: Bool] = [:]
     private var lastBroadWindowRefreshDate = Date.distantPast
@@ -2202,7 +2216,7 @@ final class WorkspaceEngine {
                     performAXWrites: !self.isWindowManagementPaused
                 )
                 self.persistState(preservingPendingRestores: Date() < self.startupGraceDeadline)
-                self.emitState()
+                self.emitState(force: self.commandPalettePresented)
             }
             self.timer = timer
             timer.resume()
@@ -17033,7 +17047,7 @@ final class WorkspaceEngine {
         )
     }
 
-    private func emitState() {
+    private func emitState(force: Bool = true) {
         let windowCountByWorkspace = Dictionary(grouping: windows.values, by: \.workspaceID)
             .mapValues(\.count)
         let layoutByWorkspace = Dictionary(
@@ -17061,6 +17075,7 @@ final class WorkspaceEngine {
                 ? activeWorkspaceIDByDisplay : [:],
             focusedWindowHighlightWorkspaceContexts: highlightContexts
         )
+        guard stateEmissionGate.shouldSchedule(state, force: force) else { return }
         DispatchQueue.main.async { [weak self] in self?.onStateChanged?(state) }
     }
 

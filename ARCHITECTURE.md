@@ -66,6 +66,15 @@ then rebuilds the signature from fresh frames so rejected, delayed, or adjusted 
 an assumed baseline; a no-write refresh retains the enumerated signature without rereading every
 visible managed window.
 
+The periodic broad refresh constructs the same public engine state needed to notice Accessibility
+trust, membership, workspace, profile, display, and highlight-context changes, but schedules its
+main-thread observer only when that state differs from the last scheduled value. Explicit engine
+mutations retain a forced observer notification even when this compact state is equal because the
+observer also invalidates Command Palette, menu, Settings utility, Shelf-guide, and other derived
+contexts not represented by `WorkspaceEngineState`. While Command Palette is presented, periodic
+notifications also remain forced because its exact focus, frame, direction, and tree validation
+token intentionally contains more context than the public state.
+
 Layout membership and Accessibility write eligibility are separate during a transient observation
 gap. A failed application-window enumeration or unreadable frame for an existing Tiled or Accordion
 participant preserves its last stable slot, so readable siblings are not reflowed around the gap;
