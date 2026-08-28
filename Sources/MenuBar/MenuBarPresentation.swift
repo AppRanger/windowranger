@@ -1243,6 +1243,133 @@ final class MenuBarDisplayGroupContentView: NSView {
         _ = hoverState.update(pointer: nil, among: [])
         workspaceSegments.forEach { $0.setHovered(false) }
     }
+
+    func setHoveredTarget(_ target: MenuBarHitTarget?) {
+        workspaceSegments.forEach { segment in
+            segment.setHovered(segment.hitTarget == target)
+        }
+    }
+}
+
+/// An immutable, pre-rendered display-group status item. AppKit's standard status button owns the
+/// live image and all pointer/accessibility behavior; the custom view hierarchy only exists long
+/// enough to produce these bitmaps and local workspace regions.
+@MainActor
+final class MenuBarDisplayGroupRenderedContent {
+    let mode: MenuBarPresentationMode
+    let size: CGSize
+    let workspaceRegions: [MenuBarWorkspaceTrackingRegion]
+
+    private let normalImage: NSImage
+    private let hoveredImages: [(target: MenuBarHitTarget, image: NSImage)]
+
+    init(
+        plan: MenuBarDisplayGroupStatusItem,
+        workspaceLabelMode: MenuBarWorkspaceLabelMode,
+        highlightColor: MenuBarHighlightColor,
+        displayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic,
+        appearance: NSAppearance,
+        scale: CGFloat = 2
+    ) {
+        mode = plan.mode
+        var rendered: (
+            size: CGSize,
+            regions: [MenuBarWorkspaceTrackingRegion],
+            normalImage: NSImage,
+            hoveredImages: [(target: MenuBarHitTarget, image: NSImage)]
+        )!
+        appearance.performAsCurrentDrawingAppearance {
+            let content = MenuBarDisplayGroupContentView(
+                plan: plan,
+                workspaceLabelMode: workspaceLabelMode,
+                highlightColor: highlightColor,
+                displayIconConfiguration: displayIconConfiguration
+            )
+            content.appearance = appearance
+            content.frame = CGRect(origin: .zero, size: content.intrinsicContentSize)
+            content.layoutSubtreeIfNeeded()
+
+            let size = content.bounds.size
+            let regions = content.workspaceTrackingRegions(in: content)
+            content.setHoveredTarget(nil)
+            let normalImage = Self.rasterizedImage(of: content, size: size, scale: scale)
+            let hoveredImages = regions.map { region in
+                content.setHoveredTarget(region.hitTarget)
+                return (
+                    target: region.hitTarget,
+                    image: Self.rasterizedImage(of: content, size: size, scale: scale)
+                )
+            }
+            content.setHoveredTarget(nil)
+            rendered = (size, regions, normalImage, hoveredImages)
+        }
+        size = rendered.size
+        workspaceRegions = rendered.regions
+        normalImage = rendered.normalImage
+        hoveredImages = rendered.hoveredImages
+    }
+
+    func image(for hoveredTarget: MenuBarHitTarget?) -> NSImage {
+        guard let hoveredTarget else { return normalImage }
+        return hoveredImages.first(where: { $0.target == hoveredTarget })?.image ?? normalImage
+    }
+
+    func trackingRegions(in view: NSView) -> [MenuBarWorkspaceTrackingRegion] {
+        let offset = contentOffset(in: view)
+        return workspaceRegions.map { region in
+            MenuBarWorkspaceTrackingRegion(
+                frame: region.frame.offsetBy(dx: offset.x, dy: offset.y),
+                hitTarget: region.hitTarget
+            )
+        }
+    }
+
+    func screenSpaceTargets(in view: NSView) -> [MenuBarScreenSpaceTarget] {
+        guard let window = view.window else { return [] }
+        return trackingRegions(in: view).map { region in
+            let windowFrame = view.convert(region.frame, to: nil)
+            return MenuBarScreenSpaceTarget(
+                frame: window.convertToScreen(windowFrame),
+                hitTarget: region.hitTarget
+            )
+        }
+    }
+
+    private func contentOffset(in view: NSView) -> CGPoint {
+        CGPoint(
+            x: (view.bounds.width - size.width) / 2,
+            y: (view.bounds.height - size.height) / 2
+        )
+    }
+
+    private static func rasterizedImage(
+        of content: NSView,
+        size: CGSize,
+        scale: CGFloat
+    ) -> NSImage {
+        let pixelWidth = max(1, Int(ceil(size.width * scale)))
+        let pixelHeight = max(1, Int(ceil(size.height * scale)))
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixelWidth,
+            pixelsHigh: pixelHeight,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else {
+            return NSImage(size: size)
+        }
+        bitmap.size = size
+        content.cacheDisplay(in: content.bounds, to: bitmap)
+        let image = NSImage(size: size)
+        image.addRepresentation(bitmap)
+        image.isTemplate = false
+        return image
+    }
 }
 
 @MainActor

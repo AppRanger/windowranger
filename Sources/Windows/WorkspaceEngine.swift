@@ -1657,6 +1657,7 @@ final class WorkspaceEngine {
     var onWorkspaceDisplayAssignmentsChanged: (([UUID: String]) -> Void)?
     var onFullscreenGameSessionChanged: ((FullscreenGameSessionSnapshot?) -> Void)?
     var onVerifiedFocusTarget: ((FocusedWindowHighlightTarget) -> Void)?
+    var onTiledResizePreviewChanged: ((TiledResizePreviewEvent) -> Void)?
 
     private struct TrackedWindow {
         let key: WindowKey
@@ -1749,6 +1750,40 @@ final class WorkspaceEngine {
         let focusedWindow: WindowKey
         let partition: TiledLayoutPartitionKey
         let candidateTarget: WindowKey?
+    }
+
+    private struct ManualTiledMovePreviewSession {
+        let token: UUID
+        let focusedWindow: WindowKey
+        let partition: TiledLayoutPartitionKey
+        let participantKeys: Set<WindowKey>
+        let originalTree: TiledNode
+        let originalFrames: [WindowKey: WindowFrame]
+        let configuration: WorkspaceLayoutConfiguration
+        let layoutBounds: CGRect
+        let topologySignature: String
+        let profileID: UUID?
+        var candidateTarget: WindowKey?
+        var proposedTree: TiledNode
+        var proposedFrames: [WindowKey: WindowFrame]
+    }
+
+    private struct ManualTiledResizeSession {
+        let token: UUID
+        let focusedWindow: WindowKey
+        let partition: TiledLayoutPartitionKey
+        let participantKeys: Set<WindowKey>
+        let originalTree: TiledNode
+        let originalFrames: [WindowKey: WindowFrame]
+        let configuration: WorkspaceLayoutConfiguration
+        let layoutBounds: CGRect
+        let topologySignature: String
+        let profileID: UUID?
+        let draggedEdges: TiledResizeDraggedEdges
+        let anchorFrame: WindowFrame
+        let anchorPointer: CGPoint
+        var proposedTree: TiledNode
+        var proposedFrames: [WindowKey: WindowFrame]
     }
 
     private struct DropDownAppSession {
@@ -1900,6 +1935,8 @@ final class WorkspaceEngine {
     private var radialFreeformPlacementCommitContext: FreeformPlacementCommitContext? = nil
     private var directionalMoveGestureContext: DirectionalMoveGestureContext? = nil
     private var manualTiledDragSession: ManualTiledDragSession? = nil
+    private var manualTiledMovePreviewSession: ManualTiledMovePreviewSession? = nil
+    private var manualTiledResizeSession: ManualTiledResizeSession? = nil
     private var ignoredWindowKeys = Set<WindowKey>()
     private var admissionDecisionByWindow: [WindowKey: WindowAdmissionDecision] = [:]
     private var admissionMetadataByWindow: [WindowKey: WindowAdmissionMetadata] = [:]
@@ -2107,6 +2144,7 @@ final class WorkspaceEngine {
         queue.async { [weak self] in
             guard let self, self.isWindowManagementPaused != paused else { return }
             if paused {
+                self.cancelManualTiledPreviewTransactions(reason: "pause-mode")
                 self.isWindowManagementPaused = true
                 self.dropDownAnimationGeneration &+= 1
                 self.quickAppNeighborVisibilityGeneration.removeAll()
@@ -2193,6 +2231,7 @@ final class WorkspaceEngine {
     /// synchronous queue hand-off gives persistence a bounded opportunity to finish.
     func prepareForSystemSleep() {
         queue.sync {
+            cancelManualTiledPreviewTransactions(reason: "system-sleep")
             postSleepWindowRecoveryState.prepareForSleep(protecting: Set(windows.keys))
             restoreAndClearDropDownAppSession(reason: "system-sleep")
             let focused = interactionFocusedWindowSnapshot()
@@ -2236,6 +2275,7 @@ final class WorkspaceEngine {
     /// obtains a fresh Accessibility snapshot.
     func prepareForScreenSleep(source: ScreenSessionSuspensionSource) {
         queue.sync {
+            cancelManualTiledPreviewTransactions(reason: source.rawValue)
             screenSessionLifecycleState.suspend(source)
             postSleepWindowRecoveryState.prepareForSleep(protecting: Set(windows.keys))
             if wakeReconciliationState.isSleeping {
@@ -2378,6 +2418,7 @@ final class WorkspaceEngine {
 
     func stopAndRestoreAllWindows() {
         queue.sync {
+            cancelManualTiledPreviewTransactions(reason: "application-stop")
             timer?.cancel()
             timer = nil
             wakeReconciliationWorkItem?.cancel()
@@ -2771,6 +2812,7 @@ final class WorkspaceEngine {
         allowsLaunchAttempt: Bool,
         refreshBeforeResolving: Bool
     ) {
+        cancelManualTiledPreviewTransactions(reason: "quick-app-shelf-command")
         guard let configuration = dropDownAppConfiguration else {
             emitCommandFeedback(
                 "Choose a Quick App in Applications first.",
@@ -3665,6 +3707,7 @@ final class WorkspaceEngine {
         guard !definitions.isEmpty else { return }
         queue.async { [weak self] in
             guard let self else { return }
+            self.cancelManualTiledPreviewTransactions(reason: "workspace-configuration-changed")
             let validIDs = Set(definitions.map(\.id))
             let fallbackID = definitions[0].id
             let newLayouts = Dictionary(uniqueKeysWithValues: definitions.map { ($0.id, $0.layout) })
@@ -3713,6 +3756,7 @@ final class WorkspaceEngine {
                 return
             }
             let switchingProfile = self.currentProfileID != configuration.profileID
+            self.cancelManualTiledPreviewTransactions(reason: "profile-transition")
             self.cancelPendingDropDownAppLaunch()
             self.pendingQuickAppSelection = nil
             self.pendingPausedQuickAppConfigurationUpdate = nil
@@ -4198,6 +4242,7 @@ final class WorkspaceEngine {
             appBuild: build,
             buildMode: buildMode,
             macOSVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            displaysHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces,
             session: Self.shortIdentifier(WorkspaceStateStore.currentWindowServerSession())
         )
 
@@ -4208,6 +4253,7 @@ final class WorkspaceEngine {
                 appBuild: base.appBuild,
                 buildMode: base.buildMode,
                 macOSVersion: base.macOSVersion,
+                displaysHaveSeparateSpaces: base.displaysHaveSeparateSpaces,
                 windowServerSession: base.session,
                 targetStatus: "accessibility-unavailable",
                 targetBundleIdentifier: .unavailable("Accessibility permission is not granted"),
@@ -4228,6 +4274,7 @@ final class WorkspaceEngine {
                 appBuild: base.appBuild,
                 buildMode: base.buildMode,
                 macOSVersion: base.macOSVersion,
+                displaysHaveSeparateSpaces: base.displaysHaveSeparateSpaces,
                 windowServerSession: base.session,
                 targetStatus: "no-target",
                 targetBundleIdentifier: .unavailable("no externally focused window"),
@@ -4365,6 +4412,7 @@ final class WorkspaceEngine {
             appBuild: base.appBuild,
             buildMode: base.buildMode,
             macOSVersion: base.macOSVersion,
+            displaysHaveSeparateSpaces: base.displaysHaveSeparateSpaces,
             windowServerSession: base.session,
             targetStatus: targetStatus,
             targetBundleIdentifier: bundleIdentifier.map(DiagnosticReportValue.value) ?? .unavailable("bundle identifier unavailable"),
@@ -4507,6 +4555,7 @@ final class WorkspaceEngine {
         correlationID: String
     ) {
         guard workspaces.contains(where: { $0.id == id }) else { return }
+        cancelManualTiledPreviewTransactions(reason: "workspace-command")
 
         let rawFocusedBefore = focusedWindowSnapshot()
         refreshWindows(correlationID: correlationID)
@@ -4570,6 +4619,7 @@ final class WorkspaceEngine {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self else { return }
+            self.cancelManualTiledPreviewTransactions(reason: "workspace-command")
             let rawFocusedBefore = self.focusedWindowSnapshot()
             self.refreshWindows(correlationID: correlationID)
             let displays = Self.activeDisplays()
@@ -4636,6 +4686,7 @@ final class WorkspaceEngine {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self else { return }
+            self.cancelManualTiledPreviewTransactions(reason: "workspace-command")
             let rawFocusedBefore = self.focusedWindowSnapshot()
             self.refreshWindows(correlationID: correlationID)
             let displays = Self.activeDisplays()
@@ -5839,6 +5890,7 @@ final class WorkspaceEngine {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self, offset != 0 else { return }
+            self.cancelManualTiledPreviewTransactions(reason: "layout-command")
             let rawFocusedBefore = self.focusedWindowSnapshot()
             self.refreshWindows(correlationID: correlationID)
             let focusedBefore = self.interactionFocusedWindowSnapshot(rawFocusedBefore)
@@ -5931,6 +5983,7 @@ final class WorkspaceEngine {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self else { return }
+            self.cancelManualTiledPreviewTransactions(reason: "layout-command")
             let rawFocusedBefore = self.focusedWindowSnapshot()
             self.refreshWindows(correlationID: correlationID)
             let focusedBefore = self.interactionFocusedWindowSnapshot(rawFocusedBefore)
@@ -6169,6 +6222,12 @@ final class WorkspaceEngine {
     ) {
         queue.async { [weak self] in
             guard let self else { return }
+            let previewProcessIdentifier = self.manualTiledMovePreviewSession?.focusedWindow
+                .processIdentifier ?? self.manualTiledResizeSession?.focusedWindow.processIdentifier
+            if let previewProcessIdentifier,
+               previewProcessIdentifier != processIdentifier {
+                self.cancelManualTiledPreviewTransactions(reason: "application-activated")
+            }
             self.noteApplicationActivation(processIdentifier: processIdentifier)
             let shouldCancelRadialInteraction = Self.shouldCancelRadialInteractionForActivation(
                 activatedProcessIdentifier: processIdentifier,
@@ -7298,6 +7357,794 @@ final class WorkspaceEngine {
             ]
         )
         return .swapped
+    }
+
+    /// Pointer delivery is intentionally separate from the broad discovery timer. Tiled move and
+    /// resize previews need to follow the gesture promptly, while discovery remains deliberately
+    /// coarse to avoid continuously enumerating every application window.
+    func tiledResizePointerDragged() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if self.manualTiledMovePreviewSession != nil {
+                self.updateConcealedManualTiledMovePreview()
+            } else if self.manualTiledResizeSession != nil {
+                self.updateManualTiledResizePreview()
+            } else {
+                self.updateManualTiledResizePreview()
+                if self.manualTiledResizeSession == nil {
+                    self.updateManualTiledMovePreview()
+                }
+            }
+        }
+    }
+
+    func tiledResizePointerReleased() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if self.manualTiledMovePreviewSession != nil {
+                self.commitManualTiledMovePreview()
+            } else if self.manualTiledResizeSession != nil {
+                self.commitManualTiledResizePreview()
+            }
+        }
+    }
+
+    private func commitManualTiledResizePreview() {
+            guard var session = manualTiledResizeSession else { return }
+            let correlationID = "manual-resize-\(session.token.uuidString.prefix(8))"
+
+            // Capture the final pointer position because a throttled drag event can precede the
+            // mouse-up by one render interval.
+            updateManualTiledResizePreview(allowStartingSession: false)
+            guard let updatedSession = manualTiledResizeSession else { return }
+            session = updatedSession
+
+            let displays = Self.activeDisplays()
+            guard !isWindowManagementPaused,
+                  !wakeReconciliationState.isSleeping,
+                  !wakeReconciliationState.isPending,
+                  windowServerSessionValidated,
+                  currentProfileID == session.profileID,
+                  Self.displayTopologySignature(displays) == session.topologySignature,
+                  tiledTrees[session.partition] == session.originalTree,
+                  let tracked = windows[session.focusedWindow],
+                  isWorkspaceActive(tracked.workspaceID),
+                  workspaceLayout(for: tracked.workspaceID) == .tiled,
+                  fullscreenSessions[session.focusedWindow] == nil,
+                  !isQuickAppShelfPresented,
+                  let display = displays.first(where: {
+                      $0.identifier == session.partition.displayIdentifier
+                  })
+            else {
+                cancelManualTiledResizePreview(reason: "release-validation-failed")
+                return
+            }
+
+            let currentConfiguration = workspaceLayoutConfiguration(for: tracked.workspaceID)
+                ?? .aeroSpaceUserDefaults
+            guard currentConfiguration == session.configuration,
+                  managedLayoutBounds(display.usableBounds) == session.layoutBounds,
+                  Self.shouldIncludeInLayout(
+                      layoutOverride: tracked.layoutOverride,
+                      admissionDecision: tracked.admissionDecision,
+                      rule: resolvedRule(for: tracked.bundleIdentifier)
+                  )
+            else {
+                cancelManualTiledResizePreview(reason: "layout-configuration-changed")
+                return
+            }
+
+            let participants = orderedLayoutParticipants(
+                workspaceID: tracked.workspaceID,
+                displayIdentifier: display.identifier,
+                displays: displays,
+                correlationID: correlationID
+            )
+            guard Set(participants) == session.participantKeys,
+                  let effectiveShares = TiledLayoutEngine.leafShares(session.proposedTree)
+            else {
+                cancelManualTiledResizePreview(reason: "participants-changed")
+                return
+            }
+
+            manualTiledResizeSession = nil
+            tiledTrees[session.partition] = session.proposedTree
+            for key in participants {
+                windows[key]?.layoutWeight = effectiveShares[key] ?? 1
+            }
+            radialPlacementCommitContext = nil
+            radialFreeformPlacementCommitContext = nil
+            directionalMoveGestureContext = nil
+            manualTiledDragSession = nil
+
+            let changes = participants.compactMap { key -> FrameChange? in
+                guard let window = windows[key], let frame = session.proposedFrames[key] else {
+                    return nil
+                }
+                lastSolvedTiledFrames[key] = frame
+                return FrameChange(window: window, frame: frame)
+            }
+            applyFrameChanges(changes, correlationID: correlationID)
+            lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
+            persistState(preservingPendingRestores: true)
+            diagnostics.log(
+                category: "manual-resize-preview",
+                event: "committed",
+                correlation: correlationID,
+                fields: [
+                    "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                    "display": Self.shortIdentifier(display.identifier),
+                    "window": Self.diagnosticWindowKey(session.focusedWindow),
+                    "window-count": String(participants.count),
+                    "tree-before": TiledLayoutEngine.fingerprint(session.originalTree),
+                    "tree-after": TiledLayoutEngine.fingerprint(session.proposedTree),
+                ]
+            )
+            emitTiledResizePreviewEvent(
+                .dismiss(token: session.token, reason: "committed")
+            )
+    }
+
+    private func updateManualTiledMovePreview() {
+        guard manualTiledMovePreviewSession == nil,
+              manualTiledResizeSession == nil,
+              !isWindowManagementPaused,
+              !wakeReconciliationState.isSleeping,
+              !wakeReconciliationState.isPending,
+              windowServerSessionValidated,
+              !isQuickAppShelfPresented,
+              let focused = focusedWindowSnapshot(),
+              let observedFrame = focused.frame,
+              let tracked = windows[focused.key],
+              isWorkspaceActive(tracked.workspaceID),
+              workspaceLayout(for: tracked.workspaceID) == .tiled,
+              fullscreenSessions[focused.key] == nil,
+              !temporarilyDeferredWindowKeys.contains(focused.key),
+              Self.shouldIncludeInLayout(
+                  layoutOverride: tracked.layoutOverride,
+                  admissionDecision: tracked.admissionDecision,
+                  rule: resolvedRule(for: tracked.bundleIdentifier)
+              )
+        else { return }
+
+        let displays = Self.activeDisplays()
+        guard let display = targetDisplay(
+            for: tracked,
+            workspaceID: tracked.workspaceID,
+            displays: displays,
+            correlationID: nil
+        ) else { return }
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier,
+            displays: displays,
+            correlationID: nil
+        )
+        let configuration = workspaceLayoutConfiguration(for: tracked.workspaceID)
+            ?? .aeroSpaceUserDefaults
+        let layoutBounds = managedLayoutBounds(display.usableBounds)
+        let partition = TiledLayoutPartitionKey(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier
+        )
+        guard participants.count > 1,
+              participants.contains(focused.key),
+              let originalTree = TiledLayoutEngine.reconciled(
+                  tiledTrees[partition],
+                  windowKeys: participants,
+                  weights: participants.map {
+                      CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
+                  },
+                  orientation: configuration.orientation.resolved(for: layoutBounds)
+              ),
+              let originalFrames = try? TiledLayoutEngine.frames(
+                  for: originalTree,
+                  in: layoutBounds,
+                  configuration: configuration
+              ),
+              let expectedFocusedFrame = originalFrames[focused.key],
+              let lastSolvedFrame = lastSolvedTiledFrames[focused.key],
+              AccessibilityWindow.framesMatch(lastSolvedFrame, expectedFocusedFrame),
+              TiledLayoutEngine.observedDrag(
+                  in: originalTree,
+                  focusedWindow: focused.key,
+                  observedFrame: observedFrame,
+                  pointerLocation: CGEvent(source: nil)?.location,
+                  expectedFrames: originalFrames
+              ) != nil
+        else { return }
+
+        let token = UUID()
+        let session = ManualTiledMovePreviewSession(
+            token: token,
+            focusedWindow: focused.key,
+            partition: partition,
+            participantKeys: Set(participants),
+            originalTree: originalTree,
+            originalFrames: originalFrames,
+            configuration: configuration,
+            layoutBounds: layoutBounds,
+            topologySignature: Self.displayTopologySignature(displays),
+            profileID: currentProfileID,
+            candidateTarget: nil,
+            proposedTree: originalTree,
+            proposedFrames: originalFrames
+        )
+        manualTiledMovePreviewSession = session
+        manualTiledDragSession = nil
+        emitTiledResizePreviewEvent(.present(TiledResizePreviewPresentation(
+            token: token,
+            displayIdentifier: display.identifier,
+            layoutBounds: WindowFrame(position: layoutBounds.origin, size: layoutBounds.size),
+            frames: originalFrames,
+            transition: .immediate
+        )))
+        let correlationID = "manual-move-\(token.uuidString.prefix(8))"
+        guard concealManualTiledParticipants(
+            session.participantKeys,
+            diagnosticCategory: "manual-move-preview",
+            correlationID: correlationID
+        ) else {
+            cancelManualTiledMovePreview(reason: "participant-concealment-failed")
+            return
+        }
+        diagnostics.log(
+            category: "manual-move-preview",
+            event: "started",
+            correlation: correlationID,
+            fields: [
+                "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                "display": Self.shortIdentifier(display.identifier),
+                "window": Self.diagnosticWindowKey(focused.key),
+                "window-count": String(participants.count),
+            ]
+        )
+        updateConcealedManualTiledMovePreview()
+    }
+
+    private func updateConcealedManualTiledMovePreview() {
+        guard var session = manualTiledMovePreviewSession else { return }
+        let correlationID = "manual-move-\(session.token.uuidString.prefix(8))"
+        let displays = Self.activeDisplays()
+        guard !isWindowManagementPaused,
+              !wakeReconciliationState.isSleeping,
+              !wakeReconciliationState.isPending,
+              windowServerSessionValidated,
+              !isQuickAppShelfPresented,
+              currentProfileID == session.profileID,
+              Self.displayTopologySignature(displays) == session.topologySignature,
+              tiledTrees[session.partition] == session.originalTree,
+              let tracked = windows[session.focusedWindow],
+              isWorkspaceActive(tracked.workspaceID),
+              workspaceLayout(for: tracked.workspaceID) == .tiled,
+              fullscreenSessions[session.focusedWindow] == nil,
+              !temporarilyDeferredWindowKeys.contains(session.focusedWindow),
+              let display = displays.first(where: {
+                  $0.identifier == session.partition.displayIdentifier
+              }),
+              (workspaceLayoutConfiguration(for: tracked.workspaceID)
+                ?? .aeroSpaceUserDefaults) == session.configuration,
+              managedLayoutBounds(display.usableBounds) == session.layoutBounds
+        else {
+            cancelManualTiledMovePreview(reason: "context-changed")
+            return
+        }
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier,
+            displays: displays,
+            correlationID: correlationID
+        )
+        guard Set(participants) == session.participantKeys,
+              let pointer = CGEvent(source: nil)?.location
+        else {
+            cancelManualTiledMovePreview(reason: "participants-or-pointer-changed")
+            return
+        }
+
+        let target = TiledLayoutEngine.swapTarget(
+            at: pointer,
+            focusedWindow: session.focusedWindow,
+            expectedFrames: session.originalFrames
+        )
+        let proposedTree = target.flatMap {
+            TiledLayoutEngine.swappingWindows(session.focusedWindow, $0, in: session.originalTree)
+        } ?? session.originalTree
+        guard let proposedFrames = try? TiledLayoutEngine.frames(
+            for: proposedTree,
+            in: session.layoutBounds,
+            configuration: session.configuration
+        ) else {
+            cancelManualTiledMovePreview(reason: "proposal-invalid")
+            return
+        }
+
+        let targetChanged = target != session.candidateTarget
+        session.candidateTarget = target
+        session.proposedTree = proposedTree
+        session.proposedFrames = proposedFrames
+        manualTiledMovePreviewSession = session
+        if targetChanged {
+            emitTiledResizePreviewEvent(.present(TiledResizePreviewPresentation(
+                token: session.token,
+                displayIdentifier: display.identifier,
+                layoutBounds: WindowFrame(
+                    position: session.layoutBounds.origin,
+                    size: session.layoutBounds.size
+                ),
+                frames: proposedFrames,
+                transition: .animated
+            )))
+            diagnostics.log(
+                category: "manual-move-preview",
+                event: "target-changed",
+                correlation: correlationID,
+                fields: [
+                    "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                    "display": Self.shortIdentifier(display.identifier),
+                    "window": Self.diagnosticWindowKey(session.focusedWindow),
+                    "target": target.map(Self.diagnosticWindowKey) ?? "none",
+                    "tree-proposed": TiledLayoutEngine.fingerprint(proposedTree),
+                ]
+            )
+        }
+        guard concealManualTiledParticipants(
+            session.participantKeys,
+            diagnosticCategory: "manual-move-preview",
+            correlationID: correlationID
+        ) else {
+            cancelManualTiledMovePreview(reason: "participant-concealment-failed")
+            return
+        }
+    }
+
+    private func commitManualTiledMovePreview() {
+        guard var session = manualTiledMovePreviewSession else { return }
+        updateConcealedManualTiledMovePreview()
+        guard let updatedSession = manualTiledMovePreviewSession else { return }
+        session = updatedSession
+        let correlationID = "manual-move-\(session.token.uuidString.prefix(8))"
+        let displays = Self.activeDisplays()
+        guard !isWindowManagementPaused,
+              !wakeReconciliationState.isSleeping,
+              !wakeReconciliationState.isPending,
+              windowServerSessionValidated,
+              currentProfileID == session.profileID,
+              Self.displayTopologySignature(displays) == session.topologySignature,
+              tiledTrees[session.partition] == session.originalTree,
+              let tracked = windows[session.focusedWindow],
+              isWorkspaceActive(tracked.workspaceID),
+              workspaceLayout(for: tracked.workspaceID) == .tiled,
+              fullscreenSessions[session.focusedWindow] == nil,
+              !isQuickAppShelfPresented,
+              let display = displays.first(where: {
+                  $0.identifier == session.partition.displayIdentifier
+              }),
+              (workspaceLayoutConfiguration(for: tracked.workspaceID)
+                ?? .aeroSpaceUserDefaults) == session.configuration,
+              managedLayoutBounds(display.usableBounds) == session.layoutBounds
+        else {
+            cancelManualTiledMovePreview(reason: "release-validation-failed")
+            return
+        }
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier,
+            displays: displays,
+            correlationID: correlationID
+        )
+        guard Set(participants) == session.participantKeys,
+              let target = session.candidateTarget,
+              participants.contains(target),
+              session.proposedTree != session.originalTree,
+              let effectiveShares = TiledLayoutEngine.leafShares(session.proposedTree)
+        else {
+            cancelManualTiledMovePreview(reason: "released-without-target")
+            return
+        }
+
+        manualTiledMovePreviewSession = nil
+        tiledTrees[session.partition] = session.proposedTree
+        for (index, key) in session.proposedTree.windowKeys.enumerated() {
+            windows[key]?.layoutOrder = index
+            windows[key]?.layoutWeight = effectiveShares[key] ?? 1
+        }
+        lastFocusedWindow[tracked.workspaceID] = session.focusedWindow
+        radialPlacementCommitContext = nil
+        radialFreeformPlacementCommitContext = nil
+        directionalMoveGestureContext = nil
+        manualTiledDragSession = nil
+        let changes = participants.compactMap { key -> FrameChange? in
+            guard let window = windows[key], let frame = session.proposedFrames[key] else {
+                return nil
+            }
+            lastSolvedTiledFrames[key] = frame
+            return FrameChange(window: window, frame: frame)
+        }
+        applyFrameChanges(changes, correlationID: correlationID)
+        lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
+        persistState(preservingPendingRestores: true)
+        diagnostics.log(
+            category: "manual-move-preview",
+            event: "committed",
+            correlation: correlationID,
+            fields: [
+                "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                "display": Self.shortIdentifier(display.identifier),
+                "window": Self.diagnosticWindowKey(session.focusedWindow),
+                "swapped-with": Self.diagnosticWindowKey(target),
+                "window-count": String(participants.count),
+                "tree-before": TiledLayoutEngine.fingerprint(session.originalTree),
+                "tree-after": TiledLayoutEngine.fingerprint(session.proposedTree),
+            ]
+        )
+        emitTiledResizePreviewEvent(.dismiss(token: session.token, reason: "committed"))
+    }
+
+    private func cancelManualTiledMovePreview(reason: String) {
+        guard let session = manualTiledMovePreviewSession else { return }
+        manualTiledMovePreviewSession = nil
+        lastBackgroundLayoutSignature = nil
+        let correlationID = "manual-move-\(session.token.uuidString.prefix(8))"
+        restoreManualTiledParticipants(
+            session.participantKeys,
+            frames: session.originalFrames,
+            correlationID: correlationID
+        )
+        diagnostics.log(
+            category: "manual-move-preview",
+            event: "cancelled",
+            correlation: correlationID,
+            fields: ["reason": reason]
+        )
+        emitTiledResizePreviewEvent(.dismiss(token: session.token, reason: reason))
+    }
+
+    func cancelTiledResizePreview(reason: String) {
+        queue.async { [weak self] in
+            self?.cancelManualTiledPreviewTransactions(reason: reason)
+        }
+    }
+
+    private func updateManualTiledResizePreview(allowStartingSession: Bool = true) {
+        if let existingSession = manualTiledResizeSession {
+            updateConcealedManualTiledResizePreview(existingSession)
+            return
+        }
+        guard !isWindowManagementPaused,
+              !wakeReconciliationState.isSleeping,
+              !wakeReconciliationState.isPending,
+              windowServerSessionValidated,
+              !isQuickAppShelfPresented,
+              let focused = focusedWindowSnapshot(),
+              let observedFrame = focused.frame,
+              let tracked = windows[focused.key],
+              isWorkspaceActive(tracked.workspaceID),
+              workspaceLayout(for: tracked.workspaceID) == .tiled,
+              fullscreenSessions[focused.key] == nil,
+              !temporarilyDeferredWindowKeys.contains(focused.key),
+              Self.shouldIncludeInLayout(
+                  layoutOverride: tracked.layoutOverride,
+                  admissionDecision: tracked.admissionDecision,
+                  rule: resolvedRule(for: tracked.bundleIdentifier)
+              )
+        else {
+            return
+        }
+
+        let displays = Self.activeDisplays()
+        guard let display = targetDisplay(
+            for: tracked,
+            workspaceID: tracked.workspaceID,
+            displays: displays,
+            correlationID: nil
+        ) else {
+            return
+        }
+        let topologySignature = Self.displayTopologySignature(displays)
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier,
+            displays: displays,
+            correlationID: nil
+        )
+        let configuration = workspaceLayoutConfiguration(for: tracked.workspaceID)
+            ?? .aeroSpaceUserDefaults
+        let layoutBounds = managedLayoutBounds(display.usableBounds)
+        let partition = TiledLayoutPartitionKey(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier
+        )
+
+        guard allowStartingSession, participants.count > 1, participants.contains(focused.key),
+              let originalTree = TiledLayoutEngine.reconciled(
+                  tiledTrees[partition],
+                  windowKeys: participants,
+                  weights: participants.map {
+                      CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
+                  },
+                  orientation: configuration.orientation.resolved(for: layoutBounds)
+              )
+        else { return }
+
+        guard let originalFrames = try? TiledLayoutEngine.frames(
+            for: originalTree,
+            in: layoutBounds,
+            configuration: configuration
+        ), let expectedFocusedFrame = originalFrames[focused.key],
+              let lastSolvedFrame = lastSolvedTiledFrames[focused.key],
+              AccessibilityWindow.framesMatch(lastSolvedFrame, expectedFocusedFrame)
+        else {
+            return
+        }
+
+        guard let pointer = CGEvent(source: nil)?.location else { return }
+        let draggedEdges = TiledResizeDraggedEdges.inferred(
+            expectedFrame: expectedFocusedFrame,
+            observedFrame: observedFrame
+        )
+        guard !draggedEdges.isEmpty else { return }
+
+        let proposedTree = TiledLayoutEngine.resizedToMatchObservedFrame(
+            originalTree,
+            focusedWindow: focused.key,
+            observedFrame: observedFrame,
+            displayBounds: layoutBounds,
+            configuration: configuration
+        ) ?? originalTree
+        guard proposedTree != originalTree else { return }
+        guard let proposedFrames = try? TiledLayoutEngine.frames(
+            for: proposedTree,
+            in: layoutBounds,
+            configuration: configuration
+        ) else {
+            return
+        }
+
+        let token = UUID()
+        let session = ManualTiledResizeSession(
+            token: token,
+            focusedWindow: focused.key,
+            partition: partition,
+            participantKeys: Set(participants),
+            originalTree: originalTree,
+            originalFrames: originalFrames,
+            configuration: configuration,
+            layoutBounds: layoutBounds,
+            topologySignature: topologySignature,
+            profileID: currentProfileID,
+            draggedEdges: draggedEdges,
+            anchorFrame: observedFrame,
+            anchorPointer: pointer,
+            proposedTree: proposedTree,
+            proposedFrames: proposedFrames
+        )
+        manualTiledResizeSession = session
+        manualTiledDragSession = nil
+        let presentation = TiledResizePreviewPresentation(
+            token: token,
+            displayIdentifier: display.identifier,
+            layoutBounds: WindowFrame(position: layoutBounds.origin, size: layoutBounds.size),
+            frames: proposedFrames,
+            transition: .immediate
+        )
+        emitTiledResizePreviewEvent(.present(presentation))
+        guard concealManualTiledResizeParticipants(
+            session,
+            correlationID: "manual-resize-\(token.uuidString.prefix(8))"
+        ) else {
+            cancelManualTiledResizePreview(reason: "participant-concealment-failed")
+            return
+        }
+        diagnostics.log(
+            category: "manual-resize-preview",
+            event: "started",
+            correlation: "manual-resize-\(token.uuidString.prefix(8))",
+            fields: [
+                "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                "display": Self.shortIdentifier(display.identifier),
+                "window": Self.diagnosticWindowKey(focused.key),
+                "window-count": String(participants.count),
+                "tree-proposed": TiledLayoutEngine.fingerprint(proposedTree),
+            ]
+        )
+    }
+
+    private func updateConcealedManualTiledResizePreview(
+        _ session: ManualTiledResizeSession
+    ) {
+        let correlationID = "manual-resize-\(session.token.uuidString.prefix(8))"
+        let displays = Self.activeDisplays()
+        guard !isWindowManagementPaused,
+              !wakeReconciliationState.isSleeping,
+              !wakeReconciliationState.isPending,
+              windowServerSessionValidated,
+              !isQuickAppShelfPresented,
+              currentProfileID == session.profileID,
+              Self.displayTopologySignature(displays) == session.topologySignature,
+              tiledTrees[session.partition] == session.originalTree,
+              let tracked = windows[session.focusedWindow],
+              isWorkspaceActive(tracked.workspaceID),
+              workspaceLayout(for: tracked.workspaceID) == .tiled,
+              fullscreenSessions[session.focusedWindow] == nil,
+              !temporarilyDeferredWindowKeys.contains(session.focusedWindow),
+              let display = displays.first(where: {
+                  $0.identifier == session.partition.displayIdentifier
+              }),
+              (workspaceLayoutConfiguration(for: tracked.workspaceID)
+                ?? .aeroSpaceUserDefaults) == session.configuration,
+              managedLayoutBounds(display.usableBounds) == session.layoutBounds
+        else {
+            cancelManualTiledResizePreview(reason: "context-changed")
+            return
+        }
+
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier,
+            displays: displays,
+            correlationID: correlationID
+        )
+        guard Set(participants) == session.participantKeys,
+              let pointer = CGEvent(source: nil)?.location,
+              let observedFrame = session.draggedEdges.projectedFrame(
+                  from: session.anchorFrame,
+                  anchorPointer: session.anchorPointer,
+                  pointer: pointer
+              )
+        else {
+            cancelManualTiledResizePreview(reason: "participants-or-pointer-changed")
+            return
+        }
+
+        let proposedTree = TiledLayoutEngine.resizedToMatchObservedFrame(
+            session.originalTree,
+            focusedWindow: session.focusedWindow,
+            observedFrame: observedFrame,
+            displayBounds: session.layoutBounds,
+            configuration: session.configuration
+        ) ?? session.originalTree
+        guard let proposedFrames = try? TiledLayoutEngine.frames(
+            for: proposedTree,
+            in: session.layoutBounds,
+            configuration: session.configuration
+        ) else {
+            cancelManualTiledResizePreview(reason: "proposal-invalid")
+            return
+        }
+
+        var updated = session
+        updated.proposedTree = proposedTree
+        updated.proposedFrames = proposedFrames
+        manualTiledResizeSession = updated
+
+        let presentation = TiledResizePreviewPresentation(
+            token: session.token,
+            displayIdentifier: display.identifier,
+            layoutBounds: WindowFrame(
+                position: session.layoutBounds.origin,
+                size: session.layoutBounds.size
+            ),
+            frames: proposedFrames,
+            transition: .immediate
+        )
+        emitTiledResizePreviewEvent(.present(presentation))
+        guard concealManualTiledResizeParticipants(updated, correlationID: correlationID) else {
+            cancelManualTiledResizePreview(reason: "participant-concealment-failed")
+            return
+        }
+        diagnostics.log(
+            category: "manual-resize-preview",
+            event: "updated",
+            correlation: correlationID,
+            fields: [
+                "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                "display": Self.shortIdentifier(display.identifier),
+                "window": Self.diagnosticWindowKey(session.focusedWindow),
+                "window-count": String(participants.count),
+                "tree-proposed": TiledLayoutEngine.fingerprint(proposedTree),
+            ]
+        )
+    }
+
+    private func concealManualTiledResizeParticipants(
+        _ session: ManualTiledResizeSession,
+        correlationID: String
+    ) -> Bool {
+        concealManualTiledParticipants(
+            session.participantKeys,
+            diagnosticCategory: "manual-resize-preview",
+            correlationID: correlationID
+        )
+    }
+
+    private func concealManualTiledParticipants(
+        _ participantKeys: Set<WindowKey>,
+        diagnosticCategory: String,
+        correlationID: String
+    ) -> Bool {
+        let targets = participantKeys.compactMap { windows[$0] }
+        guard targets.count == participantKeys.count else { return false }
+        let parkingPosition = parkingPosition()
+        var allSucceeded = true
+        for (processIdentifier, applicationTargets) in Dictionary(
+            grouping: targets,
+            by: \.processIdentifier
+        ) {
+            AccessibilityWindow.withoutPositionAnimations(for: processIdentifier) {
+                for target in applicationTargets {
+                    let succeeded = AccessibilityWindow.setPositionIfNeeded(
+                        parkingPosition,
+                        of: target.element
+                    )
+                    allSucceeded = allSucceeded && succeeded
+                    diagnostics.log(
+                        category: diagnosticCategory,
+                        event: "participant-concealed",
+                        correlation: correlationID,
+                        fields: [
+                            "window": Self.diagnosticWindowKey(target.key),
+                            "success": String(succeeded),
+                        ]
+                    )
+                }
+            }
+        }
+        return allSucceeded
+    }
+
+    private func restoreManualTiledResizeParticipants(
+        _ session: ManualTiledResizeSession,
+        frames: [WindowKey: WindowFrame],
+        correlationID: String
+    ) {
+        restoreManualTiledParticipants(
+            session.participantKeys,
+            frames: frames,
+            correlationID: correlationID
+        )
+    }
+
+    private func restoreManualTiledParticipants(
+        _ participantKeys: Set<WindowKey>,
+        frames: [WindowKey: WindowFrame],
+        correlationID: String
+    ) {
+        let changes = participantKeys.compactMap { key -> FrameChange? in
+            guard let tracked = windows[key], let frame = frames[key] else { return nil }
+            return FrameChange(window: tracked, frame: frame)
+        }
+        applyFrameChanges(changes, correlationID: correlationID)
+    }
+
+    private func cancelManualTiledPreviewTransactions(reason: String) {
+        cancelManualTiledMovePreview(reason: reason)
+        cancelManualTiledResizePreview(reason: reason)
+    }
+
+    private func cancelManualTiledResizePreview(reason: String) {
+        guard let session = manualTiledResizeSession else { return }
+        manualTiledResizeSession = nil
+        lastBackgroundLayoutSignature = nil
+        let correlationID = "manual-resize-\(session.token.uuidString.prefix(8))"
+        restoreManualTiledResizeParticipants(
+            session,
+            frames: session.originalFrames,
+            correlationID: correlationID
+        )
+        diagnostics.log(
+            category: "manual-resize-preview",
+            event: "cancelled",
+            correlation: correlationID,
+            fields: ["reason": reason]
+        )
+        emitTiledResizePreviewEvent(.dismiss(token: session.token, reason: reason))
+    }
+
+    private func emitTiledResizePreviewEvent(_ event: TiledResizePreviewEvent) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onTiledResizePreviewChanged?(event)
+        }
     }
 
     /// A normal refresh sees an externally resized tiled window before the background layout pass.
@@ -9304,6 +10151,7 @@ final class WorkspaceEngine {
     }
 
     private func clearWindowServerBoundStateAfterSessionChange() {
+        cancelManualTiledPreviewTransactions(reason: "window-server-session-changed")
         windows.removeAll()
         pendingRestoredWindows.removeAll()
         ignoredWindowKeys.removeAll()
@@ -10099,24 +10947,42 @@ final class WorkspaceEngine {
             lastFocusedWindow[tracked.workspaceID] = focused
         }
 
-        var manualTiledDragInProgress = false
-        if performAXWrites, !isStartup, !topologyChanged, !lifecycleTransitionActive, let focused,
+        if let resizeSession = manualTiledResizeSession,
+           isStartup || topologyChanged || lifecycleTransitionActive ||
+            !resizeSession.participantKeys.isSubset(of: Set(windows.keys)) {
+            cancelManualTiledResizePreview(reason: topologyChanged
+                ? "display-topology-changed"
+                : lifecycleTransitionActive ? "lifecycle-transition" : "participants-changed")
+        }
+        if let moveSession = manualTiledMovePreviewSession,
+           isStartup || topologyChanged || lifecycleTransitionActive ||
+            !moveSession.participantKeys.isSubset(of: Set(windows.keys)) {
+            cancelManualTiledMovePreview(reason: topologyChanged
+                ? "display-topology-changed"
+                : lifecycleTransitionActive ? "lifecycle-transition" : "participants-changed")
+        }
+
+        var manualTiledDragInProgress = manualTiledMovePreviewSession != nil
+        if manualTiledResizeSession == nil, manualTiledMovePreviewSession == nil,
+           performAXWrites, !isStartup, !topologyChanged, !lifecycleTransitionActive, let focused,
            !isDropDownAppWindow(focused),
            let focusedTracked = windows[focused],
            !isExcludedFromWorkspaceParticipation(focusedTracked) {
+            let isLeftMouseButtonPressed = CGEventSource.buttonState(
+                .combinedSessionState,
+                button: .left
+            )
             let moveReconciliation = reconcileManualTiledMove(
                 focusedWindow: focused,
                 observedFrames: observedFrames,
                 displays: displays,
                 pointerLocation: CGEvent(source: nil)?.location,
-                isLeftMouseButtonPressed: CGEventSource.buttonState(
-                    .combinedSessionState,
-                    button: .left
-                ),
+                isLeftMouseButtonPressed: isLeftMouseButtonPressed,
                 correlationID: correlationID
             )
-            manualTiledDragInProgress = moveReconciliation == .dragInProgress
-            if moveReconciliation == .none {
+            manualTiledDragInProgress = moveReconciliation == .dragInProgress ||
+                (isLeftMouseButtonPressed && workspaceLayout(for: focusedTracked.workspaceID) == .tiled)
+            if moveReconciliation == .none, !isLeftMouseButtonPressed {
                 reconcileManualTiledResize(
                     focusedWindow: focused,
                     observedFrames: observedFrames,
@@ -10124,25 +10990,30 @@ final class WorkspaceEngine {
                     correlationID: correlationID
                 )
             }
-        } else if isStartup || topologyChanged || lifecycleTransitionActive || focused == nil {
+        } else if manualTiledResizeSession == nil, manualTiledMovePreviewSession == nil,
+                    (isStartup || topologyChanged || lifecycleTransitionActive || focused == nil) {
             manualTiledDragSession = nil
         }
+
+        let manualTiledInteractionInProgress = manualTiledDragInProgress ||
+            manualTiledMovePreviewSession != nil ||
+            manualTiledResizeSession != nil
 
         let layoutSignatureBeforeApply = backgroundLayoutSignature(displays: displays)
         if performAXWrites, topologyChanged, !isStartup {
             applyVisibility(displays: displays, correlationID: correlationID)
-        } else if performAXWrites, !manualTiledDragInProgress, Self.shouldApplyBackgroundLayout(
+        } else if performAXWrites, !manualTiledInteractionInProgress, Self.shouldApplyBackgroundLayout(
             previousSignature: lastBackgroundLayoutSignature,
             currentSignature: layoutSignatureBeforeApply,
             isStartup: isStartup
         ) {
             applyVisibility(displays: displays, correlationID: correlationID)
         }
-        if performAXWrites, !manualTiledDragInProgress, resizeRecoveryNeedsImmediateReflow {
+        if performAXWrites, !manualTiledInteractionInProgress, resizeRecoveryNeedsImmediateReflow {
             resizeRecoveryNeedsImmediateReflow = false
             applyVisibility(displays: displays, correlationID: correlationID)
         }
-        if performAXWrites, !manualTiledDragInProgress {
+        if performAXWrites, !manualTiledInteractionInProgress {
             lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
         }
 
@@ -10559,6 +11430,12 @@ final class WorkspaceEngine {
         if let dragSession = manualTiledDragSession,
            dragSession.focusedWindow == key || dragSession.candidateTarget == key {
             manualTiledDragSession = nil
+        }
+        if manualTiledMovePreviewSession?.participantKeys.contains(key) == true {
+            cancelManualTiledMovePreview(reason: "participant-removed")
+        }
+        if manualTiledResizeSession?.participantKeys.contains(key) == true {
+            cancelManualTiledResizePreview(reason: "participant-removed")
         }
         for bundleKey in Array(quickAppSessions.keys) {
             guard var session = quickAppSessions[bundleKey] else { continue }
@@ -15948,6 +16825,9 @@ final class WorkspaceEngine {
                 "automatically-unhide-applications": String(automaticallyUnhideApplications),
                 "workspace-count": String(workspaces.count),
                 "display-count": String(displays.count),
+                "displays-have-separate-spaces": Self.displaysHaveSeparateSpacesDiagnosticValue(
+                    NSScreen.screensHaveSeparateSpaces
+                ),
             ]
         )
         for display in displays {
@@ -15979,6 +16859,10 @@ final class WorkspaceEngine {
                 ]
             )
         }
+    }
+
+    static func displaysHaveSeparateSpacesDiagnosticValue(_ enabled: Bool) -> String {
+        String(enabled)
     }
 
     private func diagnosticActiveWorkspaceMap() -> String {

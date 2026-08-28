@@ -928,7 +928,7 @@ private extension CGRect {
 @MainActor
 private final class MenuBarDisplayGroupHoverTracker: NSResponder {
     private weak var button: NSStatusBarButton?
-    private weak var contentView: MenuBarDisplayGroupContentView?
+    private var renderedContent: MenuBarDisplayGroupRenderedContent?
     private var trackingAreas: [NSTrackingArea] = []
     private var pointerIsOverWorkspace = false
     private var currentTarget: MenuBarHitTarget?
@@ -944,14 +944,14 @@ private final class MenuBarDisplayGroupHoverTracker: NSResponder {
 
     func configure(
         button: NSStatusBarButton,
-        contentView: MenuBarDisplayGroupContentView
+        renderedContent: MenuBarDisplayGroupRenderedContent
     ) {
         removeTrackingAreas()
         self.button = button
-        self.contentView = contentView
+        self.renderedContent = renderedContent
+        button.image = renderedContent.image(for: currentTarget)
         button.layoutSubtreeIfNeeded()
-        contentView.layoutSubtreeIfNeeded()
-        for region in contentView.workspaceTrackingRegions(in: button) where !region.frame.isEmpty {
+        for region in renderedContent.trackingRegions(in: button) where !region.frame.isEmpty {
             let area = NSTrackingArea(
                 rect: region.frame,
                 options: [.mouseEnteredAndExited, .activeAlways],
@@ -982,20 +982,24 @@ private final class MenuBarDisplayGroupHoverTracker: NSResponder {
 
     func invalidate() {
         removeTrackingAreas()
-        contentView?.clearHover()
         pointerIsOverWorkspace = false
         currentTarget = nil
         button = nil
-        contentView = nil
+        renderedContent = nil
     }
 
     private func refreshHover() {
-        guard let contentView else { return }
-        let targets = contentView.screenSpaceTargets()
-        let target = contentView.updateHover(at: NSEvent.mouseLocation)
+        guard let button, let renderedContent else { return }
+        let targets = renderedContent.screenSpaceTargets(in: button)
+        let resolved = MenuBarScreenSpaceTargetResolver.target(
+            at: NSEvent.mouseLocation,
+            among: targets
+        )
+        let target: MenuBarHitTarget? = if case .workspace = resolved { resolved } else { nil }
         pointerIsOverWorkspace = target != nil
         guard target != currentTarget else { return }
         currentTarget = target
+        button.image = renderedContent.image(for: target)
         let frame = target.flatMap { target in
             targets.first(where: { $0.hitTarget == target })?.frame
         }
@@ -1015,7 +1019,7 @@ private final class MenuBarDisplayGroupHoverTracker: NSResponder {
 @MainActor
 private struct ManagedDisplayGroupStatusItem {
     let statusItem: NSStatusItem
-    var contentView: MenuBarDisplayGroupContentView?
+    var renderedContent: MenuBarDisplayGroupRenderedContent?
     var hoverTracker: MenuBarDisplayGroupHoverTracker?
 }
 
@@ -1056,7 +1060,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private var displayIconConfiguration: MenuBarDisplayIconConfiguration
     private var highlightColor: MenuBarHighlightColor
     private var displayGroupStatusItems: [ManagedDisplayGroupStatusItem] = []
-    private var displayGroupContentByButton: [ObjectIdentifier: MenuBarDisplayGroupContentView] = [:]
+    private var displayGroupContentByButton: [ObjectIdentifier: MenuBarDisplayGroupRenderedContent] = [:]
+    private var systemColorsObserver: NSObjectProtocol?
     private var hostView: MenuBarStatusHostView?
     private var contentView: MenuBarStatusContentView?
     private var lastSnapshot: MenuBarPresentationSnapshot?
@@ -1120,6 +1125,13 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         // An assigned NSStatusItem menu owns every click. The custom host keeps workspace buttons
         // interactive and presents this same menu explicitly for the primary area and right-click.
         statusItem.menu = nil
+        systemColorsObserver = NotificationCenter.default.addObserver(
+            forName: NSColor.systemColorsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rebuild(force: true) }
+        }
         rebuildMenu()
         rebuild(force: true)
     }
@@ -1307,7 +1319,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             item.autosaveName = "\(ApplicationIdentity.bundleIdentifier).full-display-group-\(slot)"
             displayGroupStatusItems.append(ManagedDisplayGroupStatusItem(
                 statusItem: item,
-                contentView: nil,
+                renderedContent: nil,
                 hoverTracker: nil
             ))
         }
@@ -1322,36 +1334,21 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         guard let button = managed.statusItem.button else { return }
         button.title = ""
         button.attributedTitle = NSAttributedString(string: "")
-        button.image = nil
-        button.imagePosition = .noImage
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleNone
         button.contentTintColor = .labelColor
         button.target = self
         button.action = #selector(displayGroupStatusButtonActivated(_:))
         _ = button.sendAction(on: MenuBarStatusItemControlEventPolicy.actionEvents)
-        let content: MenuBarDisplayGroupContentView
-        if let existing = managed.contentView {
-            existing.configure(
-                plan: plan,
-                workspaceLabelMode: snapshot.workspaceLabelMode,
-                highlightColor: highlightColor,
-                displayIconConfiguration: displayIconConfiguration
-            )
-            content = existing
-        } else {
-            content = MenuBarDisplayGroupContentView(
-                plan: plan,
-                workspaceLabelMode: snapshot.workspaceLabelMode,
-                highlightColor: highlightColor,
-                displayIconConfiguration: displayIconConfiguration
-            )
-            button.addSubview(content)
-            NSLayoutConstraint.activate([
-                content.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-                content.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-                content.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            ])
-        }
-        managed.statusItem.length = max(24, content.intrinsicContentSize.width)
+        let renderedContent = MenuBarDisplayGroupRenderedContent(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: highlightColor,
+            displayIconConfiguration: displayIconConfiguration,
+            appearance: button.effectiveAppearance
+        )
+        button.image = renderedContent.image(for: nil)
+        managed.statusItem.length = max(24, renderedContent.size.width)
         button.layoutSubtreeIfNeeded()
         let hoverTracker: MenuBarDisplayGroupHoverTracker?
         if plan.mode == .full {
@@ -1359,7 +1356,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
                 [weak self] target, frame in
                 self?.workspaceHoverChanged(target, anchorFrame: frame)
             }
-            tracker.configure(button: button, contentView: content)
+            tracker.configure(button: button, renderedContent: renderedContent)
             hoverTracker = tracker
         } else {
             managed.hoverTracker?.invalidate()
@@ -1380,9 +1377,9 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             )
             button.setAccessibilityHelp("Opens the WindowRanger menu.")
         }
-        displayGroupStatusItems[index].contentView = content
+        displayGroupStatusItems[index].renderedContent = renderedContent
         displayGroupStatusItems[index].hoverTracker = hoverTracker
-        displayGroupContentByButton[ObjectIdentifier(button)] = content
+        displayGroupContentByButton[ObjectIdentifier(button)] = renderedContent
     }
 
     private func removeDisplayGroupStatusItems() {
@@ -1588,7 +1585,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         let pointerTarget = content.flatMap { content in
             MenuBarScreenSpaceTargetResolver.target(
                 at: NSEvent.mouseLocation,
-                among: content.screenSpaceTargets()
+                among: content.screenSpaceTargets(in: sender)
             )
         }
         switch MenuBarStatusItemActivationPolicy.action(
@@ -1624,6 +1621,10 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         contentView?.removeFromSuperview()
         contentView = nil
         removeDisplayGroupStatusItems()
+        if let systemColorsObserver {
+            NotificationCenter.default.removeObserver(systemColorsObserver)
+            self.systemColorsObserver = nil
+        }
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 

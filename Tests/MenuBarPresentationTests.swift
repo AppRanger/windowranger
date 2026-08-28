@@ -984,6 +984,58 @@ final class MenuBarPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testRenderedDisplayGroupPreservesSizeTargetsAndRetinaBitmapsWithoutALiveSubview() throws {
+        let snapshot = independentSnapshot(displays: [mainDisplay]).replacingMode(.full)
+        let plan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+            for: snapshot,
+            availableWidth: 620
+        ).first)
+        let appearance = try XCTUnwrap(NSAppearance(named: .aqua))
+        let rendered = MenuBarDisplayGroupRenderedContent(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: .default,
+            appearance: appearance,
+            scale: 2
+        )
+        let reference = MenuBarDisplayGroupContentView(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: .default
+        )
+        layout(reference)
+
+        XCTAssertEqual(rendered.mode, .full)
+        XCTAssertEqual(rendered.size, reference.bounds.size)
+        XCTAssertEqual(
+            rendered.workspaceRegions,
+            reference.workspaceTrackingRegions(in: reference)
+        )
+
+        let normalImage = rendered.image(for: nil)
+        let hoveredImage = rendered.image(for: rendered.workspaceRegions.first?.hitTarget)
+        XCTAssertEqual(normalImage.size, rendered.size)
+        XCTAssertEqual(hoveredImage.size, rendered.size)
+        XCTAssertFalse(normalImage === hoveredImage)
+        let bitmap = try XCTUnwrap(normalImage.representations.first as? NSBitmapImageRep)
+        XCTAssertEqual(bitmap.pixelsWide, Int(ceil(rendered.size.width * 2)))
+        XCTAssertEqual(bitmap.pixelsHigh, Int(ceil(rendered.size.height * 2)))
+
+        let statusButtonBounds = CGRect(
+            origin: .zero,
+            size: CGSize(width: rendered.size.width + 10, height: rendered.size.height + 6)
+        )
+        let standInButton = NSView(frame: statusButtonBounds)
+        let translatedRegions = rendered.trackingRegions(in: standInButton)
+        XCTAssertEqual(translatedRegions.map(\.hitTarget), rendered.workspaceRegions.map(\.hitTarget))
+        XCTAssertEqual(
+            translatedRegions.first?.frame,
+            rendered.workspaceRegions.first?.frame.offsetBy(dx: 5, dy: 3)
+        )
+        XCTAssertTrue(standInButton.subviews.isEmpty)
+    }
+
+    @MainActor
     func testInformationalDisplayGroupContentStaysMenuOnly() throws {
         let medium = independentSnapshot(displays: [mainDisplay])
 
@@ -1007,6 +1059,16 @@ final class MenuBarPresentationTests: XCTestCase {
                 x: content.bounds.midX,
                 y: content.bounds.midY
             )))
+
+            let rendered = MenuBarDisplayGroupRenderedContent(
+                plan: plan,
+                workspaceLabelMode: medium.workspaceLabelMode,
+                highlightColor: .default,
+                appearance: try XCTUnwrap(NSAppearance(named: .aqua))
+            )
+            XCTAssertEqual(rendered.mode, mode)
+            XCTAssertTrue(rendered.workspaceRegions.isEmpty)
+            XCTAssertEqual(rendered.image(for: .primary).size, rendered.size)
         }
     }
 

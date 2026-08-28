@@ -171,6 +171,116 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-091 — Remove the macOS 27 status-item redraw loop
+
+- **Type:** Diagnostic-backed performance bug
+- **Priority:** P0
+- **Status:** Live validation — the static-rendering correction is implemented, reviewed,
+  automated-test verified, installed, and performance-verified; maintainer interaction acceptance
+  remains.
+- **Reported:** 28 August 2026 during the deep CPU and memory optimisation audit.
+- **Observed:** The installed signed Debug daily copy sustained about 46% of one CPU core while
+  otherwise idle. A three-second process sample attributed 561 of 1,231 sampled main-thread stacks
+  to AppKit status-item replicant updates and snapshot rendering of WindowRanger's retained custom
+  display-group views. This is diagnostic-backed, not inferred from source alone.
+- **Expected:** An unchanged menu-bar presentation should be effectively idle. Compact, Medium, and
+  Full must retain the existing per-display ordering, widths, labels, hover feedback, workspace hit
+  regions, primary/right/control click routing, menu behavior, accessibility, and appearance.
+- **Implemented:** On macOS 27 and later, each standard `NSStatusBarButton` now owns only a cached 2x
+  bitmap and immutable workspace geometry. The existing hierarchy is constructed offscreen solely
+  when presentation or system colours change, then discarded. Normal and workspace-hover images
+  are pre-rendered so pointer movement only swaps an image; no custom view remains attached beneath
+  AppKit's live status button. The pre-macOS-27 composition path is unchanged.
+- **Automated evidence:** The focused 46-test menu-bar suite, unsigned Debug app build, test-isolation
+  gate, and complete 754-test non-hosted suite pass. New coverage checks exact rendered size, 2x
+  pixel dimensions, normal/hover image availability, preserved hit targets, parent-button centring,
+  informational modes, and the absence of a live custom subview. A skeptical read-only review found
+  no material blockers and independently matched the geometry to AppKit's image rect.
+- **Installed evidence:** The Apple Development-signed universal Debug daily build for
+  `0561951a20e5-dirty` was installed at `/Applications/WindowRanger.app`, signature-verified, and
+  relaunched as PID 97265. A 20-sample idle run averaged 5.7% CPU versus about 46% before the change,
+  an approximately 88% reduction. The follow-up five-second sample found only single-digit AppKit
+  replicant updates during genuine status rebuilds rather than the former continuous 561-of-1,231
+  main-thread sample path. After two minutes, physical footprint settled to 76.5 MB versus 79.5 MB
+  before the change, with a 364 MB launch peak versus 380 MB before it. The process RSS snapshot was
+  about 96 MB versus 53 MB before it, so memory has no demonstrated regression in physical footprint
+  but still needs a longer, like-for-like baseline before drawing an RSS conclusion.
+- **Live validation remaining:** Exercise Compact, Medium, and Full; every Full workspace click and
+  hover/Shelf path; primary/right/control menu opening; menu-bar item ordering; VoiceOver; and
+  Light/Dark appearance before marking this Done.
+
+### WR-089 — Preview manual Tiled resize and move with glass tiles
+
+- **Type:** Tiled layout interaction refinement
+- **Priority:** P2
+- **Status:** Live validation — transparent resize was accepted; animated move preview is
+  implemented, automated/build verified, installed, and awaiting maintainer interaction acceptance.
+- **Requested:** 25 August 2026.
+- **Smallest useful outcome:** When the user begins resizing a managed window in a Tiled workspace,
+  visually replace every participating tile with a click-through glass placeholder that follows the
+  proposed split geometry. Temporarily park only the participating real windows, commit their new
+  frames once on mouse release, then remove the preview. Apply the same transaction to a genuine
+  title-bar move: animate the glass tiles into the swap proposed by the pointer target, and replace
+  them with the real windows only on release.
+- **Safety boundary:** Do not hide an application, minimise a window, activate WindowRanger, or
+  disturb unrelated windows. Capture exact original frames before parking participants, and restore
+  them on every cancellation path. The overlay must never intercept the resize gesture. Cancel and
+  remove it on a workspace, profile, participant set, display topology, lifecycle, Pause,
+  full-screen, Shelf, or termination boundary; an abandoned preview must retain the last committed
+  Tiled tree.
+- **Acceptance:** A genuine edge or corner size change with more than one eligible Tiled participant
+  starts the preview promptly; title-bar moves and WindowRanger resize commands do not. Placeholders
+  use the exact proposed final frames and native glass on macOS 26 or later, with the existing HUD
+  material fallback on older supported macOS versions. Once the preview begins, only bounded
+  concealment writes keep the participating windows parked while pointer movement drives the hints.
+  For a title-bar move, the source layout appears first and changed placeholders slide and resize to
+  each newly targeted tile; moving over the source or a gap previews and restores the original tree.
+  Release validates and commits the latest tree once before revealing the real windows. Focused
+  deterministic tests, the complete non-hosted suite, an unsigned app build, visual inspection, and
+  separately approved installed-app interaction validation are required.
+- **Implemented:** A passive global pointer monitor samples drag updates at a bounded 30 Hz without
+  broad window enumeration. The engine retains the committed BSP tree as an immutable session
+  baseline, captures exact participant frames and the dragged edge/pointer anchor, emits proposed
+  frames to one tokened nonactivating overlay, parks only the participating windows, and projects
+  subsequent geometry directly from the pointer. It applies the final participant frames once on a
+  fully revalidated release or restores the captured originals on cancellation. On macOS 26 and
+  later, untinted clear Liquid Glass tiles sit in one system glass container over the visible
+  desktop; a fine border in the glass-owned content view preserves the lightweight landing hint.
+  macOS 14–25 use the HUD-material fallback on the same transparent panel. The focused-window border
+  is suppressed for the transaction. Workspace/layout commands, Quick App Shelf commands, Pause,
+  profile changes, display/session lifecycle changes, WindowServer replacement, and quit explicitly
+  cancel the preview. A position-only title-bar move now starts the same tokened overlay from the
+  committed frames, resolves subsequent targets without consulting the parked AX windows, and
+  animates changed tile frames over 160 ms. Release commits the proposed leaf swap; release over the
+  source or a gap and every cancellation boundary restore the captured frames.
+- **Review correction:** A display-configuration change now reports whether it directly dismissed an
+  active preview and immediately restores the focused-window border before the engine completes its
+  tokened cancellation. This prevents the border remaining suppressed after the presenter has
+  already cleared its token; a focused regression test covers both active and already-empty paths.
+- **Automated evidence:** Twelve focused preview-policy, transition, coordinate-conversion,
+  dragged-edge projection, transparent glass-container, clear-glass hint/border,
+  native/fallback-surface, stale-token, and opt-in render tests pass. All 37 Tiled tree tests pass,
+  including concealed move target resolution from immutable committed frames. The complete
+  non-hosted suite passes all 754 tests, and the unsigned universal Debug app build succeeds for
+  both `arm64` and `x86_64`.
+- **Visual evidence:** The first installed candidate proved the exact 1+2 split and interaction but
+  its nearly opaque backing, tint, wash, mask, and outline visually flattened the native material.
+  Those custom layers are removed in the refined candidate; AppKit's live refraction over real
+  window content was accepted as a better direction. The concealed-content candidate then proved
+  too opaque for a transient landing hint. The lighter clear-glass candidate then made app content
+  visible beneath the tiles, and the clean-stage candidate again lost transparency. The revised
+  transaction instead removes only participating windows from view and leaves the transparent glass
+  over the desktop; the maintainer accepted that resize interaction. Animated move behavior requires
+  its own installed interaction check.
+- **Installed evidence:** The signed universal daily build for `0561951a20e5-dirty` is running from
+  `/Applications/WindowRanger.app` as PID 624 (CDHash
+  `fc590a046f823ae65c1de134d8c6e0d62cd861be`). Its Apple Development signature, Team ID
+  `44NAD22AK6`, bundle identity, `x86_64` and `arm64` architectures, embedded revision, and running
+  path were verified. Fresh diagnostics session `AC7F3B64-126F-43C9-A3C9-C4BF5EEF77AB` reached
+  `startup-state-ready` without a diagnostic error or fault. This installed build contains the
+  accepted resize transaction and the new animated move extension; move interaction remains
+  unaccepted.
+
 ### WR-087 — Copy a workspace layout without creating a preset library
 
 - **Type:** Workspace Settings convenience
@@ -2003,6 +2113,46 @@ smallest useful outcome and acceptance boundary.
   preview were working or visibly improved, then explicitly closed the pass for merge.
 
 ## Live validation
+
+### WR-090 — Validate Displays have separate Spaces compatibility
+
+- **Type:** Multi-display compatibility validation and diagnostics
+- **Priority:** P1
+- **Status:** Diagnostic instrumentation implemented; automated verification and signed daily-app
+  startup evidence complete; physical multi-display behavior validation remains.
+- **Requested:** 27 August 2026, after enabling the default macOS **Displays have separate Spaces**
+  setting following the development cycle with it disabled for AeroSpace compatibility.
+- **User-observed:** WindowRanger appeared to continue working after the setting was enabled. This is
+  not a confirmed compatibility result: AeroSpace documents macOS focus, performance, and native
+  Space-transfer failures when Accessibility-driven window movement crosses displays.
+- **Smallest useful outcome:** Keep the default macOS setting supported without making native Spaces
+  part of WindowRanger's workspace model. Record the setting in startup diagnostics and the bounded
+  focused-window support report, then validate the existing parking, restoration, focus, layout,
+  full-screen, and reconnect safety paths with real windows on two displays.
+- **Acceptance:** With separate Spaces enabled and one ordinary native Space per display, exercise
+  Unified and Independent Displays, repeated workspace parking/restoration, same-application windows
+  on both displays, Move & Follow to a workspace homed on the other display, Arrange-D workspace
+  display movement, native full screen on one display while using WindowRanger on the other, and
+  disconnect/reconnect plus sleep/wake. The exact requested window must retain focus without bouncing;
+  inactive windows must remain recoverably parked; restored/layout frames must resolve to the intended
+  display; and the other display must stay usable during native full screen. Separately switch a native
+  Space on one display and confirm WindowRanger fails safely rather than claiming to preserve native
+  Space membership. Capture diagnostics after the first mismatch rather than repeatedly moving the
+  affected windows.
+- **Implemented:** The verbose `session/started` record and schema-v2 focused-window report include
+  `displays-have-separate-spaces: true|false`, sampled from AppKit. The value is diagnostic context
+  only: it does not enter `DisplaySnapshot`, display-topology identity, persistence, sync, or any
+  window-management decision, and WindowRanger does not change the system preference.
+- **Automated evidence:** All 11 focused report tests pass, proving both preference values render
+  explicitly and the shared startup-field formatter is deterministic. The complete non-hosted quick
+  checkpoint passes all 754 tests, and the unsigned universal Debug app builds for `arm64` and
+  `x86_64`.
+- **Installed evidence (27 August 2026):** The Apple Development-signed universal Debug daily app
+  from `develop` at `0561951a20e5-dirty` was installed and relaunched from
+  `/Applications/WindowRanger.app`. Its live `session/started` record reported Debug build, two
+  displays, Independent Displays mode, and `displays-have-separate-spaces: true`. This proves the
+  installed diagnostic path and current system setting only; the acceptance scenarios above remain
+  unverified.
 
 ### WR-081 — Retain stable layout slots across transient Accessibility read failures
 

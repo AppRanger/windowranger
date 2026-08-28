@@ -107,6 +107,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var shortcutGuideModifierMonitor = ShortcutGuideModifierMonitor()
     private lazy var focusedWindowHighlightPresenter: FocusedWindowHighlightPresenting =
         FocusedWindowHighlightController(diagnostics: diagnostics)
+    private lazy var tiledResizePreviewPresenter: TiledResizePreviewPresenting =
+        TiledResizePreviewController(diagnostics: diagnostics)
+    private lazy var tiledResizePointerMonitor = TiledResizePointerMonitor(
+        onDragged: { [weak self] in self?.engine.tiledResizePointerDragged() },
+        onReleased: { [weak self] in self?.engine.tiledResizePointerReleased() }
+    )
     private lazy var hotKeyManager: HotKeyManager = {
         let manager = HotKeyManager(
             dispatcher: commandDispatcher,
@@ -215,6 +221,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         engine.onVerifiedFocusTarget = { [weak self] target in
             self?.focusedWindowHighlightPresenter.updateVerifiedFocusTarget(target)
+        }
+        engine.onTiledResizePreviewChanged = { [weak self] event in
+            guard let self else { return }
+            switch event {
+            case let .present(presentation):
+                self.focusedWindowHighlightPresenter.setSuppressed(
+                    true,
+                    reason: "tiled-resize-preview"
+                )
+                self.tiledResizePreviewPresenter.present(presentation)
+            case let .dismiss(token, reason):
+                if self.tiledResizePreviewPresenter.dismiss(token: token, reason: reason) {
+                    self.focusedWindowHighlightPresenter.setSuppressed(
+                        self.fullscreenGameSession != nil || self.isPauseModeEnabled,
+                        reason: "tiled-resize-preview-ended"
+                    )
+                }
+            }
         }
         engine.onFullscreenGameSessionChanged = { [weak self] session in
             guard let self, self.fullscreenGameSession != session else { return }
@@ -371,6 +395,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.workspaceSwipeController.cancel(reason: "display-configuration-changed")
                 self?.commandFeedbackPresenter.screenParametersDidChange()
                 self?.focusedWindowHighlightPresenter.screenParametersDidChange()
+                if let self,
+                   self.tiledResizePreviewPresenter.screenParametersDidChange() {
+                    self.focusedWindowHighlightPresenter.setSuppressed(
+                        self.fullscreenGameSession != nil || self.isPauseModeEnabled,
+                        reason: "tiled-resize-preview-display-change"
+                    )
+                }
+                self?.engine.cancelTiledResizePreview(reason: "display-configuration-changed")
                 self?.settingsWindowCoordinator.screenParametersDidChange()
                 self?.commandPaletteController.dismiss(reason: "display-configuration-changed")
                 self?.stopShortcutGuideObservation()
@@ -609,6 +641,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Install every Settings/profile subscriber before discovery can publish a foreground
         // full-screen game session. Otherwise an immediate startup session could advance the
         // active profile while the engine misses its generated transition request.
+        tiledResizePointerMonitor.start()
         engine.start()
         onboardingWindowController.presentIfNeeded()
     }
@@ -639,6 +672,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         workspaceSwipeController.shutdown()
         commandPaletteController.shutdown()
         commandFeedbackPresenter.shutdown()
+        tiledResizePointerMonitor.shutdown()
+        tiledResizePreviewPresenter.shutdown()
         stopShortcutGuideObservation()
         focusedWindowHighlightPresenter.shutdown()
         onboardingWindowController.shutdown()

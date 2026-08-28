@@ -435,6 +435,26 @@ public static Liquid Glass view; older supported releases use the system HUD mat
 surfaces use a capsule radius derived from the live overlay height. The surface choice never changes
 its panel, focus, input, timing, or accessibility boundary.
 
+Manual Tiled divider resize and title-bar move use two-phase preview transactions. A passive global
+mouse monitor asks the serialized engine for the focused-window frame only until a genuine size or
+position change classifies the gesture. The engine then freezes the committed tree, captures every
+participant's exact original frame, and parks only those windows at the recoverable desktop edge.
+Resize sessions also retain the dragged edge and pointer anchor; subsequent samples at a bounded
+30 Hz project an observed frame from the pointer rather than the concealed AX window. Move sessions
+resolve the tile under the pointer against the immutable committed frames, swap only those two tree
+leaves, and animate every changed glass frame toward the proposed result. Neither path requires
+broad window enumeration or application-wide Hide. A status-level, nonactivating, click-through
+overlay draws untinted clear Liquid Glass tiles over the visible desktop on macOS 26 or later. The
+glass remains in one shared `NSGlassEffectContainerView`; its only content is a fine inset outline.
+Older supported systems use the HUD-material fallback on the same transparent panel. The
+focused-window border is suppressed for the transaction so only the landing hints remain. Mouse-up
+revalidates profile, workspace, participant set, display topology, layout configuration and original
+tree, snaps the parked windows directly into the latest proposed frames, persists the committed
+tree, and then removes the overlay. Releasing a move over its source or a gap restores the original
+frames. Cancellation also restores those captured frames before dismissing the preview. Pause,
+Shelf presentation, full-screen protection, lifecycle suspension, display change, WindowServer
+replacement and quit all cancel the tokened preview; stale dismissals cannot remove a newer preview.
+
 The optional Shortcut Guide separately observes
 paired global and local `flagsChanged` events without consuming them. The exact configured Navigate
 and Arrange families select content from the same conflict-checked registry Carbon uses; changing a
