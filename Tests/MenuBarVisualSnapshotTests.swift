@@ -208,14 +208,38 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
                 name: "Studio Display"
             ),
         ]
-        let focus = workspace("60000000-0000-0000-0000-000000000001", "Focus", "f", .tiled)
+        var focus = workspace("60000000-0000-0000-0000-000000000001", "Focus", "f", .tiled)
+        focus.layoutConfiguration = WorkspaceLayoutConfiguration(
+            orientation: .automatic,
+            accordionPadding: 250,
+            gaps: WorkspaceLayoutGaps(
+                innerHorizontal: 140,
+                innerVertical: 55,
+                outerTop: 70,
+                outerRight: 280,
+                outerBottom: 220,
+                outerLeft: 110
+            )
+        )
         var writing = workspace("60000000-0000-0000-0000-000000000002", "Writing", "w", .accordion)
         writing.layoutConfiguration = WorkspaceLayoutConfiguration(
             orientation: .automatic,
             accordionPadding: 16,
             gaps: .aeroSpaceUserDefaults
         )
-        let chat = workspace("60000000-0000-0000-0000-000000000003", "Chat", "c", .tiled)
+        var chat = workspace("60000000-0000-0000-0000-000000000003", "Chat", "c", .tiled)
+        chat.layoutConfiguration = WorkspaceLayoutConfiguration(
+            orientation: .automatic,
+            accordionPadding: 250,
+            gaps: WorkspaceLayoutGaps(
+                innerHorizontal: 0,
+                innerVertical: 0,
+                outerTop: 0,
+                outerRight: 0,
+                outerBottom: 0,
+                outerLeft: 0
+            )
+        )
         let review = workspace("60000000-0000-0000-0000-000000000004", "Review", "r", .none)
         let workspaces = [focus, writing, chat, review]
 
@@ -322,6 +346,135 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             to: outputDirectory.appendingPathComponent("windowranger-settings-workspaces-dark.png"),
             options: .atomic
         )
+
+        navigation.selectWorkspace(focus.id)
+
+        let tiledGeometryWideSize = CGSize(width: 2_200, height: Self.snapshotSize.height)
+        let tiledGeometryWideView = SettingsView(
+            store: store,
+            engine: engine,
+            navigation: navigation,
+            windowCoordinator: coordinator,
+            diagnostics: .disabled,
+            updateController: updateController,
+            shortcutRecordingStateChanged: { _ in }
+        )
+        .frame(width: tiledGeometryWideSize.width, height: tiledGeometryWideSize.height)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, .light)
+        .environment(\.controlActiveState, .key)
+        let tiledGeometryWideData = try renderRetinaPNG(
+            tiledGeometryWideView,
+            size: tiledGeometryWideSize
+        )
+        XCTAssertGreaterThan(tiledGeometryWideData.count, 25_000)
+        try tiledGeometryWideData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry-wide.png"
+            ),
+            options: .atomic
+        )
+
+        let tiledGeometryData = try renderRetinaPNG(view, size: Self.snapshotSize)
+        XCTAssertGreaterThan(tiledGeometryData.count, 25_000)
+        try tiledGeometryData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry.png"
+            ),
+            options: .atomic
+        )
+        let tiledGeometryDarkData = try renderRetinaPNG(
+            darkView,
+            size: Self.snapshotSize,
+            appearance: .darkAqua
+        )
+        XCTAssertGreaterThan(tiledGeometryDarkData.count, 25_000)
+        try tiledGeometryDarkData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry-dark.png"
+            ),
+            options: .atomic
+        )
+
+        let tiledGeometryCompactSize = CGSize(
+            width: SettingsWindowMetrics.minimumSize.width,
+            height: Self.snapshotSize.height
+        )
+        let tiledGeometryCompactView = SettingsView(
+            store: store,
+            engine: engine,
+            navigation: navigation,
+            windowCoordinator: coordinator,
+            diagnostics: .disabled,
+            updateController: updateController,
+            shortcutRecordingStateChanged: { _ in }
+        )
+        .frame(
+            width: tiledGeometryCompactSize.width,
+            height: tiledGeometryCompactSize.height
+        )
+        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, .light)
+        .environment(\.controlActiveState, .key)
+        let tiledGeometryCompactData = try renderRetinaPNG(
+            tiledGeometryCompactView,
+            size: tiledGeometryCompactSize
+        )
+        XCTAssertGreaterThan(tiledGeometryCompactData.count, 15_000)
+        try tiledGeometryCompactData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry-compact.png"
+            ),
+            options: .atomic
+        )
+
+        navigation.selectWorkspace(chat.id)
+        let tiledGeometryZeroData = try renderRetinaPNG(view, size: Self.snapshotSize)
+        XCTAssertGreaterThan(tiledGeometryZeroData.count, 25_000)
+        try tiledGeometryZeroData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry-zero.png"
+            ),
+            options: .atomic
+        )
+
+        store.setSettingsLayoutConfiguration(
+            WorkspaceLayoutConfiguration(
+                orientation: .automatic,
+                accordionPadding: 250,
+                gaps: WorkspaceLayoutGaps(
+                    innerHorizontal: 5,
+                    innerVertical: 5,
+                    outerTop: 5,
+                    outerRight: 5,
+                    outerBottom: 5,
+                    outerLeft: 5
+                )
+            ),
+            for: chat.id
+        )
+        let tiledGeometryFivePointData = try renderRetinaPNG(view, size: Self.snapshotSize)
+        XCTAssertGreaterThan(tiledGeometryFivePointData.count, 25_000)
+        try tiledGeometryFivePointData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry-five-point.png"
+            ),
+            options: .atomic
+        )
+        let tiledGeometryFivePointDarkData = try renderRetinaPNG(
+            darkView,
+            size: Self.snapshotSize,
+            appearance: .darkAqua
+        )
+        XCTAssertGreaterThan(tiledGeometryFivePointDarkData.count, 25_000)
+        try tiledGeometryFivePointDarkData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry-five-point-dark.png"
+            ),
+            options: .atomic
+        )
+
+        navigation.selectWorkspace(writing.id)
 
         let currentProfileID = store.activeProfileID
         store.renameProfile(currentProfileID, to: "Current Setup")

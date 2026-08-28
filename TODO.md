@@ -276,6 +276,123 @@ smallest useful outcome and acceptance boundary.
 - **Live evidence:** On 28 August 2026, the maintainer confirmed the installed Top, Centre, and
   Bottom choices were all working, including the requested Command Palette positioning behavior.
 
+### WR-099 — Make Tiled gaps and padding visual and intuitive
+
+- **Type:** Workspace Settings interaction and visual improvement
+- **Priority:** P2
+- **Status:** Live validation — third link-alignment correction implemented, documented,
+  automated-test/native-visual verified, installed, and accepted; the broader interaction and
+  accessibility matrix remains.
+- **Requested:** 28 August 2026.
+- **Previous behavior:** Tiled workspaces exposed two Inner gaps and four Outer screen padding values
+  as six plain Stepper rows. The values are precise but their spatial meaning is not visible.
+- **Selected direction:** Keep the existing native macOS Workspaces inspector and replace only those
+  rows with two lightweight visual editors. Inner gaps uses a small tiled preview beside Horizontal
+  and Vertical controls; Outer padding uses an inset-screen preview beside Top, Right, Bottom, and
+  Left controls. Each group also offers an optional local editing link so related values can be kept
+  equal without adding profile state.
+- **Functionality boundary:** Preserve `WorkspaceLayoutGaps`, its existing ranges, per-workspace
+  persistence, Undo behavior, layout reconciliation, Copy Layout, legacy geometry migration, and
+  Freeform/Accordion control visibility. Linking is transient Settings UI state and must never be
+  serialized or silently affect another workspace.
+- **Acceptance:** The diagrams truthfully distinguish inner horizontal/vertical spacing from outer
+  top/right/bottom/left padding; every exact value remains visible and keyboard/VoiceOver operable;
+  linked edits update only the intended group and reset safely when workspace context changes; and
+  compact Settings widths remain usable. Add deterministic edit-policy and Settings tests, render
+  the native production view against the selected visual direction, run the complete non-hosted
+  gate and unsigned universal build, obtain skeptical review, then use a separately approved signed
+  daily install for maintainer acceptance.
+- **Implemented:** Tiled Workspaces now use a neutral four-pane diagram with accent-coloured inner
+  gap channels and an inset-screen diagram whose accent band maps outer padding. Native Steppers
+  retain lossless point readouts and their adjustable accessibility role. Wide Settings arranges the
+  four outer values as a physical 2-by-2 edge map; compact Settings stacks the same controls. Keep equal
+  and Keep all sides equal are transient inspector links: activation normalizes the current group,
+  linked edits update only that group and participate in native Undo, and both links reset when the
+  workspace, profile, or layout context changes. Untouched legacy geometry remains nil until a real
+  value edit or the existing explicit defaults action.
+- **Automated evidence:** All 130 focused Settings tests pass. The complete repository quick gate
+  passes 779/779 with the non-hosted boundary intact; `git diff --check` passes; and the unsigned
+  Debug app builds as a universal `x86_64 arm64` binary. Coverage includes group normalization,
+  linked edit isolation, legacy migration preservation, lossless fractional readouts, native Undo,
+  reset state, and layout-specific control visibility.
+- **Visual evidence:** The production Settings hierarchy renders offscreen without launching or
+  installing WindowRanger. Wide Light/Dark, minimum-width compact, asymmetric-direction, and all-zero
+  fixtures were inspected against selected direction 2. Accent colour describes only actual gaps or
+  padding; 0 pt renders as a neutral separator rather than a non-zero blue band; no clipping or
+  wrapping remains in the tested states.
+- **Review evidence:** Skeptical rereview found no remaining P0-P2 issue after the legacy migration,
+  fractional readout, zero-gap truthfulness, native Stepper accessibility, and linked-edit Undo
+  fixes. Live VoiceOver behavior remains a manual signed-app boundary.
+- **Install evidence:** On 28 August 2026, signed universal Debug daily revision
+  `96f82764b787-dirty` was installed and relaunched as PID `6022` from
+  `/Applications/WindowRanger.app`. Strict deep signature verification passed under Team
+  `44NAD22AK6`; the executable contains `x86_64 arm64` and has CDHash
+  `e80a3e5afc14774885097dca8f8962c0b744d13e`. Fresh diagnostics session
+  `A9B32F87-F93A-4B42-902F-62AA8E745B30` reached `startup-state-ready` without an error, fault,
+  timeout, or failed event. The previous daily build remains recoverable at
+  `/Applications/.WindowRanger.previous`.
+- **User-observed follow-up:** In the installed candidate on 28 August 2026, the maintainer found
+  that 5 pt gaps and padding were technically drawn but remained too faint to read in the compact
+  diagrams until roughly 30 pt, and that the Inner Keep equal row looked misaligned because its
+  label and switch stretched across the whole controls column.
+- **Correction evidence:** The diagrams now use a square-root visual scale that preserves exact
+  zero, monotonic growth, and the maximum while making a 5 pt value several screen pixels wide.
+  This changes only the explanatory preview, not stored values or live layout geometry. The Inner
+  Keep equal label and switch were first grouped together at the trailing edge. All 131 focused
+  Settings tests and all 780 tests in the complete repository quick gate passed, including
+  deterministic small-value preview coverage. The production offscreen Light and Dark fixtures at
+  5 pt on every edge were inspected with both diagrams legible. `git diff --check` passed.
+- **Corrected install evidence:** On 28 August 2026, the refreshed signed universal Debug daily
+  revision `96f82764b787-dirty` was installed and relaunched as PID `13708` from
+  `/Applications/WindowRanger.app`. Strict deep signature verification passed under Team
+  `44NAD22AK6`; the executable contains `x86_64 arm64` and has CDHash
+  `149da37c67d45c0b9b971a916a65435059f6e02f`. Fresh diagnostics session
+  `83B30CC5-316F-4254-A595-AEA151649653` reached `startup-state-ready` without an error, fault,
+  timeout, or failed event. The superseded candidate remains recoverable at
+  `/Applications/.WindowRanger.previous`.
+- **Second user-observed follow-up:** The maintainer accepted the corrected previews but confirmed
+  that Inner Keep equal still looked misaligned in the installed build: grouping the contents did
+  not fix its placement because the toggle remained a third row beneath the two values.
+- **Second correction:** In wide Settings, Inner Keep equal became a separate right-hand column
+  beside the Horizontal and Vertical values. A flexible spacer gave its switch the same far-right
+  edge as Outer Keep all sides equal while keeping the label on one line. Compact Settings kept the
+  control in a trailing stacked row. The production wide Light/Dark and minimum-width compact
+  fixtures were inspected, the isolated render passed, the complete repository quick gate passed
+  all 780 tests, and `git diff --check` passed.
+- **Final alignment install evidence:** On 28 August 2026, the refreshed signed universal Debug
+  daily revision `96f82764b787-dirty` was installed and relaunched as PID `17783` from
+  `/Applications/WindowRanger.app`. Strict deep signature verification passed under Team
+  `44NAD22AK6`; the executable contains `x86_64 arm64` and has CDHash
+  `3d903e04b37bda557fbe417f831f9ffda77b1bad`. Fresh diagnostics session
+  `0774482F-AE57-4E9E-9B34-5E1191C4568F` reached `startup-state-ready` without an error, fault,
+  timeout, or failed event. The preceding corrected candidate remains recoverable at
+  `/Applications/.WindowRanger.previous`.
+- **Third user-observed follow-up:** The separate right-hand column improved the installed layout,
+  but the maintainer confirmed that its label remained right-grouped beside the switch rather than
+  beginning where the Outer Keep all sides equal label begins.
+- **Third correction:** Inner Keep equal now uses the same visible row geometry as the Outer link:
+  its label begins immediately after the value column, flexible space separates it from the switch,
+  and the switch remains on the shared far-right edge. The responsive candidate retains a compact
+  intrinsic width so the normal-width inspector stays side-by-side instead of falling back to its
+  stacked layout prematurely. The production extra-wide and minimum-width compact fixtures were
+  inspected; both layouts are clean and the two wide link labels and switches align. The visual
+  fixture now includes the extra-wide state that exposed this distinction. The isolated production
+  render and complete repository quick gate pass all 780 tests, and `git diff --check` passes.
+- **Third correction install evidence:** On 28 August 2026, the refreshed signed universal Debug
+  daily revision `96f82764b787-dirty` was installed and relaunched as PID `24616` from
+  `/Applications/WindowRanger.app`. Strict deep signature verification passed under Team
+  `44NAD22AK6`; the executable contains `x86_64 arm64` and has CDHash
+  `3aefb6faf2f89f47eea7af4c02f0582eff1e27df`. Fresh diagnostics session
+  `E545E9E2-BED1-48AF-AE12-51D30E7DBF8C` reached `startup-state-ready` without an error, fault,
+  timeout, or failed event. The preceding alignment candidate remains recoverable at
+  `/Applications/.WindowRanger.previous`.
+- **Live alignment evidence:** On 28 August 2026, the maintainer accepted the installed final link
+  alignment as the checkpoint before a potentially reversible follow-up experiment and requested
+  that WR-099 be committed.
+- **Live validation remaining:** Complete the wider immediate-layout, both-link, Undo,
+  workspace/profile reset, compact resizing,
+  keyboard-adjustment, and VoiceOver checks.
+
 ### WR-096 — Suppress unchanged periodic engine-state callbacks
 
 - **Type:** Runtime CPU and main-thread invalidation optimisation

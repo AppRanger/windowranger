@@ -397,6 +397,14 @@ window recovery. Profiles remains separate for reusable profile management, Disp
 profile's display mode and this Mac's physical monitor bindings, and Shortcuts remains separate for
 global commands.
 
+Tiled geometry uses two compact visual editors instead of an undifferentiated list of numbers. A
+tile preview distinguishes horizontal and vertical inner gaps, while an inset-screen preview maps
+Top, Right, Bottom, and Left outer padding to their physical edges. Every point value remains
+directly editable. Optional **Keep equal** controls link values only for the current Settings edit;
+they reset when the inspected workspace changes and add no profile or iCloud state. Link activation
+does not migrate untouched pre-upgrade geometry, and linked multi-value changes participate in
+native Undo.
+
 Each workspace key produces read-only summaries of the exact derived commands: Navigate-key
 switches to it and Arrange-key sends the focused window there. Add and Duplicate resolve a
 unique name and supported key automatically. Drag reorder, context-menu and VoiceOver Move Up/Down,

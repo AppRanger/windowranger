@@ -1883,6 +1883,118 @@ struct WorkspaceInspectorControlVisibility: Equatable {
     }
 }
 
+/// Local editing policy for the Tiled geometry inspector. Link choices deliberately belong to the
+/// transient Settings view rather than the workspace configuration, profile, or synced state.
+enum TiledGeometryEditPolicy {
+    enum LinkGroup {
+        case inner
+        case outer
+    }
+
+    enum Gap: CaseIterable {
+        case innerHorizontal
+        case innerVertical
+        case outerTop
+        case outerRight
+        case outerBottom
+        case outerLeft
+
+        var keyPath: WritableKeyPath<WorkspaceLayoutGaps, Double> {
+            switch self {
+            case .innerHorizontal: \WorkspaceLayoutGaps.innerHorizontal
+            case .innerVertical: \WorkspaceLayoutGaps.innerVertical
+            case .outerTop: \WorkspaceLayoutGaps.outerTop
+            case .outerRight: \WorkspaceLayoutGaps.outerRight
+            case .outerBottom: \WorkspaceLayoutGaps.outerBottom
+            case .outerLeft: \WorkspaceLayoutGaps.outerLeft
+            }
+        }
+
+        var isInner: Bool {
+            switch self {
+            case .innerHorizontal, .innerVertical: true
+            case .outerTop, .outerRight, .outerBottom, .outerLeft: false
+            }
+        }
+    }
+
+    static func normalizedForInnerLink(_ gaps: WorkspaceLayoutGaps) -> WorkspaceLayoutGaps {
+        var result = gaps
+        result.innerVertical = result.innerHorizontal
+        return result
+    }
+
+    static func normalizedForOuterLink(_ gaps: WorkspaceLayoutGaps) -> WorkspaceLayoutGaps {
+        var result = gaps
+        result.outerRight = result.outerTop
+        result.outerBottom = result.outerTop
+        result.outerLeft = result.outerTop
+        return result
+    }
+
+    static func normalizationForLinkActivation(
+        _ group: LinkGroup,
+        gaps: WorkspaceLayoutGaps,
+        preservesLegacyGeometry: Bool
+    ) -> WorkspaceLayoutGaps? {
+        guard !preservesLegacyGeometry else { return nil }
+        return switch group {
+        case .inner: normalizedForInnerLink(gaps)
+        case .outer: normalizedForOuterLink(gaps)
+        }
+    }
+
+    static func pointValueText(_ value: Double) -> String {
+        let representation = String(value)
+        return representation.hasSuffix(".0")
+            ? String(representation.dropLast(2))
+            : representation
+    }
+
+    /// The compact diagram is explanatory rather than a scale drawing. A square-root scale keeps
+    /// small non-zero values visible while preserving zero, monotonic growth, and the exact maximum.
+    static func previewExtent(
+        value: Double,
+        maximumValue: Double,
+        maximumExtent: CGFloat
+    ) -> CGFloat {
+        guard maximumValue > 0, maximumExtent > 0 else { return 0 }
+        let normalized = min(max(value / maximumValue, 0), 1)
+        return CGFloat(normalized.squareRoot()) * maximumExtent
+    }
+
+    static func applying(
+        _ value: Double,
+        to gap: Gap,
+        gaps: WorkspaceLayoutGaps,
+        isInnerLinked: Bool,
+        isOuterLinked: Bool
+    ) -> WorkspaceLayoutGaps {
+        var result = gaps
+        result[keyPath: gap.keyPath] = value
+        if gap.isInner, isInnerLinked {
+            result.innerHorizontal = value
+            result.innerVertical = value
+        } else if !gap.isInner, isOuterLinked {
+            result.outerTop = value
+            result.outerRight = value
+            result.outerBottom = value
+            result.outerLeft = value
+        }
+        return result
+    }
+}
+
+struct TiledGeometryEditingLinks: Equatable {
+    var inner = false
+    var outer = false
+
+    mutating func reset() {
+        inner = false
+        outer = false
+    }
+}
+
 enum WorkspaceSettingsAccessibility {
     static func rowLabel(
         workspace: WorkspaceDefinition,
@@ -1900,6 +2012,7 @@ struct WorkspaceSettingsView: View {
     @Environment(\.undoManager) private var undoManager
     @State private var selectedWorkspaceID: UUID?
     @State private var showsCompactInspector: Bool
+    @State private var tiledGeometryEditingLinks = TiledGeometryEditingLinks()
 
     init(
         store: SettingsStore,
@@ -1928,7 +2041,14 @@ struct WorkspaceSettingsView: View {
             reconcileSelection(preferred: requestedWorkspaceID ?? highlightedEntry?.workspaceID)
         }
         .onChange(of: store.settingsWorkspaces.map(\.id)) { _, _ in reconcileSelection() }
-        .onChange(of: store.settingsProfileID) { _, _ in reconcileSelection() }
+        .onChange(of: store.settingsProfileID) { _, _ in
+            resetTiledGeometryEditingLinks()
+            reconcileSelection()
+        }
+        .onChange(of: store.settingsWorkspaces.map { "\($0.id.uuidString):\($0.layout.rawValue)" }) { _, _ in
+            resetTiledGeometryEditingLinks()
+        }
+        .onChange(of: selectedWorkspaceID) { _, _ in resetTiledGeometryEditingLinks() }
         .onChange(of: highlightedEntry?.workspaceID) { _, workspaceID in
             reconcileSelection(preferred: workspaceID)
             if workspaceID != nil { showsCompactInspector = true }
@@ -2351,84 +2471,206 @@ struct WorkspaceSettingsView: View {
         VStack(alignment: .leading, spacing: 11) {
             Text("Inner gaps").font(.subheadline.weight(.semibold))
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 20) {
-                    Stepper(
-                        "Horizontal: \(Int(configuration(for: workspaceID).gaps.innerHorizontal)) pt",
-                        value: gapBinding(\.innerHorizontal, workspaceID: workspaceID),
-                        in: 0...200
-                    )
-                    Stepper(
-                        "Vertical: \(Int(configuration(for: workspaceID).gaps.innerVertical)) pt",
-                        value: gapBinding(\.innerVertical, workspaceID: workspaceID),
-                        in: 0...200
-                    )
+                HStack(alignment: .top, spacing: 16) {
+                    innerGapPreview(configuration(for: workspaceID).gaps)
+                    innerGapValueControls(workspaceID)
+                        .frame(width: 276, alignment: .leading)
+                    innerGapLinkToggle(workspaceID)
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    Stepper(
-                        "Horizontal: \(Int(configuration(for: workspaceID).gaps.innerHorizontal)) pt",
-                        value: gapBinding(\.innerHorizontal, workspaceID: workspaceID),
-                        in: 0...200
-                    )
-                    Stepper(
-                        "Vertical: \(Int(configuration(for: workspaceID).gaps.innerVertical)) pt",
-                        value: gapBinding(\.innerVertical, workspaceID: workspaceID),
-                        in: 0...200
-                    )
+                    innerGapPreview(configuration(for: workspaceID).gaps)
+                    innerGapValueControls(workspaceID)
+                    innerGapLinkToggle(workspaceID)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
 
             Text("Outer screen padding").font(.subheadline.weight(.semibold))
             ViewThatFits(in: .horizontal) {
-                Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
-                    GridRow {
-                        Stepper(
-                            "Top: \(Int(configuration(for: workspaceID).gaps.outerTop)) pt",
-                            value: gapBinding(\.outerTop, workspaceID: workspaceID),
-                            in: 0...400
-                        )
-                        Stepper(
-                            "Right: \(Int(configuration(for: workspaceID).gaps.outerRight)) pt",
-                            value: gapBinding(\.outerRight, workspaceID: workspaceID),
-                            in: 0...400
-                        )
-                    }
-                    GridRow {
-                        Stepper(
-                            "Bottom: \(Int(configuration(for: workspaceID).gaps.outerBottom)) pt",
-                            value: gapBinding(\.outerBottom, workspaceID: workspaceID),
-                            in: 0...400
-                        )
-                        Stepper(
-                            "Left: \(Int(configuration(for: workspaceID).gaps.outerLeft)) pt",
-                            value: gapBinding(\.outerLeft, workspaceID: workspaceID),
-                            in: 0...400
-                        )
-                    }
+                HStack(alignment: .top, spacing: 16) {
+                    outerPaddingPreview(configuration(for: workspaceID).gaps)
+                    outerPaddingControls(workspaceID, usesGrid: true)
+                        .frame(width: 276, alignment: .leading)
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    Stepper(
-                        "Top: \(Int(configuration(for: workspaceID).gaps.outerTop)) pt",
-                        value: gapBinding(\.outerTop, workspaceID: workspaceID),
-                        in: 0...400
-                    )
-                    Stepper(
-                        "Right: \(Int(configuration(for: workspaceID).gaps.outerRight)) pt",
-                        value: gapBinding(\.outerRight, workspaceID: workspaceID),
-                        in: 0...400
-                    )
-                    Stepper(
-                        "Bottom: \(Int(configuration(for: workspaceID).gaps.outerBottom)) pt",
-                        value: gapBinding(\.outerBottom, workspaceID: workspaceID),
-                        in: 0...400
-                    )
-                    Stepper(
-                        "Left: \(Int(configuration(for: workspaceID).gaps.outerLeft)) pt",
-                        value: gapBinding(\.outerLeft, workspaceID: workspaceID),
-                        in: 0...400
-                    )
+                    outerPaddingPreview(configuration(for: workspaceID).gaps)
+                    outerPaddingControls(workspaceID, usesGrid: false)
                 }
             }
         }
+    }
+
+    private func innerGapValueControls(_ workspaceID: UUID) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            gapStepper("Horizontal", .innerHorizontal, workspaceID: workspaceID, range: 0...200)
+            gapStepper("Vertical", .innerVertical, workspaceID: workspaceID, range: 0...200)
+        }
+    }
+
+    private func innerGapLinkToggle(_ workspaceID: UUID) -> some View {
+        HStack(spacing: 8) {
+            Label("Keep equal", systemImage: "link")
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Toggle("Keep equal", isOn: innerLinkBinding(workspaceID))
+                .labelsHidden()
+                .accessibilityLabel("Keep equal")
+        }
+    }
+
+    @ViewBuilder
+    private func outerPaddingControls(_ workspaceID: UUID, usesGrid: Bool) -> some View {
+        if usesGrid {
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                GridRow {
+                    outerPaddingStepper(.outerTop, workspaceID: workspaceID)
+                        .frame(width: 132)
+                    outerPaddingStepper(.outerRight, workspaceID: workspaceID)
+                        .frame(width: 132)
+                }
+                GridRow {
+                    outerPaddingStepper(.outerBottom, workspaceID: workspaceID)
+                        .frame(width: 132)
+                    outerPaddingStepper(.outerLeft, workspaceID: workspaceID)
+                        .frame(width: 132)
+                }
+            }
+            Toggle(isOn: outerLinkBinding(workspaceID)) {
+                Label("Keep all sides equal", systemImage: "link")
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                outerPaddingStepper(.outerTop, workspaceID: workspaceID)
+                outerPaddingStepper(.outerRight, workspaceID: workspaceID)
+                outerPaddingStepper(.outerBottom, workspaceID: workspaceID)
+                outerPaddingStepper(.outerLeft, workspaceID: workspaceID)
+                Toggle(isOn: outerLinkBinding(workspaceID)) {
+                    Label("Keep all sides equal", systemImage: "link")
+                }
+            }
+        }
+    }
+
+    private func outerPaddingStepper(
+        _ gap: TiledGeometryEditPolicy.Gap,
+        workspaceID: UUID
+    ) -> some View {
+        let title: String = switch gap {
+        case .outerTop: "Top"
+        case .outerRight: "Right"
+        case .outerBottom: "Bottom"
+        case .outerLeft: "Left"
+        case .innerHorizontal, .innerVertical: preconditionFailure("Outer padding only")
+        }
+        return gapStepper(title, gap, workspaceID: workspaceID, range: 0...400)
+    }
+
+    private func gapStepper(
+        _ title: String,
+        _ gap: TiledGeometryEditPolicy.Gap,
+        workspaceID: UUID,
+        range: ClosedRange<Double>
+    ) -> some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .lineLimit(1)
+                .accessibilityHidden(true)
+            Spacer(minLength: 2)
+            Text(
+                "\(TiledGeometryEditPolicy.pointValueText(configuration(for: workspaceID).gaps[keyPath: gap.keyPath])) pt"
+            )
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .frame(minWidth: 42, alignment: .trailing)
+                .accessibilityHidden(true)
+            Stepper(
+                title,
+                value: gapBinding(gap, workspaceID: workspaceID),
+                in: range
+            )
+            .labelsHidden()
+            .accessibilityLabel(title)
+            .accessibilityValue(
+                "\(TiledGeometryEditPolicy.pointValueText(configuration(for: workspaceID).gaps[keyPath: gap.keyPath])) points"
+            )
+        }
+    }
+
+    private func innerGapPreview(_ gaps: WorkspaceLayoutGaps) -> some View {
+        GeometryReader { geometry in
+            let horizontalGap = TiledGeometryEditPolicy.previewExtent(
+                value: gaps.innerHorizontal,
+                maximumValue: 200,
+                maximumExtent: geometry.size.width * 0.22
+            )
+            let verticalGap = TiledGeometryEditPolicy.previewExtent(
+                value: gaps.innerVertical,
+                maximumValue: 200,
+                maximumExtent: geometry.size.height * 0.28
+            )
+            ZStack {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+                Rectangle()
+                    .fill(horizontalGap > 0
+                        ? Color.accentColor.opacity(0.55)
+                        : Color(nsColor: .separatorColor))
+                    .frame(width: max(horizontalGap, 0.5))
+                Rectangle()
+                    .fill(verticalGap > 0
+                        ? Color.accentColor.opacity(0.55)
+                        : Color(nsColor: .separatorColor))
+                    .frame(height: max(verticalGap, 0.5))
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(.separator, lineWidth: 0.5)
+            }
+        }
+        .frame(width: 92, height: 58)
+        .accessibilityHidden(true)
+    }
+
+    private func outerPaddingPreview(_ gaps: WorkspaceLayoutGaps) -> some View {
+        GeometryReader { geometry in
+            let maximumHorizontalInset = geometry.size.width * 0.28
+            let maximumVerticalInset = geometry.size.height * 0.28
+            let top = TiledGeometryEditPolicy.previewExtent(
+                value: gaps.outerTop,
+                maximumValue: 400,
+                maximumExtent: maximumVerticalInset
+            )
+            let right = TiledGeometryEditPolicy.previewExtent(
+                value: gaps.outerRight,
+                maximumValue: 400,
+                maximumExtent: maximumHorizontalInset
+            )
+            let bottom = TiledGeometryEditPolicy.previewExtent(
+                value: gaps.outerBottom,
+                maximumValue: 400,
+                maximumExtent: maximumVerticalInset
+            )
+            let left = TiledGeometryEditPolicy.previewExtent(
+                value: gaps.outerLeft,
+                maximumValue: 400,
+                maximumExtent: maximumHorizontalInset
+            )
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color.accentColor.opacity(0.55))
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 3)
+                            .stroke(.separator, lineWidth: 0.5)
+                    }
+                    .frame(
+                        width: max(8, geometry.size.width - left - right),
+                        height: max(8, geometry.size.height - top - bottom)
+                    )
+                    .offset(x: left, y: top)
+            }
+        }
+        .frame(width: 92, height: 58)
+        .accessibilityHidden(true)
     }
 
     private func workspaceRow(
@@ -2580,18 +2822,92 @@ struct WorkspaceSettingsView: View {
         )
     }
 
+    private func innerLinkBinding(_ workspaceID: UUID) -> Binding<Bool> {
+        Binding(
+            get: { tiledGeometryEditingLinks.inner },
+            set: { isLinked in
+                tiledGeometryEditingLinks.inner = isLinked
+                guard isLinked else { return }
+                guard let normalized = TiledGeometryEditPolicy.normalizationForLinkActivation(
+                    .inner,
+                    gaps: configuration(for: workspaceID).gaps,
+                    preservesLegacyGeometry: store.settingsUsesLegacyLayoutGeometry(
+                        for: workspaceID
+                    )
+                ) else { return }
+                updateGaps(
+                    normalized,
+                    workspaceID: workspaceID,
+                    undoManager: undoManager
+                )
+            }
+        )
+    }
+
+    private func outerLinkBinding(_ workspaceID: UUID) -> Binding<Bool> {
+        Binding(
+            get: { tiledGeometryEditingLinks.outer },
+            set: { isLinked in
+                tiledGeometryEditingLinks.outer = isLinked
+                guard isLinked else { return }
+                guard let normalized = TiledGeometryEditPolicy.normalizationForLinkActivation(
+                    .outer,
+                    gaps: configuration(for: workspaceID).gaps,
+                    preservesLegacyGeometry: store.settingsUsesLegacyLayoutGeometry(
+                        for: workspaceID
+                    )
+                ) else { return }
+                updateGaps(
+                    normalized,
+                    workspaceID: workspaceID,
+                    undoManager: undoManager
+                )
+            }
+        )
+    }
+
     private func gapBinding(
-        _ keyPath: WritableKeyPath<WorkspaceLayoutGaps, Double>,
+        _ gap: TiledGeometryEditPolicy.Gap,
         workspaceID: UUID
     ) -> Binding<Double> {
         Binding(
-            get: { configuration(for: workspaceID).gaps[keyPath: keyPath] },
+            get: { configuration(for: workspaceID).gaps[keyPath: gap.keyPath] },
             set: { newValue in
-                var updated = configuration(for: workspaceID)
-                updated.gaps[keyPath: keyPath] = newValue
-                store.setSettingsLayoutConfiguration(updated, for: workspaceID)
+                let linkedEdit = gap.isInner
+                    ? tiledGeometryEditingLinks.inner
+                    : tiledGeometryEditingLinks.outer
+                updateGaps(
+                    TiledGeometryEditPolicy.applying(
+                        newValue,
+                        to: gap,
+                        gaps: configuration(for: workspaceID).gaps,
+                        isInnerLinked: tiledGeometryEditingLinks.inner,
+                        isOuterLinked: tiledGeometryEditingLinks.outer
+                    ),
+                    workspaceID: workspaceID,
+                    undoManager: linkedEdit ? undoManager : nil
+                )
             }
         )
+    }
+
+    private func updateGaps(
+        _ gaps: WorkspaceLayoutGaps,
+        workspaceID: UUID,
+        undoManager: UndoManager? = nil
+    ) {
+        var updated = configuration(for: workspaceID)
+        updated.gaps = gaps
+        store.setSettingsLayoutConfiguration(
+            updated,
+            for: workspaceID,
+            undoManager: undoManager,
+            actionName: "Change Linked Layout Geometry"
+        )
+    }
+
+    private func resetTiledGeometryEditingLinks() {
+        tiledGeometryEditingLinks.reset()
     }
 
     private func duplicateSelectedWorkspace() {

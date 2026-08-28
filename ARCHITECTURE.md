@@ -231,7 +231,12 @@ the selected Quick App identity for each profile, monitor fingerprints, role-to-
 bindings, trackpad preferences, Shortcut Guide enablement/size/position, focused-window border
 preferences and per-application radius overrides, versioned onboarding progress/completion,
 Accessibility state, login-item state, diagnostics, and live window
-session remain local. `WorkspaceStateStore` writes the current WindowServer-bound session beneath
+session remain local. The Workspaces inspector's optional equal-gap and equal-padding links are even
+narrower ephemeral UI state: they reset when inspection moves to another workspace and never enter
+`WorkspaceLayoutConfiguration`, profile storage, or iCloud. Activating a link on an untouched
+legacy workspace also preserves its nil geometry boundary; only an actual value edit or the explicit
+defaults action adopts current geometry. Linked multi-value changes use the existing reversible
+workspace-definition path for native Undo. `WorkspaceStateStore` writes the current WindowServer-bound session beneath
 the user's cache directory using an atomic replacement. This includes exact hidden Quick App
 identities only when WindowRanger hid those windows' applications. A changed WindowServer session
 invalidates exact window IDs and that ownership marker rather than guessing. Legacy minimized-window

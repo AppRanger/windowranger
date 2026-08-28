@@ -1593,6 +1593,229 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
+    func testTiledGeometryEditPolicyNormalizesOnlyTheRequestedLinkGroup() {
+        let original = WorkspaceLayoutGaps(
+            innerHorizontal: 10,
+            innerVertical: 20,
+            outerTop: 30,
+            outerRight: 40,
+            outerBottom: 50,
+            outerLeft: 60
+        )
+
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.normalizedForInnerLink(original),
+            WorkspaceLayoutGaps(
+                innerHorizontal: 10,
+                innerVertical: 10,
+                outerTop: 30,
+                outerRight: 40,
+                outerBottom: 50,
+                outerLeft: 60
+            )
+        )
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.normalizedForOuterLink(original),
+            WorkspaceLayoutGaps(
+                innerHorizontal: 10,
+                innerVertical: 20,
+                outerTop: 30,
+                outerRight: 30,
+                outerBottom: 30,
+                outerLeft: 30
+            )
+        )
+    }
+
+    func testTiledGeometryEditPolicyAppliesLinkedEditsToOnlyTheirGroup() {
+        let original = WorkspaceLayoutGaps(
+            innerHorizontal: 10,
+            innerVertical: 20,
+            outerTop: 30,
+            outerRight: 40,
+            outerBottom: 50,
+            outerLeft: 60
+        )
+
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.applying(
+                75,
+                to: .innerVertical,
+                gaps: original,
+                isInnerLinked: true,
+                isOuterLinked: false
+            ),
+            WorkspaceLayoutGaps(
+                innerHorizontal: 75,
+                innerVertical: 75,
+                outerTop: 30,
+                outerRight: 40,
+                outerBottom: 50,
+                outerLeft: 60
+            )
+        )
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.applying(
+                125,
+                to: .outerLeft,
+                gaps: original,
+                isInnerLinked: false,
+                isOuterLinked: true
+            ),
+            WorkspaceLayoutGaps(
+                innerHorizontal: 10,
+                innerVertical: 20,
+                outerTop: 125,
+                outerRight: 125,
+                outerBottom: 125,
+                outerLeft: 125
+            )
+        )
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.applying(
+                90,
+                to: .outerRight,
+                gaps: original,
+                isInnerLinked: false,
+                isOuterLinked: false
+            ).outerRight,
+            90
+        )
+    }
+
+    func testTiledGeometryLinkActivationPreservesLegacyMigrationBoundary() {
+        let original = WorkspaceLayoutGaps(
+            innerHorizontal: 10,
+            innerVertical: 20,
+            outerTop: 30,
+            outerRight: 40,
+            outerBottom: 50,
+            outerLeft: 60
+        )
+
+        XCTAssertNil(
+            TiledGeometryEditPolicy.normalizationForLinkActivation(
+                .inner,
+                gaps: original,
+                preservesLegacyGeometry: true
+            )
+        )
+        XCTAssertNil(
+            TiledGeometryEditPolicy.normalizationForLinkActivation(
+                .outer,
+                gaps: original,
+                preservesLegacyGeometry: true
+            )
+        )
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.normalizationForLinkActivation(
+                .inner,
+                gaps: original,
+                preservesLegacyGeometry: false
+            ),
+            TiledGeometryEditPolicy.normalizedForInnerLink(original)
+        )
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.normalizationForLinkActivation(
+                .outer,
+                gaps: original,
+                preservesLegacyGeometry: false
+            ),
+            TiledGeometryEditPolicy.normalizedForOuterLink(original)
+        )
+    }
+
+    func testTiledGeometryPointValuesPreserveFractionalPrecision() {
+        XCTAssertEqual(TiledGeometryEditPolicy.pointValueText(5), "5")
+        XCTAssertEqual(TiledGeometryEditPolicy.pointValueText(5.5), "5.5")
+        XCTAssertEqual(TiledGeometryEditPolicy.pointValueText(5.125), "5.125")
+    }
+
+    func testTiledGeometryPreviewKeepsSmallNonZeroValuesVisible() {
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.previewExtent(
+                value: 0,
+                maximumValue: 200,
+                maximumExtent: 20
+            ),
+            0
+        )
+        XCTAssertGreaterThan(
+            TiledGeometryEditPolicy.previewExtent(
+                value: 5,
+                maximumValue: 200,
+                maximumExtent: 20
+            ),
+            3
+        )
+        XCTAssertGreaterThan(
+            TiledGeometryEditPolicy.previewExtent(
+                value: 5,
+                maximumValue: 400,
+                maximumExtent: 25
+            ),
+            2.5
+        )
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.previewExtent(
+                value: 500,
+                maximumValue: 400,
+                maximumExtent: 25
+            ),
+            25
+        )
+    }
+
+    @MainActor
+    func testLinkedTiledGeometryChangesParticipateInNativeUndo() {
+        let defaults = isolatedDefaults()
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        var workspace = workspaceA
+        workspace.layout = .tiled
+        workspace.layoutConfiguration = WorkspaceLayoutConfiguration(
+            orientation: .automatic,
+            accordionPadding: 250,
+            gaps: WorkspaceLayoutGaps(
+                innerHorizontal: 10,
+                innerVertical: 20,
+                outerTop: 30,
+                outerRight: 40,
+                outerBottom: 50,
+                outerLeft: 60
+            )
+        )
+        store.workspaces = [workspace]
+        let original = store.settingsLayoutConfiguration(for: workspace.id)
+        var updated = original
+        updated.gaps = TiledGeometryEditPolicy.normalizedForOuterLink(original.gaps)
+        let undo = UndoManager()
+
+        store.setSettingsLayoutConfiguration(
+            updated,
+            for: workspace.id,
+            undoManager: undo,
+            actionName: "Change Linked Layout Geometry"
+        )
+
+        XCTAssertEqual(store.settingsLayoutConfiguration(for: workspace.id), updated)
+        XCTAssertTrue(undo.canUndo)
+        undo.undo()
+        XCTAssertEqual(store.settingsLayoutConfiguration(for: workspace.id), original)
+    }
+
+    func testTiledGeometryEditingLinksResetWhenWorkspaceContextChanges() {
+        var links = TiledGeometryEditingLinks(inner: true, outer: true)
+
+        links.reset()
+
+        XCTAssertEqual(links, TiledGeometryEditingLinks())
+    }
+
     func testWorkspaceSettingsWindowHasRoomForSidebarListAndInspector() {
         XCTAssertEqual(SettingsWindowMetrics.minimumSize, CGSize(width: 760, height: 560))
         XCTAssertEqual(SettingsWindowMetrics.defaultSize, CGSize(width: 1280, height: 780))

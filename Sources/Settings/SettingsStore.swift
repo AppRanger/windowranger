@@ -1229,12 +1229,25 @@ final class SettingsStore: ObservableObject {
 
     func setSettingsLayoutConfiguration(
         _ configuration: WorkspaceLayoutConfiguration,
-        for workspaceID: UUID
+        for workspaceID: UUID,
+        undoManager: UndoManager? = nil,
+        actionName: String = "Change Layout Geometry"
     ) {
         guard let index = settingsProfile.workspaces.firstIndex(where: { $0.id == workspaceID }) else {
             return
         }
         let clamped = configuration.clamped()
+        if let undoManager {
+            var updated = settingsProfile.workspaces[index]
+            updated.layoutConfiguration = clamped
+            setSettingsWorkspaceDefinition(
+                updated,
+                profileID: settingsProfileID,
+                actionName: actionName,
+                undoManager: undoManager
+            )
+            return
+        }
         mutateSettingsProfile { $0.workspaces[index].layoutConfiguration = clamped }
     }
 

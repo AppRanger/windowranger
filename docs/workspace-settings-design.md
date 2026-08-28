@@ -98,7 +98,14 @@ intentionally omitted.
 - **Freeform:** no geometry controls. Copy explains that frames remain manual while workspace
   visibility, focus, persistence, display assignment, quit/wake recovery, and safety repair remain
   managed.
-- **Tiled:** orientation, inner horizontal/vertical gaps, and four outer screen paddings.
+- **Tiled:** orientation plus two lightweight visual geometry rows. A four-tile diagram maps inner
+  horizontal/vertical gaps to exact native controls, and an inset-screen diagram maps Top, Right,
+  Bottom, and Left outer padding to their physical edges. The compact diagrams use a compressed
+  visual scale so small non-zero values remain visible; this affects only the preview, while the
+  displayed point values and applied window geometry remain exact. Optional Keep equal controls
+  normalize and link only the active edit group; they are transient inspector state rather than
+  profile data. Link activation leaves untouched legacy geometry nil, while linked multi-value
+  writes participate in native Undo.
 - **Accordion:** orientation and visible-edge padding only.
 - Pre-upgrade workspaces with nil layout configuration retain their existing appearance until the
   user explicitly adopts current built-in geometry, preserving the existing migration boundary.
@@ -128,8 +135,10 @@ intentionally omitted.
   fingerprints and role bindings, current focus, active runtime workspace state, selected Quick App,
   open-window membership, trackpad preferences, Focus Border preferences and application overrides,
   permissions, login-item state, and diagnostics.
-- Settings category, independently selected profile edit target, and currently inspected workspace
-  are local UI state. They do not enter profile or iCloud data.
+- Settings category, independently selected profile edit target, currently inspected workspace, and
+  temporary Tiled geometry-link controls are local UI state. They do not enter profile or iCloud
+  data. Geometry links reset when the inspected workspace changes and do not themselves cross the
+  explicit legacy-geometry adoption boundary.
 - Pause is runtime-only, starts off on every launch, and enters neither local persistence nor iCloud.
 
 No profile/storage format migration is needed for this redesign. Existing profile-backed values stay
