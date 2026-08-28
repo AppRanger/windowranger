@@ -2540,6 +2540,10 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             SettingsCatalog.search("Command Palette shortcut", includeDebug: false).first?.id,
             "radial-shortcut"
         )
+        XCTAssertEqual(
+            SettingsCatalog.search("palette position", includeDebug: false).first?.id,
+            "palette-position"
+        )
     }
 
     func testSettingsNoLongerExposesTheLegacyWheelCatalogueEditor() {
@@ -2638,6 +2642,29 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(restored.shortcutGuideSize, .large)
         XCTAssertEqual(restored.shortcutGuidePosition, .topTrailing)
         XCTAssertNil(restored.shortcutGuideRuntimeIssue)
+    }
+
+    @MainActor
+    func testCommandPalettePositionStaysOnThisMacAndSurvivesRelaunch() {
+        let defaults = isolatedDefaults()
+        let cloud = RecordingUbiquitousStore()
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        store.iCloudSyncEnabled = true
+        store.commandPalettePosition = .bottom
+
+        XCTAssertEqual(defaults.string(forKey: "commandPalettePosition.v1"), "bottom")
+        XCTAssertFalse(cloud.keys.contains("commandPalettePosition.v1"))
+
+        let restored = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertEqual(restored.commandPalettePosition, .bottom)
     }
 
     @MainActor

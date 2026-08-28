@@ -89,6 +89,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotKeyConfigurationProvider: { [weak self] in
             self?.settingsStore.hotKeyConfiguration ?? HotKeyConfiguration()
         },
+        positionProvider: { [weak self] in
+            self?.settingsStore.commandPalettePosition ?? .defaultValue
+        },
         isPauseModeEnabledProvider: { [weak self] in
             self?.isPauseModeEnabled ?? false
         },

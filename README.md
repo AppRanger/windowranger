@@ -419,6 +419,11 @@ the palette. Its second row opens focused-window placement only when truthful pl
 Results also show their configured shortcuts where one exists. Arrow keys move selection, Return
 runs it, and Escape or a second shortcut press closes the palette.
 
+Command Palette Settings can place the panel at the **Top**, **Centre**, or **Bottom** of the
+interaction display. **Top** preserves the original default. This display-geometry preference stays
+on the current Mac, follows the display captured before WindowRanger becomes key, and keeps both the
+ordinary palette and its expanded Placement Halo inside that display's usable area.
+
 **Pause WindowRanger** is a transient runtime state available from the palette and app menu. While
 paused, only the Command Palette shortcut remains registered; the palette offers only **Resume
 WindowRanger**. Workspace swipes, shortcut guidance, focus highlighting, automatic visibility and

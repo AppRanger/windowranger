@@ -93,6 +93,7 @@ final class SettingsStore: ObservableObject {
 
         static let iCloudSync = "iCloudSyncEnabled"
         static let radialMenuEnabled = "radialMenuEnabled.v1"
+        static let commandPalettePosition = "commandPalettePosition.v1"
         // Read once to preserve the pre-recorder three-choice command-wheel shortcut.
         static let radialMenuShortcut = "radialMenuShortcut.v1"
         // Removed private-install inputs. Keep their names only so initialization can delete stale
@@ -202,6 +203,12 @@ final class SettingsStore: ObservableObject {
 
     @Published var radialMenuEnabled: Bool {
         didSet { persistRadialMenuSettings() }
+    }
+
+    /// Palette placement is tied to this Mac's usable display geometry, so it never becomes
+    /// profile content or an iCloud preference.
+    @Published var commandPalettePosition: CommandPalettePosition {
+        didSet { persistCommandPalettePosition() }
     }
 
     @Published var workspaceSwipeEnabled: Bool {
@@ -391,6 +398,8 @@ final class SettingsStore: ObservableObject {
         iCloudSyncEnabled = defaults.object(forKey: Keys.iCloudSync) as? Bool ?? false
         iCloudProfileLibraryIssue = nil
         radialMenuEnabled = defaults.object(forKey: Keys.radialMenuEnabled) as? Bool ?? true
+        commandPalettePosition = defaults.string(forKey: Keys.commandPalettePosition)
+            .flatMap(CommandPalettePosition.init(rawValue:)) ?? .defaultValue
         workspaceSwipeEnabled = defaults.object(forKey: Keys.workspaceSwipeEnabled) as? Bool ?? false
         workspaceSwipeFingerCount = WorkspaceSwipeFingerCount(
             rawValue: defaults.integer(forKey: Keys.workspaceSwipeFingerCount)
@@ -2937,6 +2946,11 @@ final class SettingsStore: ObservableObject {
             if let wheelData { ubiquitousStore.set(wheelData, forKey: Keys.radialWheelDefinition) }
             ubiquitousStore.synchronize()
         }
+    }
+
+    private func persistCommandPalettePosition() {
+        guard !isApplyingRemoteChange else { return }
+        defaults.set(commandPalettePosition.rawValue, forKey: Keys.commandPalettePosition)
     }
 
     private func persistShortcutGuideSettings() {

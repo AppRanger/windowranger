@@ -752,6 +752,64 @@ final class CommandPalettePresentationModel: ObservableObject {
     }
 }
 
+/// A local presentation choice for the Command Palette. This belongs to the Mac rather than a
+/// profile: it describes physical display geometry, not workspace content.
+enum CommandPalettePosition: String, Codable, CaseIterable, Identifiable, Sendable {
+    case top
+    case center
+    case bottom
+
+    var id: String { rawValue }
+    static let defaultValue: Self = .top
+
+    var title: String {
+        switch self {
+        case .top: "Top"
+        case .center: "Centre"
+        case .bottom: "Bottom"
+        }
+    }
+}
+
+/// Pure frame calculation shared by initial palette presentation and Placement Halo resizing.
+/// A too-small usable area clips the palette rather than allowing a panel frame to escape the
+/// display. Normal displays retain the historical 84-point top inset exactly.
+enum CommandPaletteGeometry {
+    static let topAndBottomInset: CGFloat = 84
+
+    static func frame(
+        visibleFrame: CGRect,
+        preferredSize: CGSize,
+        basePaletteSize: CGSize,
+        position: CommandPalettePosition
+    ) -> CGRect {
+        let size = CGSize(
+            width: min(max(preferredSize.width, 0), max(visibleFrame.width, 0)),
+            height: min(max(preferredSize.height, 0), max(visibleFrame.height, 0))
+        )
+        // The halo grows to the right of the base palette. Preserve that base palette origin on
+        // displays with room for the expansion, shifting left only when containment requires it.
+        let baseWidth = min(max(basePaletteSize.width, 0), max(visibleFrame.width, 0))
+        let preferredHorizontalOrigin = visibleFrame.midX - baseWidth / 2
+        let horizontalOrigin = min(
+            max(preferredHorizontalOrigin, visibleFrame.minX),
+            visibleFrame.maxX - size.width
+        )
+        let availableVerticalInset = max(visibleFrame.height - size.height, 0)
+        let inset = min(topAndBottomInset, availableVerticalInset)
+        let verticalOrigin: CGFloat
+        switch position {
+        case .top:
+            verticalOrigin = visibleFrame.maxY - size.height - inset
+        case .center:
+            verticalOrigin = visibleFrame.midY - size.height / 2
+        case .bottom:
+            verticalOrigin = visibleFrame.minY + inset
+        }
+        return CGRect(origin: CGPoint(x: horizontalOrigin, y: verticalOrigin), size: size)
+    }
+}
+
 @MainActor
 final class CommandPaletteController: NSObject, NSWindowDelegate {
     static let panelSize = CGSize(width: 620, height: 526)
@@ -767,6 +825,7 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
     private let diagnostics: DiagnosticLogger
     private let contextEnricher: @MainActor (RadialCommandContext) -> RadialCommandContext
     private let hotKeyConfigurationProvider: () -> HotKeyConfiguration
+    private let positionProvider: () -> CommandPalettePosition
     private let isPauseModeEnabledProvider: () -> Bool
     private let openSettings: () -> Void
     private var panel: CommandPalettePanel?
@@ -784,6 +843,7 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         diagnostics: DiagnosticLogger = .disabled,
         contextEnricher: @escaping @MainActor (RadialCommandContext) -> RadialCommandContext = { $0 },
         hotKeyConfigurationProvider: @escaping () -> HotKeyConfiguration,
+        positionProvider: @escaping () -> CommandPalettePosition = { .defaultValue },
         isPauseModeEnabledProvider: @escaping () -> Bool = { false },
         openSettings: @escaping () -> Void
     ) {
@@ -792,6 +852,7 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         self.diagnostics = diagnostics
         self.contextEnricher = contextEnricher
         self.hotKeyConfigurationProvider = hotKeyConfigurationProvider
+        self.positionProvider = positionProvider
         self.isPauseModeEnabledProvider = isPauseModeEnabledProvider
         self.openSettings = openSettings
         super.init()
@@ -920,10 +981,15 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
 
         let screen = screen(for: context.displayIdentifier) ?? NSScreen.main
         if let visibleFrame = screen?.visibleFrame {
-            panel.setFrameOrigin(CGPoint(
-                x: visibleFrame.midX - Self.panelSize.width / 2,
-                y: visibleFrame.maxY - Self.panelSize.height - 84
-            ))
+            panel.setFrame(
+                CommandPaletteGeometry.frame(
+                    visibleFrame: visibleFrame,
+                    preferredSize: Self.panelSize,
+                    basePaletteSize: Self.panelSize,
+                    position: positionProvider()
+                ),
+                display: false
+            )
         } else {
             panel.center()
         }
@@ -1193,12 +1259,22 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         if isPresented {
             panel.hasShadow = false
         }
-        if panel.frame.size != targetSize {
+        let targetVisibleFrame = context
+            .flatMap { screen(for: $0.displayIdentifier)?.visibleFrame }
+            ?? panel.screen?.visibleFrame
+        if let visibleFrame = targetVisibleFrame {
             panel.setFrame(
-                CGRect(origin: panel.frame.origin, size: targetSize),
+                CommandPaletteGeometry.frame(
+                    visibleFrame: visibleFrame,
+                    preferredSize: targetSize,
+                    basePaletteSize: Self.panelSize,
+                    position: positionProvider()
+                ),
                 display: true,
                 animate: false
             )
+        } else if panel.frame.size != targetSize {
+            panel.setFrame(CGRect(origin: panel.frame.origin, size: targetSize), display: true, animate: false)
         }
         if !isPresented {
             panel.hasShadow = true

@@ -226,6 +226,56 @@ smallest useful outcome and acceptance boundary.
   or timeout. The previous clean daily build remains recoverable at
   `/Applications/.WindowRanger.previous`.
 
+### WR-098 — Choose where Command Palette opens
+
+- **Type:** Command Palette presentation preference
+- **Priority:** P2
+- **Status:** Done — implemented, documented, reviewed, automated-test verified, signed daily build
+  installed, and maintainer live acceptance recorded on 28 August 2026.
+- **Requested:** 28 August 2026.
+- **Current behavior:** The palette always opens near the top centre of the captured interaction
+  display, 84 points below its usable top edge. The choice is not configurable or persisted.
+- **Recommended smallest useful outcome:** Add a Mac-local **Position** preference with **Top**,
+  **Centre**, and **Bottom** choices. Keep **Top** as the migration-safe default, continue following
+  the captured interaction display, and keep every base and expanded palette frame inside that
+  display's usable area.
+- **Functionality boundary:** Change presentation geometry only. Do not change command contents,
+  search or keyboard behavior, external-focus capture, target display selection, Placement Halo
+  behavior, profiles, or iCloud content. The setting belongs to this Mac because it describes local
+  display geometry.
+- **Decision:** The maintainer approved the three vertical positions on 28 August 2026. A future
+  nine-position grid remains separate because the halo currently grows 200 points to the right;
+  right-edge positions cannot remain truthful without shifting or mirroring that expansion.
+- **Acceptance:** Geometry tests cover every choice, negative-coordinate displays, usable-area
+  margins, undersized displays, and opening/closing the expanded Placement Halo without drift.
+  Settings persistence remains local and survives relaunch. Focused Command Palette and Settings
+  tests, the complete non-hosted suite, an unsigned universal build, and a separately approved
+  signed daily install and live multi-display check are required.
+- **Implemented:** Command Palette Settings now offers Top, Centre, and Bottom. Top preserves the
+  original 84-point inset. A pure geometry policy places the base palette on the captured
+  interaction display, retains its horizontal position while the right-side Halo fits, shifts only
+  enough to contain an overflowing Halo, and recomputes the exact base frame on collapse. The
+  preference is stored only in this Mac's local defaults and is absent from profiles and iCloud.
+- **Automated evidence:** All 154 focused Command Palette and Settings tests pass. The complete
+  repository quick gate passes 773/773 with non-hosted isolation intact, `git diff --check` passes,
+  and the unsigned Debug app builds successfully as a universal `arm64` and `x86_64` binary.
+  Coverage includes all three positions, the migration-safe default, negative-coordinate and
+  undersized usable frames, stationary ordinary Halo expansion, minimum overflow correction,
+  collapse without drift, local persistence, relaunch, iCloud exclusion, and Settings search.
+- **Review evidence:** Skeptical review found no blocking correctness, persistence, geometry, UI,
+  or documentation issue. The remaining non-blocking test boundary is controller-level AppKit
+  presentation, whose screen lookup is not injected; pure geometry, provider wiring, compilation,
+  and the universal build are covered, while signed live use remains required.
+- **Install evidence:** With explicit approval, signed universal Debug candidate
+  `cce1c8e663e3-dirty` was installed and relaunched from `/Applications/WindowRanger.app` as PID
+  `87361` on 28 August 2026. Strict deep signature verification passed under Team `44NAD22AK6`, the
+  executable contains `arm64` and `x86_64`, and its CDHash is
+  `cf69542cc7ee6933903a0aa5b62449d5828d91b8`. Fresh diagnostics session
+  `BCC5A5C3-1E4E-44EC-BEFA-F3CC53BAF817` reached startup ready without an observed error, fault, or
+  timeout. The previous daily build remains recoverable at `/Applications/.WindowRanger.previous`.
+- **Live evidence:** On 28 August 2026, the maintainer confirmed the installed Top, Centre, and
+  Bottom choices were all working, including the requested Command Palette positioning behavior.
+
 ### WR-096 — Suppress unchanged periodic engine-state callbacks
 
 - **Type:** Runtime CPU and main-thread invalidation optimisation

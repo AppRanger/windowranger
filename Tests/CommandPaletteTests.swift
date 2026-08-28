@@ -6,6 +6,112 @@ final class CommandPaletteTests: XCTestCase {
     private let writingID = UUID(uuidString: "81000000-0000-0000-0000-000000000002")!
     private let profileID = UUID(uuidString: "81000000-0000-0000-0000-000000000003")!
 
+    func testPalettePositionDefaultsToTopAndUsesBritishDisplayTitle() {
+        XCTAssertEqual(CommandPalettePosition.defaultValue, .top)
+        XCTAssertEqual(CommandPalettePosition.allCases, [.top, .center, .bottom])
+        XCTAssertEqual(CommandPalettePosition.center.title, "Centre")
+    }
+
+    @MainActor
+    func testPaletteGeometryKeepsHistoricalTopPlacementAndFitsNegativeCoordinateDisplay() {
+        let visibleFrame = CGRect(x: -1_920, y: 24, width: 1_920, height: 1_056)
+        let frame = CommandPaletteGeometry.frame(
+            visibleFrame: visibleFrame,
+            preferredSize: CommandPaletteController.panelSize,
+            basePaletteSize: CommandPaletteController.panelSize,
+            position: .top
+        )
+
+        XCTAssertEqual(frame.origin.x, -1_270, accuracy: 0.001)
+        XCTAssertEqual(frame.origin.y, 470, accuracy: 0.001)
+        XCTAssertEqual(frame.size, CommandPaletteController.panelSize)
+        XCTAssertTrue(visibleFrame.contains(frame))
+    }
+
+    @MainActor
+    func testPaletteGeometryPositionsAndHaloFramesStayWithinUsableAreaWithoutDrift() {
+        let visibleFrame = CGRect(x: 2_560, y: -900, width: 1_440, height: 900)
+        for position in CommandPalettePosition.allCases {
+            let base = CommandPaletteGeometry.frame(
+                visibleFrame: visibleFrame,
+                preferredSize: CommandPaletteController.panelSize,
+                basePaletteSize: CommandPaletteController.panelSize,
+                position: position
+            )
+            let expanded = CommandPaletteGeometry.frame(
+                visibleFrame: visibleFrame,
+                preferredSize: CommandPaletteController.expandedPanelSize,
+                basePaletteSize: CommandPaletteController.panelSize,
+                position: position
+            )
+            let collapsed = CommandPaletteGeometry.frame(
+                visibleFrame: visibleFrame,
+                preferredSize: CommandPaletteController.panelSize,
+                basePaletteSize: CommandPaletteController.panelSize,
+                position: position
+            )
+
+            XCTAssertTrue(visibleFrame.contains(base), "\(position)")
+            XCTAssertTrue(visibleFrame.contains(expanded), "\(position)")
+            XCTAssertEqual(collapsed, base, "\(position)")
+        }
+    }
+
+    @MainActor
+    func testPaletteGeometryClampsUndersizedUsableArea() {
+        let visibleFrame = CGRect(x: -300, y: 40, width: 500, height: 320)
+        let frame = CommandPaletteGeometry.frame(
+            visibleFrame: visibleFrame,
+            preferredSize: CommandPaletteController.expandedPanelSize,
+            basePaletteSize: CommandPaletteController.panelSize,
+            position: .bottom
+        )
+
+        XCTAssertEqual(frame, visibleFrame)
+        XCTAssertTrue(visibleFrame.contains(frame))
+    }
+
+    @MainActor
+    func testPaletteHaloKeepsBasePaletteStationaryWhenTheDisplayHasRoom() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
+        let base = CommandPaletteGeometry.frame(
+            visibleFrame: visibleFrame,
+            preferredSize: CommandPaletteController.panelSize,
+            basePaletteSize: CommandPaletteController.panelSize,
+            position: .center
+        )
+        let expanded = CommandPaletteGeometry.frame(
+            visibleFrame: visibleFrame,
+            preferredSize: CommandPaletteController.expandedPanelSize,
+            basePaletteSize: CommandPaletteController.panelSize,
+            position: .center
+        )
+
+        XCTAssertEqual(expanded.origin.x, base.origin.x, accuracy: 0.001)
+        XCTAssertTrue(visibleFrame.contains(expanded))
+    }
+
+    @MainActor
+    func testPaletteHaloShiftsOnlyEnoughToContainRightOverflow() {
+        let visibleFrame = CGRect(x: -1_200, y: 0, width: 900, height: 900)
+        let base = CommandPaletteGeometry.frame(
+            visibleFrame: visibleFrame,
+            preferredSize: CommandPaletteController.panelSize,
+            basePaletteSize: CommandPaletteController.panelSize,
+            position: .bottom
+        )
+        let expanded = CommandPaletteGeometry.frame(
+            visibleFrame: visibleFrame,
+            preferredSize: CommandPaletteController.expandedPanelSize,
+            basePaletteSize: CommandPaletteController.panelSize,
+            position: .bottom
+        )
+
+        XCTAssertEqual(expanded.maxX, visibleFrame.maxX, accuracy: 0.001)
+        XCTAssertEqual(expanded.origin.x, base.origin.x - 60, accuracy: 0.001)
+        XCTAssertTrue(visibleFrame.contains(expanded))
+    }
+
     func testPaletteCombinesContextualCommandsAndRegisteredShortcuts() {
         let entries = CommandPaletteIndex.entries(
             context: context(),

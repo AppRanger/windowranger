@@ -3755,6 +3755,16 @@ private struct RadialMenuSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Section("Position") {
+                Picker("Position", selection: $store.commandPalettePosition) {
+                    ForEach(CommandPalettePosition.allCases) { position in
+                        Text(position.title).tag(position)
+                    }
+                }
+                Text("Choose where the palette opens on the interaction display. This setting stays on this Mac and does not change profiles or iCloud content.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
     }

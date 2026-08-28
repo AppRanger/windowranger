@@ -513,7 +513,11 @@ publish another app's rendered corner radius, so the generation table uses verif
 keeps the macOS 27 baseline for later releases until a future design change is verified. Per-app
 overrides are local appearance state rather than synced App Rule actions because the correct
 rendering depends on this Mac and OS. Their lifetime is independent of profile App Rules and Quick
-Apps. The Command Palette captures its external target before
+Apps. Command Palette vertical position is likewise machine-local presentation state rather than
+profile or iCloud content. A pure geometry policy resolves Top, Centre, or Bottom against the
+captured interaction display's visible frame and keeps both the base panel and its right-expanding
+Placement Halo inside that usable area without accumulating origin drift across expansion cycles.
+The Command Palette captures its external target before
 becoming key and rejects a selection if that window/workspace/display/profile token changed while
 the user typed. Every command revalidates while the palette's external-focus lease is still active;
 ordinary commands then dismiss, restore the previous application, and dispatch, while exact
