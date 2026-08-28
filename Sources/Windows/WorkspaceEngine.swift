@@ -11086,22 +11086,34 @@ final class WorkspaceEngine {
             manualTiledMovePreviewSession != nil ||
             manualTiledResizeSession != nil
 
-        let layoutSignatureBeforeApply = backgroundLayoutSignature(displays: displays)
+        let layoutSignatureBeforeApply = backgroundLayoutSignature(
+            displays: displays,
+            observedFrames: observedFrames
+        )
+        var didAttemptBackgroundVisibilityApplication = false
         if performAXWrites, topologyChanged, !isStartup {
             applyVisibility(displays: displays, correlationID: correlationID)
+            didAttemptBackgroundVisibilityApplication = true
         } else if performAXWrites, !manualTiledInteractionInProgress, Self.shouldApplyBackgroundLayout(
             previousSignature: lastBackgroundLayoutSignature,
             currentSignature: layoutSignatureBeforeApply,
             isStartup: isStartup
         ) {
             applyVisibility(displays: displays, correlationID: correlationID)
+            didAttemptBackgroundVisibilityApplication = true
         }
         if performAXWrites, !manualTiledInteractionInProgress, resizeRecoveryNeedsImmediateReflow {
             resizeRecoveryNeedsImmediateReflow = false
             applyVisibility(displays: displays, correlationID: correlationID)
+            didAttemptBackgroundVisibilityApplication = true
         }
         if performAXWrites, !manualTiledInteractionInProgress {
-            lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
+            lastBackgroundLayoutSignature = Self.settledBackgroundLayoutSignature(
+                observedSignature: layoutSignatureBeforeApply,
+                didApplyVisibility: didAttemptBackgroundVisibilityApplication
+            ) {
+                backgroundLayoutSignature(displays: displays)
+            }
         }
 
         if observeFocus {
@@ -11621,7 +11633,26 @@ final class WorkspaceEngine {
         !isStartup && previousSignature != currentSignature
     }
 
-    private func backgroundLayoutSignature(displays: [DisplaySnapshot]) -> String {
+    static func backgroundLayoutFrame(
+        for key: WindowKey,
+        observedFrames: [WindowKey: WindowFrame]?,
+        readFrame: () -> WindowFrame?
+    ) -> WindowFrame? {
+        observedFrames?[key] ?? readFrame()
+    }
+
+    static func settledBackgroundLayoutSignature(
+        observedSignature: String,
+        didApplyVisibility: Bool,
+        readPostWriteSignature: () -> String
+    ) -> String {
+        didApplyVisibility ? readPostWriteSignature() : observedSignature
+    }
+
+    private func backgroundLayoutSignature(
+        displays: [DisplaySnapshot],
+        observedFrames: [WindowKey: WindowFrame]? = nil
+    ) -> String {
         let fullActiveMap: String
         if displayMode == .unified {
             fullActiveMap = "all:\(currentWorkspaceID.uuidString)"
@@ -11672,7 +11703,12 @@ final class WorkspaceEngine {
                 activeWorkspaceIDs: activeWorkspaceIDs,
                 rule: rule
             ) else { return nil }
-            let currentFrame = AccessibilityWindow.frame(of: tracked.element)
+            let currentFrame = Self.backgroundLayoutFrame(
+                for: tracked.key,
+                observedFrames: observedFrames
+            ) {
+                AccessibilityWindow.frame(of: tracked.element)
+            }
                 .map(Self.diagnosticFrame) ?? "unknown"
             return [
                 "window=\(Self.diagnosticWindowKey(tracked.key))",

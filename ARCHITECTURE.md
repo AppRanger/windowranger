@@ -59,6 +59,13 @@ position-only AX writes where possible. Their recoverable frames are retained so
 graceful quit, startup recovery and explicit reset can return them to meaningful visible geometry.
 Exact window identities are trusted only inside the same WindowServer session.
 
+The broad refresh captures each readable Accessibility frame once during enumeration and reuses
+that observation when deciding whether background visibility or layout work is necessary. A missing
+enumeration frame receives a direct retry. If the engine attempts visibility or geometry work, it
+then rebuilds the signature from fresh frames so rejected, delayed, or adjusted writes cannot become
+an assumed baseline; a no-write refresh retains the enumerated signature without rereading every
+visible managed window.
+
 Layout membership and Accessibility write eligibility are separate during a transient observation
 gap. A failed application-window enumeration or unreadable frame for an existing Tiled or Accordion
 participant preserves its last stable slot, so readable siblings are not reflowed around the gap;

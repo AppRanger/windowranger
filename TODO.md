@@ -171,6 +171,69 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-095 — Reuse refresh frame observations in background layout signatures
+
+- **Type:** Runtime CPU and Accessibility-read optimisation
+- **Priority:** P1
+- **Status:** Done — implemented, reviewed, automated-test verified, installed, source-level
+  performance verified, and maintainer live acceptance recorded on 28 August 2026.
+- **Requested:** 28 August 2026 as the first remaining item after the accepted optimisation
+  checkpoint and fresh installed-build baseline.
+- **Baseline:** The signed installed `a3de0b817f7f-dirty` candidate, running for about 46 minutes,
+  averaged 3.45% CPU across 19 settled one-second samples (0.3–6.1%). Sampler-reported process
+  memory settled around 61–62 MB after macOS reclaimed pages during the run. The Mac's overall load
+  was elevated, so this is an operational comparison point rather than a controlled laboratory
+  benchmark.
+- **Smallest useful outcome:** Build the pre-layout signature from the frames already read during
+  the same broad refresh. If an enumerated window had no readable frame, retain the existing fresh
+  fallback read. When WindowRanger applies visibility or geometry, perform one fresh post-write
+  signature read; when it performs no write, retain the already-built signature without rereading
+  every visible managed window.
+- **Functionality boundary:** Preserve the 0.75-second refresh cadence, enumeration, admission,
+  external-drag reconciliation, visibility/layout decisions, write ordering, post-write baseline,
+  failed-frame retry, persistence, state emission, and diagnostics. A window moved externally after
+  its enumeration frame was captured may be recognized on the following refresh rather than by a
+  second read later in the same refresh.
+- **Acceptance:** Pure tests prove a captured frame bypasses the fallback read, a missing frame still
+  retries, a no-write refresh reuses its signature, and a geometry-writing refresh obtains a fresh
+  post-write signature. Run the focused tests, complete non-hosted suite, unsigned universal build,
+  skeptical review, and separately approved signed install. Compare a settled like-for-like sample
+  against the 3.45% operational baseline and exercise external window movement plus Tiled,
+  Accordion, Freeform, workspace switching, native fullscreen return, and display changes.
+- **Implemented:** The broad refresh passes its captured frame map into background-signature
+  construction. Signature resolution uses an observed frame when present and preserves a direct AX
+  fallback for failed or unavailable enumeration frames. The refresh records whether any visibility
+  or recovery layout application was attempted: ordinary no-application refreshes keep the observed
+  signature, while an attempted application obtains the same fresh post-write signature used
+  previously even when it ultimately has no eligible or changed targets. Explicit command and
+  lifecycle paths outside the broad refresh retain their existing fresh frame reads.
+- **Automated evidence:** All 24 focused Move Window/Focus tests and the complete 763-test
+  non-hosted suite pass, as do test isolation, project regeneration, shell checks, diff checks, and
+  an unsigned universal Debug app build containing `x86_64 arm64`. Pure coverage proves observed
+  frame reuse, missing-frame retry, no-application signature reuse, and post-application rereading.
+  Independent read-only trace and skeptical review found no correctness blocker across startup,
+  wake, topology, manual Tiled drag, hidden/deferred windows, rejected writes, or explicit command
+  paths. Integration of the helpers inside the private broad-refresh path is verified by inspection
+  rather than a hosted engine test; the existing non-hosted boundary intentionally cannot enumerate
+  or move live windows.
+- **Installed evidence:** With explicit maintainer approval, Apple Development-signed universal
+  Debug daily candidate `2c2932e1c11f-dirty` was installed at
+  `/Applications/WindowRanger.app` and relaunched as PID `99804`. The installed executable exactly
+  matches the built candidate; strict deep signature validation, bundle identity
+  `dev.appranger.WindowRanger`, Team ID `44NAD22AK6`, `x86_64 arm64` architectures, running path,
+  embedded source marker, and CDHash `1af56b2f6424d25729f731d36c3d4f6eb5835e49` were verified.
+  Diagnostic session `82F35F52-2F57-4962-B3A5-7F43166B4814` reached `session/started` with the
+  expected Debug build and two-display Independent mode. The previous daily candidate remains
+  available at `/Applications/.WindowRanger.previous`.
+- **Live and performance result:** The maintainer reported that the installed candidate appeared to
+  work normally. Its current diagnostic session contains no failure, rejection, or timeout record.
+  A five-second process sample confirms background-signature construction no longer contains an
+  Accessibility frame-read stack; remaining frame reads belong to the single enumeration pass.
+  Two settled 20-sample runs averaged 5.21% and 5.31% CPU, versus the earlier unusually low 3.45%
+  operational baseline, while sampler memory moved from 102 MB to 66 MB as macOS reclaimed pages.
+  System load remained high. Therefore the removed synchronous AX work is directly verified, but no
+  whole-process CPU or memory reduction is attributed to WR-095 from these noisy runs.
+
 ### WR-094 — Preserve tiled order across native fullscreen Space transitions
 
 - **Type:** Fullscreen window-lifecycle and layout-stability bug
