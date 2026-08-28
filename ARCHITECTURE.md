@@ -265,9 +265,16 @@ resume signal before reconciliation begins. Because Accessibility windows can di
 the distributed lock notification arrives, a successful-empty collapse spanning at least half of
 multiple still-running tracked applications receives a 500-millisecond grace period. Single-app
 closure remains immediately authoritative; a coordinated collapse that remains fully active after
-the grace period is accepted. Display topology resolves first, fresh AX elements are acquired
-second, and visibility/layout is applied once the snapshot is stable. Bounded retries handle
-temporarily incomplete enumeration.
+the grace period is accepted. While a native fullscreen window remains present in the current AX
+snapshot, the same coordinated collapse stays non-authoritative without making fullscreen a global
+layout suspension; ordinary management on another display continues. Accessibility snapshot
+authority is per application rather than per display, so the successfully empty process cohort is
+protected WindowServer-wide while currently enumerated windows remain write-eligible. A latched but
+currently absent fullscreen session cannot prolong this protection indefinitely. Fullscreen exit
+starts one fresh bounded grace so the returning Space can publish a stable snapshot before any
+retained tree is pruned. Display topology resolves first, fresh AX elements are acquired second, and
+visibility/layout is applied once the snapshot is stable. Bounded retries handle temporarily
+incomplete enumeration.
 After the layout solve, expected Tiled and Accordion frames are read back because a successful AX
 write does not prove that the receiving app retained it. Only mismatched, still-eligible split
 windows are retried, for a bounded number of attempts; a newer lifecycle signal supersedes the
@@ -491,8 +498,10 @@ keeps the macOS 27 baseline for later releases until a future design change is v
 overrides are local appearance state rather than synced App Rule actions because the correct
 rendering depends on this Mac and OS. Their lifetime is independent of profile App Rules and Quick
 Apps. The Command Palette captures its external target before
-becoming key, restores the previous application before dispatch, and rejects a selection if that
-window/workspace/display/profile token changed while the user typed. A top segmented control shows
+becoming key and rejects a selection if that window/workspace/display/profile token changed while
+the user typed. Every command revalidates while the palette's external-focus lease is still active;
+ordinary commands then dismiss, restore the previous application, and dispatch, while exact
+placement is validated and enqueued before dismissal. A top segmented control shows
 the captured workspace's Freeform, Tiled, or Accordion layout. It dispatches through the same typed
 command path and keeps the palette open; an observable presentation context adopts each accepted
 layout token so repeated changes remain valid. A selection made after an inline layout change is

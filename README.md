@@ -109,8 +109,13 @@ successful snapshot is removed immediately from the registry, focus history, Til
 persisted state, so closed or inactive tab identities cannot leave ghost layout slots. The narrow
 exception is a coordinated successful-empty collapse across at least half of multiple still-running
 applications: WindowRanger defers that cohort for 500 milliseconds so a slightly later screen-lock
-signal can establish the lifecycle boundary. A failed or incomplete enumeration is not evidence
-that a window closed. Existing Tiled and Accordion
+signal can establish the lifecycle boundary, and while a native fullscreen window remains present
+in the current snapshot so a Space transition cannot erase the retained layout tree. A remembered
+but currently absent fullscreen window does not create unbounded protection. The first still-collapsed
+snapshot after fullscreen receives the same bounded grace. A failed or incomplete enumeration is
+not evidence that a window closed. Because Accessibility enumeration authority is per application,
+not per display, this protection covers only the successfully empty process cohort across the Mac;
+currently enumerated windows on another display remain fully manageable. Existing Tiled and Accordion
 participants retain their stable layout slots while their geometry writes remain suppressed; an
 authoritative minimized, fullscreen, ignored, floating, or layout-excluded state still leaves the
 layout immediately.
@@ -422,8 +427,10 @@ synced and always starts off after relaunch.
 
 Opening a key window must not retarget a window-management command to WindowRanger itself. The
 palette therefore captures the external interaction context and frontmost application first. It
-restores that application before dispatch, then revalidates the exact window, workspace, display,
-layout, profile, and generated placement token. A changed or unavailable target cancels safely.
+revalidates the exact window, workspace, display, layout, profile, and generated placement token
+while its external-focus lease is still active. Ordinary commands then close the palette, restore
+the preceding application, and dispatch; placement remains queued before dismissal so its target
+cannot be replaced by focus restoration. A changed or unavailable target cancels safely.
 
 The **Place focused window** Quick Action expands a compact **Placement Halo** from its row without
 closing the palette. It contains only Loop-style positions that can be previewed truthfully for the

@@ -356,7 +356,14 @@ final class CommandPaletteTests: XCTestCase {
         )
     }
 
-    func testPlacementDefersFocusRestorationUntilAfterDispatch() {
+    func testCommandsValidateBeforeDismissalAndOnlyPlacementDefersFocusRestoration() {
+        XCTAssertTrue(CommandPaletteSelectionRevalidation.validatesBeforeDismissal(
+            .command(.setLayout(.none))
+        ))
+        XCTAssertTrue(CommandPaletteSelectionRevalidation.validatesBeforeDismissal(
+            .command(.placeFreeformWindow(.left, validationToken: "token"))
+        ))
+        XCTAssertFalse(CommandPaletteSelectionRevalidation.validatesBeforeDismissal(.settings))
         XCTAssertTrue(CommandPaletteSelectionRevalidation.defersFocusRestoration(
             for: .command(.placeFreeformWindow(.left, validationToken: "token"))
         ))
@@ -367,6 +374,47 @@ final class CommandPaletteTests: XCTestCase {
             for: .command(.setLayout(.none))
         ))
         XCTAssertFalse(CommandPaletteSelectionRevalidation.defersFocusRestoration(for: .settings))
+    }
+
+    func testAsyncValidationCannotCompleteAgainstAReplacementPalette() {
+        XCTAssertTrue(CommandPaletteSelectionRevalidation.isValidationRequestCurrent(
+            presentationGeneration: 7,
+            requestGeneration: 7,
+            isPresented: true
+        ))
+        XCTAssertFalse(CommandPaletteSelectionRevalidation.isValidationRequestCurrent(
+            presentationGeneration: 7,
+            requestGeneration: 8,
+            isPresented: true
+        ))
+        XCTAssertFalse(CommandPaletteSelectionRevalidation.isValidationRequestCurrent(
+            presentationGeneration: 7,
+            requestGeneration: 7,
+            isPresented: false
+        ))
+    }
+
+    func testOrdinaryCommandRevalidationAcceptsOnlyTheCapturedContext() {
+        let original = context(validationToken: "captured")
+        let requested = CommandPaletteDestination.command(.switchWorkspace(writingID))
+
+        XCTAssertEqual(
+            CommandPaletteSelectionRevalidation.destination(
+                requested,
+                original: original,
+                current: original,
+                hotKeyConfiguration: HotKeyConfiguration(),
+                allowsInlineLayoutRefresh: false
+            ),
+            requested
+        )
+        XCTAssertNil(CommandPaletteSelectionRevalidation.destination(
+            requested,
+            original: original,
+            current: context(validationToken: "changed", windowIdentifier: 999),
+            hotKeyConfiguration: HotKeyConfiguration(),
+            allowsInlineLayoutRefresh: false
+        ))
     }
 
     func testInlineLayoutRefreshRejectsAChangedWindowOrLayout() {

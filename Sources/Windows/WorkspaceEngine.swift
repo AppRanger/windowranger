@@ -351,6 +351,29 @@ enum WindowEnumerationLifecycle {
         })
     }
 
+    static func hasCurrentFullscreenObservation(
+        sessionWindowKeys: Set<WindowKey>,
+        enumeratedWindowKeys: Set<WindowKey>
+    ) -> Bool {
+        !sessionWindowKeys.isDisjoint(with: enumeratedWindowKeys)
+    }
+
+    static func diagnosticFocusKeyAfterEnumeration(
+        previousKey: WindowKey?,
+        observedKey: WindowKey?,
+        ownProcessIdentifier: pid_t,
+        removedWindowKeys: Set<WindowKey>
+    ) -> WindowKey? {
+        let retainedPreviousKey = previousKey.flatMap {
+            removedWindowKeys.contains($0) ? nil : $0
+        }
+        guard let observedKey,
+              observedKey.processIdentifier != ownProcessIdentifier,
+              !removedWindowKeys.contains(observedKey)
+        else { return retainedPreviousKey }
+        return observedKey
+    }
+
     static func pruning(
         _ trees: [TiledLayoutPartitionKey: TiledNode],
         removedWindowKeys: Set<WindowKey>
@@ -373,10 +396,10 @@ enum WindowEnumerationLifecycle {
     }
 }
 
-/// A screen lock can make still-running applications lose their Accessibility windows in stages
-/// before macOS delivers the distributed lock notification. Preserve a coordinated collapse across
-/// multiple applications for a short grace period, while keeping a single application's successful
-/// absence authoritative immediately.
+/// A screen lock or native fullscreen Space can make still-running applications lose their
+/// Accessibility windows in stages. Preserve a coordinated collapse across multiple applications
+/// while that lifecycle boundary is active, with a short grace period around otherwise fully active
+/// transitions, while keeping a single application's successful absence authoritative immediately.
 struct CoordinatedWindowEnumerationCollapseState {
     static let graceDuration: TimeInterval = 0.5
 
@@ -387,6 +410,7 @@ struct CoordinatedWindowEnumerationCollapseState {
         successfullyEnumeratedProcessIdentifiers: Set<pid_t>,
         enumeratedWindowProcessIdentifiers: Set<pid_t>,
         isLifecycleTransitionActive: Bool,
+        hasCurrentFullscreenObservation: Bool = false,
         at now: Date = Date()
     ) -> Set<pid_t> {
         let successfullyEmptyProcessIdentifiers = requiredProcessIdentifiers
@@ -400,7 +424,7 @@ struct CoordinatedWindowEnumerationCollapseState {
             deferralDeadline = nil
             return []
         }
-        if isLifecycleTransitionActive {
+        if isLifecycleTransitionActive || hasCurrentFullscreenObservation {
             deferralDeadline = nil
             return successfullyEmptyProcessIdentifiers
         }
@@ -1510,6 +1534,42 @@ struct WorkspaceEngineState: Equatable {
     }
 }
 
+/// Immutable derived lookups for the engine's active workspace and app-rule configuration.
+/// Replacing the source arrays/maps replaces this value as one unit on the engine queue.
+struct WorkspaceEngineLookupIndex {
+    let validWorkspaceIDs: Set<UUID>
+
+    private let workspacesByID: [UUID: WorkspaceDefinition]
+    private let resolvedRulesByBundleIdentifier: [String: ResolvedAppRule]
+
+    init(
+        workspaces: [WorkspaceDefinition],
+        appRulesByBundleIdentifier: [String: AppRule]
+    ) {
+        let workspaceIDs = Set(workspaces.map(\.id))
+        validWorkspaceIDs = workspaceIDs
+
+        var indexedWorkspaces: [UUID: WorkspaceDefinition] = [:]
+        for workspace in workspaces where indexedWorkspaces[workspace.id] == nil {
+            // Preserve the existing `first(where:)` behavior if malformed input repeats an ID.
+            indexedWorkspaces[workspace.id] = workspace
+        }
+        workspacesByID = indexedWorkspaces
+
+        resolvedRulesByBundleIdentifier = appRulesByBundleIdentifier.mapValues {
+            $0.resolved(validWorkspaceIDs: workspaceIDs)
+        }
+    }
+
+    func workspace(for workspaceID: UUID) -> WorkspaceDefinition? {
+        workspacesByID[workspaceID]
+    }
+
+    func resolvedRule(forBundleIdentifier bundleIdentifier: String) -> ResolvedAppRule {
+        resolvedRulesByBundleIdentifier[bundleIdentifier.lowercased()] ?? .none
+    }
+}
+
 struct WindowAdmissionSupportRecord: Identifiable, Equatable, Sendable, Codable {
     let id: String
     let bundleIdentifier: String
@@ -1872,7 +1932,9 @@ final class WorkspaceEngine {
         qos: .userInitiated
     )
     private var timer: DispatchSourceTimer?
-    private var workspaces: [WorkspaceDefinition]
+    private var workspaces: [WorkspaceDefinition] {
+        didSet { rebuildWorkspaceEngineLookupIndex() }
+    }
     private var currentProfileID: UUID?
     private var currentWorkspaceID: UUID
     private var previousWorkspaceID: UUID?
@@ -1880,7 +1942,13 @@ final class WorkspaceEngine {
     private var activeWorkspaceIDByDisplay: [String: UUID]
     private var displayMode: MultiDisplayMode
     private var workspaceDisplayAssignments: [UUID: String]
-    private var appRulesByBundleIdentifier: [String: AppRule]
+    private var appRulesByBundleIdentifier: [String: AppRule] {
+        didSet { rebuildWorkspaceEngineLookupIndex() }
+    }
+    private var workspaceEngineLookupIndex = WorkspaceEngineLookupIndex(
+        workspaces: [],
+        appRulesByBundleIdentifier: [:]
+    )
     private var quickAppConfigurations: [DropDownAppConfiguration]
     private var quickAppShelfPresentation: QuickAppShelfPresentation
     /// Exact ownership is retained per configured Quick App, including entries that are currently
@@ -2018,6 +2086,10 @@ final class WorkspaceEngine {
         self.displayMode = displayMode
         self.workspaceDisplayAssignments = workspaceDisplayAssignments
         appRulesByBundleIdentifier = Self.indexedAppRules(appRules)
+        workspaceEngineLookupIndex = WorkspaceEngineLookupIndex(
+            workspaces: initial,
+            appRulesByBundleIdentifier: appRulesByBundleIdentifier
+        )
         quickAppConfigurations = QuickAppShelfPolicy.normalized(
             quickApps.isEmpty ? dropDownApp.map { [$0] } ?? [] : quickApps
         )
@@ -10604,6 +10676,11 @@ final class WorkspaceEngine {
             wakeReconciliationState.isPending ||
             wasPostSleepWindowRecoveryActive ||
             postSleepWindowRecoveryState.isActive
+        let hasCurrentFullscreenObservation = WindowEnumerationLifecycle
+            .hasCurrentFullscreenObservation(
+                sessionWindowKeys: Set(fullscreenSessions.keys),
+                enumeratedWindowKeys: enumeratedWindowKeys
+            )
         let coordinatedEmptyProcessIdentifiers =
             coordinatedWindowEnumerationCollapseState.processIdentifiersToDefer(
                 requiredProcessIdentifiers: requiredProcessIdentifiers,
@@ -10611,7 +10688,8 @@ final class WorkspaceEngine {
                 enumeratedWindowProcessIdentifiers: Set(
                     enumeratedWindowKeys.map(\.processIdentifier)
                 ),
-                isLifecycleTransitionActive: lifecycleTransitionActive
+                isLifecycleTransitionActive: lifecycleTransitionActive,
+                hasCurrentFullscreenObservation: hasCurrentFullscreenObservation
             )
         let deferredGlobalEmptySnapshot = WindowEnumerationLifecycle
             .shouldDeferGlobalEmptySnapshot(
@@ -10643,6 +10721,7 @@ final class WorkspaceEngine {
                     ),
                     "required-process-count": String(requiredProcessIdentifiers.count),
                     "lifecycle-transition": String(lifecycleTransitionActive),
+                    "fullscreen-observed": String(hasCurrentFullscreenObservation),
                     "grace-milliseconds": String(Int(
                         CoordinatedWindowEnumerationCollapseState.graceDuration * 1_000
                     )),
@@ -10928,9 +11007,17 @@ final class WorkspaceEngine {
         }
 
         let focusedSnapshot = observeFocus ? focusedWindowSnapshot() : nil
-        if let focusedSnapshot,
-           focusedSnapshot.key.processIdentifier != ownProcessIdentifier {
+        let previousDiagnosticFocusKey = lastDiagnosticFocusedWindow?.key
+        let nextDiagnosticFocusKey = WindowEnumerationLifecycle.diagnosticFocusKeyAfterEnumeration(
+            previousKey: previousDiagnosticFocusKey,
+            observedKey: focusedSnapshot?.key,
+            ownProcessIdentifier: ownProcessIdentifier,
+            removedWindowKeys: removedTrackedWindowKeys
+        )
+        if let focusedSnapshot, nextDiagnosticFocusKey == focusedSnapshot.key {
             lastDiagnosticFocusedWindow = focusedSnapshot
+        } else if nextDiagnosticFocusKey == nil {
+            lastDiagnosticFocusedWindow = nil
         }
         let focused = focusedSnapshot?.key
         if observeFocus {
@@ -11562,24 +11649,20 @@ final class WorkspaceEngine {
             } ?? "legacy"
             return "workspace=\($0.id.uuidString)|\($0.layout.rawValue)|\(workspaceHomeDisplayIdentifier(for: $0.id, displays: displays))|\(primary)|\(geometry)"
         })
-        parts.append(contentsOf: windows.values.sorted {
+        let orderedWindows = windows.values.sorted {
             if $0.key.processIdentifier != $1.key.processIdentifier {
                 return $0.key.processIdentifier < $1.key.processIdentifier
             }
             return $0.key.windowIdentifier < $1.key.windowIdentifier
-        }.compactMap { tracked in
+        }
+        parts.append(contentsOf: orderedWindows.compactMap { tracked in
             guard let visibility = Self.backgroundApplicationVisibilityMarker(
                 isApplicationHidden: isExcludedFromWorkspaceParticipation(tracked),
                 isDropDownAppWindow: isDropDownAppWindow(tracked.key)
             ) else { return nil }
             return "application-visibility=\(Self.diagnosticWindowKey(tracked.key))|\(visibility)"
         })
-        parts.append(contentsOf: windows.values.sorted {
-            if $0.key.processIdentifier != $1.key.processIdentifier {
-                return $0.key.processIdentifier < $1.key.processIdentifier
-            }
-            return $0.key.windowIdentifier < $1.key.windowIdentifier
-        }.compactMap { tracked in
+        parts.append(contentsOf: orderedWindows.compactMap { tracked in
             guard !isDropDownAppWindow(tracked.key),
                   !isExcludedFromWorkspaceParticipation(tracked)
             else { return nil }
@@ -14152,30 +14235,29 @@ final class WorkspaceEngine {
 
         // Restore first, then hide. This ordering is intentional: it minimizes the interval in
         // which neither workspace is visible and matches the low-flicker ordering used by AeroSpork.
+        var visibleWindows: [TrackedWindow] = []
+        var hiddenWindows: [TrackedWindow] = []
+        for tracked in windows.values {
+            guard isEligible(tracked), !isDropDownAppWindow(tracked.key) else { continue }
+            let isVisible = Self.shouldWindowBeVisible(
+                workspaceID: tracked.workspaceID,
+                activeWorkspaceIDs: activeWorkspaceIDs,
+                rule: resolvedRule(for: tracked.bundleIdentifier)
+            )
+            if isVisible {
+                visibleWindows.append(tracked)
+            } else {
+                hiddenWindows.append(tracked)
+            }
+        }
+
         let expectedLayoutFrames = applyVisibleWindows(
-            windows.values.filter {
-                isEligible($0) &&
-                !isDropDownAppWindow($0.key) &&
-                Self.shouldWindowBeVisible(
-                    workspaceID: $0.workspaceID,
-                    activeWorkspaceIDs: activeWorkspaceIDs,
-                    rule: resolvedRule(for: $0.bundleIdentifier)
-                )
-            },
+            visibleWindows,
             displays: displays,
             correlationID: correlationID
         )
-        applyPositionChanges(windows.values
-            .filter {
-                isEligible($0) &&
-                !isDropDownAppWindow($0.key) &&
-                !Self.shouldWindowBeVisible(
-                    workspaceID: $0.workspaceID,
-                    activeWorkspaceIDs: activeWorkspaceIDs,
-                    rule: resolvedRule(for: $0.bundleIdentifier)
-                )
-            }
-            .map { PositionChange(window: $0, position: parkingPosition) },
+        applyPositionChanges(
+            hiddenWindows.map { PositionChange(window: $0, position: parkingPosition) },
             correlationID: correlationID
         )
         let hiddenQuickAppChanges = quickAppSessions.values.flatMap { session -> [PositionChange] in
@@ -14417,7 +14499,7 @@ final class WorkspaceEngine {
     }
 
     private func workspaceLayout(for workspaceID: UUID) -> WorkspaceLayout {
-        workspaces.first(where: { $0.id == workspaceID })?.layout ?? .none
+        workspaceEngineLookupIndex.workspace(for: workspaceID)?.layout ?? .none
     }
 
     private func isManagedLayoutParticipant(_ tracked: TrackedWindow) -> Bool {
@@ -14441,7 +14523,7 @@ final class WorkspaceEngine {
     private func workspaceLayoutConfiguration(
         for workspaceID: UUID
     ) -> WorkspaceLayoutConfiguration? {
-        workspaces.first(where: { $0.id == workspaceID })?.layoutConfiguration
+        workspaceEngineLookupIndex.workspace(for: workspaceID)?.layoutConfiguration
     }
 
     private func nextLayoutOrder(in workspaceID: UUID) -> Int {
@@ -14474,8 +14556,21 @@ final class WorkspaceEngine {
         in rules: [String: AppRule]? = nil
     ) -> ResolvedAppRule {
         guard let bundleIdentifier else { return .none }
-        let rule = (rules ?? appRulesByBundleIdentifier)[bundleIdentifier.lowercased()]
-        return rule?.resolved(validWorkspaceIDs: Set(workspaces.map(\.id))) ?? .none
+        if let rules {
+            return rules[bundleIdentifier.lowercased()]?.resolved(
+                validWorkspaceIDs: workspaceEngineLookupIndex.validWorkspaceIDs
+            ) ?? .none
+        }
+        return workspaceEngineLookupIndex.resolvedRule(
+            forBundleIdentifier: bundleIdentifier
+        )
+    }
+
+    private func rebuildWorkspaceEngineLookupIndex() {
+        workspaceEngineLookupIndex = WorkspaceEngineLookupIndex(
+            workspaces: workspaces,
+            appRulesByBundleIdentifier: appRulesByBundleIdentifier
+        )
     }
 
     @discardableResult

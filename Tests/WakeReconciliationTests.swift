@@ -351,6 +351,68 @@ final class WakeReconciliationTests: XCTestCase {
         ), [])
     }
 
+    func testCoordinatedCollapseRemainsDeferredThroughoutFullscreenSession() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let required: Set<pid_t> = [10, 11, 12, 13]
+        var state = CoordinatedWindowEnumerationCollapseState()
+
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [12, 13],
+            isLifecycleTransitionActive: false,
+            hasCurrentFullscreenObservation: true,
+            at: start
+        ), [10, 11])
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [12, 13],
+            isLifecycleTransitionActive: false,
+            hasCurrentFullscreenObservation: true,
+            at: start.addingTimeInterval(60)
+        ), [10, 11])
+
+        // Ending fullscreen starts the ordinary bounded grace instead of immediately accepting the
+        // first still-collapsed snapshot returned during the Space transition.
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [12, 13],
+            isLifecycleTransitionActive: false,
+            hasCurrentFullscreenObservation: false,
+            at: start.addingTimeInterval(60.1)
+        ), [10, 11])
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [12, 13],
+            isLifecycleTransitionActive: false,
+            hasCurrentFullscreenObservation: false,
+            at: start.addingTimeInterval(
+                60.1 + CoordinatedWindowEnumerationCollapseState.graceDuration + 0.001
+            )
+        ), [])
+    }
+
+    func testOnlyCurrentlyEnumeratedFullscreenSessionEnablesCollapseProtection() {
+        let fullscreen = WindowKey(processIdentifier: 10, windowIdentifier: 100)
+        let unrelated = WindowKey(processIdentifier: 11, windowIdentifier: 101)
+
+        XCTAssertTrue(WindowEnumerationLifecycle.hasCurrentFullscreenObservation(
+            sessionWindowKeys: [fullscreen],
+            enumeratedWindowKeys: [fullscreen, unrelated]
+        ))
+        XCTAssertFalse(WindowEnumerationLifecycle.hasCurrentFullscreenObservation(
+            sessionWindowKeys: [fullscreen],
+            enumeratedWindowKeys: [unrelated]
+        ))
+        XCTAssertFalse(WindowEnumerationLifecycle.hasCurrentFullscreenObservation(
+            sessionWindowKeys: [],
+            enumeratedWindowKeys: [unrelated]
+        ))
+    }
+
     func testSingleApplicationAbsenceRemainsImmediatelyAuthoritative() {
         var state = CoordinatedWindowEnumerationCollapseState()
 
@@ -364,7 +426,8 @@ final class WakeReconciliationTests: XCTestCase {
             requiredProcessIdentifiers: [10],
             successfullyEnumeratedProcessIdentifiers: [10],
             enumeratedWindowProcessIdentifiers: [],
-            isLifecycleTransitionActive: false
+            isLifecycleTransitionActive: false,
+            hasCurrentFullscreenObservation: true
         ), [])
     }
 

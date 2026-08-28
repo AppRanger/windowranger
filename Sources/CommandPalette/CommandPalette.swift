@@ -626,6 +626,21 @@ enum CommandPaletteLayoutNavigation {
 }
 
 enum CommandPaletteSelectionRevalidation {
+    static func isValidationRequestCurrent(
+        presentationGeneration: UInt64,
+        requestGeneration: UInt64,
+        isPresented: Bool
+    ) -> Bool {
+        isPresented && presentationGeneration == requestGeneration
+    }
+
+    static func validatesBeforeDismissal(
+        _ destination: CommandPaletteDestination
+    ) -> Bool {
+        if case .command = destination { return true }
+        return false
+    }
+
     static func destination(
         _ requested: CommandPaletteDestination,
         original: RadialCommandContext,
@@ -954,6 +969,15 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
             )
             return
         }
+        if CommandPaletteSelectionRevalidation.validatesBeforeDismissal(destination) {
+            validateBeforeDismissalAndDispatch(
+                destination,
+                original: original,
+                allowsInlineLayoutRefresh: allowsInlineLayoutRefresh,
+                presentationGeneration: requestGeneration
+            )
+            return
+        }
         closePanel(
             reason: "selection",
             restorePreviousApplication: true
@@ -970,6 +994,41 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
                     allowsInlineLayoutRefresh: allowsInlineLayoutRefresh
                 )
             }
+        }
+    }
+
+    private func validateBeforeDismissalAndDispatch(
+        _ destination: CommandPaletteDestination,
+        original: RadialCommandContext,
+        allowsInlineLayoutRefresh: Bool,
+        presentationGeneration: UInt64
+    ) {
+        engine.radialCommandContext { [weak self] current in
+            guard let self,
+                  CommandPaletteSelectionRevalidation.isValidationRequestCurrent(
+                      presentationGeneration: presentationGeneration,
+                      requestGeneration: self.requestGeneration,
+                      isPresented: self.isPresented
+                  )
+            else { return }
+            let current = self.contextEnricher(current)
+            guard let command = self.revalidatedCommand(
+                destination,
+                original: original,
+                current: current,
+                allowsInlineLayoutRefresh: allowsInlineLayoutRefresh
+            ) else {
+                self.closePanel(reason: "selection", restorePreviousApplication: true)
+                return
+            }
+            let correlationID = self.diagnostics.makeCorrelationID()
+            self.logCommittedSelection(command, correlationID: correlationID)
+            self.closePanel(reason: "selection", restorePreviousApplication: true)
+            self.dispatcher.dispatch(
+                command,
+                source: .commandPalette,
+                correlationID: correlationID
+            )
         }
     }
 
@@ -1030,39 +1089,61 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
                 completion()
             }
             let current = self.contextEnricher(current)
-            guard let validatedDestination = CommandPaletteSelectionRevalidation.destination(
-                      destination,
-                      original: original,
-                      current: current,
-                      hotKeyConfiguration: self.hotKeyConfigurationProvider(),
-                      isPauseModeEnabled: self.isPauseModeEnabledProvider(),
-                      allowsInlineLayoutRefresh: allowsInlineLayoutRefresh
-                  ),
-                  case let .command(command) = validatedDestination
-            else {
-                self.diagnostics.log(
-                    category: "command-palette",
-                    event: "selection-rejected",
-                    fields: ["reason": "stale-context"]
-                )
-                return
-            }
-            if current.sessionValidationToken != original.sessionValidationToken {
-                self.diagnostics.log(
-                    category: "command-palette",
-                    event: "selection-revalidated",
-                    fields: ["reason": "accepted-inline-layout-refresh"]
-                )
-            }
+            guard let command = self.revalidatedCommand(
+                destination,
+                original: original,
+                current: current,
+                allowsInlineLayoutRefresh: allowsInlineLayoutRefresh
+            ) else { return }
             let correlationID = self.diagnostics.makeCorrelationID()
-            self.diagnostics.log(
-                category: "command-palette",
-                event: "selection-committed",
-                correlation: correlationID,
-                fields: command.diagnosticFields
-            )
+            self.logCommittedSelection(command, correlationID: correlationID)
             self.dispatcher.dispatch(command, source: .commandPalette, correlationID: correlationID)
         }
+    }
+
+    private func revalidatedCommand(
+        _ destination: CommandPaletteDestination,
+        original: RadialCommandContext,
+        current: RadialCommandContext,
+        allowsInlineLayoutRefresh: Bool
+    ) -> WindowManagerCommand? {
+        guard let validatedDestination = CommandPaletteSelectionRevalidation.destination(
+                  destination,
+                  original: original,
+                  current: current,
+                  hotKeyConfiguration: hotKeyConfigurationProvider(),
+                  isPauseModeEnabled: isPauseModeEnabledProvider(),
+                  allowsInlineLayoutRefresh: allowsInlineLayoutRefresh
+              ),
+              case let .command(command) = validatedDestination
+        else {
+            diagnostics.log(
+                category: "command-palette",
+                event: "selection-rejected",
+                fields: ["reason": "stale-context"]
+            )
+            return nil
+        }
+        if current.sessionValidationToken != original.sessionValidationToken {
+            diagnostics.log(
+                category: "command-palette",
+                event: "selection-revalidated",
+                fields: ["reason": "accepted-inline-layout-refresh"]
+            )
+        }
+        return command
+    }
+
+    private func logCommittedSelection(
+        _ command: WindowManagerCommand,
+        correlationID: String
+    ) {
+        diagnostics.log(
+            category: "command-palette",
+            event: "selection-committed",
+            correlation: correlationID,
+            fields: command.diagnosticFields
+        )
     }
 
     private func closePanel(reason: String, restorePreviousApplication: Bool) {
