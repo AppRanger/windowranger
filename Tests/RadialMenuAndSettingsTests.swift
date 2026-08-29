@@ -1380,6 +1380,24 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             "menuBar"
         )
         XCTAssertFalse(available.contains(.appearance))
+
+        let profileSwitchingDefaults = isolatedDefaults()
+        profileSwitchingDefaults.set(
+            SettingsCategory.profileSwitching.rawValue,
+            forKey: "settings.selectedCategory.v1"
+        )
+        let profileSwitchingModel = SettingsNavigationModel(
+            defaults: profileSwitchingDefaults,
+            includeDebug: false
+        )
+        XCTAssertEqual(profileSwitchingModel.selectedCategory, .profiles)
+        XCTAssertEqual(
+            profileSwitchingDefaults.string(forKey: "settings.selectedCategory.v1"),
+            SettingsCategory.profiles.rawValue
+        )
+        profileSwitchingModel.select(.profileSwitching)
+        XCTAssertEqual(profileSwitchingModel.selectedCategory, .profiles)
+        XCTAssertFalse(available.contains(.profileSwitching))
     }
 
     func testWorkspaceSearchRoutesConfigurationAndDynamicIdentityToWorkspaces() {
@@ -1404,7 +1422,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertNotNil(dynamic?.workspaceID)
     }
 
-    func testProfileSwitchingAndDisplaysSearchRouteToTheirOwnSections() {
+    func testProfilesOwnIdentityAndAutomaticUseSearchWhileDisplaysStaySeparate() {
         for query in ["profile name", "profile icon", "editing profile identity"] {
             XCTAssertEqual(
                 SettingsCatalog.search(query, includeDebug: false).first?.category,
@@ -1415,8 +1433,8 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         for query in ["manual profile pin", "docked topology", "automatic selection"] {
             XCTAssertEqual(
                 SettingsCatalog.search(query, includeDebug: false).first?.category,
-                .profileSwitching,
-                "Expected Profile Switching routing for \(query)"
+                .profiles,
+                "Expected Profiles routing for \(query)"
             )
         }
         for query in ["Independent Displays", "monitor fingerprint role", "display workspace behavior"] {
@@ -1424,6 +1442,50 @@ final class RadialMenuAndSettingsTests: XCTestCase {
                 SettingsCatalog.search(query, includeDebug: false).first?.category,
                 .displays,
                 "Expected Displays routing for \(query)"
+            )
+        }
+    }
+
+    func testProfileAutomaticAssignmentPolicyKeepsDefaultOwnedAndTogglesOptionalContexts() {
+        let currentOwner = UUID()
+        let selectedProfileID = UUID()
+
+        XCTAssertEqual(
+            ProfileAutomaticAssignmentPolicy.replacementOwner(
+                currentOwner: currentOwner,
+                selectedProfileID: selectedProfileID,
+                context: .localDefault
+            ),
+            selectedProfileID
+        )
+        XCTAssertEqual(
+            ProfileAutomaticAssignmentPolicy.replacementOwner(
+                currentOwner: selectedProfileID,
+                selectedProfileID: selectedProfileID,
+                context: .localDefault
+            ),
+            selectedProfileID
+        )
+
+        for context in [
+            ProfileAutomaticContext.gameMode,
+            .docked,
+            .undocked,
+        ] {
+            XCTAssertEqual(
+                ProfileAutomaticAssignmentPolicy.replacementOwner(
+                    currentOwner: currentOwner,
+                    selectedProfileID: selectedProfileID,
+                    context: context
+                ),
+                selectedProfileID
+            )
+            XCTAssertNil(
+                ProfileAutomaticAssignmentPolicy.replacementOwner(
+                    currentOwner: selectedProfileID,
+                    selectedProfileID: selectedProfileID,
+                    context: context
+                )
             )
         }
     }
@@ -1533,6 +1595,24 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
+    func testWorkspacePreviewRefreshCapturesEveryTabWithSelectionFirst() {
+        let ids = [workspaceA.id, workspaceB.id, workspaceC.id]
+        XCTAssertEqual(
+            WorkspaceSettingsPreviewRefreshPolicy.captureOrder(
+                workspaceIDs: ids,
+                selectedWorkspaceID: workspaceB.id
+            ),
+            [workspaceB.id, workspaceA.id, workspaceC.id]
+        )
+        XCTAssertEqual(
+            WorkspaceSettingsPreviewRefreshPolicy.captureOrder(
+                workspaceIDs: ids,
+                selectedWorkspaceID: UUID()
+            ),
+            ids
+        )
+    }
+
     @MainActor
     func testWorkspaceDeepLinkTracksExactSelectionAndClearsStaleWorkspaceFocus() {
         let model = SettingsNavigationModel(defaults: isolatedDefaults(), includeDebug: false)
@@ -1552,7 +1632,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertNil(model.requestedWorkspaceID)
     }
 
-    func testWorkspaceRowAccessibilityExposesFullIdentityAndOwnership() {
+    func testWorkspaceTabAccessibilityExposesFullIdentityAndOwnership() {
         let workspace = WorkspaceDefinition(name: "Long-form Writing", key: "w", layout: .accordion)
         XCTAssertEqual(
             WorkspaceSettingsAccessibility.rowLabel(
@@ -1560,6 +1640,24 @@ final class RadialMenuAndSettingsTests: XCTestCase {
                 displayRoleName: "Studio Display"
             ),
             "Long-form Writing, Home Display Studio Display, Accordion layout, workspace key W"
+        )
+    }
+
+    func testWorkspaceLayoutMiniaturesTrackSavedLayoutStyle() {
+        XCTAssertEqual(WorkspaceLayoutMiniatureKind(layout: .none), .freeform)
+        XCTAssertEqual(WorkspaceLayoutMiniatureKind(layout: .tiled), .tiled)
+        XCTAssertEqual(WorkspaceLayoutMiniatureKind(layout: .accordion), .accordion)
+        XCTAssertEqual(
+            WorkspaceLayoutMiniatureKind(layout: .none).accessibilityDescription,
+            "Freeform layout preview"
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutMiniatureKind(layout: .tiled).accessibilityDescription,
+            "Tiled layout preview"
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutMiniatureKind(layout: .accordion).accessibilityDescription,
+            "Accordion layout preview"
         )
     }
 
@@ -1593,7 +1691,230 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
-    func testWorkspaceSettingsWindowHasRoomForSidebarListAndInspector() {
+    func testTiledGeometryEditPolicyNormalizesOnlyTheRequestedLinkGroup() {
+        let original = WorkspaceLayoutGaps(
+            innerHorizontal: 10,
+            innerVertical: 20,
+            outerTop: 30,
+            outerRight: 40,
+            outerBottom: 50,
+            outerLeft: 60
+        )
+
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.normalizedForInnerLink(original),
+            WorkspaceLayoutGaps(
+                innerHorizontal: 10,
+                innerVertical: 10,
+                outerTop: 30,
+                outerRight: 40,
+                outerBottom: 50,
+                outerLeft: 60
+            )
+        )
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.normalizedForOuterLink(original),
+            WorkspaceLayoutGaps(
+                innerHorizontal: 10,
+                innerVertical: 20,
+                outerTop: 30,
+                outerRight: 30,
+                outerBottom: 30,
+                outerLeft: 30
+            )
+        )
+    }
+
+    func testTiledGeometryEditPolicyAppliesLinkedEditsToOnlyTheirGroup() {
+        let original = WorkspaceLayoutGaps(
+            innerHorizontal: 10,
+            innerVertical: 20,
+            outerTop: 30,
+            outerRight: 40,
+            outerBottom: 50,
+            outerLeft: 60
+        )
+
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.applying(
+                75,
+                to: .innerVertical,
+                gaps: original,
+                isInnerLinked: true,
+                isOuterLinked: false
+            ),
+            WorkspaceLayoutGaps(
+                innerHorizontal: 75,
+                innerVertical: 75,
+                outerTop: 30,
+                outerRight: 40,
+                outerBottom: 50,
+                outerLeft: 60
+            )
+        )
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.applying(
+                125,
+                to: .outerLeft,
+                gaps: original,
+                isInnerLinked: false,
+                isOuterLinked: true
+            ),
+            WorkspaceLayoutGaps(
+                innerHorizontal: 10,
+                innerVertical: 20,
+                outerTop: 125,
+                outerRight: 125,
+                outerBottom: 125,
+                outerLeft: 125
+            )
+        )
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.applying(
+                90,
+                to: .outerRight,
+                gaps: original,
+                isInnerLinked: false,
+                isOuterLinked: false
+            ).outerRight,
+            90
+        )
+    }
+
+    func testTiledGeometryLinkActivationPreservesLegacyMigrationBoundary() {
+        let original = WorkspaceLayoutGaps(
+            innerHorizontal: 10,
+            innerVertical: 20,
+            outerTop: 30,
+            outerRight: 40,
+            outerBottom: 50,
+            outerLeft: 60
+        )
+
+        XCTAssertNil(
+            TiledGeometryEditPolicy.normalizationForLinkActivation(
+                .inner,
+                gaps: original,
+                preservesLegacyGeometry: true
+            )
+        )
+        XCTAssertNil(
+            TiledGeometryEditPolicy.normalizationForLinkActivation(
+                .outer,
+                gaps: original,
+                preservesLegacyGeometry: true
+            )
+        )
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.normalizationForLinkActivation(
+                .inner,
+                gaps: original,
+                preservesLegacyGeometry: false
+            ),
+            TiledGeometryEditPolicy.normalizedForInnerLink(original)
+        )
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.normalizationForLinkActivation(
+                .outer,
+                gaps: original,
+                preservesLegacyGeometry: false
+            ),
+            TiledGeometryEditPolicy.normalizedForOuterLink(original)
+        )
+    }
+
+    func testTiledGeometryPointValuesPreserveFractionalPrecision() {
+        XCTAssertEqual(TiledGeometryEditPolicy.pointValueText(5), "5")
+        XCTAssertEqual(TiledGeometryEditPolicy.pointValueText(5.5), "5.5")
+        XCTAssertEqual(TiledGeometryEditPolicy.pointValueText(5.125), "5.125")
+    }
+
+    func testTiledGeometryPreviewKeepsSmallNonZeroValuesVisible() {
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.previewExtent(
+                value: 0,
+                maximumValue: 200,
+                maximumExtent: 20
+            ),
+            0
+        )
+        XCTAssertGreaterThan(
+            TiledGeometryEditPolicy.previewExtent(
+                value: 5,
+                maximumValue: 200,
+                maximumExtent: 20
+            ),
+            3
+        )
+        XCTAssertGreaterThan(
+            TiledGeometryEditPolicy.previewExtent(
+                value: 5,
+                maximumValue: 400,
+                maximumExtent: 25
+            ),
+            2.5
+        )
+        XCTAssertEqual(
+            TiledGeometryEditPolicy.previewExtent(
+                value: 500,
+                maximumValue: 400,
+                maximumExtent: 25
+            ),
+            25
+        )
+    }
+
+    @MainActor
+    func testLinkedTiledGeometryChangesParticipateInNativeUndo() {
+        let defaults = isolatedDefaults()
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        var workspace = workspaceA
+        workspace.layout = .tiled
+        workspace.layoutConfiguration = WorkspaceLayoutConfiguration(
+            orientation: .automatic,
+            accordionPadding: 250,
+            gaps: WorkspaceLayoutGaps(
+                innerHorizontal: 10,
+                innerVertical: 20,
+                outerTop: 30,
+                outerRight: 40,
+                outerBottom: 50,
+                outerLeft: 60
+            )
+        )
+        store.workspaces = [workspace]
+        let original = store.settingsLayoutConfiguration(for: workspace.id)
+        var updated = original
+        updated.gaps = TiledGeometryEditPolicy.normalizedForOuterLink(original.gaps)
+        let undo = UndoManager()
+
+        store.setSettingsLayoutConfiguration(
+            updated,
+            for: workspace.id,
+            undoManager: undo,
+            actionName: "Change Linked Layout Geometry"
+        )
+
+        XCTAssertEqual(store.settingsLayoutConfiguration(for: workspace.id), updated)
+        XCTAssertTrue(undo.canUndo)
+        undo.undo()
+        XCTAssertEqual(store.settingsLayoutConfiguration(for: workspace.id), original)
+    }
+
+    func testTiledGeometryEditingLinksResetWhenWorkspaceContextChanges() {
+        var links = TiledGeometryEditingLinks(inner: true, outer: true)
+
+        links.reset()
+
+        XCTAssertEqual(links, TiledGeometryEditingLinks())
+    }
+
+    func testWorkspaceSettingsWindowHasRoomForTabsAndSplitInspector() {
         XCTAssertEqual(SettingsWindowMetrics.minimumSize, CGSize(width: 760, height: 560))
         XCTAssertEqual(SettingsWindowMetrics.defaultSize, CGSize(width: 1280, height: 780))
         XCTAssertEqual(SettingsWindowMetrics.sidebarWidth, 240)
@@ -2167,7 +2488,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(report.issues.filter { $0.chord == nil }.count, 2)
     }
 
-    func testInjectedRegistrationFailureIsIsolatedAndReplacementUnregistersEveryOldToken() {
+    func testInjectedRegistrationFailureIsRetriedWithoutReplacingWorkingRegistrations() {
         let service = TestGlobalHotKeyRegistrationService()
         let failingChord = HotKeyConfiguration().chord(for: .nextWindow)
         service.failures[failingChord] = -9_878
@@ -2197,16 +2518,53 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             hotKeyConfiguration: HotKeyConfiguration(),
             radialMenuEnabled: true
         )
-        XCTAssertEqual(Set(service.unregistrations), firstTokens)
+        XCTAssertTrue(service.unregistrations.isEmpty)
         XCTAssertTrue(second.runtimeIssues.isEmpty)
         XCTAssertEqual(second.registeredOwners.count, enabledActionCount)
+        XCTAssertEqual(service.registrations.count, enabledActionCount)
 
-        let replacementTokens = Set(service.registrations.suffix(second.registeredOwners.count).map(\.token))
+        let allTokens = Set(service.registrations.map(\.token))
         manager.suspendRegistration()
-        XCTAssertTrue(replacementTokens.isSubset(of: Set(service.unregistrations)))
+        XCTAssertEqual(Set(service.unregistrations), allTokens)
         let countAfterFirstSuspend = service.unregistrations.count
         manager.suspendRegistration()
         XCTAssertEqual(service.unregistrations.count, countAfterFirstSuspend)
+    }
+
+    func testAddingFifthWorkspaceKeepsExistingRegistrationsAndAddsBothNewBindings() {
+        let service = TestGlobalHotKeyRegistrationService()
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { _, _ in },
+            registrationService: service,
+            installsEventHandler: false
+        )
+        let firstFour = ["1", "2", "3", "4"].map {
+            WorkspaceDefinition(name: "Workspace \($0)", key: $0, layout: .tiled)
+        }
+
+        let first = manager.register(workspaces: firstFour, radialMenuEnabled: true)
+        let initialTokens = Set(service.registrations.map(\.token))
+        let initialRegistrationCount = service.registrations.count
+        XCTAssertEqual(first.registeredOwners.filter { $0.kind == .workspaceSwitch }.count, 4)
+        XCTAssertEqual(first.registeredOwners.filter { $0.kind == .workspaceMove }.count, 4)
+
+        let fifth = WorkspaceDefinition(name: "Personal", key: "P", layout: .tiled)
+        let second = manager.register(
+            workspaces: firstFour + [fifth],
+            radialMenuEnabled: true,
+            diagnosticSource: "workspace-settings-changed"
+        )
+
+        XCTAssertTrue(service.unregistrations.isEmpty)
+        XCTAssertEqual(service.registrations.count, initialRegistrationCount + 2)
+        XCTAssertTrue(initialTokens.isSubset(of: Set(service.registrations.map(\.token))))
+        XCTAssertTrue(second.runtimeIssues.isEmpty)
+        XCTAssertTrue(second.registeredOwners.contains {
+            $0.kind == .workspaceSwitch && $0.workspaceID == fifth.id
+        })
+        XCTAssertTrue(second.registeredOwners.contains {
+            $0.kind == .workspaceMove && $0.workspaceID == fifth.id
+        })
     }
 
     func testFullscreenGameRegistrationScopeKeepsOnlyWorkspaceNavigation() {
@@ -2328,15 +2686,18 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         let retained = firstRegistrations[0]
         service.unregistrationFailures[retained.token] = -9_877
 
+        var replacementConfiguration = HotKeyConfiguration()
+        replacementConfiguration.setKeyCode(12, for: .previousWorkspace) // Q
         _ = manager.register(
             workspaces: [],
-            hotKeyConfiguration: HotKeyConfiguration(),
+            hotKeyConfiguration: replacementConfiguration,
             radialMenuEnabled: false
         )
 
         let replacementIdentifiers = Set(
             service.registrations.dropFirst(firstRegistrations.count).map(\.identifier)
         )
+        XCTAssertEqual(replacementIdentifiers.count, 1)
         XCTAssertFalse(replacementIdentifiers.contains(retained.identifier))
         XCTAssertEqual(service.unregistrations.filter { $0 == retained.token }.count, 1)
 
@@ -2413,6 +2774,31 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertTrue(sink.text.contains("global:nextWindow"))
         XCTAssertTrue(sink.text.contains("-9878"))
         XCTAssertFalse(sink.text.contains("window-title"))
+    }
+
+    func testShortcutRegistrationDiagnosticsRecordCompletedWorkspaceSnapshot() {
+        let sink = MemoryDiagnosticSink()
+        let logger = DiagnosticLogger(buildMode: .debug, sink: sink)
+        let workspace = WorkspaceDefinition(name: "Private name", key: "P", layout: .tiled)
+        let manager = HotKeyManager(
+            dispatcher: WindowManagerCommandDispatcher { _, _ in },
+            diagnostics: logger,
+            registrationService: TestGlobalHotKeyRegistrationService(),
+            installsEventHandler: false
+        )
+
+        _ = manager.register(
+            workspaces: [workspace],
+            radialMenuEnabled: false,
+            diagnosticSource: "workspace-settings-changed"
+        )
+
+        XCTAssertTrue(sink.text.contains("registration-completed"))
+        XCTAssertTrue(sink.text.contains("workspace-settings-changed"))
+        XCTAssertTrue(sink.text.contains(String(workspace.id.uuidString.prefix(8))))
+        XCTAssertTrue(sink.text.contains("workspace-count"))
+        XCTAssertTrue(sink.text.contains("registered-count"))
+        XCTAssertFalse(sink.text.contains("Private name"))
     }
 
     @MainActor
@@ -2540,6 +2926,10 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             SettingsCatalog.search("Command Palette shortcut", includeDebug: false).first?.id,
             "radial-shortcut"
         )
+        XCTAssertEqual(
+            SettingsCatalog.search("palette position", includeDebug: false).first?.id,
+            "palette-position"
+        )
     }
 
     func testSettingsNoLongerExposesTheLegacyWheelCatalogueEditor() {
@@ -2591,7 +2981,7 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             cloud.set("obsolete", forKey: key)
         }
 
-        _ = SettingsStore(
+        let store = SettingsStore(
             defaults: defaults,
             ubiquitousStore: cloud,
             connectedDisplaysProvider: { [] }
@@ -2603,6 +2993,15 @@ final class RadialMenuAndSettingsTests: XCTestCase {
             "radialMenuGlobeFnHoldEnabled.v1",
         ] {
             XCTAssertNil(defaults.object(forKey: key))
+            XCTAssertTrue(cloud.keys.contains(key))
+        }
+
+        XCTAssertTrue(store.replaceICloudSettingsWithLocalCopy())
+        for key in [
+            "radialMenuActivationStyle.v1",
+            "radialMenuHoldDelay.v1",
+            "radialMenuGlobeFnHoldEnabled.v1",
+        ] {
             XCTAssertFalse(cloud.keys.contains(key))
         }
     }
@@ -2638,6 +3037,29 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertEqual(restored.shortcutGuideSize, .large)
         XCTAssertEqual(restored.shortcutGuidePosition, .topTrailing)
         XCTAssertNil(restored.shortcutGuideRuntimeIssue)
+    }
+
+    @MainActor
+    func testCommandPalettePositionStaysOnThisMacAndSurvivesRelaunch() {
+        let defaults = isolatedDefaults()
+        let cloud = RecordingUbiquitousStore()
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        store.iCloudSyncEnabled = true
+        store.commandPalettePosition = .bottom
+
+        XCTAssertEqual(defaults.string(forKey: "commandPalettePosition.v1"), "bottom")
+        XCTAssertFalse(cloud.keys.contains("commandPalettePosition.v1"))
+
+        let restored = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertEqual(restored.commandPalettePosition, .bottom)
     }
 
     @MainActor

@@ -36,7 +36,9 @@ installing production hotkeys, asking for Accessibility permission or moving liv
    After the runtime publishers are wired, the onboarding controller presents when its local
    completion version is stale and binds every choice back to this same store. General Settings can
    explicitly restart only that local progress; the Settings window closes before onboarding is
-   presented on the next main-loop turn, and existing configuration remains intact.
+   presented on the next main-loop turn, and existing configuration remains intact. The wizard is
+   a floating auxiliary window on every native macOS Space so testing workspace navigation cannot
+   hide it; permission state comes from the same bounded, prompt-free monitor used by Settings.
 3. `WorkspaceEngine.start()` checks Accessibility trust, enumerates applications/windows and sends
    each candidate through the central admission classifier before it can enter any other subsystem.
 4. Hotkeys, the optional local workspace-swipe monitor, the menu bar, and the Command Palette emit
@@ -224,14 +226,33 @@ when it exceeds the newer sync envelope; writing that library to iCloud is withh
 recovery state until it is eligible. Replacing a rejected remote value is a separate explicit user
 action and never occurs as a side effect of a failed pull.
 
+Joining iCloud is pull-first and write-gated. The initial pull, startup refresh, and external-change
+refresh perform no cloud writes. A valid remote profile library establishes the writable state and
+remains authoritative; an absent value leaves the store waiting because iCloud availability may be
+delayed, while a rejected value leaves it blocked with visible recovery state. Profile edits and all
+supported global-setting writers share the same gate. Establishing this Mac as the source of truth,
+including while ordinary sync is still off, is a separately confirmed action that validates the
+local library before enabling writes and publishing the complete supported payload.
+
 ### Local to one Mac
 
 The active/manual profile selection, automatic trigger mappings, runtime active-workspace state,
 the selected Quick App identity for each profile, monitor fingerprints, role-to-physical-monitor
 bindings, trackpad preferences, Shortcut Guide enablement/size/position, focused-window border
 preferences and per-application radius overrides, versioned onboarding progress/completion,
-Accessibility state, login-item state, diagnostics, and live window
-session remain local. `WorkspaceStateStore` writes the current WindowServer-bound session beneath
+Accessibility and Screen Recording state, the workspace-thumbnail opt-in, login-item state,
+diagnostics, and live window session remain local. Workspaces visual tabs for the active profile may
+render a read-only descriptor from the engine's existing tracked-window state; inactive-profile tabs
+remain saved-layout miniatures. Selecting a tab never activates a workspace. Optional window
+thumbnails and the home display's current wallpaper are decoded only to bounded preview resolution,
+remain memory-only, and never enter profile, local-session, iCloud, export, or diagnostic storage.
+The inspector's optional equal-gap and
+equal-padding links are even
+narrower ephemeral UI state: they reset when inspection moves to another workspace and never enter
+`WorkspaceLayoutConfiguration`, profile storage, or iCloud. Activating a link on an untouched
+legacy workspace also preserves its nil geometry boundary; only an actual value edit or the explicit
+defaults action adopts current geometry. Linked multi-value changes use the existing reversible
+workspace-definition path for native Undo. `WorkspaceStateStore` writes the current WindowServer-bound session beneath
 the user's cache directory using an atomic replacement. This includes exact hidden Quick App
 identities only when WindowRanger hid those windows' applications. A changed WindowServer session
 invalidates exact window IDs and that ownership marker rather than guessing. Legacy minimized-window
@@ -255,13 +276,17 @@ previews deterministic additive names, and performs one profile-library mutation
 The transport file never becomes a second authoritative configuration source.
 
 Settings exposes this ownership boundary directly. Profiles owns the reusable library, inline
-profile name/icon editing, and explicit activation; Profile Switching owns this Mac's local selection rules; Displays owns the selected
+profile name/icon editing, explicit activation, and the profile-centric editor for this Mac's local
+selection rules. The standalone legacy Profile Switching destination resolves to Profiles. Displays owns the selected
 profile's display mode and role definitions alongside this Mac's physical display bindings.
 Workspaces, Displays, Applications, and Quick App Shelf share an explicit Settings edit target.
 Selecting, creating, or duplicating a library profile changes only that edit
 target; mutations are persisted into that reusable definition and do not publish live engine values
-unless the target is active. The full-row sidebar selector changes only that edit target; **Use
-Profile** remains in Profile Status as the explicit local manual-pin and engine activation boundary.
+unless the target is active. The top profile tabs and full-row sidebar selector change only that edit
+target; **Use Profile** remains the explicit local manual-pin and engine activation boundary.
+Automatic-use rows invert the existing single-owner local mappings without changing their persisted
+schema or priority. Default always retains an owner, optional contexts may be cleared, and assigning
+the current display topology reuses and reassigns an existing exact match rather than duplicating it.
 Menu Bar exposes the separate profile-owned display-role icons alongside
 its global presentation controls, while Focus Border owns local application-specific appearance
 overrides. Removing an App Rule or converting it to a Quick App never deletes the independent local
@@ -424,18 +449,25 @@ area; on macOS 27 the standard parent status button owns workspace-shaped tracki
 resolves enter/exit with the same global screen-space geometry as clicks. This compatibility path
 does not add event monitors, access the system menu-bar process, or change gesture exclusivity.
 After a short dwell, the menu-bar controller may attach a nonactivating application shelf beneath
-the hovered workspace. The shelf reads an asynchronous, read-only application summary from the
-workspace engine's existing managed-window state; it does not enumerate Accessibility windows or
-perform writes merely because the pointer hovered. Applications are grouped by normalized bundle
+the hovered workspace. By default it reads an asynchronous, read-only application summary from the
+workspace engine's existing managed-window state. When the local thumbnail option is enabled, the
+same panel instead hosts the reusable interactive desktop preview. Its descriptor uses already
+tracked identity and geometry and never enumerates, unparks, moves, or focuses Accessibility windows
+merely because the pointer hovered. ScreenCaptureKit performs at most one shareable-content
+enumeration for that refresh followed by bounded sequential one-shot captures; failures and
+permission loss retain metadata/icon placeholders. Applications are grouped by normalized bundle
 identifier, with a process fallback for bundle-less apps, and the workspace's focus history chooses
-the representative window before stable layout order. Selecting a shelf row returns one target to
+the representative window before stable layout order. Selecting a shelf row or preview item returns one target to
 the engine, which performs the normal workspace transition and filters its existing verified focus
 pipeline to that application. If the target disappeared, the operation leaves focus neutral instead
 of selecting a different app. Keep-on-all-workspaces apps are omitted because the shelf describes
 direct workspace membership. The shelf embeds its content in AppKit's native regular Liquid Glass
-surface on macOS 26 and later, with the system menu material as the older-OS fallback. It enables a
-vertical scroller only when the bounded eight-row viewport actually overflows; the empty state and
-ordinary app lists do not advertise scrolling. Returning from the shelf to the macOS 27 status item
+surface on macOS 26 and later, with the system menu material as the older-OS fallback. The list
+enables a vertical scroller only when its bounded eight-row viewport overflows; the preview uses a
+bounded canvas matching the resolved home display's full bounds and aspect ratio. Windows are mapped
+in that display's coordinate space, and windows wholly on other displays are omitted. Preview
+background clicks perform the ordinary workspace switch and item
+clicks preserve application-focus behavior. Returning from the shelf to the macOS 27 status item
 crosses a small non-window gap where AppKit may omit a new tracking-area enter. During the existing
 dismissal grace, the controller therefore performs one delayed re-sample through the display
 group's existing global-pointer resolver. A resolved workspace restores the normal hover state and
@@ -498,12 +530,16 @@ the Shelf opens or closes. Arrange content is suppressed because ordinary focuse
 arrangement does not act on a Shelf-owned window. The Focus Border remains independent. Shortcut
 recording, protected game sessions, sleep, inactive login sessions, display changes and termination
 stop the passive monitor and clear the panel so a missed modifier release cannot leave it visible.
+Hot-key refreshes reconcile owner/chord identities: unchanged Carbon tokens remain live and only
+added, removed, or changed bindings touch the system registration service. Every refresh uses the
+same workspace snapshot that triggered the runtime update and records privacy-safe completion counts
+and owner IDs, so a dynamic registration fault can be separated from command dispatch.
 
 The optional focused-window highlight
 uses the same nonactivating, click-through boundary, polls only while enabled on this Mac, and excludes
 WindowRanger-owned windows, apps identified as games through the same public bundle metadata used by
-full-screen safety, and full-screen windows. Its local white-by-default colour is independent of the
-synced menu-bar accent. Automated Tiled and
+full-screen safety, and full-screen windows. Its local light-blue default is independent of the
+synced white menu-bar accent. Automated Tiled and
 Accordion geometry reserves a four-point screen-edge clearance while it is enabled; Freeform
 geometry remains untouched. Optional Tiled-only and multiple-window filters consume the engine's
 managed-window workspace snapshot; if a requested workspace condition cannot be proven, the border
@@ -513,7 +549,11 @@ publish another app's rendered corner radius, so the generation table uses verif
 keeps the macOS 27 baseline for later releases until a future design change is verified. Per-app
 overrides are local appearance state rather than synced App Rule actions because the correct
 rendering depends on this Mac and OS. Their lifetime is independent of profile App Rules and Quick
-Apps. The Command Palette captures its external target before
+Apps. Command Palette vertical position is likewise machine-local presentation state rather than
+profile or iCloud content. A pure geometry policy resolves Top, Centre, or Bottom against the
+captured interaction display's visible frame and keeps both the base panel and its right-expanding
+Placement Halo inside that usable area without accumulating origin drift across expansion cycles.
+The Command Palette captures its external target before
 becoming key and rejects a selection if that window/workspace/display/profile token changed while
 the user typed. Every command revalidates while the palette's external-focus lease is still active;
 ordinary commands then dismiss, restore the previous application, and dispatch, while exact

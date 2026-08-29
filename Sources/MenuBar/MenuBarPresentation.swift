@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MenuBarHighlightColor: Equatable, Sendable {
     static let `default` = MenuBarHighlightColor(red: 1, green: 1, blue: 1)
+    static let focusBorderDefault = MenuBarHighlightColor(red: 0.2, green: 0.6, blue: 1)
 
     let red: Double
     let green: Double

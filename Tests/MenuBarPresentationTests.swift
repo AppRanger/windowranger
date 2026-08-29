@@ -156,6 +156,19 @@ final class MenuBarPresentationTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(true, forKey: "iCloudSyncEnabled")
         let cloud = FakeUbiquitousKeyValueStore()
+        let remoteWorkspace = WorkspaceDefinition(name: "Remote", key: "1")
+        let remoteRole = ProfileDisplayRole(name: "Main")
+        cloud.set(
+            try! JSONEncoder().encode(ProfileLibrary(profiles: [WindowManagerProfile(
+                name: "Remote",
+                workspaces: [remoteWorkspace],
+                displayMode: .unified,
+                displayRoles: [remoteRole],
+                workspaceRoleAssignments: [remoteWorkspace.id: remoteRole.id],
+                appRules: []
+            )])),
+            forKey: "profileLibrary.v1"
+        )
         cloud.set("workspace-label", forKey: "menuBarPresentationMode.v1")
         cloud.set("key", forKey: "menuBarWorkspaceLabelMode.v1")
         cloud.set("#FF7A00", forKey: "menuBarHighlightColor.v1")
@@ -169,7 +182,7 @@ final class MenuBarPresentationTests: XCTestCase {
         XCTAssertEqual(store.menuBarPresentationMode, .medium)
         XCTAssertEqual(store.menuBarWorkspaceLabelMode, .key)
         XCTAssertEqual(store.menuBarHighlightColor.hex, "#FF7A00")
-        XCTAssertEqual(cloud.string(forKey: "menuBarPresentationMode.v1"), "medium")
+        XCTAssertEqual(cloud.string(forKey: "menuBarPresentationMode.v1"), "workspace-label")
         XCTAssertEqual(cloud.string(forKey: "menuBarWorkspaceLabelMode.v1"), "key")
         XCTAssertEqual(cloud.string(forKey: "menuBarHighlightColor.v1"), "#FF7A00")
         store.menuBarPresentationMode = .full
@@ -245,6 +258,7 @@ final class MenuBarPresentationTests: XCTestCase {
             ubiquitousStore: cloud,
             connectedDisplaysProvider: { [self.mainDisplay, self.externalDisplay] }
         )
+        XCTAssertTrue(writer.replaceICloudSettingsWithLocalCopy())
         let mainRoleID = try XCTUnwrap(writer.roleBindings.first(where: {
             $0.value.lastKnownIdentifier == self.mainDisplay.identifier
         })?.key)

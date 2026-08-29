@@ -31,5 +31,9 @@ WINDOWRANGER_MENU_SNAPSHOT_DIR="$output_directory" \
     /usr/bin/xcrun xctest \
     -XCTest WindowRangerTests.MenuBarVisualSnapshotTests/testOffscreenProductionMenuBarComponents \
     "$test_bundle"
+WINDOWRANGER_MENU_SNAPSHOT_DIR="$output_directory" \
+    /usr/bin/xcrun xctest \
+    -XCTest WindowRangerTests.MenuBarVisualSnapshotTests/testOffscreenReusableWorkspacePreviewFallback \
+    "$test_bundle"
 
-print "Rendered Compact Names, Compact Keys, Compact Key Icon Review, Medium, and Full previews to: $output_directory"
+print "Rendered Compact Names, Compact Keys, Compact Key Icon Review, Medium, Full, and landscape/portrait workspace fallback previews to: $output_directory"

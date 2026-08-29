@@ -41,6 +41,7 @@ targets:
       - package: Sparkle
       - sdk: ApplicationServices.framework
       - sdk: Carbon.framework
+      - sdk: ScreenCaptureKit.framework
       - sdk: ServiceManagement.framework
   WindowRangerTests:
     type: bundle.unit-test
@@ -54,6 +55,7 @@ targets:
       - package: Sparkle
       - sdk: ApplicationServices.framework
       - sdk: Carbon.framework
+      - sdk: ScreenCaptureKit.framework
       - sdk: ServiceManagement.framework
     settings:
       base:
