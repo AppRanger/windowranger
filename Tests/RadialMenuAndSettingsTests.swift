@@ -2178,35 +2178,6 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
-    func testMenuBarPresentationModesKeepPrimaryMenuSeparateFromWorkspaceButtons() {
-        XCTAssertEqual(
-            MenuBarPresentationMode.compact.primaryLabelDescriptor,
-            MenuBarPrimaryLabelDescriptor(
-                showsIcon: true,
-                indicatorStyle: .compact,
-                showsWorkspaceStrip: false
-            )
-        )
-        XCTAssertEqual(
-            MenuBarPresentationMode.medium.primaryLabelDescriptor,
-            MenuBarPrimaryLabelDescriptor(
-                showsIcon: true,
-                indicatorStyle: .medium,
-                showsWorkspaceStrip: false
-            )
-        )
-        XCTAssertTrue(MenuBarPresentationMode.full.primaryLabelDescriptor.showsWorkspaceStrip)
-        XCTAssertTrue(MenuBarPresentationMode.full.primaryLabelDescriptor.showsIcon)
-        XCTAssertEqual(
-            MenuBarPresentationMode.full.primaryLabelDescriptor,
-            MenuBarPrimaryLabelDescriptor(
-                showsIcon: true,
-                indicatorStyle: .none,
-                showsWorkspaceStrip: true
-            )
-        )
-    }
-
     @MainActor
     func testPrimaryMenuBarStateUsesInteractionWorkspaceWithMultipleActiveDisplays() {
         let model = MenuBarStateModel(workspaces: [workspaceA, workspaceB, workspaceC])

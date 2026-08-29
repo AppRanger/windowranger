@@ -426,28 +426,25 @@ requires the existing exact same-process replacement proof.
 ## UI and focus safety
 
 The menu bar never assigns an `NSStatusItem.menu`, because AppKit gives an assigned menu ownership
-of every click. Compact, Medium, and Full on macOS 14–26 use one stable custom interaction view: a
-primary click outside an explicit Full workspace button, any secondary click, or the primary
-accessibility action presents the same `NSMenu`, while an explicit workspace-button primary click
-switches. macOS 27 treats one custom status-item view as one interaction target and rewrites nested
-clicks to that target, so every mode uses one standard status item per logical display group.
+of every click. Every supported macOS release uses one standard status item per logical display
+group. This avoids nested custom status-item hit testing and keeps the same composition, placement,
+and interaction model across operating-system versions.
 Compact adapts to the configured label mode: keys use symbol-specific safe areas inside the
 horizontal, portrait, laptop, and combined-display symbols, while names render as compacted bare
 text beside a smaller symbol, with no status dot or enclosing badge. A
 hidden display icon falls back to bare workspace text. Medium renders its active-workspace chip
-inside that button; every action opens the shared menu. Settings
-embeds these same production display-group content views on macOS 27 rather than maintaining a
-separate visual imitation. Full workspace segments remain noninteractive visuals;
+inside that button; every action opens the shared menu. Settings embeds these same production
+display-group content views rather than maintaining a separate visual imitation. Full workspace
+segments remain noninteractive visuals;
 the owning status button receives one action and resolves a primary click by comparing the public
 global pointer X with those segments' live screen-space frames. Display, overflow, unresolved,
 right-, Control-, and accessibility actions present the shared menu. The standalone primary item is
 hidden in this grouped mode because every display group is already a safe menu target. Display-group
 items are retained across presentation changes and are added or removed only when display topology
-changes. Full workspace segments expose an
-immediate visual hover state. On macOS 14–26 each native workspace button owns its standard tracking
-area; on macOS 27 the standard parent status button owns workspace-shaped tracking regions and
-resolves enter/exit with the same global screen-space geometry as clicks. This compatibility path
-does not add event monitors, access the system menu-bar process, or change gesture exclusivity.
+changes. Full workspace segments expose an immediate visual hover state. The standard parent status
+button owns workspace-shaped tracking regions and resolves enter/exit with the same global
+screen-space geometry as clicks. This path does not add event monitors, access the system menu-bar
+process, or change gesture exclusivity.
 After a short dwell, the menu-bar controller may attach a nonactivating application shelf beneath
 the hovered workspace. By default it reads an asynchronous, read-only application summary from the
 workspace engine's existing managed-window state. When the local thumbnail option is enabled, the
@@ -467,8 +464,8 @@ enables a vertical scroller only when its bounded eight-row viewport overflows; 
 bounded canvas matching the resolved home display's full bounds and aspect ratio. Windows are mapped
 in that display's coordinate space, and windows wholly on other displays are omitted. Preview
 background clicks perform the ordinary workspace switch and item
-clicks preserve application-focus behavior. Returning from the shelf to the macOS 27 status item
-crosses a small non-window gap where AppKit may omit a new tracking-area enter. During the existing
+clicks preserve application-focus behavior. Returning from the shelf to a status item crosses a
+small non-window gap where AppKit may omit a new tracking-area enter. During the existing
 dismissal grace, the controller therefore performs one delayed re-sample through the display
 group's existing global-pointer resolver. A resolved workspace restores the normal hover state and
 cancels dismissal; an unresolved pointer changes nothing. This remains a bounded transition check,

@@ -171,6 +171,54 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-104 — Use one menu-bar composition on every supported macOS release
+
+- **Type:** Menu-bar consistency and code simplification
+- **Priority:** P1
+- **Status:** Live validation — implementation, complete automation, and the macOS 26 one-display
+  compatibility pass are complete; an exact release-signed physical-Mac check remains.
+- **Evidence:** User-observed on 29 August 2026 after installing Beta 9 on a macOS 26 Mac. Full mode
+  used the retained pre-27 custom strip, including a redundant app glyph and visibly heavier
+  workspace capsules, while the newer Mac used the grouped standard-status-item presentation.
+- **Expected behavior:** Compact, Medium, and Full have the same display-group composition and
+  interaction model on every supported macOS release; operating-system material and tint may still
+  differ naturally.
+- **Smallest useful outcome:** Make the standard per-display-group status items the sole production
+  path without raising WindowRanger's minimum macOS version. Remove the superseded single custom
+  host, its standalone app glyph, native child workspace buttons, version switch, and obsolete
+  tests and documentation.
+- **Acceptance:** Focused menu-bar and complete non-hosted gates pass. A signed candidate is installed
+  in the persistent macOS 26 UTM guest and visibly checked in Compact, Medium, and Full. Full must
+  switch explicit workspaces, open the menu from non-workspace/secondary/Control-click actions,
+  preserve hover previews, and retain coherent ordering and press feedback. Automated, guest
+  installation, and observed GUI evidence remain separate.
+- **Implemented:** Every supported macOS release now uses one standard status item per logical
+  display group and the same rendered hit-target geometry. The superseded custom status host,
+  standalone app glyph, native child buttons, operating-system composition switch, compatibility
+  preview, and their obsolete tests were removed. The Settings preview now always represents the
+  production grouped composition.
+- **Automated evidence (29 August 2026):** The focused 41-test menu-bar presentation suite and two
+  visual snapshot tests passed. `./scripts/verify-local-ci.sh --quick` passed all 808 non-hosted
+  tests plus the release-build registry, Sparkle workflow, project-generation, and test-isolation
+  checks. The final universal Debug app built successfully for macOS 14+ with no new compiler
+  warning, passed strict deep signature verification, and embedded source revision
+  `e9358197fdcb-dirty`.
+- **macOS 26 guest evidence (29 August 2026):** The persistent UTM guest was visibly identified as
+  UUID `74D1CCD5-8C65-45B0-8D4C-4B22A24E9191`, macOS 26.6.2 build 25G83, arm64. The exact source
+  candidate replaced Beta 9 recoverably. Its host Apple Development profile was correctly rejected
+  because that profile does not include the VM, so the same guest test bundle was re-signed ad hoc
+  after removing the machine-specific profile; version 0.1.0, build 1, bundle identifier, and source
+  revision remained verified. With Accessibility granted, Compact, Medium, and Full each rendered
+  visibly through the grouped status item. Full visibly switched 1 → 2 → 3 with the selected segment
+  updating, opened the application menu from a secondary click, and presented the hover shelf using
+  its no-app fallback. Diagnostics then recorded real AX candidates and a verified Finder focus
+  restoration while switching 3 → 2 → 1 → 3.
+- **Remaining live boundary:** The guest proves the macOS 26 grouped composition and one-display
+  interaction path, not Developer ID/release packaging, multi-display ordering, or a physical Mac.
+  UTM's nested input did not give a reliable held-Control-click or final display-icon primary-click
+  observation; those routes retain focused automated coverage. Screen Recording remained off, so
+  the hover check exercised the icon/fallback shelf rather than captured window thumbnails.
+
 ### WR-102 — Keep newly added workspace shortcuts live without relaunching
 
 - **Type:** Global shortcut registration bug
