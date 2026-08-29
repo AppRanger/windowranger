@@ -55,6 +55,21 @@ workspace switching, and application-unhide compatibility.
 Shortcuts remains separate for global, non-workspace commands. Applications, Quick App Shelf, and
 Command Palette retain their existing destinations.
 
+## Displays presentation
+
+Displays presents the existing model in the order a person makes the decision:
+
+1. Choose whether displays **Switch together** or **Switch separately**. Native visual cards show
+   the outcome; Unified and Independent remain secondary technical labels for continuity.
+2. Configure each display role in one mapping row. The profile-owned name and this Mac's physical
+   monitor picker are adjacent instead of appearing as separate lists.
+3. Read a plain local status: Connected, Disconnected, Needs attention, or Not assigned. Hardware
+   fingerprints and matching mechanics remain implementation details.
+
+The role name remains reusable profile data and may sync through iCloud. The physical monitor
+choice remains local to this Mac. Existing role identity, CRUD, safe main-display fallback,
+`WorkspaceDisplayPin` persistence, and Unified/Independent runtime behavior are unchanged.
+
 ## Existing-control mapping
 
 | Existing location | New Workspaces location |
@@ -116,6 +131,13 @@ intentionally omitted.
 
 ### Layout
 
+- Layout Style uses three labelled visual choices rather than a text-only segmented control.
+  Freeform depicts independently overlapping windows, Tiled depicts non-overlapping panes, and
+  Accordion depicts an overlapping stack with neighbouring edges still visible.
+- Tiled and Accordion orientation uses the same visual-choice treatment. Horizontal depicts
+  left-to-right flow, Vertical depicts top-to-bottom flow, and Automatic pairs a wide-display
+  horizontal result with a portrait-display vertical result. These diagrams explain the existing
+  values and do not add layout state or alter geometry.
 - **Freeform:** no geometry controls. Copy explains that frames remain manual while workspace
   visibility, focus, persistence, display assignment, quit/wake recovery, and safety repair remain
   managed.
@@ -209,6 +231,10 @@ items, or show a live window.
 and minimum-width Light/Dark states plus wide and minimum-width Dark states with nine workspaces, a
 selected long name, and horizontal overflow. No extra environment switch is required to reproduce
 that evidence.
+
+Set `WINDOWRANGER_SETTINGS_SNAPSHOT_SCOPE=displays` to render the production Displays screen in
+wide Light, wide Dark, and minimum-width Dark states without launching the app or touching live
+display, Accessibility, hotkey, or iCloud state.
 
 The final reference/prototype comparison must check tab proportions and layout miniatures, panel
 hierarchy, padding, typography, native borders/materials, selected state, horizontal overflow,

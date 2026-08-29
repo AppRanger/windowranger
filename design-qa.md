@@ -1,3 +1,70 @@
+# WR-066 Displays Presentation Design QA
+
+## Scope and evidence
+
+- **Selected visual source:**
+  `/Users/chris/.codex/generated_images/01a046f9-13a7-7900-937a-afbfca1e14ed/exec-487064a8-408e-4e47-a907-eb508dde0a0e.png`
+  (1,532 x 1,026 pixels). It establishes outcome-led workspace-switching choices and one combined
+  role-to-monitor mapping surface.
+- **Production renders:** `.build/displays-settings-previews/windowranger-settings-displays.png`
+  and `windowranger-settings-displays-dark.png` render the real SwiftUI Settings view at 1,536 x
+  1,024 points and Retina 2x. `windowranger-settings-displays-compact-dark.png` renders the same
+  screen at the 760 x 560-point minimum window size.
+- **State:** Dark and Light appearance, Desktop 2 screens profile, Switch separately selected,
+  Primary Display mapped to DELL U4021QW, Side bar mapped to TYPE-C, and both bindings connected.
+  The compact state stacks the two switching choices and retains the vertically scrollable native
+  Form.
+- **Normalization:** the final Dark render was downsampled to 1,532 x 1,026 pixels for comparison
+  with the source. The source and implementation differ by only four pixels of nominal width and
+  two pixels of nominal height before normalization.
+- **Full comparison:** `.build/displays-settings-previews/displays-full-comparison.png` places the
+  complete selected source and final native implementation together.
+- **Focused comparisons:** `.build/displays-settings-previews/displays-switching-comparison.png`
+  isolates the switching choices; `.build/displays-settings-previews/displays-roles-comparison.png`
+  isolates the combined role mappings and sync/local boundary.
+
+## Comparison history
+
+1. **P2 resolved — the first visual cards read as decorated labels rather than primary choices.**
+   The final cards use larger native display diagrams, a stronger selected outline and checkmark,
+   and enough height to make the two outcomes immediately comparable.
+2. **P2 resolved — the first deterministic fixture showed an unintended third role.** The fixture
+   now reuses the profile's existing second role, leaving the approved Primary Display and Side bar
+   pair and matching physical-monitor examples.
+3. **P2 resolved — role rows were denser than the approved direction.** Additional vertical rhythm
+   separates each reusable role while retaining standard native Form controls and separators.
+4. **Adaptive result:** at the 760 x 560-point minimum size, the cards stack rather than compressing
+   their diagrams or text. The same Form remains scrollable, so the role editor and add action are
+   reachable without a separate compact interface.
+
+## Fidelity surfaces
+
+- **Information hierarchy:** Switch together and Switch separately lead with the real outcome;
+  Unified and Independent remain quiet continuity terms. The selected profile's display setup
+  follows as the second decision.
+- **Role mapping:** every row keeps its profile-owned name, local physical-monitor picker, plain
+  connection status, and delete action together. The footer states the reusable-versus-local
+  persistence boundary once for the group.
+- **Typography and spacing:** native San Francisco semantic text, grouped Form surfaces, 12-point
+  card spacing, continuous corners, system separators, and expanded row padding preserve the
+  existing Settings design system rather than copying bitmap effects.
+- **Colour and assets:** semantic primary/secondary labels, the user's control accent, system green
+  and orange status colours, and SF Symbols provide native Light, Dark, and increased-contrast
+  behaviour. No generated bitmap or custom drawing asset ships in the app.
+- **Interaction and accessibility:** each card is one button with selected state, outcome label,
+  value, and hint. Diagrams are decorative and hidden from accessibility. Role name, local monitor,
+  textual status, add, and delete remain native controls backed by the existing store operations.
+- **Behavior boundary:** this is a presentation recomposition only. Display mode semantics, role
+  UUIDs, profile/iCloud ownership, local `WorkspaceDisplayPin` persistence, ambiguous/disconnected
+  handling, and the safe main-display fallback are unchanged.
+
+No actionable P0, P1, or P2 visual mismatch remains. Pointer, keyboard, VoiceOver, and physical
+monitor interaction remain the separately approved signed installed-app validation boundary.
+
+final result: passed
+
+---
+
 # Menu Bar Presentation Design QA
 
 ## Scope
