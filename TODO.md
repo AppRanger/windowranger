@@ -3837,28 +3837,6 @@ design notes, but every active candidate must map back to a work item here or be
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
-### WR-107 — Publish WindowRanger 0.1.0 Beta 10
-
-- **Type:** Beta release preparation
-- **Status:** Candidate preparation and validation in progress.
-- **Requested:** 29 August 2026 after the signed daily candidate was installed and accepted for the
-  post-Beta 9 menu-bar, workspace-preview, and Settings refinements.
-- **Smallest useful outcome:** Publish signed, notarized universal Beta `0.1.0-beta.10` as public
-  build `11`, containing the reviewed work since Beta 9. Keep public appcast generation and website
-  deployment outside this checkpoint.
-- **Acceptance boundary:** Central `develop` owns the single build-11 allocation; the reviewed tree
-  is promoted without force-updating `release/0.1.0`; stable Xcode passes the exact release tree's
-  isolated suite and static analysis, then produces the Developer ID-signed, notarized and stapled
-  DMG/ZIP. The immutable tag, five GitHub assets, checksums, and provenance must round-trip to that
-  exact tree, and GitHub must publish it as a prerelease. Existing signed-daily and macOS 26 UTM
-  evidence remain distinct from exact packaged-artifact and physical multi-display validation.
-- **Current evidence:** The complete post-Beta 9 checkpoint passes all 814 non-hosted tests, test
-  isolation, a universal unsigned Debug build, targeted production Settings renders, and whitespace
-  verification. The signed daily exercised the same product code on the maintainer's Mac, while the
-  grouped menu-bar composition also passed the macOS 26 UTM acceptance path. The release contains no
-  packaging, signing, entitlement, identity, updater, migration, or minimum-system change, so the
-  documented repeat-Beta validation path applies.
-
 ### WR-012 — Clean build and package verification
 
 - **Type:** Release epic
@@ -3923,6 +3901,30 @@ second copy of that checklist.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-107 — Publish WindowRanger 0.1.0 Beta 10
+
+- **Result:** Published
+  [`v0.1.0-beta.10`](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.10) as a
+  GitHub prerelease on 29 August 2026. The protected annotated tag points to exact release commit
+  `ea9f330bdeb1bb195b34348e766b8785d4a28805`; central `develop` owns build `11`, and the
+  [release-branch CI run](https://github.com/AppRanger/windowranger/actions/runs/33252397850) passed
+  814 tests, static analysis, an unsigned universal Release build, and both DMG smoke layouts.
+- **Distribution evidence:** Stable Xcode 26.6 reproduced the 814-test pass and static analysis,
+  then built the Developer ID-signed universal `arm64`/`x86_64` archive. Apple accepted the app
+  (`a05ef8f3-b827-403a-8bcd-d0b886b93db4`) and DMG
+  (`e58bbb78-03e0-4f22-b154-45716aba5316`) notarizations with zero issues; both stapled artifacts
+  passed validation and Gatekeeper. The five public assets round-tripped against the tag, build,
+  channel, provenance, and SHA-256 values `516e59e7ae9655cb867ce7315313b30f40c114a2a644b1f3820f1c3a63ee1df8`
+  (DMG) and `de8b2a282780d128358855dfcdf83934f40e4eac493805bc2c36ef7d71082fe6`
+  (ZIP).
+- **Validation boundary:** The documented repeat-Beta path applied because the release contained no
+  packaging, signing, entitlement, identity, updater, migration, or minimum-system change. The
+  maintainer accepted the same signed-daily product code and the grouped menu-bar composition also
+  passed macOS 26 UTM acceptance, so a second packaged replacement install was not required. The
+  maintainer's Mac still runs the signed daily rather than packaged Beta 10. Public appcast
+  generation, website deployment, exact packaged-artifact installation, and the outstanding
+  physical multi-display and clean-machine matrices remain outside this checkpoint.
 
 ### WR-103 — Publish WindowRanger 0.1.0 Beta 9
 
