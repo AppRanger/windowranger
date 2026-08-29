@@ -36,7 +36,9 @@ installing production hotkeys, asking for Accessibility permission or moving liv
    After the runtime publishers are wired, the onboarding controller presents when its local
    completion version is stale and binds every choice back to this same store. General Settings can
    explicitly restart only that local progress; the Settings window closes before onboarding is
-   presented on the next main-loop turn, and existing configuration remains intact.
+   presented on the next main-loop turn, and existing configuration remains intact. The wizard is
+   a floating auxiliary window on every native macOS Space so testing workspace navigation cannot
+   hide it; permission state comes from the same bounded, prompt-free monitor used by Settings.
 3. `WorkspaceEngine.start()` checks Accessibility trust, enumerates applications/windows and sends
    each candidate through the central admission classifier before it can enter any other subsystem.
 4. Hotkeys, the optional local workspace-swipe monitor, the menu bar, and the Command Palette emit
@@ -58,6 +60,22 @@ Window membership is session state, not profile content. Inactive members are pa
 position-only AX writes where possible. Their recoverable frames are retained so switching back,
 graceful quit, startup recovery and explicit reset can return them to meaningful visible geometry.
 Exact window identities are trusted only inside the same WindowServer session.
+
+The broad refresh captures each readable Accessibility frame once during enumeration and reuses
+that observation when deciding whether background visibility or layout work is necessary. A missing
+enumeration frame receives a direct retry. If the engine attempts visibility or geometry work, it
+then rebuilds the signature from fresh frames so rejected, delayed, or adjusted writes cannot become
+an assumed baseline; a no-write refresh retains the enumerated signature without rereading every
+visible managed window.
+
+The periodic broad refresh constructs the same public engine state needed to notice Accessibility
+trust, membership, workspace, profile, display, and highlight-context changes, but schedules its
+main-thread observer only when that state differs from the last scheduled value. Explicit engine
+mutations retain a forced observer notification even when this compact state is equal because the
+observer also invalidates Command Palette, menu, Settings utility, Shelf-guide, and other derived
+contexts not represented by `WorkspaceEngineState`. While Command Palette is presented, periodic
+notifications also remain forced because its exact focus, frame, direction, and tree validation
+token intentionally contains more context than the public state.
 
 Layout membership and Accessibility write eligibility are separate during a transient observation
 gap. A failed application-window enumeration or unreadable frame for an existing Tiled or Accordion
@@ -208,14 +226,33 @@ when it exceeds the newer sync envelope; writing that library to iCloud is withh
 recovery state until it is eligible. Replacing a rejected remote value is a separate explicit user
 action and never occurs as a side effect of a failed pull.
 
+Joining iCloud is pull-first and write-gated. The initial pull, startup refresh, and external-change
+refresh perform no cloud writes. A valid remote profile library establishes the writable state and
+remains authoritative; an absent value leaves the store waiting because iCloud availability may be
+delayed, while a rejected value leaves it blocked with visible recovery state. Profile edits and all
+supported global-setting writers share the same gate. Establishing this Mac as the source of truth,
+including while ordinary sync is still off, is a separately confirmed action that validates the
+local library before enabling writes and publishing the complete supported payload.
+
 ### Local to one Mac
 
 The active/manual profile selection, automatic trigger mappings, runtime active-workspace state,
 the selected Quick App identity for each profile, monitor fingerprints, role-to-physical-monitor
 bindings, trackpad preferences, Shortcut Guide enablement/size/position, focused-window border
 preferences and per-application radius overrides, versioned onboarding progress/completion,
-Accessibility state, login-item state, diagnostics, and live window
-session remain local. `WorkspaceStateStore` writes the current WindowServer-bound session beneath
+Accessibility and Screen Recording state, the workspace-thumbnail opt-in, login-item state,
+diagnostics, and live window session remain local. Workspaces visual tabs for the active profile may
+render a read-only descriptor from the engine's existing tracked-window state; inactive-profile tabs
+remain saved-layout miniatures. Selecting a tab never activates a workspace. Optional window
+thumbnails and the home display's current wallpaper are decoded only to bounded preview resolution,
+remain memory-only, and never enter profile, local-session, iCloud, export, or diagnostic storage.
+The inspector's optional equal-gap and
+equal-padding links are even
+narrower ephemeral UI state: they reset when inspection moves to another workspace and never enter
+`WorkspaceLayoutConfiguration`, profile storage, or iCloud. Activating a link on an untouched
+legacy workspace also preserves its nil geometry boundary; only an actual value edit or the explicit
+defaults action adopts current geometry. Linked multi-value changes use the existing reversible
+workspace-definition path for native Undo. `WorkspaceStateStore` writes the current WindowServer-bound session beneath
 the user's cache directory using an atomic replacement. This includes exact hidden Quick App
 identities only when WindowRanger hid those windows' applications. A changed WindowServer session
 invalidates exact window IDs and that ownership marker rather than guessing. Legacy minimized-window
@@ -239,13 +276,17 @@ previews deterministic additive names, and performs one profile-library mutation
 The transport file never becomes a second authoritative configuration source.
 
 Settings exposes this ownership boundary directly. Profiles owns the reusable library, inline
-profile name/icon editing, and explicit activation; Profile Switching owns this Mac's local selection rules; Displays owns the selected
+profile name/icon editing, explicit activation, and the profile-centric editor for this Mac's local
+selection rules. The standalone legacy Profile Switching destination resolves to Profiles. Displays owns the selected
 profile's display mode and role definitions alongside this Mac's physical display bindings.
 Workspaces, Displays, Applications, and Quick App Shelf share an explicit Settings edit target.
 Selecting, creating, or duplicating a library profile changes only that edit
 target; mutations are persisted into that reusable definition and do not publish live engine values
-unless the target is active. The full-row sidebar selector changes only that edit target; **Use
-Profile** remains in Profile Status as the explicit local manual-pin and engine activation boundary.
+unless the target is active. The top profile tabs and full-row sidebar selector change only that edit
+target; **Use Profile** remains the explicit local manual-pin and engine activation boundary.
+Automatic-use rows invert the existing single-owner local mappings without changing their persisted
+schema or priority. Default always retains an owner, optional contexts may be cleared, and assigning
+the current display topology reuses and reassigns an existing exact match rather than duplicating it.
 Menu Bar exposes the separate profile-owned display-role icons alongside
 its global presentation controls, while Focus Border owns local application-specific appearance
 overrides. Removing an App Rule or converting it to a Quick App never deletes the independent local
@@ -258,8 +299,23 @@ or ambiguous physical display falls back safely without rewriting the synced hom
 therefore restore the original role.
 
 Sleep/wake and display notifications are coalesced through generation-tokened reconciliation.
-Display topology resolves first, fresh AX elements are acquired second, and visibility/layout is
-applied once the snapshot is stable. Bounded retries handle temporarily incomplete enumeration.
+AppKit workspace signals cover system/display sleep and fast-user switching; the distributed macOS
+screen-lock and screen-unlock notifications provide the separate ordinary-lock boundary that those
+workspace signals do not guarantee. Every observed suspension source must receive its matching
+resume signal before reconciliation begins. Because Accessibility windows can disappear just before
+the distributed lock notification arrives, a successful-empty collapse spanning at least half of
+multiple still-running tracked applications receives a 500-millisecond grace period. Single-app
+closure remains immediately authoritative; a coordinated collapse that remains fully active after
+the grace period is accepted. While a native fullscreen window remains present in the current AX
+snapshot, the same coordinated collapse stays non-authoritative without making fullscreen a global
+layout suspension; ordinary management on another display continues. Accessibility snapshot
+authority is per application rather than per display, so the successfully empty process cohort is
+protected WindowServer-wide while currently enumerated windows remain write-eligible. A latched but
+currently absent fullscreen session cannot prolong this protection indefinitely. Fullscreen exit
+starts one fresh bounded grace so the returning Space can publish a stable snapshot before any
+retained tree is pruned. Display topology resolves first, fresh AX elements are acquired second, and
+visibility/layout is applied once the snapshot is stable. Bounded retries handle temporarily
+incomplete enumeration.
 After the layout solve, expected Tiled and Accordion frames are read back because a successful AX
 write does not prove that the receiving app retained it. Only mismatched, still-eligible split
 windows are retried, for a bounded number of attempts; a newer lifecycle signal supersedes the
@@ -278,12 +334,13 @@ the recovery boundary for those cases.
 
 The profile-aware Quick App Shelf is an engine-owned coordinated set of temporary presentation
 overrides. Direction, size fraction, animation, Accordion or Carousel style, and a one-to-four
-visible maximum are profile-owned shelf presentation, applied uniformly to every ordered entry
-before engine publication. Carousel divides the shelf's cross-axis into non-overlapping cards;
-Accordion overlaps entries along that axis while leaving a fixed reachable edge and raising the
-selected window. Only already available, unambiguous neighbour windows can join the group. The
-selected entry retains the existing bounded launch path, but presentation never launches extra apps
-merely to fill the visible maximum. The synced shelf order and machine-local selected identity
+visible application maximum are profile-owned shelf presentation, applied uniformly to every
+ordered application entry before engine publication. Each visible application contributes every
+eligible admitted standard window from its one running process. Carousel divides the shelf's
+cross-axis into non-overlapping window cards; Accordion overlaps windows along that axis while
+leaving a fixed reachable edge and raising the selected window. The selected application retains
+the existing bounded launch path, but presentation never launches extra apps merely to fill the
+visible maximum. The synced shelf order and machine-local selected identity
 are separate state: configuration publication cannot reorder the shelf or cancel an unchanged
 entry's in-flight launch. Direct Command Palette selection means idempotent Show, the regular
 shortcut means Toggle selected, and Previous/Next traverse the stable configured order. Launch,
@@ -291,16 +348,18 @@ show, hide, focus-loss, switching, removal, profile changes, screen suspension, 
 replacement are generation-gated through one serialized transition path; a rapid switch retains
 only the latest valid requested selection.
 
-Exact ownership and application Hide confirmation remain independent for every visible member,
-while one selected entry owns focus and the ordinary toggle/animation transition. Selecting an
-already visible neighbour promotes it without collapsing the group. Moving beyond the visible group
-safely hides the current members, then presents the requested entry and whichever eligible
-neighbours fit the new group. Ambiguous neighbours fail closed without disturbing valid members.
+Exact ownership remains per window, while Hide confirmation and the ordinary toggle transition are
+per application. One exact window owns focus. Selecting any already visible window promotes it
+without collapsing or relaying out the group. Moving beyond the visible application group safely
+hides the current applications, then presents the requested application and every eligible window
+from whichever configured neighbours fit the new group. A second process for one configured bundle
+fails closed without disturbing valid application groups.
 
 Command Palette presentation is an explicit shelf-focus lease. Activating WindowRanger for that
 panel does not count as external focus loss, palette-owned launches do not activate the target app,
 and completed shelf previews retain palette keyboard focus. While an entry is presented, the normal
-Previous Window and Next Window commands route through the shelf's ordered selection path.
+Previous Window and Next Window commands traverse windows inside the selected application before
+continuing through the shelf's configured application order.
 Navigate-arrow commands use the presented group geometry to choose the nearest visible Shelf window
 in that direction. Arrow promotion raises and focuses that already-presented window in place without
 rotating membership or relaying out the group, so reversing direction returns to the window just
@@ -317,17 +376,17 @@ workspace and interaction display. When that direction has no neighbour, it wrap
 in the opposite direction, preferring perpendicular-axis overlap before distance. The fallback
 never broadens candidate admission or crosses a workspace or display boundary.
 
-Each entry resolves only one unambiguous admitted standard window for the configured bundle. The
+Each entry resolves every eligible admitted window from one process for the configured bundle. The
 group targets the pointer/interaction display's usable bounds. Its optional Top, Bottom, Left, or
 Right movement uses generation-gated
 frame steps so a hide, profile switch, sleep, termination, or newer toggle supersedes delayed
 animation writes. Every direction expands from or collapses to a one-point frame inside the chosen
 usable edge. No animation path travels through off-screen coordinates, and the receiving
 application's Accessibility position transition is suppressed around direct frame writes. Once
-owned, each shelf window is
+owned, every shelf window is
 excluded from normal visibility, layout, focus-cycle, reset, manual-geometry reconciliation, and
 background-signature participation. The engine uses AppKit Hide/Unhide for the configured
-application while retaining the exact window as the only geometry and session target. This avoids
+application while retaining exact per-window geometry and restore targets. This avoids
 the Dock minimize/restore transition, but intentionally means every window belonging to that
 application follows its hidden state. Hide and Unhide are generation-gated and confirmed before the
 session changes state. The engine preserves every exact target's durable restore frame and unhides
@@ -336,10 +395,11 @@ lifecycle cleanup. It also
 ignores its own programmatic activation when deciding whether another app has taken focus. A
 successful AX snapshot
 may replace an exact window identity during a native tab switch. The engine rebinds the session only
-when the old key disappeared and exactly one newly tracked, same-process, same-bundle eligible window
-remains. That replacement inherits the old local workspace, restore frame, display placement, and
-layout metadata before background layout runs. Multiple, pre-existing, cross-process, or unrelated
-replacements leave the exact-window safety boundary intact and clear the obsolete session.
+when the old key disappeared and exactly one newly tracked, same-process, same-bundle eligible
+replacement exists. Other retained members of the application group do not make that one-for-one
+handoff ambiguous. That replacement inherits the old local workspace, restore frame, display
+placement, and layout metadata before background layout runs. Multiple new, pre-existing,
+cross-process, or unrelated replacements leave the exact-window safety boundary intact.
 When the local focused-window border is enabled, Quick App presentation bounds reuse the border's
 four-point screen-edge clearance before applying the configured size fraction. Startup, wake,
 native-tab replacement, hide-failure restoration, and ordinary presentation all use those same
@@ -348,18 +408,20 @@ final frame without changing focus or session ownership.
 When a shortcut finds no eligible configured-app window, the engine asks Launch Services to open
 and activate that application so its normal reopen handling can create a window, then starts one
 generation-bound watchdog. Window discovery during that watchdog performs no Accessibility writes,
-so the first unambiguous eligible
-window can become the exact Quick App session before ordinary workspace layout moves it. The
-watchdog checks eight times after a short launch delay, then fails with explicit feedback; a profile
-change, shutdown, newer launch generation, missing installation, launch error, timeout, or multiple
-eligible windows never grants permission to guess a target.
+so the first eligible same-process window group can become the exact Quick App session before
+ordinary workspace layout moves it. The watchdog checks eight times after a short launch delay, then
+fails with explicit feedback; a profile change, shutdown, newer launch generation, missing
+installation, launch error, timeout, or multiple matching processes never grants permission to
+guess a target.
 During startup reconciliation, the engine establishes ownership only for configured shelf entries
-before initial workspace visibility and layout. Every configured entry with exactly one eligible
-matching window is claimed hidden, regardless of its pre-launch visibility; launching WindowRanger
-never implicitly presents a Shelf entry. Crash-restart recovery may reclaim a hidden application only
-when the WindowServer-bound marker matches the exact process/window identity and bundle and AppKit
-still reports that application hidden. An ambiguous set is left untouched by Quick App startup
-handling.
+before initial workspace visibility and layout. Every configured entry whose eligible windows come
+from one process is claimed hidden, regardless of pre-launch visibility; launching WindowRanger
+never implicitly presents a Shelf entry. Crash-restart recovery may reclaim a hidden application
+only when the WindowServer-bound marker matches the exact owned window identities and bundle and
+AppKit still reports that application hidden. Same-bundle candidates from multiple processes remain
+untouched. Newly admitted same-process windows join the exact application group, and an
+authoritatively removed member leaves only that exact ownership set; native-tab state transfer still
+requires the existing exact same-process replacement proof.
 
 ## UI and focus safety
 
@@ -387,18 +449,25 @@ area; on macOS 27 the standard parent status button owns workspace-shaped tracki
 resolves enter/exit with the same global screen-space geometry as clicks. This compatibility path
 does not add event monitors, access the system menu-bar process, or change gesture exclusivity.
 After a short dwell, the menu-bar controller may attach a nonactivating application shelf beneath
-the hovered workspace. The shelf reads an asynchronous, read-only application summary from the
-workspace engine's existing managed-window state; it does not enumerate Accessibility windows or
-perform writes merely because the pointer hovered. Applications are grouped by normalized bundle
+the hovered workspace. By default it reads an asynchronous, read-only application summary from the
+workspace engine's existing managed-window state. When the local thumbnail option is enabled, the
+same panel instead hosts the reusable interactive desktop preview. Its descriptor uses already
+tracked identity and geometry and never enumerates, unparks, moves, or focuses Accessibility windows
+merely because the pointer hovered. ScreenCaptureKit performs at most one shareable-content
+enumeration for that refresh followed by bounded sequential one-shot captures; failures and
+permission loss retain metadata/icon placeholders. Applications are grouped by normalized bundle
 identifier, with a process fallback for bundle-less apps, and the workspace's focus history chooses
-the representative window before stable layout order. Selecting a shelf row returns one target to
+the representative window before stable layout order. Selecting a shelf row or preview item returns one target to
 the engine, which performs the normal workspace transition and filters its existing verified focus
 pipeline to that application. If the target disappeared, the operation leaves focus neutral instead
 of selecting a different app. Keep-on-all-workspaces apps are omitted because the shelf describes
 direct workspace membership. The shelf embeds its content in AppKit's native regular Liquid Glass
-surface on macOS 26 and later, with the system menu material as the older-OS fallback. It enables a
-vertical scroller only when the bounded eight-row viewport actually overflows; the empty state and
-ordinary app lists do not advertise scrolling. Returning from the shelf to the macOS 27 status item
+surface on macOS 26 and later, with the system menu material as the older-OS fallback. The list
+enables a vertical scroller only when its bounded eight-row viewport overflows; the preview uses a
+bounded canvas matching the resolved home display's full bounds and aspect ratio. Windows are mapped
+in that display's coordinate space, and windows wholly on other displays are omitted. Preview
+background clicks perform the ordinary workspace switch and item
+clicks preserve application-focus behavior. Returning from the shelf to the macOS 27 status item
 crosses a small non-window gap where AppKit may omit a new tracking-area enter. During the existing
 dismissal grace, the controller therefore performs one delayed re-sample through the display
 group's existing global-pointer resolver. A resolved workspace restores the normal hover state and
@@ -421,6 +490,26 @@ public static Liquid Glass view; older supported releases use the system HUD mat
 surfaces use a capsule radius derived from the live overlay height. The surface choice never changes
 its panel, focus, input, timing, or accessibility boundary.
 
+Manual Tiled divider resize and title-bar move use two-phase preview transactions. A passive global
+mouse monitor asks the serialized engine for the focused-window frame only until a genuine size or
+position change classifies the gesture. The engine then freezes the committed tree, captures every
+participant's exact original frame, and parks only those windows at the recoverable desktop edge.
+Resize sessions also retain the dragged edge and pointer anchor; subsequent samples at a bounded
+30 Hz project an observed frame from the pointer rather than the concealed AX window. Move sessions
+resolve the tile under the pointer against the immutable committed frames, swap only those two tree
+leaves, and animate every changed glass frame toward the proposed result. Neither path requires
+broad window enumeration or application-wide Hide. A status-level, nonactivating, click-through
+overlay draws untinted clear Liquid Glass tiles over the visible desktop on macOS 26 or later. The
+glass remains in one shared `NSGlassEffectContainerView`; its only content is a fine inset outline.
+Older supported systems use the HUD-material fallback on the same transparent panel. The
+focused-window border is suppressed for the transaction so only the landing hints remain. Mouse-up
+revalidates profile, workspace, participant set, display topology, layout configuration and original
+tree, snaps the parked windows directly into the latest proposed frames, persists the committed
+tree, and then removes the overlay. Releasing a move over its source or a gap restores the original
+frames. Cancellation also restores those captured frames before dismissing the preview. Pause,
+Shelf presentation, full-screen protection, lifecycle suspension, display change, WindowServer
+replacement and quit all cancel the tokened preview; stale dismissals cannot remove a newer preview.
+
 The optional Shortcut Guide separately observes
 paired global and local `flagsChanged` events without consuming them. The exact configured Navigate
 and Arrange families select content from the same conflict-checked registry Carbon uses; changing a
@@ -431,15 +520,26 @@ system HUD material as the older-system fallback. The normal presentation remain
 key map. Presentation-only groups label the action and its workspace, window, layout, or display
 target without maintaining a second command list; the spatial arrow caption is centred below its
 keys. Unusually dense valid configurations add rows rather than clipping actions. Enablement,
-Small/Medium/Large density and the nine screen anchors are local to one Mac. Shortcut recording,
-protected game sessions, sleep, inactive login sessions, display changes and termination stop the
-passive monitor and clear the panel so a missed modifier release cannot leave it visible.
+Small/Medium/Large density and the nine screen anchors are local to one Mac. When a Quick App Shelf
+session is presented, the engine exposes only its direction and display as a read-only guide
+context. The normal conflict-checked Navigate content is then filtered to commands that remain
+truthful for Shelf focus: workspace switching and Commands remain, the Shelf toggle becomes Hide
+Shelf, ordered traversal names Shelf windows, and spatial focus retains only the Shelf layout axis.
+The view uses one lower density and the screen edge opposite the Shelf; a held guide refreshes when
+the Shelf opens or closes. Arrange content is suppressed because ordinary focused-window
+arrangement does not act on a Shelf-owned window. The Focus Border remains independent. Shortcut
+recording, protected game sessions, sleep, inactive login sessions, display changes and termination
+stop the passive monitor and clear the panel so a missed modifier release cannot leave it visible.
+Hot-key refreshes reconcile owner/chord identities: unchanged Carbon tokens remain live and only
+added, removed, or changed bindings touch the system registration service. Every refresh uses the
+same workspace snapshot that triggered the runtime update and records privacy-safe completion counts
+and owner IDs, so a dynamic registration fault can be separated from command dispatch.
 
 The optional focused-window highlight
 uses the same nonactivating, click-through boundary, polls only while enabled on this Mac, and excludes
 WindowRanger-owned windows, apps identified as games through the same public bundle metadata used by
-full-screen safety, and full-screen windows. Its local white-by-default colour is independent of the
-synced menu-bar accent. Automated Tiled and
+full-screen safety, and full-screen windows. Its local light-blue default is independent of the
+synced white menu-bar accent. Automated Tiled and
 Accordion geometry reserves a four-point screen-edge clearance while it is enabled; Freeform
 geometry remains untouched. Optional Tiled-only and multiple-window filters consume the engine's
 managed-window workspace snapshot; if a requested workspace condition cannot be proven, the border
@@ -449,9 +549,15 @@ publish another app's rendered corner radius, so the generation table uses verif
 keeps the macOS 27 baseline for later releases until a future design change is verified. Per-app
 overrides are local appearance state rather than synced App Rule actions because the correct
 rendering depends on this Mac and OS. Their lifetime is independent of profile App Rules and Quick
-Apps. The Command Palette captures its external target before
-becoming key, restores the previous application before dispatch, and rejects a selection if that
-window/workspace/display/profile token changed while the user typed. A top segmented control shows
+Apps. Command Palette vertical position is likewise machine-local presentation state rather than
+profile or iCloud content. A pure geometry policy resolves Top, Centre, or Bottom against the
+captured interaction display's visible frame and keeps both the base panel and its right-expanding
+Placement Halo inside that usable area without accumulating origin drift across expansion cycles.
+The Command Palette captures its external target before
+becoming key and rejects a selection if that window/workspace/display/profile token changed while
+the user typed. Every command revalidates while the palette's external-focus lease is still active;
+ordinary commands then dismiss, restore the previous application, and dispatch, while exact
+placement is validated and enqueued before dismissal. A top segmented control shows
 the captured workspace's Freeform, Tiled, or Accordion layout. It dispatches through the same typed
 command path and keeps the palette open; an observable presentation context adopts each accepted
 layout token so repeated changes remain valid. A selection made after an inline layout change is
@@ -462,8 +568,11 @@ window, the same context exposes its active profile's App Rule and App Shelf mem
 commands carry the captured workspace and active-profile identity through dispatch, mutate only the
 active profile, and fail closed if profile selection, membership, or Shelf capacity changes before
 the MainActor write. An App Shelf conversion first proves capacity so it cannot discard an App Rule
-when all four Shelf entries are occupied. Exact placement is revalidated and enqueued
-while the palette still owns a preserved managed-window anchor; a transient nil AX focus during
+when all four Shelf entries are occupied. A focused-app removal command carries the same active
+profile and exact App Rule membership, then deletes only that rule; aliases may expose the inverse
+action for an Add search, but the presented title remains explicitly destructive. Exact placement
+is revalidated and enqueued while the palette still owns a preserved managed-window anchor; a
+transient nil AX focus during
 dismissal retains that anchor. The engine's serial queue commits placement before palette dismissal
 ends Shelf preservation or restores a Quick App Shelf window or fallback application. The command
 results, workspace layout, and focused-window placement remain separate interaction

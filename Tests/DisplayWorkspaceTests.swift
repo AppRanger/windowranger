@@ -709,6 +709,50 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(store.activeProfileSelectionReason, .exactTopology(exactTriggerID))
     }
 
+    func testAssignCurrentDisplaySetupMovesExistingExclusiveMappingWithoutDuplicatingIt() throws {
+        let (defaults, suite) = isolatedDefaults("AssignCurrentDisplaySetup")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let displays = [
+            profileDisplay("main", isMain: true, isBuiltIn: true, serial: "1"),
+            profileDisplay("external", serial: "2"),
+        ]
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { displays },
+            isPortableMacProvider: { true }
+        )
+        let originalProfileID = store.activeProfileID
+        let selectedProfileID = try XCTUnwrap(
+            store.createProfile(named: "Docked", source: .scratch)
+        )
+
+        let triggerID = try XCTUnwrap(
+            store.assignCurrentDisplaySetup(to: originalProfileID)
+        )
+        XCTAssertEqual(store.exactProfileTriggers.count, 1)
+        XCTAssertEqual(store.exactProfileTriggers.first?.profileID, originalProfileID)
+        XCTAssertEqual(store.settingsProfileID, selectedProfileID)
+
+        XCTAssertEqual(
+            store.assignCurrentDisplaySetup(to: selectedProfileID),
+            triggerID
+        )
+        XCTAssertEqual(store.exactProfileTriggers.count, 1)
+        XCTAssertEqual(store.exactProfileTriggers.first?.id, triggerID)
+        XCTAssertEqual(store.exactProfileTriggers.first?.profileID, selectedProfileID)
+        XCTAssertEqual(store.activeProfileID, selectedProfileID)
+        XCTAssertEqual(store.settingsProfileID, selectedProfileID)
+        XCTAssertEqual(store.activeProfileSelectionReason, .exactTopology(triggerID))
+
+        XCTAssertEqual(
+            store.assignCurrentDisplaySetup(to: selectedProfileID),
+            triggerID
+        )
+        XCTAssertEqual(store.exactProfileTriggers.count, 1)
+    }
+
     func testGameModeActivationRestoresAutomaticProfileAndPreservesSettingsTarget() throws {
         let (defaults, suite) = isolatedDefaults("GameModeProfileSelection")
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -1225,14 +1269,14 @@ final class ProfileTests: XCTestCase {
         XCTAssertTrue(gate.isCurrent(3))
     }
 
-    func testProfileSettingsAreSearchableByTheirSeparateOwners() {
+    func testProfileSettingsAndAutomaticUseShareOneSearchOwner() {
         XCTAssertEqual(
             SettingsCatalog.search("create manage profiles", includeDebug: false).first?.category,
             .profiles
         )
         XCTAssertEqual(
             SettingsCatalog.search("docked topology", includeDebug: false).first?.category,
-            .profileSwitching
+            .profiles
         )
         XCTAssertEqual(
             SettingsCatalog.search("monitor fingerprint role", includeDebug: false).first?.category,

@@ -14,6 +14,7 @@ struct WindowRangerApp: App {
                 windowCoordinator: appDelegate.settingsWindowCoordinator,
                 diagnostics: appDelegate.diagnostics,
                 updateController: appDelegate.updateController,
+                workspacePreviewRepository: appDelegate.workspacePreviewRepository,
                 shortcutRecordingStateChanged: appDelegate.shortcutRecordingStateDidChange,
                 onboardingRestartRequested: appDelegate.restartOnboardingFromSettings
             )

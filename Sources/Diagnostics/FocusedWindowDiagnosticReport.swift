@@ -15,7 +15,7 @@ enum DiagnosticReportValue: Equatable, Sendable {
 }
 
 struct FocusedWindowDiagnosticSnapshot: Equatable, Sendable {
-    static let schemaVersion = 1
+    static let schemaVersion = 2
     static let maximumReportBytes = 64_000
 
     let timestamp: Date
@@ -23,6 +23,7 @@ struct FocusedWindowDiagnosticSnapshot: Equatable, Sendable {
     let appBuild: String
     let buildMode: String
     let macOSVersion: String
+    let displaysHaveSeparateSpaces: Bool
     let windowServerSession: String
     let targetStatus: String
     let targetBundleIdentifier: DiagnosticReportValue
@@ -37,6 +38,7 @@ struct FocusedWindowDiagnosticSnapshot: Equatable, Sendable {
             lhs.appBuild == rhs.appBuild &&
             lhs.buildMode == rhs.buildMode &&
             lhs.macOSVersion == rhs.macOSVersion &&
+            lhs.displaysHaveSeparateSpaces == rhs.displaysHaveSeparateSpaces &&
             lhs.windowServerSession == rhs.windowServerSession &&
             lhs.targetStatus == rhs.targetStatus &&
             lhs.targetBundleIdentifier == rhs.targetBundleIdentifier &&
@@ -63,6 +65,7 @@ enum FocusedWindowDiagnosticReport {
             "windowranger-build: \(snapshot.appBuild)",
             "build-mode: \(snapshot.buildMode)",
             "macos-version: \(snapshot.macOSVersion)",
+            "displays-have-separate-spaces: \(snapshot.displaysHaveSeparateSpaces)",
             "windowserver-session: \(snapshot.windowServerSession)",
             "target-status: \(snapshot.targetStatus)",
             "target-bundle-identifier: \(snapshot.targetBundleIdentifier.rendered)",

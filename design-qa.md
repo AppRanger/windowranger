@@ -72,6 +72,104 @@ final result: passed
 
 ---
 
+# WR-066 Workspace Visual Tabs Design QA
+
+## Scope and evidence
+
+- **Source visual truth:**
+  `/Users/chris/.codex/generated_images/01a046f9-13a7-7900-937a-afbfca1e14ed/exec-4754f52d-3200-4280-9912-4c1a828b8b4e.png`
+  (1,487 x 1,058 pixels). The maintainer selected option 2: large layout-preview workspace tabs
+  above a compact Details panel and wider Layout/Repair inspector.
+- **Rendered implementation:**
+  `.build/workspaces-design-qa/implementation/windowranger-settings-workspaces-dark.png`
+  (2,880 x 2,048 pixels for a 1,440 x 1,024-point native macOS Settings viewport at 2x Retina
+  density). Matching Light, Tiled-geometry Dark, 760 x 560-point minimum-width Light/Dark, and
+  many-workspace/long-name renders live beside it in `.build/workspaces-design-qa/implementation/`.
+- **State:** Dark appearance, Default profile, four workspaces with Writing selected and Accordion
+  controls visible. The source labels the profile Travel and omits the fixture's truthful shortcut
+  warning; those content-state differences are not layout mismatches. Additional renders select a
+  final long-named Freeform workspace among nine workspaces at wide and compact widths.
+- **Density normalization:** the source's 1,487 x 1,058 pixels and the implementation's 2,880 x
+  2,048 Retina pixels were both normalized to 1,440 x 1,024 pixels before horizontal composition.
+  Their aspect ratios differ by less than 0.1 percent, so no material crop or distortion was
+  introduced.
+- **Full-view comparison:**
+  `.build/workspaces-design-qa/comparisons/windowranger-workspace-tabs-comparison-final.png`
+  (2,880 x 1,024 pixels) places the selected source and final implementation together.
+- **Focused comparison:**
+  `.build/workspaces-design-qa/comparisons/windowranger-workspace-tabs-comparison-tabs-final.png`
+  (2,880 x 500 pixels) isolates the tabs, selected state, Details/Layout split, controls, and
+  trailing Add Workspace affordance at readable scale.
+
+## Comparison history
+
+1. **P2 resolved — the first implementation under-emphasized the selected direction's panel
+   proportions and controls.** Workspace details was widened to 320 points, Duplicate/Delete became
+   one balanced bordered action row, and the Layout Style and Orientation segments received a consistent
+   trailing 330-point alignment. Revised wide and compact renders show a compact identity column
+   beside a clearly dominant layout column without clipping.
+2. **P2 resolved — the first Add Workspace affordance was narrower and visually unrelated to the
+   workspace tabs.** It now shares their 168 x 126-point footprint and uses the selected mock's quiet
+   dashed outline, so the end of the ordered tab strip reads as one intentional interaction.
+3. **P2 resolved — a deep link or selection near the end of a long tab strip could be selected but
+   remain offscreen.** The tab strip now scrolls its stable UUID into view on appearance and every
+   selection change. The final nine-workspace wide and minimum-width renders show the selected
+   long-name tab and Add Workspace affordance visible while earlier tabs remain horizontally
+   reachable.
+4. **P2 resolved — derived workspace shortcuts looked like editable shortcut controls and repeated
+   the selected workspace name in two oversized rows.** They now appear under a compact Generated
+   shortcuts heading as short action names with plain right-aligned read-only values. Supporting copy
+   points to the editable Workspace Key above and the global Shortcuts destination for modifiers.
+5. **P2 resolved — the Inner gaps and Outer screen padding equality controls used mirrored checkbox
+   order and unrelated columns.** Both now use one shared label-then-checkbox row; the wide Tiled
+   layout places them in the same trailing column, while compact mode retains the same stacked order.
+   `windowranger-settings-workspaces-tiled-dark.png` records the exact production state.
+6. **Post-fix evidence:** the final full and focused comparisons above, plus
+   `windowranger-settings-workspaces-many-dark.png` and
+   `windowranger-settings-workspaces-many-compact-dark.png`, contain no remaining actionable P0,
+   P1, or P2 visual mismatch.
+
+## Fidelity surfaces
+
+- **Fonts and typography:** native San Francisco semantic headline, subheadline, caption, monospaced
+  keycap, and control weights preserve the existing Settings hierarchy in Light and Dark. Long names
+  remain complete in the editor and accessibility value while truncating to one line in a fixed tab.
+- **Spacing and layout rhythm:** the 20-point page inset, 16-point panel rhythm, consistent 12-point
+  continuous panel corners, equal workspace-tab dimensions, 320-point Details column, and flexible
+  Layout/Repair column reproduce option 2's hierarchy. Minimum width stacks the same panels and keeps
+  the tab strip horizontal and scrollable rather than hiding actions behind another mode.
+- **Colors and visual tokens:** system window/control backgrounds, separators, semantic labels,
+  orange warnings, and the user's control accent replace illustrative bitmap styling with native
+  macOS Light, Dark, increased-contrast, and selection behavior.
+- **Image quality and asset fidelity:** the three miniatures are native Retina vector geometry derived
+  only from saved Freeform, Tiled, or Accordion style. They are intentionally abstract rather than
+  screenshots of live windows; no reference bitmap, placeholder, custom icon asset, or live AX/CG
+  state enters the tabs.
+- **Copy and content:** every existing identity, Home Display, derived shortcut, copy, geometry,
+  reset, collection, and active-workspace repair action remains present. The implementation keeps
+  the real active-workspace repair command that the illustrative mock omitted.
+- **Interaction and accessibility:** tab selection changes only local Settings state. Drag/drop,
+  context-menu Move Left/Right, VoiceOver Move earlier/later actions, duplicate/delete, drop-to-end,
+  search deep links, and UUID selection reconciliation retain the existing store operations. The
+  offscreen renderer does not construct AppDelegate, register hotkeys, request Accessibility,
+  contact iCloud, start the engine, order a window, or touch live windows.
+
+## Findings and follow-up polish
+
+- No actionable P0, P1, or P2 mismatch remains.
+- **P3:** Restore Defaults remains grouped inside Workspace details rather than detached at the
+  lower-left of the source. This keeps the collection action next to workspace CRUD and avoids a
+  floating control at short window heights.
+- **P3:** the deterministic fixture intentionally shows a real shortcut-conflict warning and the
+  active-workspace recovery action, while the source is an idealized conflict-free screen. Both are
+  valid product states and do not alter the selected visual-tab structure.
+- Signed installed-app validation still needs pointer drag/drop, keyboard focus traversal,
+  VoiceOver actions, profile switching, search deep links, and live repair behavior.
+
+final result: passed
+
+---
+
 # WR-078 Shortcut Guide Target Labels Design QA
 
 ## Scope and evidence
@@ -149,6 +247,39 @@ final result: passed
 
 No actionable P0, P1, or P2 mismatch remains. Real Liquid Glass compositing, interaction-display
 placement, and press/release feel remain the signed installed-app validation boundary.
+
+final result: passed
+
+---
+
+# WR-086 Quick App Shelf Shortcut Guide Design QA
+
+## Scope and evidence
+
+- `.build/shortcut-guide-wr086/` contains Small, Medium, and Large Light/Dark renders of the
+  production Shortcut Guide view in its top-Shelf context, alongside the unchanged Navigate and
+  Arrange states.
+- The runtime deliberately resolves Medium to Small and Large to Medium while the Shelf is open;
+  Small remains Small. This keeps the common candidate at 680 x 190 points in the free strip
+  opposite a horizontal Shelf while preserving adaptive extra rows for dense workspace bindings.
+- The fixture uses five workspaces and the complete conflict-free default Navigate set. Its
+  snapshot material is deterministic, while layout, typography, keycaps, labels, and sizing are the
+  production hierarchy.
+
+## Review result
+
+- The header says **Quick App Shelf**; the lower groups distinguish **Switch Workspace** and
+  **Cycle Shelf Windows**; the toggle says **Hide Shelf**; ordered traversal says **Previous Shelf
+  Window** and **Next Shelf Window**; and the spatial caption says **Focus Shelf Window**.
+- The top-Shelf render contains only Left and Right focus keys. Policy tests separately prove that a
+  side Shelf contains only Up and Down and that every edge chooses the opposite guide anchor.
+- Small Dark and Medium Light were inspected at original Retina resolution. All labels remain
+  complete, the two-line Shelf traversal labels are balanced within their group, separators and
+  headings retain the accepted WR-078 alignment, and native Light/Dark semantic contrast remains
+  legible. No P0, P1, or P2 visual issue remains.
+- Live Liquid Glass compositing, free-strip placement against the actual configured Shelf size, the
+  held-modifier transition as the Shelf opens/closes, and coexistence with Focus Border remain the
+  signed installed-app validation boundary.
 
 final result: passed
 
@@ -290,78 +421,15 @@ final result: passed
 
 ---
 
-# Workspace Settings Design QA
+# Superseded Workspace Settings Master-List QA (Historical)
 
-## Scope and reference
+This section previously recorded the accepted master-list-plus-inspector Workspaces design. That
+interface and its List/table-row-specific evidence were intentionally replaced by the maintainer's
+selected WR-066 option 2 visual-tab design. It is retained only as a historical milestone and is not
+a current acceptance record.
 
-This QA covers the native Workspaces Settings destination selected from:
-
-`<local-artifact>`
-
-The reference supplies the master-list-plus-inspector hierarchy. WindowRanger uses the real
-profile-backed workspace/display/layout models, native SwiftUI/AppKit controls and SF Symbols; the
-bitmap and its illustrative unsupported Window behavior toggles are not included in the product.
-The complete information and persistence contract is in `docs/workspace-settings-design.md`.
-
-## Offscreen production render
-
-`WorkspaceSettingsVisualSnapshotTests` hosts the production `SettingsView` in a non-ordered,
-borderless AppKit window for one bounded SwiftUI update cycle. That realizes native
-`NavigationSplitView` and `List` descendants without starting `AppDelegate`, the workspace engine,
-Accessibility, global hotkeys, iCloud, login-item services, or the normal app. The fixture renders
-at 1440 x 1024 points and 2x Retina scale.
-
-- Final production preview: `<local-artifact>`
-- Same-canvas selected-reference comparison: `.build/settings-redesign-previews/window-manager-settings-comparison.png`
-- Accessibility text-size render: `.build/settings-redesign-previews/window-manager-settings-workspaces-accessibility-text.png`
-
-The representative state is Independent Displays, **Writing** selected, **Studio Display** as its
-abstract Home Display role, and **Accordion** with 16-point visible-edge padding.
-
-## Iteration history
-
-1. **Information architecture (P0):** the previous Workspaces, Displays, Layouts, and
-   workspace-shortcut controls were scattered across four destinations. Workspaces now owns one
-   reorderable master list and one selected-workspace inspector; physical role bindings remain in
-   Profiles and global commands remain in Shortcuts.
-2. **Offscreen-layout correction (fixture P0):** a detached hosting view did not realize virtualized
-   AppKit lists, while the first full-window capture did not allow SwiftUI's update cycle to settle.
-   The final fixture uses a non-ordered borderless window, a bounded main-run-loop update, and the
-   AppKit-supported view cache path. Selected table rows are marked emphasized only in the fixture
-   so the reference comparison represents an active Settings window without activating or showing
-   the test process.
-3. **Proportion and polish pass (P1/P2):** the first complete render made the Settings sidebar too
-   narrow and the workspace master too wide. Final column targets are a 260-point sidebar, a
-   roughly 385–420-point master, and a flexible inspector. The workspace key editor now suppresses
-   its redundant field label, every row exposes full VoiceOver ownership, and long explanatory copy
-   wraps without clipping.
-
-## Final fidelity review
-
-- **Hierarchy:** the far-left searchable Settings sidebar remains stable; page-level display mode,
-  workspace rows and CRUD occupy the centre; identity, General, layout-specific controls and Repair
-  occupy the inspector. Selection remains UUID-based across reorder/profile refresh.
-- **Controls:** native Lists, Forms, segmented Pickers, TextFields, Steppers, buttons, context menus,
-  drag-and-drop and Undo are used. Freeform hides automatic geometry; Tiled shows orientation,
-  inner gaps and outer padding; Accordion shows orientation and visible-edge padding.
-- **Typography and spacing:** system type, materials and grouped-form spacing preserve authentic
-  macOS density. The production render is intentionally a little denser than the generated image's
-  enlarged presentation typography.
-- **Colour and assets:** semantic materials/control accent and real SF Symbols support light/dark,
-  Increased Contrast and inactive-window states. No bitmap, handcrafted SVG, copied product icon,
-  or fake behavior control is shipped.
-- **Accessibility:** rows expose complete names, Home Display ownership, layout and key even when
-  visual text truncates. Drag reorder has context-menu and named VoiceOver Move Up/Down actions; an
-  accessibility text-size render exercises the full hierarchy through native layout and rasterization.
-- **Intentional differences (P3):** the generated reference contains an ellipsis menu, custom
-  per-workspace colours/icons, and three Window behavior toggles that the product does not support.
-  They are omitted rather than presented as dead or misleading controls. Offscreen segmented
-  controls retain AppKit's inactive-window shading; the live focused Settings window uses the
-  user's normal control accent.
-
-No scoped P0, P1, or P2 mismatch remains.
-
-final result: passed
+The authoritative current evidence, findings, render paths, accessibility language, and
+`final result` are in **WR-066 Workspace Visual Tabs Design QA** above.
 
 ---
 

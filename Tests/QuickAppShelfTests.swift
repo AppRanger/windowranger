@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 
 final class QuickAppShelfTests: XCTestCase {
@@ -114,6 +115,106 @@ final class QuickAppShelfTests: XCTestCase {
         )
     }
 
+    func testVisibleShelfWindowsRaiseWithSelectedWindowLast() {
+        XCTAssertEqual(
+            QuickAppShelfGroupPolicy.raiseOrder(
+                visibleWindowKeys: ["notes", "ghostty-one", "ghostty-two"],
+                selectedWindowKey: "notes"
+            ),
+            ["ghostty-one", "ghostty-two", "notes"]
+        )
+        XCTAssertEqual(
+            QuickAppShelfGroupPolicy.raiseOrder(
+                visibleWindowKeys: ["notes", "ghostty-one", "ghostty-two"],
+                selectedWindowKey: "ghostty-two"
+            ),
+            ["notes", "ghostty-one", "ghostty-two"]
+        )
+    }
+
+    func testPresentedShelfActivationAlwaysRestacksEvenWhenSelectionIsUnchanged() {
+        XCTAssertEqual(
+            QuickAppInteractionPolicy.presentedActivationDecision(
+                activatedBundleIdentifier: "com.apple.Notes",
+                selectedBundleIdentifier: "com.apple.notes"
+            ),
+            QuickAppInteractionPolicy.PresentedActivationDecision(
+                selectsActivatedConfiguration: false,
+                restacksPresentedGroup: true
+            )
+        )
+        XCTAssertEqual(
+            QuickAppInteractionPolicy.presentedActivationDecision(
+                activatedBundleIdentifier: "com.mitchellh.ghostty",
+                selectedBundleIdentifier: "com.apple.Notes"
+            ),
+            QuickAppInteractionPolicy.PresentedActivationDecision(
+                selectsActivatedConfiguration: true,
+                restacksPresentedGroup: true
+            )
+        )
+    }
+
+    func testApplicationWindowGroupKeepsStableOrderAndRemovesOnlyTheClosedWindow() {
+        let first = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let second = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+        let third = WindowKey(processIdentifier: 42, windowIdentifier: 102)
+
+        XCTAssertEqual(
+            QuickAppApplicationWindowPolicy.orderedWindowKeys(
+                candidates: [third, first, second, second],
+                existingOrder: [second, first, second]
+            ),
+            [second, first, third]
+        )
+        XCTAssertEqual(
+            QuickAppApplicationWindowPolicy.removing(second, from: [second, first, third]),
+            [first, third]
+        )
+        XCTAssertTrue(QuickAppApplicationWindowPolicy.presentedMembershipChanged(
+            previousWindowKeys: [second, first, third],
+            currentWindowKeys: [first, third],
+            isPresented: true
+        ))
+        XCTAssertFalse(QuickAppApplicationWindowPolicy.presentedMembershipChanged(
+            previousWindowKeys: [second, first, third],
+            currentWindowKeys: [first, third],
+            isPresented: false
+        ))
+        XCTAssertFalse(QuickAppApplicationWindowPolicy.presentedMembershipChanged(
+            previousWindowKeys: [first, third],
+            currentWindowKeys: [first, third],
+            isPresented: true
+        ))
+        XCTAssertNil(QuickAppApplicationWindowPolicy.orderedWindowKeys(
+            candidates: [first, WindowKey(processIdentifier: 43, windowIdentifier: 103)]
+        ))
+        XCTAssertEqual(
+            QuickAppApplicationWindowPolicy.cycleTarget(
+                in: [first, second, third],
+                selectedWindowKey: second,
+                offset: 1,
+                wrapsWithinGroup: false
+            ),
+            third
+        )
+        XCTAssertNil(QuickAppApplicationWindowPolicy.cycleTarget(
+            in: [first, second, third],
+            selectedWindowKey: third,
+            offset: 1,
+            wrapsWithinGroup: false
+        ))
+        XCTAssertEqual(
+            QuickAppApplicationWindowPolicy.cycleTarget(
+                in: [first, second, third],
+                selectedWindowKey: third,
+                offset: 1,
+                wrapsWithinGroup: true
+            ),
+            first
+        )
+    }
+
     func testTwoWindowShelfGeometrySupportsReversalAndWrappingWithoutRelayout() {
         let container = WindowFrame(
             position: CGPoint(x: 100, y: 200),
@@ -215,6 +316,40 @@ final class QuickAppShelfTests: XCTestCase {
             container.position.y + container.size.height,
             accuracy: 0.001
         )
+
+        for style in [
+            QuickAppShelfPresentation.LayoutStyle.carousel,
+            .accordion,
+        ] {
+            for direction in [
+                DropDownAppDirection.top,
+                .right,
+                .bottom,
+                .left,
+            ] {
+                let manyWindows = DropDownAppGeometry.groupFrames(
+                    in: container,
+                    count: 7,
+                    style: style,
+                    direction: direction
+                )
+                XCTAssertEqual(manyWindows.count, 7)
+                for frame in manyWindows {
+                    XCTAssertGreaterThan(frame.size.width, 0)
+                    XCTAssertGreaterThan(frame.size.height, 0)
+                    XCTAssertGreaterThanOrEqual(frame.position.x, container.position.x - 0.001)
+                    XCTAssertGreaterThanOrEqual(frame.position.y, container.position.y - 0.001)
+                    XCTAssertLessThanOrEqual(
+                        frame.position.x + frame.size.width,
+                        container.position.x + container.size.width + 0.001
+                    )
+                    XCTAssertLessThanOrEqual(
+                        frame.position.y + frame.size.height,
+                        container.position.y + container.size.height + 0.001
+                    )
+                }
+            }
+        }
     }
 
     func testTransitionPolicySerializesRapidSwitchingAndKeepsDirectShowIdempotent() {
@@ -252,6 +387,33 @@ final class QuickAppShelfTests: XCTestCase {
                 isPresented: false
             ),
             .queueLatest
+        )
+    }
+
+    func testApplicationSwitchHandoffWaitsForIncomingActivation() {
+        XCTAssertEqual(
+            QuickAppApplicationSwitchPolicy.activationDisposition(
+                activatedProcessIdentifier: 202,
+                incomingProcessIdentifier: 202,
+                outgoingProcessIdentifier: 101
+            ),
+            .incoming
+        )
+        XCTAssertEqual(
+            QuickAppApplicationSwitchPolicy.activationDisposition(
+                activatedProcessIdentifier: 101,
+                incomingProcessIdentifier: 202,
+                outgoingProcessIdentifier: 101
+            ),
+            .outgoing
+        )
+        XCTAssertEqual(
+            QuickAppApplicationSwitchPolicy.activationDisposition(
+                activatedProcessIdentifier: 303,
+                incomingProcessIdentifier: 202,
+                outgoingProcessIdentifier: 101
+            ),
+            .unrelated
         )
     }
 
@@ -368,6 +530,10 @@ final class QuickAppShelfTests: XCTestCase {
         XCTAssertTrue(QuickAppInteractionPolicy.activatesApplicationForLaunch(
             commandPalettePresented: false
         ))
+        XCTAssertFalse(QuickAppInteractionPolicy.activatesApplicationForLaunch(
+            commandPalettePresented: false,
+            applicationSwitchInProgress: true
+        ))
         XCTAssertTrue(QuickAppInteractionPolicy.focusesQuickAppAfterShow(
             commandPalettePresented: false
         ))
@@ -388,19 +554,28 @@ final class QuickAppShelfTests: XCTestCase {
     func testWindowCycleRoutesThroughPresentedShelf() {
         XCTAssertTrue(QuickAppInteractionPolicy.routesWindowCycleToShelf(
             shelfIsPresented: true,
-            configuredAppCount: 3
+            configuredAppCount: 3,
+            transitionInProgress: false
         ))
         XCTAssertTrue(QuickAppInteractionPolicy.routesWindowCycleToShelf(
             shelfIsPresented: true,
-            configuredAppCount: 1
+            configuredAppCount: 1,
+            transitionInProgress: false
+        ))
+        XCTAssertTrue(QuickAppInteractionPolicy.routesWindowCycleToShelf(
+            shelfIsPresented: false,
+            configuredAppCount: 3,
+            transitionInProgress: true
+        ), "A rapid Shelf cycle must remain contained between outgoing and incoming apps.")
+        XCTAssertFalse(QuickAppInteractionPolicy.routesWindowCycleToShelf(
+            shelfIsPresented: false,
+            configuredAppCount: 3,
+            transitionInProgress: false
         ))
         XCTAssertFalse(QuickAppInteractionPolicy.routesWindowCycleToShelf(
             shelfIsPresented: false,
-            configuredAppCount: 3
-        ))
-        XCTAssertFalse(QuickAppInteractionPolicy.routesWindowCycleToShelf(
-            shelfIsPresented: true,
-            configuredAppCount: 0
+            configuredAppCount: 0,
+            transitionInProgress: true
         ))
     }
 
@@ -689,7 +864,7 @@ final class QuickAppShelfTests: XCTestCase {
         ))
     }
 
-    func testEveryShelfEntryRetainsExactStartupAndAmbiguityBoundary() {
+    func testEveryShelfEntryRetainsExactSameProcessStartupOwnership() {
         let candidates = [
             DropDownAppStartupCandidate(
                 key: WindowKey(processIdentifier: 1, windowIdentifier: 1),
@@ -705,16 +880,27 @@ final class QuickAppShelfTests: XCTestCase {
             ),
         ]
         XCTAssertEqual(
-            DropDownAppStartupPolicy.selection(bundleIdentifier: "com.example.one", candidates: candidates)?.windowKey,
-            WindowKey(processIdentifier: 1, windowIdentifier: 1)
+            DropDownAppStartupPolicy.selections(
+                bundleIdentifier: "com.example.one",
+                candidates: candidates
+            )?.map(\.windowKey),
+            [WindowKey(processIdentifier: 1, windowIdentifier: 1)]
         )
         XCTAssertEqual(
-            DropDownAppStartupPolicy.selection(bundleIdentifier: "com.example.two", candidates: candidates)?.windowKey,
-            WindowKey(processIdentifier: 2, windowIdentifier: 2)
+            DropDownAppStartupPolicy.selections(
+                bundleIdentifier: "com.example.two",
+                candidates: candidates + [candidates[1]]
+            )?.map(\.windowKey),
+            [WindowKey(processIdentifier: 2, windowIdentifier: 2)]
         )
-        XCTAssertNil(DropDownAppStartupPolicy.selection(
+        XCTAssertNil(DropDownAppStartupPolicy.selections(
             bundleIdentifier: "com.example.two",
-            candidates: candidates + [candidates[1]]
+            candidates: candidates + [DropDownAppStartupCandidate(
+                key: WindowKey(processIdentifier: 3, windowIdentifier: 3),
+                bundleIdentifier: "com.example.two",
+                isMeaningfullyVisible: true,
+                wasHiddenByWindowRanger: false
+            )]
         ))
     }
 
@@ -775,8 +961,13 @@ final class QuickAppShelfTests: XCTestCase {
 
     func testPersistedShelfSessionsKeepExactOwnersAndDecodeLegacySingleSession() throws {
         let workspaceID = WorkspaceDefinition.defaults[0].id
+        let secondAWindow = WindowKey(processIdentifier: 10, windowIdentifier: 22)
         let sessionA = PersistedDropDownAppSession(
             windowKey: WindowKey(processIdentifier: 10, windowIdentifier: 20),
+            windowKeys: [
+                WindowKey(processIdentifier: 10, windowIdentifier: 20),
+                secondAWindow,
+            ],
             bundleIdentifier: "com.example.A",
             displayIdentifier: "main",
             isApplicationHiddenByWindowRanger: true
@@ -814,7 +1005,21 @@ final class QuickAppShelfTests: XCTestCase {
             from: JSONEncoder().encode(shelf)
         )
         XCTAssertEqual(decodedShelf.dropDownAppSessions?["com.example.a"], sessionA)
+        XCTAssertEqual(
+            decodedShelf.dropDownAppSessions?["com.example.a"]?.windowKeys,
+            [sessionA.windowKey, secondAWindow]
+        )
         XCTAssertEqual(decodedShelf.dropDownAppSessions?["com.example.b"], sessionB)
+
+        var legacySessionObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(sessionB)) as? [String: Any]
+        )
+        legacySessionObject.removeValue(forKey: "windowKeys")
+        let decodedLegacySession = try JSONDecoder().decode(
+            PersistedDropDownAppSession.self,
+            from: JSONSerialization.data(withJSONObject: legacySessionObject)
+        )
+        XCTAssertEqual(decodedLegacySession.windowKeys, [sessionB.windowKey])
     }
 
     func testIgnoredCompanionVisibilityDebtSurvivesRestartWithoutWindowGeometry() throws {
@@ -922,6 +1127,33 @@ final class QuickAppShelfTests: XCTestCase {
         XCTAssertTrue(store.quickApps.allSatisfy { expected.applying(to: $0) == $0 })
         XCTAssertEqual(store.activeProfile.quickAppShelfPresentation, expected)
         XCTAssertTrue(store.activeProfile.quickApps.allSatisfy { expected.applying(to: $0) == $0 })
+    }
+
+    @MainActor
+    func testActiveSettingsShelfEditPublishesAsLiveConfigurationChange() {
+        let suite = "QuickAppShelfTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        var received: [QuickAppShelfPresentation] = []
+        let cancellable = store.$quickAppShelfPresentation
+            .dropFirst()
+            .filter { _ in store.isApplyingProfileActivation == false }
+            .sink { received.append($0) }
+
+        var presentation = store.quickAppShelfPresentation
+        presentation.layoutStyle = .carousel
+        presentation.visibleCount = 2
+        store.setSettingsQuickAppShelfPresentation(presentation)
+
+        XCTAssertEqual(received, [presentation])
+        withExtendedLifetime(cancellable) {}
     }
 
     func testShelfPresentationRoundTripsThroughProfileExport() throws {

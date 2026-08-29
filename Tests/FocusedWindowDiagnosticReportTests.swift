@@ -9,9 +9,21 @@ final class FocusedWindowDiagnosticReportTests: XCTestCase {
         let second = FocusedWindowDiagnosticReport.render(snapshot())
 
         XCTAssertEqual(first, second)
-        XCTAssertTrue(first.hasPrefix("WindowRanger focused-window diagnostic report\nschema-version: 1\n"))
+        XCTAssertTrue(first.hasPrefix("WindowRanger focused-window diagnostic report\nschema-version: 2\n"))
+        XCTAssertTrue(first.contains("displays-have-separate-spaces: true"))
         XCTAssertTrue(first.contains("target-status: managed"))
         XCTAssertTrue(first.contains("ax-focused: true"))
+    }
+
+    func testSeparateSpacesConfigurationIsExplicitForEitherSetting() {
+        XCTAssertTrue(FocusedWindowDiagnosticReport.render(snapshot(
+            displaysHaveSeparateSpaces: true
+        )).contains("displays-have-separate-spaces: true"))
+        XCTAssertTrue(FocusedWindowDiagnosticReport.render(snapshot(
+            displaysHaveSeparateSpaces: false
+        )).contains("displays-have-separate-spaces: false"))
+        XCTAssertEqual(WorkspaceEngine.displaysHaveSeparateSpacesDiagnosticValue(true), "true")
+        XCTAssertEqual(WorkspaceEngine.displaysHaveSeparateSpacesDiagnosticValue(false), "false")
     }
 
     func testAllRequiredManagementStatesRemainExplicit() {
@@ -167,6 +179,7 @@ final class FocusedWindowDiagnosticReportTests: XCTestCase {
         appVersion: String = "0.1.0",
         appBuild: String = "42",
         macOS: String = "Version 15.6",
+        displaysHaveSeparateSpaces: Bool = true,
         session: String = "ws:123:456",
         targetStatus: String = "managed",
         bundle: DiagnosticReportValue = .value("com.example.Editor"),
@@ -181,6 +194,7 @@ final class FocusedWindowDiagnosticReportTests: XCTestCase {
             appBuild: appBuild,
             buildMode: "Release",
             macOSVersion: macOS,
+            displaysHaveSeparateSpaces: displaysHaveSeparateSpaces,
             windowServerSession: session,
             targetStatus: targetStatus,
             targetBundleIdentifier: bundle,

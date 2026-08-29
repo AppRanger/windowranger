@@ -55,6 +55,11 @@ struct OnboardingWindowConfiguration: Equatable, Sendable {
     static let contentSize = CGSize(width: 980, height: 660)
     static let isResizable = false
     static let isReleasedWhenClosed = false
+    static let level: NSWindow.Level = .floating
+    static let collectionBehavior: NSWindow.CollectionBehavior = [
+        .canJoinAllSpaces,
+        .fullScreenAuxiliary,
+    ]
 }
 
 @MainActor

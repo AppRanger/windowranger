@@ -26,6 +26,7 @@ test_bundle="$derived_data_directory/Build/Products/Debug/WindowRangerTests.xcte
 }
 
 /bin/mkdir -p "$output_directory"
+WINDOWRANGER_SETTINGS_SNAPSHOT_SCOPE="${WINDOWRANGER_SETTINGS_SNAPSHOT_SCOPE:-workspaces}" \
 WINDOWRANGER_SETTINGS_SNAPSHOT_DIR="$output_directory" \
     /usr/bin/xcrun xctest \
     -XCTest WindowRangerTests.WorkspaceSettingsVisualSnapshotTests/testOffscreenProductionWorkspaceSettings \

@@ -341,6 +341,14 @@ enum HotKeyRegistrationScope: Equatable, Sendable {
     case workspaceNavigationOnly
     case commandPaletteOnly
 
+    var diagnosticName: String {
+        switch self {
+        case .all: "all"
+        case .workspaceNavigationOnly: "workspace-navigation-only"
+        case .commandPaletteOnly: "command-palette-only"
+        }
+    }
+
     func allows(_ binding: ShortcutBindingDefinition) -> Bool {
         switch self {
         case .all:
@@ -465,11 +473,14 @@ final class HotKeyManager {
     private let directionalGestureMonitor: DirectionalMoveGestureMonitoring
     private var eventHandler: EventHandlerRef?
     private var eventHandlerInstallationFailure: OSStatus?
-    private var hotKeys: [(
-        token: HotKeyRegistrationToken,
-        identifier: UInt32,
-        binding: ShortcutBindingDefinition
-    )] = []
+    private struct RegisteredHotKey {
+        let token: HotKeyRegistrationToken
+        let identifier: UInt32
+        let binding: ShortcutBindingDefinition
+        let isDispatchable: Bool
+    }
+
+    private var hotKeys: [RegisteredHotKey] = []
     private var actions: [UInt32: Action] = [:]
     private var nextRegistrationIdentifier: UInt32 = 1
     private var directionalMoveChordFamily: DirectionalMoveChordFamily?
@@ -525,10 +536,10 @@ final class HotKeyManager {
         hotKeyConfiguration: HotKeyConfiguration = HotKeyConfiguration(),
         radialMenuEnabled: Bool = false,
         scope: HotKeyRegistrationScope = .all,
-        forceCommandPaletteEscapeHatch: Bool = false
+        forceCommandPaletteEscapeHatch: Bool = false,
+        diagnosticSource: String = "direct"
     ) -> HotKeyRegistrationReport {
         cancelDirectionalMoveGesture(reason: "hotkeys-reconfigured", awaitRelease: false)
-        unregisterAll()
         let configuration = ShortcutConflictModel.evaluate(
             configuration: hotKeyConfiguration,
             workspaces: workspaces,
@@ -566,26 +577,89 @@ final class HotKeyManager {
         }
 
         if let status = eventHandlerInstallationFailure {
+            unregisterAll()
             let runtimeIssues = eligibleBindings.map {
                 HotKeyRuntimeIssue(owner: $0.owner, chord: $0.chord, status: status)
             }
-            return HotKeyRegistrationReport(
+            let report = HotKeyRegistrationReport(
                 configurationIssues: configuration.issues,
                 runtimeIssues: runtimeIssues,
                 registeredOwners: []
             )
+            logRegistrationCompleted(
+                report: report,
+                eligibleBindings: eligibleBindings,
+                workspaces: workspaces,
+                scope: scope,
+                source: diagnosticSource
+            )
+            return report
         }
 
+        let desiredBindingsByOwner = Dictionary(
+            uniqueKeysWithValues: eligibleBindings.map { ($0.owner.id, $0) }
+        )
+        var retainedOwnerIDs: Set<String> = []
+        var retainedHotKeys: [RegisteredHotKey] = []
+        var retainedActions: [UInt32: Action] = [:]
+
+        // Preserve registrations whose owner and chord are unchanged. Apart from avoiding needless
+        // Carbon churn, this makes adding a workspace an additive operation: the known-good
+        // shortcuts remain registered while only the two new workspace bindings are introduced.
+        for hotKey in hotKeys {
+            if hotKey.isDispatchable,
+               let desiredBinding = desiredBindingsByOwner[hotKey.binding.owner.id],
+               desiredBinding.chord == hotKey.binding.chord,
+               let desiredAction = action(for: desiredBinding.owner) {
+                retainedHotKeys.append(RegisteredHotKey(
+                    token: hotKey.token,
+                    identifier: hotKey.identifier,
+                    binding: desiredBinding,
+                    isDispatchable: true
+                ))
+                retainedActions[hotKey.identifier] = desiredAction
+                retainedOwnerIDs.insert(desiredBinding.owner.id)
+                continue
+            }
+
+            let status = registrationService.unregister(hotKey.token)
+            if status != noErr {
+                retainedHotKeys.append(RegisteredHotKey(
+                    token: hotKey.token,
+                    identifier: hotKey.identifier,
+                    binding: hotKey.binding,
+                    isDispatchable: false
+                ))
+                diagnostics.log(
+                    category: "hotkey",
+                    event: "unregistration-failed",
+                    fields: [
+                        "owner": hotKey.binding.owner.id,
+                        "chord": hotKey.binding.chord.title,
+                        "status": String(status),
+                    ]
+                )
+            }
+        }
+        hotKeys = retainedHotKeys
+        actions = retainedActions
+
         var runtimeIssues: [HotKeyRuntimeIssue] = []
-        var registeredOwners: [ShortcutBindingOwner] = []
-        for binding in eligibleBindings {
+        for binding in eligibleBindings where !retainedOwnerIDs.contains(binding.owner.id) {
             guard let action = action(for: binding.owner) else { continue }
             let identifier = allocateRegistrationIdentifier()
             if let issue = add(id: identifier, binding: binding, action: action) {
                 runtimeIssues.append(issue)
-            } else {
-                registeredOwners.append(binding.owner)
             }
+        }
+        let activeBindingsByOwner: [String: ShortcutBindingDefinition] = Dictionary(
+            uniqueKeysWithValues: hotKeys.compactMap { hotKey in
+                hotKey.isDispatchable ? (hotKey.binding.owner.id, hotKey.binding) : nil
+            }
+        )
+        let registeredOwners: [ShortcutBindingOwner] = eligibleBindings.compactMap { binding in
+            guard activeBindingsByOwner[binding.owner.id]?.chord == binding.chord else { return nil }
+            return binding.owner
         }
         let registeredActions = Set(registeredOwners.compactMap(\.configurableAction))
         let requiredDirectionalActions = Set(DirectionalMoveChordFamily.actionDirections.map(\.0))
@@ -600,11 +674,19 @@ final class HotKeyManager {
             directionalMoveChordFamily = nil
             directionalMoveGestureRuntimeIssueChanged?(nil)
         }
-        return HotKeyRegistrationReport(
+        let report = HotKeyRegistrationReport(
             configurationIssues: configuration.issues,
             runtimeIssues: runtimeIssues,
             registeredOwners: registeredOwners
         )
+        logRegistrationCompleted(
+            report: report,
+            eligibleBindings: eligibleBindings,
+            workspaces: workspaces,
+            scope: scope,
+            source: diagnosticSource
+        )
+        return report
     }
 
     static func configurableShortcutConflict(
@@ -658,7 +740,12 @@ final class HotKeyManager {
     ) -> HotKeyRuntimeIssue? {
         switch registrationService.register(chord: binding.chord, identifier: id) {
         case let .success(token):
-            hotKeys.append((token, id, binding))
+            hotKeys.append(RegisteredHotKey(
+                token: token,
+                identifier: id,
+                binding: binding,
+                isDispatchable: true
+            ))
             actions[id] = action
             return nil
         case let .failure(failure):
@@ -681,15 +768,16 @@ final class HotKeyManager {
 
     private func unregisterAll() {
         directionalMoveChordFamily = nil
-        var failedUnregistrations: [(
-            token: HotKeyRegistrationToken,
-            identifier: UInt32,
-            binding: ShortcutBindingDefinition
-        )] = []
+        var failedUnregistrations: [RegisteredHotKey] = []
         for hotKey in hotKeys {
             let status = registrationService.unregister(hotKey.token)
             if status != noErr {
-                failedUnregistrations.append(hotKey)
+                failedUnregistrations.append(RegisteredHotKey(
+                    token: hotKey.token,
+                    identifier: hotKey.identifier,
+                    binding: hotKey.binding,
+                    isDispatchable: false
+                ))
                 diagnostics.log(
                     category: "hotkey",
                     event: "unregistration-failed",
@@ -707,6 +795,30 @@ final class HotKeyManager {
         // retained stale event from being mistaken for a newly registered command.
         hotKeys = failedUnregistrations
         actions.removeAll()
+    }
+
+    private func logRegistrationCompleted(
+        report: HotKeyRegistrationReport,
+        eligibleBindings: [ShortcutBindingDefinition],
+        workspaces: [WorkspaceDefinition],
+        scope: HotKeyRegistrationScope,
+        source: String
+    ) {
+        diagnostics.log(
+            category: "hotkey",
+            event: "registration-completed",
+            fields: [
+                "source": source,
+                "scope": scope.diagnosticName,
+                "workspace-count": String(workspaces.count),
+                "workspace-ids": workspaces.map { String($0.id.uuidString.prefix(8)) }.joined(separator: ","),
+                "eligible-count": String(eligibleBindings.count),
+                "registered-count": String(report.registeredOwners.count),
+                "registered-owners": report.registeredOwners.map(\.id).joined(separator: ","),
+                "configuration-issue-count": String(report.configurationIssues.count),
+                "runtime-issue-count": String(report.runtimeIssues.count),
+            ]
+        )
     }
 
     private func allocateRegistrationIdentifier() -> UInt32 {
