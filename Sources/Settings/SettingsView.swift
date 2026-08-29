@@ -719,7 +719,7 @@ private struct GeneralSettingsView: View {
                             }
                         }
                     }
-                    Text("Off by default and stored only on this Mac. When enabled, WindowRanger adds the current desktop wallpaper and small window thumbnails to workspace previews. Preview pixels stay in memory and are never synced, saved, exported, or included in diagnostics; unavailable images fall back safely.")
+                    Text("Off by default and stored only on this Mac. When enabled, WindowRanger adds the current desktop wallpaper and small window thumbnails to workspace previews. At launch, inactive Tiled and Accordion windows may be resized while parked so their previews are accurate. Preview pixels stay in memory and are never synced, saved, exported, or included in diagnostics; unavailable images fall back safely.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -2264,6 +2264,37 @@ enum WorkspaceLayoutMiniatureKind: Equatable, Sendable {
     }
 }
 
+enum WorkspaceLayoutChoiceDescription {
+    static func layout(_ layout: WorkspaceLayout) -> String {
+        switch layout {
+        case .none:
+            "Overlapping windows stay where you place them."
+        case .tiled:
+            "Windows fill the screen without overlapping."
+        case .accordion:
+            "Windows overlap while neighbouring edges remain visible."
+        }
+    }
+
+    static func orientation(
+        _ orientation: WorkspaceLayoutOrientation,
+        layout: WorkspaceLayout
+    ) -> String {
+        switch orientation {
+        case .automatic:
+            "Flows left to right on a wide display and top to bottom on a portrait display."
+        case .horizontal:
+            layout == .accordion
+                ? "Accordion windows overlap from left to right."
+                : "Windows tile from left to right."
+        case .vertical:
+            layout == .accordion
+                ? "Accordion windows overlap from top to bottom."
+                : "Windows tile from top to bottom."
+        }
+    }
+}
+
 struct WorkspaceSettingsView: View {
     @ObservedObject var store: SettingsStore
     let engine: WorkspaceEngine
@@ -2696,19 +2727,7 @@ struct WorkspaceSettingsView: View {
 
     private func workspaceLayoutPanel(_ workspace: WorkspaceDefinition) -> some View {
         workspaceSettingsPanel("Layout") {
-            LabeledContent("Layout Style") {
-                Picker(
-                    "Layout Style",
-                    selection: WorkspaceSettingsFieldBindings.layout(store: store, workspaceID: workspace.id)
-                ) {
-                    ForEach(WorkspaceLayout.allCases) { layout in
-                        Text(layout.title).tag(layout)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 330)
-            }
+            layoutStyleSelector(workspace)
 
             Divider()
 
@@ -2753,7 +2772,7 @@ struct WorkspaceSettingsView: View {
             }
             if controls.showsOrientation {
                 Divider()
-                orientationPicker(workspace.id)
+                orientationPicker(workspace)
             }
             if controls.showsTiledGeometry {
                 tiledGeometryControls(workspace.id)
@@ -2830,20 +2849,53 @@ struct WorkspaceSettingsView: View {
         }
     }
 
-    private func orientationPicker(_ workspaceID: UUID) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            LabeledContent("Orientation") {
-                Picker(
-                    "Orientation",
-                    selection: configurationBinding(\.orientation, workspaceID: workspaceID)
-                ) {
-                    ForEach(WorkspaceLayoutOrientation.allCases) { orientation in
-                        Text(orientation.title).tag(orientation)
+    private func layoutStyleSelector(_ workspace: WorkspaceDefinition) -> some View {
+        let selection = WorkspaceSettingsFieldBindings.layout(store: store, workspaceID: workspace.id)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Layout Style")
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 8) {
+                ForEach(WorkspaceLayout.allCases) { layout in
+                    WorkspaceVisualChoiceCard(
+                        title: layout.title,
+                        isSelected: selection.wrappedValue == layout,
+                        accessibilityHint: WorkspaceLayoutChoiceDescription.layout(layout)
+                    ) {
+                        selection.wrappedValue = layout
+                    } preview: {
+                        WorkspaceLayoutChoiceDiagram(
+                            layout: layout,
+                            orientation: .horizontal
+                        )
                     }
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 330)
+            }
+        }
+    }
+
+    private func orientationPicker(_ workspace: WorkspaceDefinition) -> some View {
+        let selection = configurationBinding(\.orientation, workspaceID: workspace.id)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Orientation")
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 8) {
+                ForEach(WorkspaceLayoutOrientation.allCases) { orientation in
+                    WorkspaceVisualChoiceCard(
+                        title: orientation.title,
+                        isSelected: selection.wrappedValue == orientation,
+                        accessibilityHint: WorkspaceLayoutChoiceDescription.orientation(
+                            orientation,
+                            layout: workspace.layout
+                        )
+                    ) {
+                        selection.wrappedValue = orientation
+                    } preview: {
+                        WorkspaceLayoutChoiceDiagram(
+                            layout: workspace.layout,
+                            orientation: orientation
+                        )
+                    }
+                }
             }
             Text("Automatic uses horizontal windows on a wide display and vertical windows on a portrait display.")
                 .font(.caption)
@@ -3329,6 +3381,208 @@ struct WorkspaceSettingsView: View {
                 previewRepository.update(
                     descriptor: descriptor,
                     captureEnabled: store.workspacePreviewThumbnailsEnabled
+                )
+            }
+        }
+    }
+}
+
+private struct WorkspaceVisualChoiceCard<Preview: View>: View {
+    let title: String
+    let isSelected: Bool
+    let accessibilityHint: String
+    let action: () -> Void
+    let preview: Preview
+
+    init(
+        title: String,
+        isSelected: Bool,
+        accessibilityHint: String,
+        action: @escaping () -> Void,
+        @ViewBuilder preview: () -> Preview
+    ) {
+        self.title = title
+        self.isSelected = isSelected
+        self.accessibilityHint = accessibilityHint
+        self.action = action
+        self.preview = preview()
+    }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                preview
+                    .frame(height: 48)
+                Text(title)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, minHeight: 78)
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .background(
+                isSelected ? Color.accentColor.opacity(0.11) : Color.primary.opacity(0.025),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(
+                        isSelected ? Color.accentColor : Color(nsColor: .separatorColor),
+                        lineWidth: isSelected ? 1.5 : 0.5
+                    )
+            }
+            .overlay(alignment: .topTrailing) {
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                        .padding(6)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .help(accessibilityHint)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityHint(accessibilityHint)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct WorkspaceLayoutChoiceDiagram: View {
+    let layout: WorkspaceLayout
+    let orientation: WorkspaceLayoutOrientation
+
+    var body: some View {
+        GeometryReader { geometry in
+            if orientation == .automatic, layout != .none {
+                HStack(alignment: .center, spacing: 7) {
+                    WorkspaceLayoutDiagramCanvas(layout: layout, orientation: .horizontal)
+                        .frame(
+                            width: geometry.size.width * 0.54,
+                            height: geometry.size.height * 0.72
+                        )
+                    WorkspaceLayoutDiagramCanvas(layout: layout, orientation: .vertical)
+                        .frame(
+                            width: geometry.size.width * 0.24,
+                            height: geometry.size.height * 0.92
+                        )
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                WorkspaceLayoutDiagramCanvas(
+                    layout: layout,
+                    orientation: orientation == .vertical ? .vertical : .horizontal
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct WorkspaceLayoutDiagramCanvas: View {
+    let layout: WorkspaceLayout
+    let orientation: WorkspaceLayoutOrientation
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color.primary.opacity(0.035))
+                ForEach(Array(paneFrames(in: geometry.size).enumerated()), id: \.offset) { index, frame in
+                    RoundedRectangle(cornerRadius: 2.5)
+                        .fill(Color.primary.opacity(index == 2 ? 0.14 : 0.09))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 2.5)
+                                .stroke(Color.primary.opacity(0.34), lineWidth: 0.7)
+                        }
+                        .frame(width: frame.width, height: frame.height)
+                        .position(x: frame.midX, y: frame.midY)
+                }
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(Color.primary.opacity(0.25), lineWidth: 0.7)
+            }
+        }
+    }
+
+    private func paneFrames(in size: CGSize) -> [CGRect] {
+        let inset: CGFloat = 4
+        let bounds = CGRect(
+            x: inset,
+            y: inset,
+            width: max(1, size.width - inset * 2),
+            height: max(1, size.height - inset * 2)
+        )
+        let gap: CGFloat = 3
+
+        switch layout {
+        case .none:
+            return [
+                CGRect(
+                    x: bounds.minX,
+                    y: bounds.minY + bounds.height * 0.06,
+                    width: bounds.width * 0.58,
+                    height: bounds.height * 0.62
+                ),
+                CGRect(
+                    x: bounds.minX + bounds.width * 0.34,
+                    y: bounds.minY + bounds.height * 0.34,
+                    width: bounds.width * 0.62,
+                    height: bounds.height * 0.62
+                ),
+                CGRect(
+                    x: bounds.minX + bounds.width * 0.51,
+                    y: bounds.minY,
+                    width: bounds.width * 0.45,
+                    height: bounds.height * 0.48
+                ),
+            ]
+        case .tiled:
+            if orientation == .vertical {
+                let paneHeight = max(1, (bounds.height - gap * 2) / 3)
+                return (0..<3).map { index in
+                    CGRect(
+                        x: bounds.minX,
+                        y: bounds.minY + CGFloat(index) * (paneHeight + gap),
+                        width: bounds.width,
+                        height: paneHeight
+                    )
+                }
+            }
+            let paneWidth = max(1, (bounds.width - gap * 2) / 3)
+            return (0..<3).map { index in
+                CGRect(
+                    x: bounds.minX + CGFloat(index) * (paneWidth + gap),
+                    y: bounds.minY,
+                    width: paneWidth,
+                    height: bounds.height
+                )
+            }
+        case .accordion:
+            if orientation == .vertical {
+                let paneHeight = bounds.height * 0.72
+                let offset = (bounds.height - paneHeight) / 2
+                return (0..<3).map { index in
+                    CGRect(
+                        x: bounds.minX,
+                        y: bounds.minY + CGFloat(index) * offset,
+                        width: bounds.width,
+                        height: paneHeight
+                    )
+                }
+            }
+            let paneWidth = bounds.width * 0.72
+            let offset = (bounds.width - paneWidth) / 2
+            return (0..<3).map { index in
+                CGRect(
+                    x: bounds.minX + CGFloat(index) * offset,
+                    y: bounds.minY,
+                    width: paneWidth,
+                    height: bounds.height
                 )
             }
         }

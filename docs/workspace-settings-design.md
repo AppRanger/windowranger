@@ -116,6 +116,13 @@ intentionally omitted.
 
 ### Layout
 
+- Layout Style uses three labelled visual choices rather than a text-only segmented control.
+  Freeform depicts independently overlapping windows, Tiled depicts non-overlapping panes, and
+  Accordion depicts an overlapping stack with neighbouring edges still visible.
+- Tiled and Accordion orientation uses the same visual-choice treatment. Horizontal depicts
+  left-to-right flow, Vertical depicts top-to-bottom flow, and Automatic pairs a wide-display
+  horizontal result with a portrait-display vertical result. These diagrams explain the existing
+  values and do not add layout state or alter geometry.
 - **Freeform:** no geometry controls. Copy explains that frames remain manual while workspace
   visibility, focus, persistence, display assignment, quit/wake recovery, and safety repair remain
   managed.

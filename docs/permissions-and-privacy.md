@@ -33,6 +33,14 @@ capture audio or the pointer, or move, unpark, unminimize, raise, activate, or f
 it capturable. A protected, unavailable, stale, or parked window that cannot be captured remains a
 placeholder rather than causing a window-management action.
 
+If the option is already enabled and Screen Recording is authorized when WindowRanger launches,
+startup restoration may resize eligible inactive Tiled and Accordion windows once after they have
+been parked. Their parked position is retained and verified, and active, Freeform, floating,
+excluded, fixed-size, deferred, minimized, full-screen, and keep-on-all-workspaces windows are not
+resized. This bounded Accessibility preparation lets each application render an undistorted
+thumbnail at its eventual layout size; it does not unpark, raise, activate, focus, continuously
+refresh, or retain another full-resolution image.
+
 The same opt-in may add the current wallpaper for the workspace's home display when macOS exposes a
 readable desktop-image file through AppKit. WindowRanger decodes it directly to the final preview
 size; it does not capture the desktop or keep a full-resolution wallpaper copy. Dynamic, protected,

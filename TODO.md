@@ -171,6 +171,130 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-106 — Reconstruct Tiled preview geometry before its first visit
+
+- **Type:** Workspace preview correctness bug
+- **Priority:** P1
+- **Status:** Live validation — calculated first-visit geometry and the bounded startup preparation
+  are implemented and pass complete automated verification; signed restart testing remains.
+- **User-observed:** After restarting WindowRanger, a workspace that has not yet been visited can
+  show its applications at the wrong positions and sizes in the workspace preview. Switching to
+  that workspace once immediately corrects the preview.
+- **Expected:** An inactive workspace preview uses the layout geometry it would receive on first
+  activation, without requiring the workspace to be visited.
+- **Reproduced cause:** Inactive Accordion previews reconstruct deterministic geometry from tracked
+  session metadata. Inactive Tiled previews use the last solved frame only when that workspace has
+  already been laid out during the current process; after restart they otherwise fall back to each
+  window's restore frame until the first activation populates the solver cache.
+- **Smallest useful outcome:** Reconstruct inactive Tiled preview frames on demand from the saved BSP
+  tree, window identities and weights, current display bounds, orientation, gaps, and padding. When
+  captured thumbnails are already enabled and authorized at launch, first park inactive windows and
+  then give eligible Tiled and Accordion participants their predicted size once while they remain
+  parked, so applications render truthful pixels before first activation. Do not activate or focus
+  the workspace, add a timer, perform another AX scan or capture, or retain a second layout cache.
+- **Acceptance:** Before first activation, Tiled preview geometry matches the normal solver for the
+  same tree and display configuration, and eligible inactive automatic-layout windows have that
+  predicted size while remaining non-meaningfully-visible at the parking edge. The startup pass is
+  disabled when thumbnail previews or authorization are unavailable; active, Freeform, floating,
+  excluded, fixed-size, deferred, minimized, full-screen, and keep-on-all-workspaces windows are
+  untouched. Focused preview tests and the complete non-hosted gate pass before a separately
+  approved install; signed restart validation checks for flashes, rejected sizing, and exact pixels.
+- **Implemented:** Inactive Tiled previews reconstruct their would-be activation frames from the
+  existing saved BSP tree, ordered window identities and weights, current display bounds,
+  orientation, gaps, and padding. When captured previews are enabled and Screen Recording is
+  already authorized at launch, restoration parks inactive windows normally and then performs one
+  bounded preparation pass. Eligible resizable Tiled and Accordion participants must already be
+  non-meaningfully-visible; each retains its parked position while receiving its predicted size and
+  is verified still parked afterwards, with one defensive re-park if macOS moved it into a visible
+  area. Active, Freeform, floating, excluded, fixed-size, deferred, minimized, full-screen, and
+  keep-on-all-workspaces windows are excluded. One of several light-hearted messages is shown through
+  the existing nonactivating feedback overlay when work is actually required. The pass adds no
+  capture, timer, polling, second layout cache, or ongoing CPU or memory cost.
+- **Automated evidence (29 August 2026):** All 23 focused Workspace Preview tests pass, including
+  exact equality between pre-visit preview reconstruction and the production Tiled solver for a
+  saved nested tree on an external display with automatic orientation, asymmetric outer padding,
+  and unequal inner gaps, plus the startup eligibility boundary and deterministic message rotation.
+  The Debug app target builds successfully. The complete quick gate passes all 812 non-hosted tests
+  plus project generation, release-ledger, Sparkle workflow, and test-isolation checks. Signed-app
+  validation must still restart WindowRanger, watch for any visible flash or rejected resize, and
+  inspect Tiled and Accordion workspaces before visiting them.
+- **Earlier installed evidence (29 August 2026):** With explicit maintainer approval, signed universal
+  Debug daily revision `7bcdbefd1d75-dirty` was installed and relaunched from
+  `/Applications/WindowRanger.app` as process `34882`. Strict deep signature verification passed
+  under Team `44NAD22AK6`; the executable contains `x86_64 arm64`, has CDHash
+  `a6fc08ee17d84cb050e9d81c08cc69b5c7aa7e5e`, and the installed Debug library matches the
+  just-built library byte for byte. Fresh diagnostics session
+  `5AD28AC8-1DFB-49B1-893A-9040973BA718` reached `startup-state-ready`.
+- **Live finding (29 August 2026):** Before workspace 1's first visit, its calculated preview
+  positions and 50/50 full-height Tiled frames were correct, and the current session contained zero
+  layout solves for that workspace. Read-only Window Server evidence showed its parked Claude source
+  at `1200x800` while Chrome was already `1913x1582`. The capturer sizes both output buffers from
+  the predicted descriptor frame while asking ScreenCaptureKit to preserve the current source aspect
+  ratio. Chrome therefore fills its preview, while Claude leaves transparent pixels that reveal a
+  wallpaper strip and make it appear too short.
+- **Approved follow-up (29 August 2026):** The maintainer chose truthful application rendering over
+  cropping, stretching, or fitting stale restore-size pixels. The bounded startup pass must park
+  first, resize only eligible inactive automatic-layout windows in place, and show one rotating
+  light-hearted preparation message while it runs. This intentionally changes the earlier
+  no-window-write preview boundary, but only when captured thumbnails are enabled and authorized.
+- **Current installed candidate (29 August 2026):** With explicit maintainer approval, signed
+  universal Debug daily revision `7bcdbefd1d75-dirty` was installed and relaunched from
+  `/Applications/WindowRanger.app` as process `52300`; the prior daily remains recoverable at
+  `/Applications/.WindowRanger.previous`. Strict deep signature verification passed under Team
+  `44NAD22AK6`, the app contains `x86_64 arm64`, has CDHash
+  `1650d389fbfea4dc3ceea02956b36ac85635cea1`, and its Debug library matches the just-built library
+  byte for byte. Fresh diagnostics session `D9CDD757-8004-467B-B6FE-2D5FE8D5816E` reached
+  `startup-state-ready`, prepared four parked windows with four successful frame writes, settled all
+  four at their target sizes, required zero defensive re-parks, and recorded no error or fault. A
+  visual check of an unvisited Accordion workspace remains before acceptance. The maintainer
+  inspected the original unvisited Tiled workspace before activating it and confirmed its prepared
+  first-visit preview was correct.
+
+### WR-105 — Make workspace layout choices visually self-explanatory
+
+- **Type:** Workspace Settings visual refinement
+- **Priority:** P2
+- **Status:** Live validation — implemented, visually inspected, and complete non-hosted verification
+  passes; signed installed-app interaction remains.
+- **Requested:** 29 August 2026.
+- **Smallest useful outcome:** Replace the text-only Layout Style and Orientation segmented controls
+  with compact visual choices. Freeform, Tiled, and Accordion must depict their actual window
+  relationship; Automatic, Horizontal, and Vertical must show the direction the selected automatic
+  layout will use rather than relying on its name alone.
+- **Functionality boundary:** This is presentation only. Preserve the existing workspace layout and
+  orientation values, profile ownership, persistence, layout reconciliation, Copy Layout, legacy
+  geometry migration, Undo behavior, conditional geometry controls, and inactive-profile isolation.
+- **Acceptance:** Every choice remains clearly named, keyboard reachable, and VoiceOver-labelled;
+  the selected state remains unambiguous in Light and Dark appearance; diagrams truthfully show
+  left-to-right versus top-to-bottom flow and Accordion overlap; the production Workspaces screen
+  remains usable at its minimum supported width; focused Settings tests and the complete non-hosted
+  gate pass before a separately approved signed daily install.
+- **Implemented:** Layout Style and Orientation now use one reusable labelled visual-choice card.
+  Freeform shows independently overlapping windows, Tiled shows non-overlapping panes, and
+  Accordion shows an overlapping stack with visible neighbouring edges. Horizontal and Vertical
+  use the selected layout's actual left-to-right or top-to-bottom geometry; Automatic pairs a wide
+  horizontal result with a portrait vertical result. Selection has a native accent outline, tint,
+  and checkmark, while every button retains a plain-language VoiceOver label, selected value, and
+  explanatory hint. No model, persistence, or layout-engine path changed.
+- **Automated and visual evidence (29 August 2026):** All 136 focused Radial Menu and Settings tests
+  pass, including deterministic wording for the actual window relationships. The complete quick
+  gate passes all 809 non-hosted tests plus project generation, release-ledger, Sparkle workflow,
+  and test-isolation checks. The production Workspaces hierarchy rendered offscreen in Light/Dark,
+  Tiled/Accordion, wide/minimum-width compact, long-name, conflict, and many-workspace fixtures.
+  Inspection found all diagrams and labels legible, distinct selected state without colour alone,
+  and no truncation or horizontal overflow. Pointer selection, keyboard traversal, and VoiceOver
+  announcement remain signed installed-app validation.
+- **Installed candidate (29 August 2026):** With explicit maintainer approval, signed universal
+  Debug daily revision `7bcdbefd1d75-dirty` was installed and relaunched from
+  `/Applications/WindowRanger.app` as process `29087`. Strict deep signature verification passed
+  under Team `44NAD22AK6`; the executable contains `x86_64 arm64`, has CDHash
+  `f7611f1bec69c640c363d8ea278fda4a53f4f8bf`, and matches the just-built executable and Debug
+  library byte for byte. Fresh diagnostics session `FB539292-7267-46EB-8564-BE1DB28E6251`
+  reached `startup-state-ready` without a recorded error, fault, or timeout. The previous daily
+  remains recoverable at `/Applications/.WindowRanger.previous`. The maintainer subsequently
+  confirmed the visual selectors look good in the installed app; keyboard traversal and VoiceOver
+  announcement remain the outstanding acceptance boundary.
+
 ### WR-104 — Use one menu-bar composition on every supported macOS release
 
 - **Type:** Menu-bar consistency and code simplification

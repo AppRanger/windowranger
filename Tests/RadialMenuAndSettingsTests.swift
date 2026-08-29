@@ -1661,6 +1661,41 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
+    func testWorkspaceLayoutChoiceDescriptionsExplainActualWindowRelationships() {
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.layout(.none),
+            "Overlapping windows stay where you place them."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.layout(.tiled),
+            "Windows fill the screen without overlapping."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.layout(.accordion),
+            "Windows overlap while neighbouring edges remain visible."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.orientation(.automatic, layout: .tiled),
+            "Flows left to right on a wide display and top to bottom on a portrait display."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.orientation(.horizontal, layout: .tiled),
+            "Windows tile from left to right."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.orientation(.vertical, layout: .tiled),
+            "Windows tile from top to bottom."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.orientation(.horizontal, layout: .accordion),
+            "Accordion windows overlap from left to right."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.orientation(.vertical, layout: .accordion),
+            "Accordion windows overlap from top to bottom."
+        )
+    }
+
     func testWorkspaceInspectorShowsOnlyLayoutSpecificControls() {
         XCTAssertEqual(
             WorkspaceInspectorControlVisibility(layout: .none),

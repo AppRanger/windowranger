@@ -35,6 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         focusFollowsMovedWindow: settingsStore.focusFollowsMovedWindow,
         automaticallyUnhideApplications: settingsStore.automaticallyUnhideApplications,
         focusedWindowHighlightEnabled: settingsStore.focusedWindowHighlightEnabled,
+        preSizeInactiveLayoutsOnStartup: settingsStore.workspacePreviewThumbnailsEnabled &&
+            workspacePreviewRepository.authorization == .authorized,
         diagnostics: diagnostics
     )
     private lazy var commandDispatcher = WindowManagerCommandDispatcher(

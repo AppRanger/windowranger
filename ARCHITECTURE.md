@@ -452,7 +452,14 @@ same panel instead hosts the reusable interactive desktop preview. Its descripto
 tracked identity and geometry and never enumerates, unparks, moves, or focuses Accessibility windows
 merely because the pointer hovered. ScreenCaptureKit performs at most one shareable-content
 enumeration for that refresh followed by bounded sequential one-shot captures; failures and
-permission loss retain metadata/icon placeholders. Applications are grouped by normalized bundle
+permission loss retain metadata/icon placeholders. When captured previews are already enabled and
+authorized at process launch, startup restoration first parks inactive windows normally and then
+performs one bounded size preparation pass for resizable Tiled and Accordion participants while
+retaining each window's parked position. Every candidate must already be non-meaningfully-visible and
+is verified still parked after the size write. This lets the application render pixels for its
+eventual layout without activating or focusing the workspace, another capture, a timer, or ongoing
+work. Active, Freeform, floating, excluded, fixed-size, deferred, full-screen, and
+keep-on-all-workspaces windows are excluded. Applications are grouped by normalized bundle
 identifier, with a process fallback for bundle-less apps, and the workspace's focus history chooses
 the representative window before stable layout order. Selecting a shelf row or preview item returns one target to
 the engine, which performs the normal workspace transition and filters its existing verified focus
