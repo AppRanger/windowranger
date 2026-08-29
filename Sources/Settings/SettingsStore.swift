@@ -567,6 +567,177 @@ final class SettingsStore: ObservableObject {
             $0.bundleIdentifier.caseInsensitiveCompare(selected ?? "") == .orderedSame
         })?.bundleIdentifier ?? quickApps.first?.bundleIdentifier
     }
+
+    /// A complete, versioned snapshot for the first-party CLI. Runtime observations and
+    /// permissions are intentionally absent: they are not durable configuration.
+    func cliConfigurationSnapshot() -> WindowRangerCLIConfiguration {
+        WindowRangerCLIConfiguration(
+            profileLibrary: ProfileLibrary(profiles: profiles),
+            localProfileState: localProfileState,
+            settingsProfileID: settingsProfileID,
+            iCloudSyncEnabled: iCloudSyncEnabled,
+            radialMenuEnabled: radialMenuEnabled,
+            radialWheelDefinition: radialWheelDefinition,
+            hotKeyConfiguration: hotKeyConfiguration,
+            commandPalettePosition: commandPalettePosition.rawValue,
+            workspaceSwipeEnabled: workspaceSwipeEnabled,
+            workspaceSwipeFingerCount: workspaceSwipeFingerCount.rawValue,
+            shortcutGuideEnabled: shortcutGuideEnabled,
+            shortcutGuideSize: shortcutGuideSize.rawValue,
+            shortcutGuidePosition: shortcutGuidePosition.rawValue,
+            menuBarPresentationMode: menuBarPresentationMode.rawValue,
+            menuBarWorkspaceLabelMode: menuBarWorkspaceLabelMode.rawValue,
+            menuBarHighlightColor: menuBarHighlightColor.hex,
+            workspacePreviewThumbnailsEnabled: workspacePreviewThumbnailsEnabled,
+            focusedWindowHighlightEnabled: focusedWindowHighlightEnabled,
+            focusedWindowHighlightColor: focusedWindowHighlightColor.hex,
+            focusedWindowHighlightTiledOnly: focusedWindowHighlightTiledOnly,
+            focusedWindowHighlightMultipleWindowsOnly: focusedWindowHighlightMultipleWindowsOnly,
+            focusedWindowHighlightCornerRadiusOverrides: focusedWindowHighlightCornerRadiusOverrides,
+            focusFollowsMovedWindow: focusFollowsMovedWindow,
+            automaticallyUnhideApplications: automaticallyUnhideApplications
+        )
+    }
+
+    /// Applies a complete CLI document only after its full structure has been validated. The
+    /// guards prevent didSet observers from persisting a partially replaced state; canonical
+    /// SettingsStore persistence runs only once all published values agree.
+    func applyCLIConfiguration(
+        _ proposed: WindowRangerCLIConfiguration
+    ) -> Result<WindowRangerCLIConfigurationApplyResult, WindowRangerCLIConfigurationError> {
+        let configuration: WindowRangerCLIConfiguration
+        switch proposed.validated() {
+        case let .success(valid): configuration = valid
+        case let .failure(error): return .failure(error)
+        }
+        guard let palettePosition = CommandPalettePosition(rawValue: configuration.commandPalettePosition),
+              let fingerCount = WorkspaceSwipeFingerCount(rawValue: configuration.workspaceSwipeFingerCount),
+              let guideSize = ShortcutGuideSize(rawValue: configuration.shortcutGuideSize),
+              let guidePosition = ShortcutGuidePosition(rawValue: configuration.shortcutGuidePosition),
+              let menuPresentation = MenuBarPresentationMode(rawValue: configuration.menuBarPresentationMode),
+              let labelMode = MenuBarWorkspaceLabelMode(rawValue: configuration.menuBarWorkspaceLabelMode),
+              let menuColor = MenuBarHighlightColor(hex: configuration.menuBarHighlightColor),
+              let focusColor = MenuBarHighlightColor(hex: configuration.focusedWindowHighlightColor)
+        else {
+            return .failure(.invalidProfileLibrary("validated configuration could not be decoded"))
+        }
+
+        let previousICloudEnabled = iCloudSyncEnabled
+        let selection = ProfileTriggerResolver.resolve(
+            profiles: configuration.profileLibrary.profiles,
+            localState: configuration.localProfileState,
+            displays: connectedDisplays,
+            isPortableMac: isPortableMacProvider(),
+            isGameModeActive: isGameModeActive
+        )
+        guard let selectedProfile = configuration.profileLibrary.profiles.first(
+            where: { $0.id == selection.profileID }
+        ) else {
+            return .failure(.invalidProfileLibrary("no active profile after normalisation"))
+        }
+
+        isApplyingRemoteChange = true
+        isReplacingProfileContent = true
+        profiles = configuration.profileLibrary.profiles
+        var appliedLocalState = configuration.localProfileState
+        appliedLocalState.activeProfileID = selectedProfile.id
+        localProfileState = appliedLocalState
+        settingsProfileID = configuration.settingsProfileID
+        activeProfileID = selectedProfile.id
+        activeProfileSelectionReason = selection.reason
+        workspaces = selectedProfile.workspaces
+        multiDisplayMode = selectedProfile.displayMode
+        appRules = selectedProfile.appRules
+        quickAppShelfPresentation = selectedProfile.quickAppShelfPresentation
+        quickApps = QuickAppShelfPolicy.normalized(selectedProfile.quickApps.isEmpty
+            ? selectedProfile.dropDownApp.map { [$0] } ?? [] : selectedProfile.quickApps)
+            .map(selectedProfile.quickAppShelfPresentation.applying)
+        dropDownApp = quickApps.first
+        iCloudSyncEnabled = configuration.iCloudSyncEnabled
+        radialMenuEnabled = configuration.radialMenuEnabled
+        radialWheelDefinition = configuration.radialWheelDefinition
+        hotKeyConfiguration = Self.reconciledHotKeyConfiguration(
+            configuration.hotKeyConfiguration,
+            profiles: configuration.profileLibrary.profiles
+        )
+        commandPalettePosition = palettePosition
+        workspaceSwipeEnabled = configuration.workspaceSwipeEnabled
+        workspaceSwipeFingerCount = fingerCount
+        shortcutGuideEnabled = configuration.shortcutGuideEnabled
+        shortcutGuideSize = guideSize
+        shortcutGuidePosition = guidePosition
+        menuBarPresentationMode = menuPresentation
+        menuBarWorkspaceLabelMode = labelMode
+        menuBarHighlightColor = menuColor
+        workspacePreviewThumbnailsEnabled = configuration.workspacePreviewThumbnailsEnabled
+        focusedWindowHighlightEnabled = configuration.focusedWindowHighlightEnabled
+        focusedWindowHighlightColor = focusColor
+        focusedWindowHighlightTiledOnly = configuration.focusedWindowHighlightTiledOnly
+        focusedWindowHighlightMultipleWindowsOnly = configuration.focusedWindowHighlightMultipleWindowsOnly
+        focusedWindowHighlightCornerRadiusOverrides = Self.normalizedCornerRadiusOverrides(
+            configuration.focusedWindowHighlightCornerRadiusOverrides
+        )
+        focusFollowsMovedWindow = configuration.focusFollowsMovedWindow
+        automaticallyUnhideApplications = configuration.automaticallyUnhideApplications
+        refreshResolvedWorkspaceDisplayAssignments()
+        isReplacingProfileContent = false
+        isApplyingRemoteChange = false
+
+        persistProfileLibrary()
+        persistLocalProfileState()
+        persistRadialMenuSettings()
+        persistCommandPalettePosition()
+        defaults.set(workspaceSwipeEnabled, forKey: Keys.workspaceSwipeEnabled)
+        defaults.set(workspaceSwipeFingerCount.rawValue, forKey: Keys.workspaceSwipeFingerCount)
+        persistShortcutGuideSettings()
+        persistMenuBarPresentationMode()
+        persistMenuBarWorkspaceLabelMode()
+        persistMenuBarHighlightColor()
+        persistWorkspacePreviewThumbnailsEnabled()
+        persistFocusedWindowHighlightEnabled()
+        persistFocusedWindowHighlightColor()
+        persistFocusedWindowHighlightTiledOnly()
+        persistFocusedWindowHighlightMultipleWindowsOnly()
+        persistFocusedWindowHighlightCornerRadiusOverrides()
+        persistFocusFollowsMovedWindow()
+        persistAutomaticallyUnhideApplications()
+
+        defaults.set(configuration.iCloudSyncEnabled, forKey: Keys.iCloudSync)
+        var enabledICloudThisApply = false
+        if configuration.iCloudSyncEnabled {
+            // Match the existing explicit enable path. A rejected cloud library is retained as an
+            // issue and cannot be silently replaced by this configuration apply.
+            if !previousICloudEnabled {
+                enabledICloudThisApply = true
+                iCloudSyncState = .waitingForCloud
+                iCloudProfileLibraryIssue = nil
+                ubiquitousStore?.synchronize()
+                pullFromICloud()
+            }
+        } else {
+            iCloudSyncState = .disabled
+            iCloudProfileLibraryIssue = nil
+        }
+
+        // A newly enabled iCloud store may have explicitly replaced this configuration with an
+        // accepted remote library. That path already publishes its own activation; never overwrite
+        // it with stale local selection data. Otherwise publish one coherent activation even when
+        // the active ID did not change, because its layout and rules may have changed.
+        if !enabledICloudThisApply || profiles == configuration.profileLibrary.profiles {
+            profileActivationGeneration &+= 1
+            profileActivationRequest = ProfileActivationRequest(
+                generation: profileActivationGeneration,
+                configuration: engineConfiguration(for: activeProfile, selectionReason: activeProfileSelectionReason)
+            )
+        }
+        reconcileSelectedQuickApp()
+        return .success(WindowRangerCLIConfigurationApplyResult(
+            profileCount: profiles.count,
+            activeProfileID: activeProfileID,
+            settingsProfileID: settingsProfileID
+        ))
+    }
+
     var profileTransferDiagnosticLogger: DiagnosticLogger { diagnostics }
 
     var workspaceDisplayPins: [UUID: WorkspaceDisplayPin] {

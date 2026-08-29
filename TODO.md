@@ -1800,14 +1800,15 @@ smallest useful outcome and acceptance boundary.
 
 ### WR-074 — Define the DesktopRanger integration and structured CLI contract
 
-- **Type:** Integration contract and CLI research
+- **Type:** Integration contract and CLI
 - **Priority:** P2
-- **Status:** Needs decision; product direction is approved, but the public contract is not scoped or
-  implemented.
+- **Status:** Automated source implementation complete for the complete WindowRanger CLI v2 surface;
+  signed installed validation and the separate DesktopRanger adapter remain.
 - **Source:** `docs/desktop-ranger-integration.md`
-- **Requested outcome:** Define a deliberately small, versioned, non-interactive WindowRanger command
-  contract that lets the DesktopRanger host expose bounded typed operations without giving plugins
-  shell access, private state, or a second workspace engine.
+- **Requested outcome:** Define a versioned, non-interactive WindowRanger command contract that gives
+  first-party callers access to every stable user-facing action and persisted setting without giving
+  plugins arbitrary shell access, raw Accessibility identities, preference-file access, or a second
+  workspace engine.
 - **Acceptance:** Choose the initial query/control allowlist, request/response/error envelopes,
   privacy grants, compatibility and migration policy, same-user authenticated IPC, designated-signing
   checks, deadlines, cancellation, idempotency, and relaunch/concurrency semantics. Converge every
@@ -1816,6 +1817,30 @@ smallest useful outcome and acceptance boundary.
   operations, timeouts, cancellation, late replies, and owner relaunch. Keep the integration
   unavailable or simulated until signed two-app validation passes without weakening macOS protections
   or changing the Apple Dock.
+- **Implemented:** The app embeds a separately signed thin client and exposes protocol v2 for status,
+  capabilities, private-by-default workspace listing, the compatibility workspace/layout/Pause
+  commands, discovery and invocation of every stable first-party action, and complete versioned
+  configuration export, validation and optimistic whole-document replacement. Actions resolve a
+  fresh app-owned context and route through the existing typed dispatcher; complete settings route
+  through the canonical SettingsStore plus app-owned login-item, updater and onboarding services.
+  Per-user local IPC verifies same user, exact resolved paths, Team ID and code identifiers on both
+  peers. Request IDs have a bounded replay cache, unavailable apps are launched from the helper's
+  enclosing bundle, expired requests are rejected before dispatch and after asynchronous context
+  capture, concurrent identical retries coalesce, and code-only failures map to deterministic exit
+  categories. Complete configuration decoding rejects unknown fields rather than dropping typos;
+  apply requires a current revision and explicit replacement flag. Turning iCloud on and replacing
+  its cloud copy are separate actions with distinct exact confirmation tokens, so pull-first sync
+  cannot make an atomic apply report success for a different document.
+  General Settings can conservatively add/remove `~/.local/bin/windowranger` without administrator
+  access, unrelated shell-file edits, or lost startup-file metadata. `windowranger skill` prints or
+  safely writes a deterministic agent skill with no runtime data.
+- **Automated evidence:** All 857 non-hosted tests pass, including strict protocol/configuration
+  shape checks, no-mutation invalid apply, cloud confirmation policy, async deadline/late-completion
+  handling, concurrent retry coalescing, 128 KiB transport, peer rejection, safe PATH and skill
+  export. Unsigned Debug app and helper builds succeed as universal arm64/x86_64 executables, and the
+  generated skill passes the Codex skill validator. Prior v1 signed arm64 and universal bundles
+  passed nested-signature validation. Exact v2 installed PATH/UI interaction, live signed IPC,
+  relaunch, concurrent-process and DesktopRanger two-app checks remain required.
 
 ### WR-070 — Add a branded, settings-backed first-run onboarding wizard
 

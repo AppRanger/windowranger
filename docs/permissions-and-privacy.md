@@ -72,6 +72,39 @@ The optional **Open at login** setting uses Apple's `SMAppService.mainApp`. It i
 the current installation unless the user explicitly changes it. Unit tests use an injected service
 and do not register or unregister the live login item.
 
+## Optional command-line PATH setup
+
+The command-line helper is bundled inside the signed app. Selecting **Add Command to PATH** creates
+`~/.local/bin` when necessary, adds an exact symlink named `windowranger`, and adds a marked PATH
+block to `.zprofile` or `.bash_profile` only when that directory is not already configured. The
+manager refuses an existing regular file, foreign symlink, shell-file symlink, or edited/duplicate
+managed block rather than replacing it. Removal owns only the exact current-app symlink and exact
+managed block. This machine-local choice is never synced.
+Existing startup-file permissions, ACLs, flags, and extended attributes are retained when the managed
+block is added or removed. The login shell is read from the current macOS account rather than assumed
+from a GUI process environment variable.
+
+Runtime commands use a same-user Unix-domain socket and bounded versioned JSON. The app and helper
+verify one another's Team ID, code identifier, and resolved executable location; finding a command
+with the right name on PATH is not a trust decision. The CLI does not read WindowRanger persistence
+files or start another workspace engine; the running app remains the sole authority.
+
+The ordinary workspace list omits names unless the caller explicitly supplies `--names`. In
+contrast, `config get` is an intentional complete private-data export: it can include profile,
+workspace and display-role names, application bundle identifiers, shortcut choices, local physical
+display bindings, automatic profile assignments, updater choices, onboarding progress and other
+persisted settings. It does not include window contents, titles, document paths, live window frames,
+diagnostics, permission database contents or credentials. Callers and agents should minimize its
+retention and must not publish it by default. Applying it validates one complete versioned document,
+requires an explicit replacement flag and rejects a stale revision before changing settings.
+Whole-document apply cannot turn iCloud on. Joining iCloud uses a separately confirmed action and
+then requires a fresh snapshot because an accepted existing cloud library may become authoritative.
+Overwriting that cloud library with this Mac's copy uses a different exact confirmation token.
+
+Generated agent-skill content is static and includes no live runtime state, window content, titles,
+paths, profile data, configuration, or diagnostics. Skill export will not replace an existing file
+without explicit `--force` and never writes through a symbolic-link destination.
+
 ## Settings and iCloud
 
 Settings sync is off by default. When **Sync settings with iCloud** is explicitly enabled, reusable
@@ -134,8 +167,8 @@ Unit tests inject memory/no-op sinks and never write diagnostics into the user's
 
 ## Deliberately not collected or provided
 
-The current app has no analytics, advertising, account system, telemetry upload, remote control,
-shell-command execution or public network API. It does not intentionally collect window contents,
+The current app has no analytics, advertising, account system, telemetry upload, remote network
+control, arbitrary shell-command execution, or public network API. It does not intentionally collect window contents,
 keystrokes, documents, browsing URLs or a history of user activity. This is a description of current
 source behavior, not a substitute for final privacy review, entitlements inspection or runtime
 network testing before release.

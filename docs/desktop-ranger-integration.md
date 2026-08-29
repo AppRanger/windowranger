@@ -1,6 +1,6 @@
 # WindowRanger integration with DesktopRanger
 
-Status: **Approved product direction; CLI and adapter are not yet implemented public contracts**
+Status: **WindowRanger CLI v2 source implementation complete; signed installed validation and DesktopRanger adapter remain**
 
 Date: 23 August 2026
 
@@ -8,6 +8,10 @@ This document records WindowRanger's ownership and contract boundary for first-c
 with DesktopRanger. It does not make the current pre-release command internals a compatibility
 promise. A canonical `WR-###` implementation item must define the exact schema and evidence gates
 before the CLI is shipped.
+
+The pre-release v2 contract is tracked by `WR-074`. Its source contract is implemented, but it
+does not become a shipped compatibility promise until the signed installation and release gates in
+this document pass.
 
 DesktopRanger's corresponding decisions are in
 `DesktopRanger/docs/first-party-content-plan.md` and
@@ -74,13 +78,57 @@ The CLI must be automation-safe rather than a text scraper for the app UI:
 13. Explicit semantics for no running instance, app launch/relaunch during a request, concurrent
     clients, duplicate/replayed operation identifiers, late replies, and owner-session change.
 
-The first contract should be deliberately small. Candidate operations include reading app/version
-and capability state; listing opaque profile/workspace identifiers and non-sensitive state; reading
-current workspace/profile/display-role state; activating an existing profile or workspace; invoking
-a bounded existing layout command; showing/hiding/cycling a configured Quick App Shelf entry; and
-requesting existing host-owned recovery actions where safe. Profile and workspace labels are
-user-authored data, not intrinsically privacy-safe metadata; returning them requires an explicit
-declared/read grant plus bounded redaction and diagnostic rules.
+The first-party CLI contract is complete rather than plugin-extensible. It exposes every stable
+user-facing WindowRanger action and every persisted configuration field, but it still does not
+accept arbitrary shell commands, raw Accessibility objects, caller-provided window identities or
+unversioned preference writes. Profile and workspace labels are user-authored private data. The
+small convenience workspace query keeps names opt-in; complete configuration export is explicitly a
+private-data operation and must be granted, retained and logged accordingly by a host integration.
+
+## WindowRanger CLI v2
+
+The implemented operation catalogue is:
+
+- `status`, `capabilities` and `list_actions`;
+- `perform_action`, accepting one catalogue action plus only its declared scalar arguments;
+- `get_configuration`, `validate_configuration` and `apply_configuration` for the complete
+  independently versioned configuration document;
+- `list_workspaces`, returning stable IDs and keys with names available only by explicit opt-in;
+- `activate_workspace`, requiring exactly one ID or key;
+- `set_layout`, limited to Freeform, Tiled or Accordion on the current interaction workspace;
+- transient `pause` and `resume`.
+
+The shell-facing spellings are `windowranger status`, `capabilities`, `workspaces`, `workspace`,
+`layout`, `pause`, `resume`, `actions`, `action`, and `config get|validate|apply`; `--json` returns the
+stable envelope. The helper also provides `windowranger skill`, which generates a static agent
+`SKILL.md` from the same command and action catalogues.
+
+Actions cover the app's stable window, workspace, layout, profile, Quick App Shelf, recovery,
+Settings, permission-navigation, updater, onboarding and explicit iCloud-replacement controls.
+Interactive gesture begin/commit/cancel messages remain an internal input implementation; the CLI
+offers the equivalent validated high-level window placement action. Each window action resolves a
+fresh app-owned command context so a client cannot replay a stale focused-window token.
+
+Configuration includes the complete profile library, machine-local profile/display assignments,
+global shortcuts and input choices, appearance choices, preview settings, login item, updater,
+iCloud and onboarding choices. `config apply` is a whole-document replacement, not an untyped
+preferences patch: validation occurs before mutation, explicit `--replace` is mandatory, and the
+revision returned by `config get` must still match. Turning iCloud on is a separately confirmed
+action because the pull-first join can select an existing cloud library; destructive replacement of
+that library requires a different exact confirmation token. Window contents, live window/session state,
+permissions, diagnostics and credentials are not configuration.
+
+The executable lives at `WindowRanger.app/Contents/Helpers/windowranger`. General Settings can add a
+conservative per-user symlink and PATH block. Runtime requests use a 4 MiB-bounded length-prefixed per-user
+Unix-domain socket. Both ends verify same-user ownership, the expected Team ID, code identifier and
+resolved path. The helper launches only its own enclosing app when the service is unavailable. The
+app serializes requests and dispatches accepted controls through `WindowManagerCommandDispatcher`;
+the app-owned Settings services mediate configuration and the helper never reads persistence itself.
+Duplicate request IDs replay the first response only when the request bytes match, otherwise they
+fail with `conflict`.
+Requests carry a monotonic execution deadline shorter than the helper's response timeout. The app
+checks it on the main actor and again after asynchronous live-context capture, so delayed requests
+fail without applying a late mutation.
 
 ## DesktopRanger adapter boundary
 

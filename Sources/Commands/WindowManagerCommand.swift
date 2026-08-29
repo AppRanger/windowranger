@@ -149,6 +149,7 @@ enum WindowManagerCommand: Hashable, Sendable {
 
 enum WindowManagerCommandSource: String, Equatable, Sendable {
     case hotkey
+    case cli
     case commandPalette = "command-palette"
     case radialMenu = "radial-menu"
     case workspaceSwipe = "workspace-swipe"
@@ -188,7 +189,7 @@ final class WindowManagerCommandDispatcher {
         addCurrentApplicationToQuickAppShelf: @escaping (String, String, UUID, CurrentApplicationConfigurationMembership, String) -> Void = {
             _, _, _, _, _ in
         },
-        setPauseMode: @escaping (Bool, String) -> Void = { _, _ in }
+        setPauseMode: @escaping (Bool, String, WindowManagerCommandSource) -> Void = { _, _, _ in }
     ) {
         self.init(diagnostics: diagnostics, sourceAwareExecutor: {
             [weak engine] command, correlationID, source in
@@ -282,7 +283,7 @@ final class WindowManagerCommandDispatcher {
             case .resumeAutomaticProfileSelection:
                 resumeAutomaticProfileSelection(correlationID)
             case let .setPauseMode(isPaused):
-                setPauseMode(isPaused, correlationID)
+                setPauseMode(isPaused, correlationID, source)
             }
         })
     }
