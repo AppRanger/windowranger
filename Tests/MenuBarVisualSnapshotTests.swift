@@ -270,6 +270,9 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
 
     @MainActor
     func testOffscreenProductionWorkspaceSettings() throws {
+        let snapshotScope = ProcessInfo.processInfo.environment[
+            "WINDOWRANGER_SETTINGS_SNAPSHOT_SCOPE"
+        ]
         let defaultsSuite = "WindowRangerTests.SettingsSnapshot.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsSuite))
         defaults.removePersistentDomain(forName: defaultsSuite)
@@ -281,13 +284,13 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
                 bounds: CGRect(x: 0, y: 0, width: 1_512, height: 982),
                 isMain: true,
                 isBuiltIn: true,
-                name: "Built-in Display"
+                name: snapshotScope == "displays" ? "TYPE-C" : "Built-in Display"
             ),
             DisplaySnapshot(
                 identifier: "fixture-studio",
                 bounds: CGRect(x: -1_920, y: 0, width: 1_920, height: 1_080),
                 isMain: false,
-                name: "Studio Display"
+                name: snapshotScope == "displays" ? "DELL U4021QW" : "Studio Display"
             ),
         ]
         var focus = workspace("60000000-0000-0000-0000-000000000001", "Focus", "f", .tiled)
@@ -342,6 +345,19 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
         let roleID = store.activeProfile.displayRoles[0].id
         store.renameDisplayRole(roleID, to: "Studio Display")
         workspaces.forEach { store.assignWorkspace($0.id, toRole: roleID) }
+        if snapshotScope == "displays" {
+            store.renameProfile(store.activeProfileID, to: "Desktop 2 screens")
+            store.renameDisplayRole(roleID, to: "Primary Display")
+            let sideRoleID: UUID
+            if let existingSideRoleID = store.activeProfile.displayRoles.dropFirst().first?.id {
+                sideRoleID = existingSideRoleID
+                store.renameDisplayRole(sideRoleID, to: "Side bar")
+            } else {
+                sideRoleID = store.addDisplayRole(name: "Side bar")
+            }
+            store.bindDisplayRole(roleID, to: "fixture-studio")
+            store.bindDisplayRole(sideRoleID, to: "fixture-built-in")
+        }
 
         let stateURL = FileManager.default.temporaryDirectory.appendingPathComponent(
             "WindowRanger-SettingsSnapshot-\(UUID().uuidString).json"
@@ -355,7 +371,11 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             diagnostics: .disabled
         )
         let navigation = SettingsNavigationModel(defaults: defaults, includeDebug: true)
-        navigation.selectWorkspace(writing.id)
+        if snapshotScope == "displays" {
+            navigation.select(.displays)
+        } else {
+            navigation.selectWorkspace(writing.id)
+        }
         let coordinator = SettingsWindowCoordinator(
             diagnostics: .disabled,
             displayProvider: { [] },
@@ -383,7 +403,12 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
         .environment(\.controlActiveState, .key)
 
         XCTAssertEqual(store.multiDisplayMode, .independent)
-        XCTAssertEqual(navigation.requestedWorkspaceID, writing.id)
+        if snapshotScope == "displays" {
+            XCTAssertEqual(navigation.selectedCategory, .displays)
+            XCTAssertNil(navigation.requestedWorkspaceID)
+        } else {
+            XCTAssertEqual(navigation.requestedWorkspaceID, writing.id)
+        }
         XCTAssertEqual(store.workspaces.first { $0.id == writing.id }?.layout, .accordion)
 
         guard let outputPath = ProcessInfo.processInfo.environment[
@@ -400,6 +425,86 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             at: outputDirectory,
             withIntermediateDirectories: true
         )
+        if snapshotScope == "displays" {
+            let displayWideSize = CGSize(width: 1_536, height: 1_024)
+            let lightDisplaysView = SettingsView(
+                store: store,
+                engine: engine,
+                navigation: navigation,
+                windowCoordinator: coordinator,
+                diagnostics: .disabled,
+                updateController: updateController,
+                shortcutRecordingStateChanged: { _ in }
+            )
+            .frame(width: displayWideSize.width, height: displayWideSize.height)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, .light)
+            .environment(\.controlActiveState, .key)
+            let lightDisplaysData = try renderRetinaPNG(
+                lightDisplaysView,
+                size: displayWideSize
+            )
+            XCTAssertGreaterThan(lightDisplaysData.count, 25_000)
+            try lightDisplaysData.write(
+                to: outputDirectory.appendingPathComponent(
+                    "windowranger-settings-displays.png"
+                ),
+                options: .atomic
+            )
+            let darkDisplaysView = SettingsView(
+                store: store,
+                engine: engine,
+                navigation: navigation,
+                windowCoordinator: coordinator,
+                diagnostics: .disabled,
+                updateController: updateController,
+                shortcutRecordingStateChanged: { _ in }
+            )
+            .frame(width: displayWideSize.width, height: displayWideSize.height)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, .dark)
+            .environment(\.controlActiveState, .key)
+            let darkDisplaysData = try renderRetinaPNG(
+                darkDisplaysView,
+                size: displayWideSize,
+                appearance: .darkAqua
+            )
+            XCTAssertGreaterThan(darkDisplaysData.count, 25_000)
+            try darkDisplaysData.write(
+                to: outputDirectory.appendingPathComponent(
+                    "windowranger-settings-displays-dark.png"
+                ),
+                options: .atomic
+            )
+
+            let compactSize = SettingsWindowMetrics.minimumSize
+            let compactDisplaysView = SettingsView(
+                store: store,
+                engine: engine,
+                navigation: navigation,
+                windowCoordinator: coordinator,
+                diagnostics: .disabled,
+                updateController: updateController,
+                shortcutRecordingStateChanged: { _ in }
+            )
+            .frame(width: compactSize.width, height: compactSize.height)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, .dark)
+            .environment(\.controlActiveState, .key)
+            let compactDisplaysData = try renderRetinaPNG(
+                compactDisplaysView,
+                size: compactSize,
+                appearance: .darkAqua
+            )
+            XCTAssertGreaterThan(compactDisplaysData.count, 15_000)
+            try compactDisplaysData.write(
+                to: outputDirectory.appendingPathComponent(
+                    "windowranger-settings-displays-compact-dark.png"
+                ),
+                options: .atomic
+            )
+            return
+        }
         try data.write(
             to: outputDirectory.appendingPathComponent("windowranger-settings-workspaces.png"),
             options: .atomic
@@ -457,7 +562,7 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
         )
         navigation.selectWorkspace(writing.id)
 
-        if ProcessInfo.processInfo.environment["WINDOWRANGER_SETTINGS_SNAPSHOT_SCOPE"] == "workspaces" {
+        if snapshotScope == "workspaces" {
             let compactSize = SettingsWindowMetrics.minimumSize
             let compactView = SettingsView(
                 store: store,

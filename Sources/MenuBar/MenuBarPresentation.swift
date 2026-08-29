@@ -101,28 +101,6 @@ enum MenuBarPresentationMode: String, Codable, CaseIterable, Identifiable, Senda
         }
     }
 
-    var primaryLabelDescriptor: MenuBarPrimaryLabelDescriptor {
-        switch self {
-        case .compact:
-            MenuBarPrimaryLabelDescriptor(
-                showsIcon: true,
-                indicatorStyle: .compact,
-                showsWorkspaceStrip: false
-            )
-        case .medium:
-            MenuBarPrimaryLabelDescriptor(
-                showsIcon: true,
-                indicatorStyle: .medium,
-                showsWorkspaceStrip: false
-            )
-        case .full:
-            MenuBarPrimaryLabelDescriptor(
-                showsIcon: true,
-                indicatorStyle: .none,
-                showsWorkspaceStrip: true
-            )
-        }
-    }
 }
 
 enum MenuBarWorkspaceLabelMode: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -137,18 +115,6 @@ enum MenuBarWorkspaceLabelMode: String, Codable, CaseIterable, Identifiable, Sen
         case .key: "Keys"
         }
     }
-}
-
-enum MenuBarPrimaryIndicatorStyle: Equatable, Sendable {
-    case none
-    case compact
-    case medium
-}
-
-struct MenuBarPrimaryLabelDescriptor: Equatable, Sendable {
-    let showsIcon: Bool
-    let indicatorStyle: MenuBarPrimaryIndicatorStyle
-    let showsWorkspaceStrip: Bool
 }
 
 enum MenuBarDisplayIconKind: String, Codable, Equatable, Sendable {
@@ -314,17 +280,6 @@ struct MenuBarPresentationSnapshot: Equatable, Sendable {
     let displayMode: MultiDisplayMode
     let interactionWorkspaceID: UUID
     let displays: [MenuBarDisplayItem]
-
-    var primaryAccessibilityLabel: String {
-        let states = displays.map(\.accessibilityLabel).joined(separator: ". ")
-        return "WindowRanger menu. \(states)."
-    }
-
-    var primaryTooltip: String {
-        let states = displays.map { "\($0.name): \($0.activeWorkspaceName)" }
-            .joined(separator: " · ")
-        return "WindowRanger — \(states)"
-    }
 
     func replacingMode(_ mode: MenuBarPresentationMode) -> MenuBarPresentationSnapshot {
         MenuBarPresentationSnapshot(
@@ -872,15 +827,6 @@ enum MenuBarPressurePolicy {
     }
 }
 
-enum MenuBarStatusItemCompositionPolicy {
-    static func usesDisplayGroups(
-        for _: MenuBarPresentationMode,
-        operatingSystemVersion: OperatingSystemVersion
-    ) -> Bool {
-        operatingSystemVersion.majorVersion >= 27
-    }
-}
-
 enum MenuBarStatusItemActivationPolicy {
     static func opensMenu(
         eventType: NSEvent.EventType?,
@@ -1002,7 +948,7 @@ enum MenuBarScreenSpaceTargetResolver {
         among targets: [MenuBarScreenSpaceTarget]
     ) -> MenuBarHitTarget? {
         // The owning status-item button already proves the vertical hit. Comparing only screen X
-        // follows the macOS 27-validated Stats approach and avoids relying on a remote menu-bar
+        // follows the validated Stats approach and avoids relying on a remote menu-bar
         // window's vertical coordinate conversion.
         targets.first(where: {
             pointer.x >= $0.frame.minX && pointer.x < $0.frame.maxX
@@ -1040,9 +986,6 @@ struct MenuBarWorkspaceTrackingRegion: Equatable {
 
 enum MenuBarVisualTokens {
     static let componentHeight: CGFloat = 18
-    static let appGlyphWidth: CGFloat = 20
-    static let mediumAppGlyphWidth: CGFloat = 24
-    static let fullPrimaryReservedWidth: CGFloat = 34
     static let displayIconWidth: CGFloat = 18
     static let workspaceSpacing: CGFloat = 2
     static let displayWorkspaceGap: CGFloat = 4
@@ -1051,13 +994,12 @@ enum MenuBarVisualTokens {
     static let maximumWorkspaceButtonWidth: CGFloat = 72
     static let compactCornerRadius: CGFloat = 4
     static let chipCornerRadius: CGFloat = 5
-    static let separatorHeight: CGFloat = 14
 }
 
 /// Renders one logical display inside a single standard status-item button. Compact and Medium are
 /// informational; Full additionally supplies visual segment geometry that the controller resolves
 /// against `NSEvent.mouseLocation` when the parent action fires. Pointer ownership stays with that
-/// parent button on macOS 27 in every mode.
+/// parent standard status button in every mode and on every supported macOS release.
 @MainActor
 final class MenuBarDisplayGroupContentView: NSView {
     private var contentSize = CGSize(width: 1, height: MenuBarVisualTokens.componentHeight)
@@ -1087,7 +1029,7 @@ final class MenuBarDisplayGroupContentView: NSView {
     required init?(coder: NSCoder) { nil }
 
     /// The standard `NSStatusBarButton` is the only pointer target. In particular, none of the
-    /// visual workspace segments participates in macOS 27's broken nested status-item hit testing.
+    /// visual workspace segments participates in nested status-item hit testing.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     func configure(
@@ -1476,70 +1418,6 @@ private final class MenuBarWorkspaceSegmentView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-struct MenuBarPrimaryStatusView: View {
-    let snapshot: MenuBarPresentationSnapshot
-    var highlightColor: MenuBarHighlightColor = .default
-    var displayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic
-
-    var body: some View {
-        HStack(spacing: snapshot.mode == .compact ? 4 : 5) {
-            appGlyph
-            if snapshot.mode != .full {
-                separator
-                ForEach(snapshot.displays) { display in
-                    switch snapshot.mode {
-                    case .compact:
-                        CompactDisplaySignal(
-                            display: display,
-                            workspaceLabelMode: snapshot.workspaceLabelMode,
-                            highlightColor: highlightColor,
-                            displayIconConfiguration: displayIconConfiguration
-                        )
-                    case .medium:
-                        MediumDisplayChip(
-                            display: display,
-                            workspaceLabelMode: snapshot.workspaceLabelMode,
-                            highlightColor: highlightColor,
-                            displayIconConfiguration: displayIconConfiguration
-                        )
-                    case .full:
-                        EmptyView()
-                    }
-                }
-            }
-        }
-        .frame(height: MenuBarVisualTokens.componentHeight)
-        .fixedSize(horizontal: true, vertical: true)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(snapshot.primaryAccessibilityLabel)
-        .help(snapshot.primaryTooltip)
-    }
-
-    private var appGlyph: some View {
-        Image(systemName: snapshot.mode == .full ? "rectangle.split.2x2" : "rectangle.on.rectangle")
-            .font(.system(size: snapshot.mode == .full ? 13 : 12.5, weight: .semibold))
-            .symbolRenderingMode(.hierarchical)
-            .frame(
-                width: snapshot.mode == .medium
-                    ? MenuBarVisualTokens.mediumAppGlyphWidth
-                    : MenuBarVisualTokens.appGlyphWidth,
-                height: MenuBarVisualTokens.componentHeight
-            )
-            .background {
-                if snapshot.mode == .medium {
-                    RoundedRectangle(cornerRadius: MenuBarVisualTokens.compactCornerRadius)
-                        .fill(.primary.opacity(0.10))
-                }
-            }
-    }
-
-    private var separator: some View {
-        Rectangle()
-            .fill(.primary.opacity(0.22))
-            .frame(width: 0.5, height: MenuBarVisualTokens.separatorHeight)
-    }
-}
-
 private struct MenuBarInformationalDisplayStatusView: View {
     let mode: MenuBarPresentationMode
     let display: MenuBarDisplayItem
@@ -1703,29 +1581,15 @@ struct MenuBarSettingsPreview: View {
     var displayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic
 
     var body: some View {
-        Group {
-            if MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
-                for: snapshot.mode,
-                operatingSystemVersion: ProcessInfo.processInfo.operatingSystemVersion
-            ) {
-                HStack(spacing: 6) {
-                    ForEach(displayGroupPlans, id: \.group.display.id) { plan in
-                        MenuBarDisplayGroupContentRepresentable(
-                            plan: plan,
-                            workspaceLabelMode: snapshot.workspaceLabelMode,
-                            highlightColor: highlightColor,
-                            displayIconConfiguration: displayIconConfiguration
-                        )
-                        .fixedSize()
-                    }
-                }
-            } else {
-                MenuBarStatusContentRepresentable(
-                    snapshot: snapshot,
-                    availableWidth: MenuBarPressurePolicy.defaultAvailableWidth,
+        HStack(spacing: 6) {
+            ForEach(displayGroupPlans, id: \.group.display.id) { plan in
+                MenuBarDisplayGroupContentRepresentable(
+                    plan: plan,
+                    workspaceLabelMode: snapshot.workspaceLabelMode,
                     highlightColor: highlightColor,
                     displayIconConfiguration: displayIconConfiguration
                 )
+                .fixedSize()
             }
         }
         .fixedSize()
@@ -1752,7 +1616,7 @@ struct MenuBarSettingsPreview: View {
     }
 }
 
-/// Settings embeds the exact per-display content used by each standard macOS 27 status item. This
+/// Settings embeds the exact per-display content used by each standard status item. This
 /// keeps preview composition, display order, icon choices, workspace labels, and pressure behavior
 /// on the production path instead of maintaining a visually similar SwiftUI-only copy.
 struct MenuBarDisplayGroupContentRepresentable: NSViewRepresentable {
@@ -1778,575 +1642,4 @@ struct MenuBarDisplayGroupContentRepresentable: NSViewRepresentable {
             displayIconConfiguration: displayIconConfiguration
         )
     }
-}
-
-/// The shared content used by Settings preview and the single-item compatibility path. macOS 27
-/// renders separate display-group status items instead; the underlying planning and visual tokens
-/// remain common.
-struct MenuBarStatusContentRepresentable: NSViewRepresentable {
-    let snapshot: MenuBarPresentationSnapshot
-    let availableWidth: CGFloat
-    var highlightColor: MenuBarHighlightColor = .default
-    var displayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic
-
-    func makeNSView(context: Context) -> MenuBarStatusContentView {
-        MenuBarStatusContentView(
-            snapshot: snapshot,
-            availableWidth: availableWidth,
-            highlightColor: highlightColor,
-            displayIconConfiguration: displayIconConfiguration,
-            workspaceAction: nil
-        )
-    }
-
-    func updateNSView(_ nsView: MenuBarStatusContentView, context: Context) {
-        nsView.configure(
-            snapshot: snapshot,
-            availableWidth: availableWidth,
-            highlightColor: highlightColor,
-            displayIconConfiguration: displayIconConfiguration,
-            workspaceAction: nil
-        )
-    }
-}
-
-/// Owns the status item's pointer and accessibility contract without assigning `NSStatusItem.menu`.
-/// AppKit documents that an assigned menu takes ownership of every status-item click. Keeping the
-/// menu detached lets concrete workspace buttons receive primary clicks on every supported macOS,
-/// while this host handles the remaining primary area and accessibility press as the app-menu
-/// target. Workspace buttons forward secondary and Control-clicks to the same menu action.
-@MainActor
-final class MenuBarStatusHostView: NSView {
-    private let contentView: MenuBarStatusContentView
-    private let selectionSurface = NSVisualEffectView()
-    private var menuAction: (() -> Void)?
-    private(set) var isMenuPresented = false
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(
-            width: contentView.intrinsicContentSize.width,
-            height: NSStatusBar.system.thickness
-        )
-    }
-
-    init(
-        contentView: MenuBarStatusContentView,
-        menuAction: (() -> Void)?
-    ) {
-        self.contentView = contentView
-        self.menuAction = menuAction
-        super.init(frame: .zero)
-
-        selectionSurface.material = .selection
-        selectionSurface.blendingMode = .withinWindow
-        selectionSurface.state = .active
-        selectionSurface.isHidden = true
-        selectionSurface.wantsLayer = true
-        selectionSurface.layer?.cornerRadius = MenuBarVisualTokens.chipCornerRadius
-        selectionSurface.layer?.masksToBounds = true
-        selectionSurface.translatesAutoresizingMaskIntoConstraints = false
-
-        addSubview(selectionSurface)
-        addSubview(contentView)
-        NSLayoutConstraint.activate([
-            selectionSurface.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
-            selectionSurface.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -1),
-            selectionSurface.centerYAnchor.constraint(equalTo: centerYAnchor),
-            selectionSurface.heightAnchor.constraint(equalToConstant: MenuBarVisualTokens.componentHeight),
-            contentView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            contentView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            contentView.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
-
-        setAccessibilityElement(true)
-        setAccessibilityRole(.button)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func mouseDown(with event: NSEvent) {
-        menuAction?()
-    }
-
-    override func rightMouseDown(with event: NSEvent) {
-        menuAction?()
-    }
-
-    override func accessibilityPerformPress() -> Bool {
-        menuAction?()
-        return true
-    }
-
-    func configure(
-        menuAction: (() -> Void)?,
-        accessibilityLabel: String,
-        accessibilityHelp: String
-    ) {
-        self.menuAction = menuAction
-        setAccessibilityLabel(accessibilityLabel)
-        setAccessibilityHelp(accessibilityHelp)
-        frame.size = intrinsicContentSize
-        invalidateIntrinsicContentSize()
-    }
-
-    func setMenuPresented(_ presented: Bool) {
-        guard isMenuPresented != presented else { return }
-        isMenuPresented = presented
-        selectionSurface.isHidden = !presented
-    }
-}
-
-@MainActor
-final class MenuBarStatusContentView: NSView {
-    private var contentSize = CGSize(
-        width: MenuBarVisualTokens.appGlyphWidth,
-        height: MenuBarVisualTokens.componentHeight
-    )
-    private var fullStrip: MenuBarFullStripView?
-
-    override var intrinsicContentSize: NSSize { contentSize }
-
-    init(
-        snapshot: MenuBarPresentationSnapshot,
-        availableWidth: CGFloat,
-        highlightColor: MenuBarHighlightColor = .default,
-        displayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic,
-        workspaceAction: ((MenuBarHitTarget) -> Void)?,
-        menuAction: (() -> Void)? = nil,
-        workspaceHoverAction: ((MenuBarHitTarget?, CGRect?) -> Void)? = nil
-    ) {
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        configure(
-            snapshot: snapshot,
-            availableWidth: availableWidth,
-            highlightColor: highlightColor,
-            displayIconConfiguration: displayIconConfiguration,
-            workspaceAction: workspaceAction,
-            menuAction: menuAction,
-            workspaceHoverAction: workspaceHoverAction
-        )
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    func configure(
-        snapshot: MenuBarPresentationSnapshot,
-        availableWidth: CGFloat,
-        highlightColor: MenuBarHighlightColor = .default,
-        displayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic,
-        workspaceAction: ((MenuBarHitTarget) -> Void)?,
-        menuAction: (() -> Void)? = nil,
-        workspaceHoverAction: ((MenuBarHitTarget?, CGRect?) -> Void)? = nil
-    ) {
-        subviews.forEach { $0.removeFromSuperview() }
-        fullStrip = nil
-
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.spacing = 5
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        let primary = NSHostingView(rootView: MenuBarPrimaryStatusView(
-            snapshot: snapshot,
-            highlightColor: highlightColor,
-            displayIconConfiguration: displayIconConfiguration
-        ))
-        primary.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(primary)
-
-        if snapshot.mode == .full {
-            let divider = NSBox()
-            divider.boxType = .separator
-            divider.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                divider.widthAnchor.constraint(equalToConstant: 1),
-                divider.heightAnchor.constraint(equalToConstant: MenuBarVisualTokens.separatorHeight),
-            ])
-            stack.addArrangedSubview(divider)
-
-            let strip = MenuBarFullStripView(
-                snapshot: snapshot,
-                availableWidth: max(120, availableWidth - MenuBarVisualTokens.fullPrimaryReservedWidth),
-                highlightColor: highlightColor,
-                displayIconConfiguration: displayIconConfiguration,
-                workspaceAction: workspaceAction,
-                menuAction: menuAction,
-                workspaceHoverAction: workspaceHoverAction
-            )
-            fullStrip = strip
-            stack.addArrangedSubview(strip)
-        }
-
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            heightAnchor.constraint(equalToConstant: MenuBarVisualTokens.componentHeight),
-        ])
-        stack.layoutSubtreeIfNeeded()
-        contentSize = CGSize(
-            width: ceil(stack.fittingSize.width),
-            height: MenuBarVisualTokens.componentHeight
-        )
-        frame.size = contentSize
-        invalidateIntrinsicContentSize()
-        setAccessibilityElement(false)
-    }
-
-    /// All non-workspace content deliberately falls through to `MenuBarStatusHostView`, whose
-    /// primary action opens the app menu. Only a concrete Full-mode workspace button captures a
-    /// primary click.
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard fullStrip != nil, let candidate = super.hitTest(point) else { return nil }
-        var view: NSView? = candidate
-        while let current = view, current !== self {
-            if current is MenuBarWorkspaceButton { return current }
-            view = current.superview
-        }
-        return nil
-    }
-
-}
-
-struct MenuBarFullStripRepresentable: NSViewRepresentable {
-    let snapshot: MenuBarPresentationSnapshot
-    let availableWidth: CGFloat
-    var highlightColor: MenuBarHighlightColor = .default
-    var displayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic
-
-    func makeNSView(context: Context) -> MenuBarFullStripView {
-        MenuBarFullStripView(
-            snapshot: snapshot,
-            availableWidth: availableWidth,
-            highlightColor: highlightColor,
-            displayIconConfiguration: displayIconConfiguration,
-            workspaceAction: nil
-        )
-    }
-
-    func updateNSView(_ nsView: MenuBarFullStripView, context: Context) {
-        nsView.configure(
-            snapshot: snapshot,
-            availableWidth: availableWidth,
-            highlightColor: highlightColor,
-            displayIconConfiguration: displayIconConfiguration,
-            workspaceAction: nil
-        )
-    }
-}
-
-@MainActor
-final class MenuBarFullStripView: NSView {
-    private(set) var layout: MenuBarFullStripLayout
-    private var workspaceAction: ((MenuBarHitTarget) -> Void)?
-    private var menuAction: (() -> Void)?
-    private var workspaceHoverAction: ((MenuBarHitTarget?, CGRect?) -> Void)?
-    private var contentSize = CGSize(width: 1, height: MenuBarVisualTokens.componentHeight)
-
-    override var intrinsicContentSize: NSSize { contentSize }
-
-    init(
-        snapshot: MenuBarPresentationSnapshot,
-        availableWidth: CGFloat,
-        highlightColor: MenuBarHighlightColor = .default,
-        displayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic,
-        workspaceAction: ((MenuBarHitTarget) -> Void)?,
-        menuAction: (() -> Void)? = nil,
-        workspaceHoverAction: ((MenuBarHitTarget?, CGRect?) -> Void)? = nil
-    ) {
-        layout = MenuBarPressurePolicy.layout(
-            displays: snapshot.displays,
-            availableWidth: availableWidth,
-            workspaceLabelMode: snapshot.workspaceLabelMode,
-            displayIconConfiguration: displayIconConfiguration
-        )
-        self.workspaceAction = workspaceAction
-        self.menuAction = menuAction
-        self.workspaceHoverAction = workspaceHoverAction
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        configure(
-            snapshot: snapshot,
-            availableWidth: availableWidth,
-            highlightColor: highlightColor,
-            displayIconConfiguration: displayIconConfiguration,
-            workspaceAction: workspaceAction,
-            menuAction: menuAction,
-            workspaceHoverAction: workspaceHoverAction
-        )
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    /// Display icons, dividers, gaps, and group backgrounds are informational. Returning only an
-    /// explicit workspace button prevents a transparent AppKit subview from stealing the primary
-    /// menu click or accidentally routing it through a stale workspace target.
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let candidate = super.hitTest(point) else { return nil }
-        var view: NSView? = candidate
-        while let current = view, current !== self {
-            if current is MenuBarWorkspaceButton { return current }
-            view = current.superview
-        }
-        return nil
-    }
-
-    func configure(
-        snapshot: MenuBarPresentationSnapshot,
-        availableWidth: CGFloat,
-        highlightColor: MenuBarHighlightColor = .default,
-        displayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic,
-        workspaceAction: ((MenuBarHitTarget) -> Void)?,
-        menuAction: (() -> Void)? = nil,
-        workspaceHoverAction: ((MenuBarHitTarget?, CGRect?) -> Void)? = nil
-    ) {
-        self.workspaceAction = workspaceAction
-        self.menuAction = menuAction
-        self.workspaceHoverAction = workspaceHoverAction
-        layout = MenuBarPressurePolicy.layout(
-            displays: snapshot.displays,
-            availableWidth: availableWidth,
-            workspaceLabelMode: snapshot.workspaceLabelMode,
-            displayIconConfiguration: displayIconConfiguration
-        )
-        subviews.forEach { $0.removeFromSuperview() }
-
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.spacing = 4
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        for (index, group) in layout.groups.enumerated() {
-            if index > 0 { stack.addArrangedSubview(makeDivider()) }
-            stack.addArrangedSubview(makeDisplayGroup(
-                group,
-                workspaceLabelMode: snapshot.workspaceLabelMode,
-                highlightColor: highlightColor,
-                displayIconConfiguration: displayIconConfiguration
-            ))
-        }
-        if layout.hiddenWorkspaceCount > 0 {
-            let overflow = NSTextField(labelWithString: "+\(layout.hiddenWorkspaceCount)")
-            overflow.font = .systemFont(ofSize: 9.5, weight: .medium)
-            overflow.textColor = .secondaryLabelColor
-            overflow.alignment = .center
-            overflow.toolTip = layout.overflowSummary
-            overflow.setAccessibilityLabel(layout.overflowSummary ?? "Hidden workspaces")
-            stack.addArrangedSubview(overflow)
-        }
-
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 3),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -3),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            heightAnchor.constraint(equalToConstant: MenuBarVisualTokens.componentHeight),
-        ])
-        stack.layoutSubtreeIfNeeded()
-        contentSize = CGSize(
-            width: ceil(stack.fittingSize.width + 6),
-            height: MenuBarVisualTokens.componentHeight
-        )
-        frame.size = contentSize
-        invalidateIntrinsicContentSize()
-        setAccessibilityElement(true)
-        setAccessibilityRole(.group)
-        setAccessibilityLabel("WindowRanger display workspace strip")
-    }
-
-    private func makeDisplayGroup(
-        _ group: MenuBarFullStripDisplayGroup,
-        workspaceLabelMode: MenuBarWorkspaceLabelMode,
-        highlightColor: MenuBarHighlightColor,
-        displayIconConfiguration: MenuBarDisplayIconConfiguration
-    ) -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.spacing = MenuBarVisualTokens.workspaceSpacing
-
-        if let systemImage = displayIconConfiguration.systemImage(for: group.display) {
-            let icon = NSImageView()
-            icon.image = NSImage(systemSymbolName: systemImage, accessibilityDescription: nil)
-            icon.contentTintColor = group.display.isInteractionDisplay
-                ? .labelColor : .secondaryLabelColor
-            icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11.5, weight: .medium)
-            icon.toolTip = group.display.accessibilityLabel
-            icon.setAccessibilityLabel(group.display.accessibilityLabel)
-            icon.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                icon.widthAnchor.constraint(equalToConstant: MenuBarVisualTokens.displayIconWidth),
-                icon.heightAnchor.constraint(equalToConstant: MenuBarVisualTokens.componentHeight),
-            ])
-            stack.addArrangedSubview(icon)
-            stack.setCustomSpacing(MenuBarVisualTokens.displayWorkspaceGap, after: icon)
-        }
-
-        for workspace in group.visibleWorkspaces {
-            let button = MenuBarWorkspaceButton(
-                workspace: workspace,
-                display: group.display,
-                labelStyle: layout.labelStyle,
-                workspaceLabelMode: workspaceLabelMode,
-                highlightColor: highlightColor
-            )
-            button.onClick = { [weak self] in
-                self?.workspaceAction?(.workspace(
-                    workspaceID: workspace.id,
-                    displayIdentifier: group.display.id
-                ))
-            }
-            button.onMenu = { [weak self] in
-                self?.menuAction?()
-            }
-            button.onHover = { [weak self] target, frame in
-                self?.workspaceHoverAction?(target, frame)
-            }
-            stack.addArrangedSubview(button)
-        }
-        stack.setAccessibilityLabel(group.display.accessibilityLabel)
-        return stack
-    }
-
-    private func makeDivider() -> NSView {
-        let divider = NSBox()
-        divider.boxType = .separator
-        divider.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            divider.widthAnchor.constraint(equalToConstant: 1),
-            divider.heightAnchor.constraint(equalToConstant: MenuBarVisualTokens.separatorHeight),
-        ])
-        return divider
-    }
-}
-
-private final class MenuBarWorkspaceButton: NSButton {
-    let hitTarget: MenuBarHitTarget
-    var onClick: (() -> Void)?
-    var onMenu: (() -> Void)?
-    var onHover: ((MenuBarHitTarget?, CGRect?) -> Void)?
-    private let hoverOverlay: MenuBarWorkspaceHoverOverlay
-    private var hoverTrackingArea: NSTrackingArea?
-
-    init(
-        workspace: MenuBarWorkspaceItem,
-        display: MenuBarDisplayItem,
-        labelStyle: MenuBarFullStripLabelStyle,
-        workspaceLabelMode: MenuBarWorkspaceLabelMode = .name,
-        highlightColor: MenuBarHighlightColor = .default
-    ) {
-        hitTarget = .workspace(
-            workspaceID: workspace.id,
-            displayIdentifier: display.id
-        )
-        let hoverContrastColor = workspace.isInteractionWorkspace
-            ? highlightColor.nsForegroundColor : NSColor.labelColor
-        hoverOverlay = MenuBarWorkspaceHoverOverlay(contrastColor: hoverContrastColor)
-        super.init(frame: .zero)
-        title = workspace.visibleLabel(
-            mode: workspaceLabelMode,
-            compact: labelStyle == .compact
-        )
-        target = self
-        action = #selector(clicked)
-        isBordered = false
-        bezelStyle = .regularSquare
-        font = .systemFont(
-            ofSize: 11,
-            weight: workspace.isInteractionWorkspace ? .semibold : (workspace.isActive ? .medium : .regular)
-        )
-        contentTintColor = workspace.isInteractionWorkspace
-            ? highlightColor.nsForegroundColor : .labelColor
-        toolTip = "\(display.name) — workspace \(workspace.name)"
-        setAccessibilityLabel("\(workspace.accessibilityLabel), \(display.name)")
-        setAccessibilityHelp("Switches \(display.name) to workspace \(workspace.name)")
-        focusRingType = .none
-        cell?.lineBreakMode = .byTruncatingTail
-        wantsLayer = true
-        layer?.cornerRadius = MenuBarVisualTokens.compactCornerRadius
-        if workspace.isInteractionWorkspace {
-            layer?.backgroundColor = highlightColor.nsColor.cgColor
-            layer?.borderColor = (highlightColor.usesDarkForeground
-                ? NSColor.black.withAlphaComponent(0.28)
-                : NSColor.white.withAlphaComponent(0.30)).cgColor
-            layer?.borderWidth = 0.5
-        } else if workspace.isActive {
-            layer?.backgroundColor = highlightColor.nsColor.withAlphaComponent(0.14).cgColor
-            layer?.borderColor = highlightColor.nsColor.withAlphaComponent(0.72).cgColor
-            layer?.borderWidth = 1
-        } else {
-            layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.09).cgColor
-        }
-        addSubview(hoverOverlay)
-        translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            hoverOverlay.leadingAnchor.constraint(equalTo: leadingAnchor),
-            hoverOverlay.trailingAnchor.constraint(equalTo: trailingAnchor),
-            hoverOverlay.topAnchor.constraint(equalTo: topAnchor),
-            hoverOverlay.bottomAnchor.constraint(equalTo: bottomAnchor),
-            widthAnchor.constraint(greaterThanOrEqualToConstant: 22),
-            widthAnchor.constraint(lessThanOrEqualToConstant: MenuBarVisualTokens.maximumWorkspaceButtonWidth),
-            heightAnchor.constraint(equalToConstant: MenuBarVisualTokens.componentHeight),
-        ])
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let hoverTrackingArea {
-            removeTrackingArea(hoverTrackingArea)
-        }
-        let area = NSTrackingArea(
-            rect: .zero,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        hoverTrackingArea = area
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        hoverOverlay.setHovered(true)
-        onHover?(hitTarget, screenFrame())
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        hoverOverlay.setHovered(false)
-        onHover?(nil, nil)
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func mouseDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.control) {
-            onMenu?()
-            return
-        }
-        super.mouseDown(with: event)
-    }
-
-    override func rightMouseDown(with event: NSEvent) {
-        onMenu?()
-    }
-
-    private func screenFrame() -> CGRect? {
-        guard let window else { return nil }
-        return window.convertToScreen(convert(bounds, to: nil))
-    }
-
-    @objc private func clicked() { onClick?() }
 }

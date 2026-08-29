@@ -1136,7 +1136,6 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         )
     }
 
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let appMenu = NSMenu()
     private let engine: WorkspaceEngine
     private let stateModel: MenuBarStateModel
@@ -1155,8 +1154,6 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private var displayGroupStatusItems: [ManagedDisplayGroupStatusItem] = []
     private var displayGroupContentByButton: [ObjectIdentifier: MenuBarDisplayGroupRenderedContent] = [:]
     private var systemColorsObserver: NSObjectProtocol?
-    private var hostView: MenuBarStatusHostView?
-    private var contentView: MenuBarStatusContentView?
     private var lastSnapshot: MenuBarPresentationSnapshot?
     private var focusedWindowDiagnosticReport: String?
     private var supportSectionVisibleForCurrentOpen = false
@@ -1216,12 +1213,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         displayIconConfiguration = initialDisplayIconConfiguration
         highlightColor = initialHighlightColor
         super.init()
-        statusItem.autosaveName = "\(ApplicationIdentity.bundleIdentifier).primary-status"
         appMenu.autoenablesItems = false
         appMenu.delegate = self
-        // An assigned NSStatusItem menu owns every click. The custom host keeps workspace buttons
-        // interactive and presents this same menu explicitly for the primary area and right-click.
-        statusItem.menu = nil
         systemColorsObserver = NotificationCenter.default.addObserver(
             forName: NSColor.systemColorsDidChangeNotification,
             object: nil,
@@ -1274,91 +1267,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         let availableWidth = MenuBarPressurePolicy.defaultBudget(
             for: NSScreen.main?.visibleFrame.width
         )
-        let usesDisplayGroups = MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
-            for: presentationMode,
-            operatingSystemVersion: ProcessInfo.processInfo.operatingSystemVersion
-        )
-        if usesDisplayGroups {
-            rebuildDisplayGroupStatusItems(snapshot: snapshot, availableWidth: availableWidth)
-        } else {
-            rebuildSingleStatusItem(snapshot: snapshot, availableWidth: availableWidth)
-        }
+        rebuildDisplayGroupStatusItems(snapshot: snapshot, availableWidth: availableWidth)
     }
 
     func applicationActivated() {
         guard !isInvalidated else { return }
         dismissApplicationShelf()
-    }
-
-    private func rebuildSingleStatusItem(
-        snapshot: MenuBarPresentationSnapshot,
-        availableWidth: CGFloat
-    ) {
-        if snapshot.mode != .full {
-            dismissApplicationShelf()
-        }
-        removeDisplayGroupStatusItems()
-        statusItem.isVisible = true
-        statusItem.button?.target = nil
-        statusItem.button?.action = nil
-
-        let workspaceAction: (MenuBarHitTarget) -> Void = { [weak self] target in
-            self?.handle(target)
-        }
-        let menuAction: () -> Void = { [weak self] in
-            self?.requestMenuPresentation()
-        }
-        let workspaceHoverAction: (MenuBarHitTarget?, CGRect?) -> Void = { [weak self] target, frame in
-            self?.workspaceHoverChanged(target, anchorFrame: frame)
-        }
-        let content: MenuBarStatusContentView
-        if let existing = contentView {
-            existing.configure(
-                snapshot: snapshot,
-                availableWidth: availableWidth,
-                highlightColor: highlightColor,
-                displayIconConfiguration: displayIconConfiguration,
-                workspaceAction: workspaceAction,
-                menuAction: menuAction,
-                workspaceHoverAction: workspaceHoverAction
-            )
-            content = existing
-        } else {
-            content = MenuBarStatusContentView(
-                snapshot: snapshot,
-                availableWidth: availableWidth,
-                highlightColor: highlightColor,
-                displayIconConfiguration: displayIconConfiguration,
-                workspaceAction: workspaceAction,
-                menuAction: menuAction,
-                workspaceHoverAction: workspaceHoverAction
-            )
-            contentView = content
-        }
-
-        let host: MenuBarStatusHostView
-        if let existing = hostView {
-            host = existing
-        } else {
-            host = MenuBarStatusHostView(
-                contentView: content,
-                menuAction: menuAction
-            )
-            hostView = host
-            statusItem.view = host
-        }
-        let width = max(24, content.intrinsicContentSize.width)
-        statusItem.length = width
-        host.toolTip = snapshot.primaryTooltip
-        host.configure(
-            menuAction: menuAction,
-            accessibilityLabel: snapshot.primaryAccessibilityLabel,
-            accessibilityHelp: presentationMode == .full
-                ? "Opens the WindowRanger menu. Only the labelled workspace buttons switch workspaces."
-                : "Opens the WindowRanger menu."
-        )
-        host.frame.size.width = width
-        content.layoutSubtreeIfNeeded()
     }
 
     private func rebuildDisplayGroupStatusItems(
@@ -1368,14 +1282,6 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         if snapshot.mode != .full {
             dismissApplicationShelf()
         }
-        statusItem.view = nil
-        hostView = nil
-        contentView?.removeFromSuperview()
-        contentView = nil
-
-        statusItem.button?.target = nil
-        statusItem.button?.action = nil
-        statusItem.isVisible = false
         let plannedGroups = MenuBarDisplayGroupStatusItemPlanner.groups(
             for: snapshot,
             availableWidth: availableWidth,
@@ -1411,8 +1317,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         while displayGroupStatusItems.count < count {
             let slot = displayGroupStatusItems.count
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            // Keep the established autosave identity so a user's grouped Full-mode placement also
-            // applies when Compact or Medium reuses these same physical display-group slots.
+            // Keep one established autosave identity per logical display-group slot across modes.
             item.autosaveName = "\(ApplicationIdentity.bundleIdentifier).full-display-group-\(slot)"
             displayGroupStatusItems.append(ManagedDisplayGroupStatusItem(
                 statusItem: item,
@@ -1739,11 +1644,10 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         ) {
         case .openMenu:
             requestMenuPresentation(relativeTo: sender)
-        case let .switchWorkspace(workspaceID, displayIdentifier):
-            handle(.workspace(
-                workspaceID: workspaceID,
-                displayIdentifier: displayIdentifier
-            ), menuAnchor: sender)
+        case let .switchWorkspace(workspaceID, _):
+            dismissApplicationShelf()
+            guard !isPauseModeEnabled() else { return }
+            engine.switchToWorkspace(workspaceID)
         }
     }
 
@@ -1756,33 +1660,14 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         }
         dismissApplicationShelf()
         appMenu.delegate = nil
-        statusItem.menu = nil
-        statusItem.view = nil
-        statusItem.button?.target = nil
-        statusItem.button?.action = nil
-        hostView = nil
-        contentView?.removeFromSuperview()
-        contentView = nil
         removeDisplayGroupStatusItems()
         if let systemColorsObserver {
             NotificationCenter.default.removeObserver(systemColorsObserver)
             self.systemColorsObserver = nil
         }
-        NSStatusBar.system.removeStatusItem(statusItem)
     }
 
-    private func handle(_ target: MenuBarHitTarget, menuAnchor: NSView? = nil) {
-        dismissApplicationShelf()
-        switch MenuBarInteractionRouter.action(for: target) {
-        case .openMenu:
-            requestMenuPresentation(relativeTo: menuAnchor)
-        case let .switchWorkspace(workspaceID, _):
-            guard !isPauseModeEnabled() else { return }
-            engine.switchToWorkspace(workspaceID)
-        }
-    }
-
-    private func requestMenuPresentation(relativeTo requestedAnchor: NSView? = nil) {
+    private func requestMenuPresentation(relativeTo requestedAnchor: NSView) {
         guard !isInvalidated,
               !isPresentingMenu,
               menuPresentationRequestGate.request()
@@ -1799,31 +1684,27 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
                 ),
             ]
         )
-        // Return through the status view/button action before beginning NSMenu's nested tracking
-        // loop. This also keeps accessibility and custom-host requests on the same safe boundary.
+        // Return through the status button action before beginning NSMenu's nested tracking loop.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.menuPresentationRequestGate.consume() else { return }
             self.presentMenu(relativeTo: requestedAnchor)
         }
     }
 
-    private func presentMenu(relativeTo requestedAnchor: NSView? = nil) {
+    private func presentMenu(relativeTo requestedAnchor: NSView) {
         dismissApplicationShelf()
-        let anchor = requestedAnchor ?? hostView ?? statusItem.button
-        guard !isInvalidated, !isPresentingMenu, let anchor else { return }
+        guard !isInvalidated, !isPresentingMenu else { return }
         isPresentingMenu = true
         diagnostics.log(category: "status-menu", event: "presentation-started")
-        hostView?.setMenuPresented(true)
-        (anchor as? NSButton)?.highlight(true)
+        (requestedAnchor as? NSButton)?.highlight(true)
         defer {
-            hostView?.setMenuPresented(false)
-            (anchor as? NSButton)?.highlight(false)
+            (requestedAnchor as? NSButton)?.highlight(false)
             isPresentingMenu = false
         }
         _ = appMenu.popUp(
             positioning: nil,
-            at: NSPoint(x: anchor.bounds.minX, y: anchor.bounds.minY),
-            in: anchor
+            at: NSPoint(x: requestedAnchor.bounds.minX, y: requestedAnchor.bounds.minY),
+            in: requestedAnchor
         )
         diagnostics.log(category: "status-menu", event: "presentation-returned")
         if settingsStatusMenuOpenGate.consumeAfterMenuPresentationReturns() {
@@ -1852,7 +1733,6 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         supportSectionVisibleForCurrentOpen = false
         focusedWindowDiagnosticReport = nil
-        hostView?.setMenuPresented(false)
         if checkForUpdatesAfterMenuCloses {
             checkForUpdatesAfterMenuCloses = false
             DispatchQueue.main.async { [weak self] in
@@ -2110,8 +1990,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     }
 
     deinit {
-        if !isInvalidated {
-            NSStatusBar.system.removeStatusItem(statusItem)
+        MainActor.assumeIsolated {
+            if !isInvalidated {
+                for managed in displayGroupStatusItems {
+                    NSStatusBar.system.removeStatusItem(managed.statusItem)
+                }
+            }
         }
     }
 }

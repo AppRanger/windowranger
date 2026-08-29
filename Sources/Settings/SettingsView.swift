@@ -719,7 +719,7 @@ private struct GeneralSettingsView: View {
                             }
                         }
                     }
-                    Text("Off by default and stored only on this Mac. When enabled, WindowRanger adds the current desktop wallpaper and small window thumbnails to workspace previews. Preview pixels stay in memory and are never synced, saved, exported, or included in diagnostics; unavailable images fall back safely.")
+                    Text("Off by default and stored only on this Mac. When enabled, WindowRanger adds the current desktop wallpaper and small window thumbnails to workspace previews. At launch, inactive Tiled and Accordion windows may be resized while parked so their previews are accurate. Preview pixels stay in memory and are never synced, saved, exported, or included in diagnostics; unavailable images fall back safely.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1666,28 +1666,98 @@ private struct ProfilesSettingsView: View {
 
 }
 
+struct DisplayWorkspaceModePresentation: Equatable, Sendable {
+    let title: String
+    let supportingText: String
+    let technicalTerm: String
+    let explanation: String
+    let accessibilityHint: String
+
+    static func value(for mode: MultiDisplayMode) -> DisplayWorkspaceModePresentation {
+        switch mode {
+        case .unified:
+            DisplayWorkspaceModePresentation(
+                title: "Switch together",
+                supportingText: "All displays change workspace together",
+                technicalTerm: "Unified",
+                explanation: "Switching changes every display at once. Windows remain on their current display.",
+                accessibilityHint: "All displays share one active workspace and switch together."
+            )
+        case .independent:
+            DisplayWorkspaceModePresentation(
+                title: "Switch separately",
+                supportingText: "Each display keeps its own workspace",
+                technicalTerm: "Independent",
+                explanation: "Switching changes only the display you are using. Each workspace has a Home Display.",
+                accessibilityHint: "Each display has its own active workspace and switches independently."
+            )
+        }
+    }
+}
+
+enum DisplayRoleBindingTone: Equatable, Sendable {
+    case connected
+    case attention
+    case inactive
+}
+
+struct DisplayRoleBindingPresentation: Equatable, Sendable {
+    let title: String
+    let systemImage: String
+    let detail: String?
+    let tone: DisplayRoleBindingTone
+
+    static func value(for resolution: DisplayPinResolution?) -> DisplayRoleBindingPresentation {
+        switch resolution {
+        case .exactIdentifier, .exactUUID, .portableFingerprint:
+            DisplayRoleBindingPresentation(
+                title: "Connected",
+                systemImage: "checkmark.circle.fill",
+                detail: nil,
+                tone: .connected
+            )
+        case .ambiguous:
+            DisplayRoleBindingPresentation(
+                title: "Needs attention",
+                systemImage: "exclamationmark.triangle.fill",
+                detail: "Two matching displays were found. Choose the intended display.",
+                tone: .attention
+            )
+        case .disconnected:
+            DisplayRoleBindingPresentation(
+                title: "Disconnected",
+                systemImage: "exclamationmark.triangle.fill",
+                detail: "Will reconnect automatically when the display is available.",
+                tone: .attention
+            )
+        case nil:
+            DisplayRoleBindingPresentation(
+                title: "Not assigned on this Mac",
+                systemImage: "circle.dashed",
+                detail: "Workspaces use the safe main-display fallback.",
+                tone: .inactive
+            )
+        }
+    }
+}
+
 private struct DisplaysSettingsView: View {
     @ObservedObject var store: SettingsStore
 
     var body: some View {
         Form {
-                Section("Workspace Behavior") {
-                    Picker("Display workspace behavior", selection: Binding(
-                        get: { store.settingsMultiDisplayMode },
-                        set: { store.setSettingsMultiDisplayMode($0) }
-                    )) {
-                        ForEach(MultiDisplayMode.allCases) { mode in Text(mode.title).tag(mode) }
-                    }
-                    .pickerStyle(.segmented)
-                    .accessibilityLabel("Display workspace behavior")
-                    Text(displayModeExplanation)
+                Section("Workspace switching") {
+                    displayModeChoices
+                    Text(DisplayWorkspaceModePresentation.value(
+                        for: store.settingsMultiDisplayMode
+                    ).explanation)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
-                Section("Display Roles in \(store.settingsProfile.name)") {
+                Section {
                     ForEach(store.settingsProfile.displayRoles) { role in
-                        profileDisplayRoleDefinition(role)
+                        displayRoleMapping(role)
                     }
                     HStack {
                         Spacer()
@@ -1695,72 +1765,146 @@ private struct DisplaysSettingsView: View {
                             _ = store.addSettingsDisplayRole()
                         }
                     }
-                    Text("Role names belong to this reusable profile and sync when iCloud is enabled. Choose each role's menu-bar icon in Menu Bar.")
+                } header: {
+                    Text("Display setup for \(store.settingsProfile.name)")
+                } footer: {
+                    Text("Names sync with this profile. Monitor choices stay on this Mac.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Display Bindings on This Mac") {
-                    ForEach(store.settingsProfile.displayRoles) { role in
-                        localDisplayBinding(role)
-                    }
-                    Text("Physical monitor identities stay on this Mac. A missing or ambiguous display falls back safely without changing the selected profile's synced role.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
         }
         .formStyle(.grouped)
     }
 
-    private var displayModeExplanation: String {
-        store.settingsMultiDisplayMode == .unified
-            ? "One active workspace is shared by every display; windows keep their display affinity."
-            : "Each display has its own active workspace and each workspace has a Home Display."
-    }
-
-    private func profileDisplayRoleDefinition(_ role: ProfileDisplayRole) -> some View {
-        LabeledContent("Role name") {
-            HStack(spacing: 8) {
-                Spacer()
-                TextField("Role name", text: Binding(
-                    get: { store.settingsProfile.displayRoles.first(where: { $0.id == role.id })?.name ?? role.name },
-                    set: { store.renameSettingsDisplayRole(role.id, to: $0) }
-                ))
-                .labelsHidden()
-                .textFieldStyle(.roundedBorder)
-                .multilineTextAlignment(.trailing)
-                .frame(width: 220)
-                .accessibilityLabel("Role name for \(role.name)")
-                Button(role: .destructive) { _ = store.deleteSettingsDisplayRole(role.id) } label: {
-                    Image(systemName: "trash")
+    @ViewBuilder
+    private var displayModeChoices: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                ForEach(MultiDisplayMode.allCases) { mode in
+                    displayModeChoice(mode)
                 }
-                .buttonStyle(.borderless)
-                .frame(width: 20)
-                .disabled(store.settingsProfile.displayRoles.count == 1)
-                .accessibilityLabel("Delete \(role.name) role")
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            VStack(spacing: 10) {
+                ForEach(MultiDisplayMode.allCases) { mode in
+                    displayModeChoice(mode)
+                }
+            }
         }
     }
 
-    private func localDisplayBinding(_ role: ProfileDisplayRole) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            LabeledContent(role.name) {
-                Picker("This Mac's display", selection: Binding<String?>(
-                    get: { store.roleBindings[role.id]?.lastKnownIdentifier },
-                    set: { store.bindSettingsDisplayRole(role.id, to: $0) }
-                )) {
-                    Text("Unbound — safe main-display fallback").tag(nil as String?)
-                    ForEach(roleDisplayOptions(role.id)) { display in
-                        Text(display.name).tag(Optional(display.identifier))
-                    }
+    private func displayModeChoice(_ mode: MultiDisplayMode) -> some View {
+        let presentation = DisplayWorkspaceModePresentation.value(for: mode)
+        return DisplayWorkspaceModeChoiceCard(
+            mode: mode,
+            presentation: presentation,
+            isSelected: store.settingsMultiDisplayMode == mode
+        ) {
+            store.setSettingsMultiDisplayMode(mode)
+        }
+    }
+
+    private func displayRoleMapping(_ role: ProfileDisplayRole) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(role.name)
+                        .font(.subheadline.weight(.semibold))
+                    Label("Profile & iCloud", systemImage: "icloud")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .labelsHidden()
-                .frame(width: 240, alignment: .trailing)
+                Spacer()
+                Button(role: .destructive) {
+                    _ = store.deleteSettingsDisplayRole(role.id)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .frame(width: 28, height: 28)
+                .disabled(store.settingsProfile.displayRoles.count == 1)
+                .accessibilityLabel("Delete \(role.name) role")
+                .help("Delete \(role.name) from this profile")
             }
-            if let note = roleBindingNote(role.id) {
-                Text(note).font(.caption).foregroundStyle(.secondary)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .bottom, spacing: 24) {
+                    roleNameEditor(role)
+                        .frame(minWidth: 180, maxWidth: .infinity)
+                    localDisplayPicker(role)
+                        .frame(minWidth: 220, maxWidth: .infinity)
+                    roleBindingStatus(role.id)
+                        .frame(width: 180, alignment: .leading)
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    roleNameEditor(role)
+                    localDisplayPicker(role)
+                    roleBindingStatus(role.id)
+                }
             }
+        }
+        .padding(.vertical, 16)
+    }
+
+    private func roleNameEditor(_ role: ProfileDisplayRole) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Name in profile")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("Name in profile", text: Binding(
+                get: {
+                    store.settingsProfile.displayRoles.first(where: { $0.id == role.id })?.name
+                        ?? role.name
+                },
+                set: { store.renameSettingsDisplayRole(role.id, to: $0) }
+            ))
+            .labelsHidden()
+            .textFieldStyle(.roundedBorder)
+            .accessibilityLabel("Name in profile for \(role.name)")
+            .accessibilityHint("This reusable name syncs when iCloud is enabled.")
+        }
+    }
+
+    private func localDisplayPicker(_ role: ProfileDisplayRole) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("On this Mac")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Picker("On this Mac", selection: Binding<String?>(
+                get: { store.roleBindings[role.id]?.lastKnownIdentifier },
+                set: { store.bindSettingsDisplayRole(role.id, to: $0) }
+            )) {
+                Text("Not assigned — use main display").tag(nil as String?)
+                ForEach(roleDisplayOptions(role.id)) { display in
+                    Text(display.name).tag(Optional(display.identifier))
+                }
+            }
+            .labelsHidden()
+            .accessibilityLabel("Display on this Mac for \(role.name)")
+        }
+    }
+
+    private func roleBindingStatus(_ roleID: UUID) -> some View {
+        let presentation = DisplayRoleBindingPresentation.value(
+            for: store.roleBindingResolution(roleID)
+        )
+        return VStack(alignment: .leading, spacing: 3) {
+            Label(presentation.title, systemImage: presentation.systemImage)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(roleBindingStatusColor(presentation.tone))
+            if let detail = presentation.detail {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func roleBindingStatusColor(_ tone: DisplayRoleBindingTone) -> Color {
+        switch tone {
+        case .connected: .green
+        case .attention: .orange
+        case .inactive: .secondary
         }
     }
 
@@ -1773,17 +1917,97 @@ private struct DisplaysSettingsView: View {
         )]
     }
 
-    private func roleBindingNote(_ roleID: UUID) -> String? {
-        switch store.roleBindingResolution(roleID) {
-        case .ambiguous:
-            "Two identical monitors match. WindowRanger will not guess; this role uses the safe main-display fallback."
-        case .disconnected:
-            "The bound monitor is disconnected. Its role is preserved and will return on reconnect."
-        case .exactIdentifier, .exactUUID, .portableFingerprint:
-            "Bound using a stable runtime identity with a conservative monitor-fingerprint fallback."
-        case nil:
-            "Unbound on this Mac; workspaces using this role fall back safely without changing the synced profile."
+}
+
+private struct DisplayWorkspaceModeChoiceCard: View {
+    let mode: MultiDisplayMode
+    let presentation: DisplayWorkspaceModePresentation
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 7) {
+                Text(presentation.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.primary)
+                Text(presentation.supportingText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                DisplayWorkspaceModeDiagram(mode: mode)
+                    .frame(height: 76)
+                Text(presentation.technicalTerm)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 190)
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .background(
+                isSelected ? Color.accentColor.opacity(0.11) : Color.primary.opacity(0.025),
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(
+                        isSelected ? Color.accentColor : Color(nsColor: .separatorColor),
+                        lineWidth: isSelected ? 1.5 : 0.5
+                    )
+            }
+            .overlay(alignment: .topTrailing) {
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.body)
+                        .foregroundStyle(Color.accentColor)
+                        .padding(8)
+                }
+            }
         }
+        .buttonStyle(.plain)
+        .help(presentation.accessibilityHint)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(presentation.title). \(presentation.supportingText)")
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityHint(presentation.accessibilityHint)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct DisplayWorkspaceModeDiagram: View {
+    let mode: MultiDisplayMode
+
+    var body: some View {
+        HStack(spacing: 8) {
+            monitor("1")
+            Group {
+                if mode == .unified {
+                    Image(systemName: "link")
+                } else {
+                    Color.clear
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(width: 14)
+            monitor(mode == .unified ? "1" : "W")
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func monitor(_ workspace: String) -> some View {
+        ZStack {
+            Image(systemName: "display")
+                .font(.system(size: 58, weight: .regular))
+                .foregroundStyle(.secondary)
+            Text(workspace)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.primary)
+                .offset(y: -3)
+        }
+        .frame(width: 86, height: 68)
     }
 }
 
@@ -2264,6 +2488,37 @@ enum WorkspaceLayoutMiniatureKind: Equatable, Sendable {
     }
 }
 
+enum WorkspaceLayoutChoiceDescription {
+    static func layout(_ layout: WorkspaceLayout) -> String {
+        switch layout {
+        case .none:
+            "Overlapping windows stay where you place them."
+        case .tiled:
+            "Windows fill the screen without overlapping."
+        case .accordion:
+            "Windows overlap while neighbouring edges remain visible."
+        }
+    }
+
+    static func orientation(
+        _ orientation: WorkspaceLayoutOrientation,
+        layout: WorkspaceLayout
+    ) -> String {
+        switch orientation {
+        case .automatic:
+            "Flows left to right on a wide display and top to bottom on a portrait display."
+        case .horizontal:
+            layout == .accordion
+                ? "Accordion windows overlap from left to right."
+                : "Windows tile from left to right."
+        case .vertical:
+            layout == .accordion
+                ? "Accordion windows overlap from top to bottom."
+                : "Windows tile from top to bottom."
+        }
+    }
+}
+
 struct WorkspaceSettingsView: View {
     @ObservedObject var store: SettingsStore
     let engine: WorkspaceEngine
@@ -2696,19 +2951,7 @@ struct WorkspaceSettingsView: View {
 
     private func workspaceLayoutPanel(_ workspace: WorkspaceDefinition) -> some View {
         workspaceSettingsPanel("Layout") {
-            LabeledContent("Layout Style") {
-                Picker(
-                    "Layout Style",
-                    selection: WorkspaceSettingsFieldBindings.layout(store: store, workspaceID: workspace.id)
-                ) {
-                    ForEach(WorkspaceLayout.allCases) { layout in
-                        Text(layout.title).tag(layout)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 330)
-            }
+            layoutStyleSelector(workspace)
 
             Divider()
 
@@ -2753,7 +2996,7 @@ struct WorkspaceSettingsView: View {
             }
             if controls.showsOrientation {
                 Divider()
-                orientationPicker(workspace.id)
+                orientationPicker(workspace)
             }
             if controls.showsTiledGeometry {
                 tiledGeometryControls(workspace.id)
@@ -2830,20 +3073,53 @@ struct WorkspaceSettingsView: View {
         }
     }
 
-    private func orientationPicker(_ workspaceID: UUID) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            LabeledContent("Orientation") {
-                Picker(
-                    "Orientation",
-                    selection: configurationBinding(\.orientation, workspaceID: workspaceID)
-                ) {
-                    ForEach(WorkspaceLayoutOrientation.allCases) { orientation in
-                        Text(orientation.title).tag(orientation)
+    private func layoutStyleSelector(_ workspace: WorkspaceDefinition) -> some View {
+        let selection = WorkspaceSettingsFieldBindings.layout(store: store, workspaceID: workspace.id)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Layout Style")
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 8) {
+                ForEach(WorkspaceLayout.allCases) { layout in
+                    WorkspaceVisualChoiceCard(
+                        title: layout.title,
+                        isSelected: selection.wrappedValue == layout,
+                        accessibilityHint: WorkspaceLayoutChoiceDescription.layout(layout)
+                    ) {
+                        selection.wrappedValue = layout
+                    } preview: {
+                        WorkspaceLayoutChoiceDiagram(
+                            layout: layout,
+                            orientation: .horizontal
+                        )
                     }
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 330)
+            }
+        }
+    }
+
+    private func orientationPicker(_ workspace: WorkspaceDefinition) -> some View {
+        let selection = configurationBinding(\.orientation, workspaceID: workspace.id)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Orientation")
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 8) {
+                ForEach(WorkspaceLayoutOrientation.allCases) { orientation in
+                    WorkspaceVisualChoiceCard(
+                        title: orientation.title,
+                        isSelected: selection.wrappedValue == orientation,
+                        accessibilityHint: WorkspaceLayoutChoiceDescription.orientation(
+                            orientation,
+                            layout: workspace.layout
+                        )
+                    ) {
+                        selection.wrappedValue = orientation
+                    } preview: {
+                        WorkspaceLayoutChoiceDiagram(
+                            layout: workspace.layout,
+                            orientation: orientation
+                        )
+                    }
+                }
             }
             Text("Automatic uses horizontal windows on a wide display and vertical windows on a portrait display.")
                 .font(.caption)
@@ -3329,6 +3605,208 @@ struct WorkspaceSettingsView: View {
                 previewRepository.update(
                     descriptor: descriptor,
                     captureEnabled: store.workspacePreviewThumbnailsEnabled
+                )
+            }
+        }
+    }
+}
+
+private struct WorkspaceVisualChoiceCard<Preview: View>: View {
+    let title: String
+    let isSelected: Bool
+    let accessibilityHint: String
+    let action: () -> Void
+    let preview: Preview
+
+    init(
+        title: String,
+        isSelected: Bool,
+        accessibilityHint: String,
+        action: @escaping () -> Void,
+        @ViewBuilder preview: () -> Preview
+    ) {
+        self.title = title
+        self.isSelected = isSelected
+        self.accessibilityHint = accessibilityHint
+        self.action = action
+        self.preview = preview()
+    }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                preview
+                    .frame(height: 48)
+                Text(title)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, minHeight: 78)
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .background(
+                isSelected ? Color.accentColor.opacity(0.11) : Color.primary.opacity(0.025),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(
+                        isSelected ? Color.accentColor : Color(nsColor: .separatorColor),
+                        lineWidth: isSelected ? 1.5 : 0.5
+                    )
+            }
+            .overlay(alignment: .topTrailing) {
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                        .padding(6)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .help(accessibilityHint)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityHint(accessibilityHint)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct WorkspaceLayoutChoiceDiagram: View {
+    let layout: WorkspaceLayout
+    let orientation: WorkspaceLayoutOrientation
+
+    var body: some View {
+        GeometryReader { geometry in
+            if orientation == .automatic, layout != .none {
+                HStack(alignment: .center, spacing: 7) {
+                    WorkspaceLayoutDiagramCanvas(layout: layout, orientation: .horizontal)
+                        .frame(
+                            width: geometry.size.width * 0.54,
+                            height: geometry.size.height * 0.72
+                        )
+                    WorkspaceLayoutDiagramCanvas(layout: layout, orientation: .vertical)
+                        .frame(
+                            width: geometry.size.width * 0.24,
+                            height: geometry.size.height * 0.92
+                        )
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                WorkspaceLayoutDiagramCanvas(
+                    layout: layout,
+                    orientation: orientation == .vertical ? .vertical : .horizontal
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct WorkspaceLayoutDiagramCanvas: View {
+    let layout: WorkspaceLayout
+    let orientation: WorkspaceLayoutOrientation
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color.primary.opacity(0.035))
+                ForEach(Array(paneFrames(in: geometry.size).enumerated()), id: \.offset) { index, frame in
+                    RoundedRectangle(cornerRadius: 2.5)
+                        .fill(Color.primary.opacity(index == 2 ? 0.14 : 0.09))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 2.5)
+                                .stroke(Color.primary.opacity(0.34), lineWidth: 0.7)
+                        }
+                        .frame(width: frame.width, height: frame.height)
+                        .position(x: frame.midX, y: frame.midY)
+                }
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(Color.primary.opacity(0.25), lineWidth: 0.7)
+            }
+        }
+    }
+
+    private func paneFrames(in size: CGSize) -> [CGRect] {
+        let inset: CGFloat = 4
+        let bounds = CGRect(
+            x: inset,
+            y: inset,
+            width: max(1, size.width - inset * 2),
+            height: max(1, size.height - inset * 2)
+        )
+        let gap: CGFloat = 3
+
+        switch layout {
+        case .none:
+            return [
+                CGRect(
+                    x: bounds.minX,
+                    y: bounds.minY + bounds.height * 0.06,
+                    width: bounds.width * 0.58,
+                    height: bounds.height * 0.62
+                ),
+                CGRect(
+                    x: bounds.minX + bounds.width * 0.34,
+                    y: bounds.minY + bounds.height * 0.34,
+                    width: bounds.width * 0.62,
+                    height: bounds.height * 0.62
+                ),
+                CGRect(
+                    x: bounds.minX + bounds.width * 0.51,
+                    y: bounds.minY,
+                    width: bounds.width * 0.45,
+                    height: bounds.height * 0.48
+                ),
+            ]
+        case .tiled:
+            if orientation == .vertical {
+                let paneHeight = max(1, (bounds.height - gap * 2) / 3)
+                return (0..<3).map { index in
+                    CGRect(
+                        x: bounds.minX,
+                        y: bounds.minY + CGFloat(index) * (paneHeight + gap),
+                        width: bounds.width,
+                        height: paneHeight
+                    )
+                }
+            }
+            let paneWidth = max(1, (bounds.width - gap * 2) / 3)
+            return (0..<3).map { index in
+                CGRect(
+                    x: bounds.minX + CGFloat(index) * (paneWidth + gap),
+                    y: bounds.minY,
+                    width: paneWidth,
+                    height: bounds.height
+                )
+            }
+        case .accordion:
+            if orientation == .vertical {
+                let paneHeight = bounds.height * 0.72
+                let offset = (bounds.height - paneHeight) / 2
+                return (0..<3).map { index in
+                    CGRect(
+                        x: bounds.minX,
+                        y: bounds.minY + CGFloat(index) * offset,
+                        width: bounds.width,
+                        height: paneHeight
+                    )
+                }
+            }
+            let paneWidth = bounds.width * 0.72
+            let offset = (bounds.width - paneWidth) / 2
+            return (0..<3).map { index in
+                CGRect(
+                    x: bounds.minX + CGFloat(index) * offset,
+                    y: bounds.minY,
+                    width: paneWidth,
+                    height: bounds.height
                 )
             }
         }

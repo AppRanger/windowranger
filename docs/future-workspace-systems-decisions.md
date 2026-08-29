@@ -118,7 +118,10 @@ safe drag target for sending managed windows. There are two materially different
 Because inactive workspace windows are parked rather than on-screen in a normal visible position,
 live capture of every inactive window cannot be assumed reliable. The product must either show a
 placeholder, cache a last-visible frame (with explicit privacy/lifetime rules), or avoid promising a
-live thumbnail. It must never unpark or focus a window merely to make a preview.
+live thumbnail. It must never unpark or focus a window merely to make a preview. The implemented
+opt-in path may instead resize an eligible automatic-layout window once after normal startup parking
+when captured previews are already enabled and authorized; this prepares real undistorted pixels
+without making the inactive workspace meaningfully visible.
 
 ### Model, interaction, and privacy
 

@@ -1257,6 +1257,45 @@ enum WindowGeometryWriteMode: String, Equatable, Sendable {
     case positionOnly = "position-only"
 }
 
+enum StartupInactiveWorkspaceSizingPolicy {
+    static let messages = [
+        "Arranging the furniture…",
+        "Putting every window in its place…",
+        "Straightening the desktop…",
+        "Preparing your other workspaces…",
+        "Asking the windows to form an orderly queue…",
+    ]
+
+    static func message(seed: Int) -> String {
+        guard !messages.isEmpty else { return "Preparing your workspaces…" }
+        return messages[abs(seed % messages.count)]
+    }
+
+    static func shouldResize(
+        isEnabled: Bool,
+        isWorkspaceActive: Bool,
+        layout: WorkspaceLayout,
+        includesInLayout: Bool,
+        writeMode: WindowGeometryWriteMode,
+        isWriteDeferred: Bool,
+        hasFullscreenSession: Bool,
+        isMeaningfullyVisible: Bool,
+        currentSize: CGSize,
+        targetSize: CGSize
+    ) -> Bool {
+        isEnabled &&
+            !isWorkspaceActive &&
+            layout != .none &&
+            includesInLayout &&
+            writeMode == .frame &&
+            !isWriteDeferred &&
+            !hasFullscreenSession &&
+            !isMeaningfullyVisible &&
+            (abs(currentSize.width - targetSize.width) >= 0.5 ||
+                abs(currentSize.height - targetSize.height) >= 0.5)
+    }
+}
+
 struct CommandFeedbackRequest: Equatable, Sendable {
     let message: String
     let preferredDisplayIdentifier: String?
@@ -2103,6 +2142,7 @@ final class WorkspaceEngine {
     private var pendingRestoredDropDownAppSessions: [String: PersistedDropDownAppSession]
     private let startupGraceDeadline = Date().addingTimeInterval(30)
     private let ownProcessIdentifier = ProcessInfo.processInfo.processIdentifier
+    private let preSizeInactiveLayoutsOnStartup: Bool
 
     init(
         workspaces: [WorkspaceDefinition],
@@ -2117,6 +2157,7 @@ final class WorkspaceEngine {
         focusFollowsMovedWindow: Bool = false,
         automaticallyUnhideApplications: Bool = false,
         focusedWindowHighlightEnabled: Bool = false,
+        preSizeInactiveLayoutsOnStartup: Bool = false,
         stateStore: WorkspaceStateStore = WorkspaceStateStore(),
         diagnostics: DiagnosticLogger = .disabled
     ) {
@@ -2142,6 +2183,7 @@ final class WorkspaceEngine {
         self.focusFollowsMovedWindow = focusFollowsMovedWindow
         self.automaticallyUnhideApplications = automaticallyUnhideApplications
         self.focusedWindowHighlightEnabled = focusedWindowHighlightEnabled
+        self.preSizeInactiveLayoutsOnStartup = preSizeInactiveLayoutsOnStartup
         self.stateStore = stateStore
         self.diagnostics = diagnostics
         let restoredState = stateStore.load()
@@ -2212,6 +2254,7 @@ final class WorkspaceEngine {
                 ]
             )
             self.applyVisibility()
+            self.preSizeInactiveWorkspaceLayoutsForStartup()
             self.lastBackgroundLayoutSignature = self.backgroundLayoutSignature(
                 displays: Self.activeDisplays()
             )
@@ -4651,6 +4694,206 @@ final class WorkspaceEngine {
         }
     }
 
+    /// Reconstructs the frames an inactive managed workspace will receive on activation. Preview
+    /// descriptors use it without touching Accessibility; the optional startup preparation uses
+    /// the same geometry before applying bounded parked-window size changes.
+    static func inactiveWorkspaceLayoutFrames(
+        layout: WorkspaceLayout,
+        orderedWindowKeys: [WindowKey],
+        weights: [CGFloat],
+        layoutBounds: CGRect,
+        layoutConfiguration: WorkspaceLayoutConfiguration?,
+        existingTiledTree: TiledNode?,
+        accordionFocusedIndex: Int?
+    ) -> [WindowKey: WindowFrame] {
+        guard !orderedWindowKeys.isEmpty else { return [:] }
+        switch layout {
+        case .none:
+            return [:]
+        case .tiled:
+            let configuration = layoutConfiguration ?? .aeroSpaceUserDefaults
+            guard let tree = TiledLayoutEngine.reconciled(
+                existingTiledTree,
+                windowKeys: orderedWindowKeys,
+                weights: weights,
+                orientation: configuration.orientation.resolved(for: layoutBounds)
+            ), let frames = try? TiledLayoutEngine.frames(
+                for: tree,
+                in: layoutBounds,
+                configuration: configuration
+            ) else { return [:] }
+            return frames
+        case .accordion:
+            let frames = layoutFrames(
+                .accordion,
+                count: orderedWindowKeys.count,
+                in: layoutBounds,
+                accordionFocusedIndex: accordionFocusedIndex,
+                layoutConfiguration: layoutConfiguration
+            )
+            return Dictionary(uniqueKeysWithValues: zip(orderedWindowKeys, frames))
+        }
+    }
+
+    /// After normal startup parking, gives inactive managed windows the size they will receive on
+    /// first activation. Their current parked position is retained, so applications can re-render
+    /// truthful preview pixels without presenting those windows or adding ongoing background work.
+    @discardableResult
+    private func preSizeInactiveWorkspaceLayoutsForStartup() -> Int {
+        guard preSizeInactiveLayoutsOnStartup, !isWindowManagementPaused else { return 0 }
+        let displays = Self.activeDisplays()
+        guard !displays.isEmpty else { return 0 }
+
+        var changes: [FrameChange] = []
+        var intendedTiledFrames: [WindowKey: WindowFrame] = [:]
+        for workspace in workspaces where !isWorkspaceActive(workspace.id) && workspace.layout != .none {
+            let participants = windows.values.filter { tracked in
+                let rule = resolvedRule(for: tracked.bundleIdentifier)
+                return tracked.workspaceID == workspace.id &&
+                    !isDropDownAppWindow(tracked.key) &&
+                    !isExcludedFromWorkspaceParticipation(tracked) &&
+                    !rule.keepsOnAllWorkspaces &&
+                    StableLayoutSlotPolicy.isAvailableForLayout(
+                        isWriteDeferred: temporarilyDeferredWindowKeys.contains(tracked.key),
+                        retainsLayoutSlot: retainedLayoutSlotWindowKeys.contains(tracked.key),
+                        isExplicitlyEligible: fullscreenSessions[tracked.key] == nil
+                    ) &&
+                    Self.shouldIncludeInLayout(
+                        layoutOverride: tracked.layoutOverride,
+                        admissionDecision: tracked.admissionDecision,
+                        rule: rule
+                    )
+            }
+            let grouped = Dictionary(grouping: participants) { tracked in
+                Self.layoutDisplayIdentifier(
+                    preferredDisplayIdentifier: tracked.displayPlacement?.displayIdentifier,
+                    savedFrame: tracked.restoreFrame,
+                    mode: displayMode,
+                    workspaceHomeDisplayIdentifier: displayMode == .independent
+                        ? workspaceHomeDisplayIdentifier(for: workspace.id, displays: displays)
+                        : nil,
+                    displays: displays
+                ) ?? displays.first?.identifier ?? "main-display"
+            }
+            let configuration = workspace.layoutConfiguration
+            for (displayIdentifier, displayWindows) in grouped {
+                guard let display = displays.first(where: { $0.identifier == displayIdentifier })
+                    ?? displays.first(where: \.isMain)
+                    ?? displays.first
+                else { continue }
+                let ordered = displayWindows.sorted { lhs, rhs in
+                    if lhs.layoutOrder != rhs.layoutOrder { return lhs.layoutOrder < rhs.layoutOrder }
+                    if lhs.key.processIdentifier != rhs.key.processIdentifier {
+                        return lhs.key.processIdentifier < rhs.key.processIdentifier
+                    }
+                    return lhs.key.windowIdentifier < rhs.key.windowIdentifier
+                }
+                let focusedIndex = lastFocusedWindow[workspace.id].flatMap { key in
+                    ordered.firstIndex(where: { $0.key == key })
+                }
+                let rawBounds = workspace.layout == .accordion || configuration != nil
+                    ? display.usableBounds
+                    : display.bounds
+                let partition = TiledLayoutPartitionKey(
+                    workspaceID: workspace.id,
+                    displayIdentifier: display.identifier
+                )
+                let frames = Self.inactiveWorkspaceLayoutFrames(
+                    layout: workspace.layout,
+                    orderedWindowKeys: ordered.map(\.key),
+                    weights: ordered.map { CGFloat(Self.validLayoutWeight($0.layoutWeight)) },
+                    layoutBounds: managedLayoutBounds(rawBounds),
+                    layoutConfiguration: configuration,
+                    existingTiledTree: workspace.layout == .tiled ? tiledTrees[partition] : nil,
+                    accordionFocusedIndex: focusedIndex
+                )
+                for tracked in ordered {
+                    guard let target = frames[tracked.key],
+                          let current = AccessibilityWindow.frame(of: tracked.element),
+                          StartupInactiveWorkspaceSizingPolicy.shouldResize(
+                              isEnabled: preSizeInactiveLayoutsOnStartup,
+                              isWorkspaceActive: false,
+                              layout: workspace.layout,
+                              includesInLayout: true,
+                              writeMode: Self.geometryWriteMode(for: tracked.admissionDecision),
+                              isWriteDeferred: temporarilyDeferredWindowKeys.contains(tracked.key),
+                              hasFullscreenSession: fullscreenSessions[tracked.key] != nil,
+                              isMeaningfullyVisible: Self.isMeaningfullyVisible(
+                                  current,
+                                  displays: displays
+                              ),
+                              currentSize: current.size,
+                              targetSize: target.size
+                          )
+                    else { continue }
+                    changes.append(FrameChange(
+                        window: tracked,
+                        frame: WindowFrame(position: current.position, size: target.size)
+                    ))
+                    if workspace.layout == .tiled {
+                        intendedTiledFrames[tracked.key] = target
+                    }
+                }
+            }
+        }
+
+        guard !changes.isEmpty else {
+            diagnostics.log(
+                category: "startup-layout-preparation",
+                event: "skipped",
+                fields: ["reason": "no-eligible-size-changes"]
+            )
+            return 0
+        }
+
+        let correlationID = diagnostics.makeCorrelationID()
+        emitCommandFeedback(
+            StartupInactiveWorkspaceSizingPolicy.message(seed: Int(ownProcessIdentifier)),
+            correlationID: correlationID
+        )
+        diagnostics.log(
+            category: "startup-layout-preparation",
+            event: "started",
+            correlation: correlationID,
+            fields: ["window-count": String(changes.count)]
+        )
+        applyFrameChanges(changes, correlationID: correlationID)
+
+        let escaped = changes.filter { change in
+            guard let actual = AccessibilityWindow.frame(of: change.window.element) else { return false }
+            return Self.isMeaningfullyVisible(actual, displays: displays)
+        }
+        if !escaped.isEmpty {
+            let parkingPosition = parkingPosition(displays: displays)
+            applyPositionChanges(
+                escaped.map { PositionChange(window: $0.window, position: parkingPosition) },
+                correlationID: correlationID
+            )
+        }
+
+        let settledKeys = Set(changes.compactMap { change -> WindowKey? in
+            guard let actual = AccessibilityWindow.frame(of: change.window.element),
+                  !Self.isMeaningfullyVisible(actual, displays: displays),
+                  Self.sizesMatch(actual.size, change.frame.size)
+            else { return nil }
+            return change.window.key
+        })
+        for (key, frame) in intendedTiledFrames where settledKeys.contains(key) {
+            lastSolvedTiledFrames[key] = frame
+        }
+        diagnostics.log(
+            category: "startup-layout-preparation",
+            event: "completed",
+            correlation: correlationID,
+            fields: [
+                "attempted-count": String(changes.count),
+                "settled-count": String(settledKeys.count),
+                "reparked-count": String(escaped.count),
+            ]
+        )
+        return settledKeys.count
+    }
+
     func workspacePreviewDescriptor(
         for workspaceID: UUID,
         workspaceName: String,
@@ -4703,9 +4946,10 @@ final class WorkspaceEngine {
                 }
             }
 
-            // Accordion frames are deterministic but are not retained like the Tiled solver's
-            // frames. Reconstruct inactive participants from existing session metadata only.
-            if !isActive, layout == .accordion {
+            // Reconstruct inactive managed layouts from existing session metadata only. Tiled uses
+            // the persisted session tree even before this process has activated the workspace;
+            // Accordion uses the same deterministic solver as normal activation.
+            if !isActive, layout != .none {
                 let participants = trackedItems.filter {
                     Self.shouldIncludeInLayout(
                         layoutOverride: $0.layoutOverride,
@@ -4724,6 +4968,7 @@ final class WorkspaceEngine {
                         displays: displays
                     ) ?? displays.first?.identifier ?? "main-display"
                 }
+                let layoutConfiguration = self.workspaceLayoutConfiguration(for: workspaceID)
                 for (displayIdentifier, windows) in grouped {
                     guard let display = displays.first(where: { $0.identifier == displayIdentifier })
                         ?? displays.first(where: \.isMain)
@@ -4739,14 +4984,24 @@ final class WorkspaceEngine {
                     let focusedIndex = self.lastFocusedWindow[workspaceID].flatMap { key in
                         ordered.firstIndex(where: { $0.key == key })
                     }
-                    let frames = Self.layoutFrames(
-                        .accordion,
-                        count: ordered.count,
-                        in: self.managedLayoutBounds(display.usableBounds),
-                        accordionFocusedIndex: focusedIndex,
-                        layoutConfiguration: self.workspaceLayoutConfiguration(for: workspaceID)
+                    let rawLayoutBounds = layout == .accordion || layoutConfiguration != nil
+                        ? display.usableBounds
+                        : display.bounds
+                    let partition = TiledLayoutPartitionKey(
+                        workspaceID: workspaceID,
+                        displayIdentifier: display.identifier
                     )
-                    for (tracked, frame) in zip(ordered, frames) {
+                    let frames = Self.inactiveWorkspaceLayoutFrames(
+                        layout: layout,
+                        orderedWindowKeys: ordered.map(\.key),
+                        weights: ordered.map { CGFloat(Self.validLayoutWeight($0.layoutWeight)) },
+                        layoutBounds: self.managedLayoutBounds(rawLayoutBounds),
+                        layoutConfiguration: layoutConfiguration,
+                        existingTiledTree: layout == .tiled ? self.tiledTrees[partition] : nil,
+                        accordionFocusedIndex: focusedIndex
+                    )
+                    for tracked in ordered {
+                        guard let frame = frames[tracked.key] else { continue }
                         previewFrames[tracked.key] = frame
                     }
                 }

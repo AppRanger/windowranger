@@ -42,6 +42,108 @@ final class WorkspacePreviewTests: XCTestCase {
         XCTAssertEqual(result, CGRect(x: 30, y: 15, width: 120, height: 60))
     }
 
+    func testInactiveTiledPreviewReconstructsFirstVisitFramesFromSavedTree() throws {
+        let first = WindowKey(processIdentifier: 10, windowIdentifier: 100)
+        let second = WindowKey(processIdentifier: 11, windowIdentifier: 200)
+        let third = WindowKey(processIdentifier: 12, windowIdentifier: 300)
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.64,
+            first: .window(first),
+            second: .split(
+                axis: .vertical,
+                ratio: 0.42,
+                first: .window(second),
+                second: .window(third)
+            )
+        )
+        let configuration = WorkspaceLayoutConfiguration(
+            orientation: .automatic,
+            accordionPadding: 250,
+            gaps: WorkspaceLayoutGaps(
+                innerHorizontal: 12,
+                innerVertical: 18,
+                outerTop: 24,
+                outerRight: 30,
+                outerBottom: 36,
+                outerLeft: 42
+            )
+        )
+        let bounds = CGRect(x: -1_920, y: 25, width: 1_920, height: 1_055)
+        let expected = try TiledLayoutEngine.frames(
+            for: tree,
+            in: bounds,
+            configuration: configuration
+        )
+
+        XCTAssertEqual(
+            WorkspaceEngine.inactiveWorkspaceLayoutFrames(
+                layout: .tiled,
+                orderedWindowKeys: [first, second, third],
+                weights: [1, 1, 1],
+                layoutBounds: bounds,
+                layoutConfiguration: configuration,
+                existingTiledTree: tree,
+                accordionFocusedIndex: nil
+            ),
+            expected
+        )
+    }
+
+    func testStartupInactiveWorkspaceSizingRequiresAParkedResizableLayoutParticipant() {
+        func shouldResize(
+            isEnabled: Bool = true,
+            isWorkspaceActive: Bool = false,
+            layout: WorkspaceLayout = .tiled,
+            includesInLayout: Bool = true,
+            writeMode: WindowGeometryWriteMode = .frame,
+            isWriteDeferred: Bool = false,
+            hasFullscreenSession: Bool = false,
+            isMeaningfullyVisible: Bool = false,
+            currentSize: CGSize = CGSize(width: 1_200, height: 800),
+            targetSize: CGSize = CGSize(width: 1_913, height: 1_582)
+        ) -> Bool {
+            StartupInactiveWorkspaceSizingPolicy.shouldResize(
+                isEnabled: isEnabled,
+                isWorkspaceActive: isWorkspaceActive,
+                layout: layout,
+                includesInLayout: includesInLayout,
+                writeMode: writeMode,
+                isWriteDeferred: isWriteDeferred,
+                hasFullscreenSession: hasFullscreenSession,
+                isMeaningfullyVisible: isMeaningfullyVisible,
+                currentSize: currentSize,
+                targetSize: targetSize
+            )
+        }
+
+        XCTAssertTrue(shouldResize())
+        XCTAssertTrue(shouldResize(layout: .accordion))
+        XCTAssertFalse(shouldResize(isEnabled: false))
+        XCTAssertFalse(shouldResize(isWorkspaceActive: true))
+        XCTAssertFalse(shouldResize(layout: .none))
+        XCTAssertFalse(shouldResize(includesInLayout: false))
+        XCTAssertFalse(shouldResize(writeMode: .positionOnly))
+        XCTAssertFalse(shouldResize(isWriteDeferred: true))
+        XCTAssertFalse(shouldResize(hasFullscreenSession: true))
+        XCTAssertFalse(shouldResize(isMeaningfullyVisible: true))
+        XCTAssertFalse(shouldResize(targetSize: CGSize(width: 1_200, height: 800)))
+    }
+
+    func testStartupInactiveWorkspaceSizingMessagesRotateDeterministically() {
+        let messages = StartupInactiveWorkspaceSizingPolicy.messages
+        XCTAssertGreaterThan(messages.count, 1)
+        XCTAssertTrue(messages.allSatisfy { !$0.isEmpty })
+        XCTAssertEqual(
+            Set((0..<messages.count).map(StartupInactiveWorkspaceSizingPolicy.message(seed:))),
+            Set(messages)
+        )
+        XCTAssertEqual(
+            StartupInactiveWorkspaceSizingPolicy.message(seed: messages.count),
+            messages[0]
+        )
+    }
+
     func testThumbnailCaptureSizePreservesEachWindowAspectRatioWithinBudget() {
         XCTAssertEqual(
             WorkspacePreviewGeometry.thumbnailSize(
