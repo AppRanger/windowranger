@@ -3630,29 +3630,6 @@ design notes, but every active candidate must map back to a work item here or be
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
-### WR-103 — Publish WindowRanger 0.1.0 Beta 9
-
-- **Type:** Beta release preparation
-- **Status:** Candidate preparation and validation in progress.
-- **Requested:** 29 August 2026 after the signed daily candidate was installed for the accumulated
-  performance, Settings, workspace-preview, iCloud-safety, onboarding, and dynamic-shortcut work.
-- **Smallest useful outcome:** Publish signed, notarized universal Beta `0.1.0-beta.9` as public
-  build `10`, containing the reviewed work since Beta 8. Keep public appcast generation and website
-  deployment outside this checkpoint.
-- **Acceptance boundary:** Central `develop` owns the single build-10 allocation; the reviewed tree
-  is promoted without force-updating `release/0.1.0`; stable Xcode passes the exact release tree's
-  isolated suite and static analysis, then produces the Developer ID-signed, notarized and stapled
-  DMG/ZIP. The immutable tag, five GitHub assets, checksums, and provenance must round-trip to that
-  exact tree, and GitHub must publish it as a prerelease. Existing signed-daily evidence remains
-  distinct from exact packaged-artifact and new-machine validation.
-- **Current evidence:** The complete dirty-tree checkpoint passed all 814 non-hosted tests, test
-  isolation, Release static analysis, an unsigned universal Release build, both DMG smoke layouts,
-  and whitespace verification. A skeptical full-diff review found no P0-P2 code, privacy,
-  persistence, migration, or project-membership blocker after adding this build allocation and the
-  Beta 9 release notes. Signed daily revision `539e0bf945e9-dirty` is installed on the maintainer's
-  Mac; live validation of the latest onboarding, fifth-workspace shortcut, optional capture, and
-  new-Mac iCloud paths remains explicit.
-
 ### WR-012 — Clean build and package verification
 
 - **Type:** Release epic
@@ -3717,6 +3694,28 @@ second copy of that checklist.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-103 — Publish WindowRanger 0.1.0 Beta 9
+
+- **Result:** Published
+  [`v0.1.0-beta.9`](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.9) as a
+  GitHub prerelease on 29 August 2026. The protected annotated tag points to exact release commit
+  `ff2e38d80d864a7c767479f0e98ad02617b196be`; central `develop` owns build `10`, and the
+  [release-branch CI run](https://github.com/AppRanger/windowranger/actions/runs/33245036560) passed
+  814 tests, static analysis, an unsigned universal Release build, and both DMG smoke layouts.
+- **Distribution evidence:** Stable Xcode 26.6 reproduced the 814-test pass and static analysis,
+  then built the Developer ID-signed universal `arm64`/`x86_64` archive. Apple accepted the app
+  (`69987b7b-5297-4f92-b2e8-a3c77439c051`) and DMG
+  (`10a1268d-072b-4334-b56b-2c8fff18415b`) notarizations with zero issues; both stapled artifacts
+  passed validation and Gatekeeper. The five public assets round-tripped against the tag, build,
+  channel, provenance, and SHA-256 values `a2bf886e7d96620a465b39750fd56e1ff2371c123c8a4e473b5e1e646ba8b4eb`
+  (DMG) and `fa6064179ff41c072a6bcec62ffc4cc68c7689f9eb77cca59ea39c232b347f0e`
+  (ZIP).
+- **Validation boundary:** The maintainer's Mac still runs signed daily revision
+  `539e0bf945e9-dirty`, not the packaged Beta. Exact packaged-artifact installation and the new-Mac
+  first-enable iCloud path remain live validation, together with the latest onboarding permission
+  refresh, setup-wizard Space behavior, fifth-workspace shortcuts, and optional captured previews.
+  Public appcast generation and website deployment were intentionally outside this checkpoint.
 
 ### WR-082 — Publish WindowRanger 0.1.0 Beta 8
 
