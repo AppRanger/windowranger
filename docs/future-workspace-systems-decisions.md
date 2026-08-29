@@ -140,14 +140,17 @@ permission denied/granted/revoked, no-prompt metadata mode, parked/ignored/minim
 windows, stale drag/drop, display changes, bounded images, cleanup, and zero capture/persistence/log
 side effects. Live tests must separately verify system permission copy and capture behavior.
 
-### Product decisions still required
+### Selected first implementation
 
-1. Is metadata-only useful enough for a first increment?
-2. Are actual thumbnails worth a second privacy permission and restart-sensitive first-run flow?
-3. What is shown for parked/minimized/full-screen/ignored windows?
-4. May last-visible thumbnails be cached, for how long, and only in memory?
-5. Is the overview global, per interaction display, or one panel per display?
-6. Does click switch only, and does drag send-only by default with a modifier for follow?
+WR-100 resolves the preview portion of this decision. One reusable metadata canvas is used by
+Workspace Settings tabs and the Full menu-bar workspace hover panel. ScreenCaptureKit enrichment is
+off by default, separately permissioned, one-shot, bounded, and memory-only. Denied, revoked,
+protected, minimized, parked, or otherwise unavailable captures keep their metadata/icon
+placeholder; preview construction never changes a live window to obtain pixels. Settings tab clicks
+remain edit-only. In the menu-bar surface, background clicks switch workspace and item clicks focus
+the exact represented window when it remains valid, falling back within the represented application
+if the window vanished during the interaction. Drag-and-drop window movement remains a later
+interaction decision rather than being inferred by this preview foundation.
 
 ## 4. Tiled templates and current direct manipulation
 

@@ -76,6 +76,13 @@ struct ICloudProfileLibraryIssue: Equatable, Identifiable, Sendable {
     }
 }
 
+enum ICloudSyncState: Equatable, Sendable {
+    case disabled
+    case waitingForCloud
+    case active
+    case needsAttention
+}
+
 @MainActor
 final class SettingsStore: ObservableObject {
     private enum Keys {
@@ -117,6 +124,9 @@ final class SettingsStore: ObservableObject {
         static let menuBarPresentationMode = "menuBarPresentationMode.v1"
         static let menuBarWorkspaceLabelMode = "menuBarWorkspaceLabelMode.v1"
         static let menuBarHighlightColor = "menuBarHighlightColor.v1"
+        // Captured window pixels are a privacy-sensitive capability of this Mac. Keep the opt-in
+        // outside profiles and iCloud, just like other machine-specific permission-backed UI.
+        static let workspacePreviewThumbnailsEnabled = "workspacePreviewThumbnailsEnabled.v1"
         static let focusedWindowHighlightEnabled = "focusedWindowHighlightEnabled.v1"
         static let focusedWindowHighlightColor = "focusedWindowHighlightColor.v1"
         static let focusedWindowHighlightTiledOnly = "focusedWindowHighlightTiledOnly.v1"
@@ -192,14 +202,18 @@ final class SettingsStore: ObservableObject {
             guard !isApplyingRemoteChange else { return }
             defaults.set(iCloudSyncEnabled, forKey: Keys.iCloudSync)
             if iCloudSyncEnabled {
-                pushToICloud()
+                iCloudSyncState = .waitingForCloud
+                iCloudProfileLibraryIssue = nil
                 ubiquitousStore?.synchronize()
+                pullFromICloud()
             } else {
+                iCloudSyncState = .disabled
                 iCloudProfileLibraryIssue = nil
             }
         }
     }
     @Published private(set) var iCloudProfileLibraryIssue: ICloudProfileLibraryIssue?
+    @Published private(set) var iCloudSyncState: ICloudSyncState
 
     @Published var radialMenuEnabled: Bool {
         didSet { persistRadialMenuSettings() }
@@ -267,6 +281,12 @@ final class SettingsStore: ObservableObject {
         didSet { persistMenuBarHighlightColor() }
     }
 
+    /// Enables one-shot ScreenCaptureKit thumbnails in reusable workspace previews. Metadata-only
+    /// previews remain available when this local preference is off or permission is unavailable.
+    @Published var workspacePreviewThumbnailsEnabled: Bool {
+        didSet { persistWorkspacePreviewThumbnailsEnabled() }
+    }
+
     /// This presentation choice is deliberately local to one Mac. It changes how often this Mac
     /// reads focused-window geometry and should not silently enable an overlay on another device.
     @Published var focusedWindowHighlightEnabled: Bool {
@@ -274,7 +294,7 @@ final class SettingsStore: ObservableObject {
     }
 
     /// The border colour stays local with the presentation toggle and defaults independently to
-    /// white rather than inheriting a potentially unrelated menu-bar accent.
+    /// a fixed light blue rather than inheriting the white menu-bar accent.
     @Published var focusedWindowHighlightColor: MenuBarHighlightColor {
         didSet { persistFocusedWindowHighlightColor() }
     }
@@ -344,16 +364,9 @@ final class SettingsStore: ObservableObject {
             Keys.radialMenuHoldDelay,
             Keys.radialMenuGlobeFnHold,
         ]
-        var removedCloudInput = false
         for key in removedInputKeys {
             defaults.removeObject(forKey: key)
-            if defaults.bool(forKey: Keys.iCloudSync),
-               ubiquitousStore?.object(forKey: key) != nil {
-                ubiquitousStore?.removeObject(forKey: key)
-                removedCloudInput = true
-            }
         }
-        if removedCloudInput { ubiquitousStore?.synchronize() }
 
         let initialDisplays = connectedDisplaysProvider()
         let bootstrap = Self.bootstrapProfiles(defaults: defaults, displays: initialDisplays)
@@ -395,8 +408,10 @@ final class SettingsStore: ObservableObject {
             displays: initialDisplays
         )
 
-        iCloudSyncEnabled = defaults.object(forKey: Keys.iCloudSync) as? Bool ?? false
+        let initialICloudSyncEnabled = defaults.object(forKey: Keys.iCloudSync) as? Bool ?? false
+        iCloudSyncEnabled = initialICloudSyncEnabled
         iCloudProfileLibraryIssue = nil
+        iCloudSyncState = initialICloudSyncEnabled ? .waitingForCloud : .disabled
         radialMenuEnabled = defaults.object(forKey: Keys.radialMenuEnabled) as? Bool ?? true
         commandPalettePosition = defaults.string(forKey: Keys.commandPalettePosition)
             .flatMap(CommandPalettePosition.init(rawValue:)) ?? .defaultValue
@@ -445,12 +460,15 @@ final class SettingsStore: ObservableObject {
             .flatMap(MenuBarHighlightColor.init(hex:)) ?? .default
         menuBarHighlightColor = initialMenuBarHighlightColor
         defaults.set(initialMenuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
+        workspacePreviewThumbnailsEnabled = defaults.object(
+            forKey: Keys.workspacePreviewThumbnailsEnabled
+        ) as? Bool ?? false
         focusedWindowHighlightEnabled = defaults.object(
             forKey: Keys.focusedWindowHighlightEnabled
         ) as? Bool ?? false
         focusedWindowHighlightColor = defaults.string(
             forKey: Keys.focusedWindowHighlightColor
-        ).flatMap(MenuBarHighlightColor.init(hex:)) ?? .default
+        ).flatMap(MenuBarHighlightColor.init(hex:)) ?? .focusBorderDefault
         focusedWindowHighlightTiledOnly = defaults.object(
             forKey: Keys.focusedWindowHighlightTiledOnly
         ) as? Bool ?? false
@@ -2632,7 +2650,9 @@ final class SettingsStore: ObservableObject {
         let library = ProfileLibrary(profiles: profiles)
         guard let data = try? JSONEncoder().encode(library) else { return }
         defaults.set(data, forKey: Keys.profileLibrary)
-        guard syncToCloud, !isApplyingRemoteChange, iCloudSyncEnabled, let ubiquitousStore else { return }
+        guard syncToCloud, !isApplyingRemoteChange, canWriteToICloud, let ubiquitousStore else {
+            return
+        }
         if validateLocalLibraryForSync(data) {
             ubiquitousStore.set(data, forKey: Keys.profileLibrary)
             ubiquitousStore.synchronize()
@@ -2645,7 +2665,7 @@ final class SettingsStore: ObservableObject {
     }
 
     private func pushToICloud() {
-        guard let ubiquitousStore else { return }
+        guard canWriteToICloud, let ubiquitousStore else { return }
         for key in [
             Keys.radialMenuActivationStyle,
             Keys.radialMenuHoldDelay,
@@ -2683,15 +2703,16 @@ final class SettingsStore: ObservableObject {
         guard iCloudSyncEnabled, let ubiquitousStore else { return }
         let remoteLibraryData = ubiquitousStore.data(forKey: Keys.profileLibrary)
         let remoteValidation = SyncedProfileLibraryPolicy.validate(remoteLibraryData)
-        let remoteLibrary: ProfileLibrary?
+        let remoteLibrary: ProfileLibrary
         switch remoteValidation {
         case .absent:
-            remoteLibrary = nil
+            iCloudSyncState = .waitingForCloud
+            iCloudProfileLibraryIssue = nil
+            return
         case let .accepted(library):
             remoteLibrary = library
             iCloudProfileLibraryIssue = nil
         case let .rejected(rejection):
-            remoteLibrary = nil
             let localCanReplace = encodedLocalProfileLibrary().map {
                 if case .accepted = SyncedProfileLibraryPolicy.validate($0) { return true }
                 return false
@@ -2706,6 +2727,8 @@ final class SettingsStore: ObservableObject {
                 event: "icloud-library-rejected",
                 fields: ["reason": String(describing: rejection)]
             )
+            iCloudSyncState = .needsAttention
+            return
         }
         let remoteRadialEnabled = ubiquitousStore.object(forKey: Keys.radialMenuEnabled) as? Bool
         let remoteWheelData = ubiquitousStore.data(forKey: Keys.radialWheelDefinition)
@@ -2743,42 +2766,8 @@ final class SettingsStore: ObservableObject {
             forKey: Keys.automaticallyUnhideApplications
         ) as? Bool
 
-        if remoteLibraryData == nil { pushToICloud() }
-        if ubiquitousStore.object(forKey: Keys.radialMenuEnabled) == nil {
-            ubiquitousStore.set(radialMenuEnabled, forKey: Keys.radialMenuEnabled)
-        }
-        if remoteWheelData == nil,
-           let data = try? JSONEncoder().encode(radialWheelDefinition) {
-            ubiquitousStore.set(data, forKey: Keys.radialWheelDefinition)
-        }
-        if remoteHotKeyData == nil,
-           let data = try? JSONEncoder().encode(hotKeyConfiguration) {
-            ubiquitousStore.set(data, forKey: Keys.hotKeyConfiguration)
-        }
-        if ubiquitousStore.string(forKey: Keys.menuBarPresentationMode) == nil {
-            ubiquitousStore.set(menuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
-        }
-        if remoteMenuBarWorkspaceLabelRawValue == nil {
-            ubiquitousStore.set(
-                menuBarWorkspaceLabelMode.rawValue,
-                forKey: Keys.menuBarWorkspaceLabelMode
-            )
-        }
-        if remoteMenuBarHighlightRawValue == nil {
-            ubiquitousStore.set(menuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
-        }
-        if ubiquitousStore.object(forKey: Keys.focusFollowsMovedWindow) == nil {
-            ubiquitousStore.set(focusFollowsMovedWindow, forKey: Keys.focusFollowsMovedWindow)
-        }
-        if ubiquitousStore.object(forKey: Keys.automaticallyUnhideApplications) == nil {
-            ubiquitousStore.set(
-                automaticallyUnhideApplications,
-                forKey: Keys.automaticallyUnhideApplications
-            )
-        }
-
         isApplyingRemoteChange = true
-        if let remoteLibrary, remoteLibrary.profiles != profiles {
+        if remoteLibrary.profiles != profiles {
             profiles = remoteLibrary.profiles
             var local = localProfileState
             local.normalize(validProfiles: profiles)
@@ -2816,12 +2805,9 @@ final class SettingsStore: ObservableObject {
             }
             if let normalizedData {
                 defaults.set(normalizedData, forKey: Keys.radialWheelDefinition)
-                if normalizedData != remoteWheelData {
-                    ubiquitousStore.set(normalizedData, forKey: Keys.radialWheelDefinition)
-                }
             }
         }
-        if let remoteHotKeyData, let remoteHotKeyConfiguration {
+        if remoteHotKeyData != nil, let remoteHotKeyConfiguration {
             let reconciled = Self.reconciledHotKeyConfiguration(
                 remoteHotKeyConfiguration,
                 profiles: profiles
@@ -2831,18 +2817,13 @@ final class SettingsStore: ObservableObject {
             }
             if let reconciledData = try? JSONEncoder().encode(reconciled) {
                 defaults.set(reconciledData, forKey: Keys.hotKeyConfiguration)
-                if reconciledData != remoteHotKeyData {
-                    ubiquitousStore.set(reconciledData, forKey: Keys.hotKeyConfiguration)
-                }
             }
         } else if remoteHotKeyData == nil, remoteLegacyRadialShortcut != nil,
                   !hotKeyConfiguration.hasExplicitKeyAssignment(for: .commandWheel) {
             // The legacy private full chord intentionally does not migrate into a family prefix.
             if let migratedData = try? JSONEncoder().encode(hotKeyConfiguration) {
                 defaults.set(migratedData, forKey: Keys.hotKeyConfiguration)
-                ubiquitousStore.set(migratedData, forKey: Keys.hotKeyConfiguration)
             }
-            ubiquitousStore.removeObject(forKey: Keys.radialMenuShortcut)
         }
         let reconciledCurrentHotKeys = Self.reconciledHotKeyConfiguration(
             hotKeyConfiguration,
@@ -2852,20 +2833,12 @@ final class SettingsStore: ObservableObject {
             hotKeyConfiguration = reconciledCurrentHotKeys
             if let reconciledData = try? JSONEncoder().encode(reconciledCurrentHotKeys) {
                 defaults.set(reconciledData, forKey: Keys.hotKeyConfiguration)
-                ubiquitousStore.set(reconciledData, forKey: Keys.hotKeyConfiguration)
             }
         }
         if let remoteMenuBarPresentationMode,
            remoteMenuBarPresentationMode != menuBarPresentationMode {
             menuBarPresentationMode = remoteMenuBarPresentationMode
             defaults.set(remoteMenuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
-        }
-        if remoteMenuBarPresentationRawValue != nil,
-           remoteMenuBarPresentationRawValue != remoteMenuBarPresentationMode?.rawValue {
-            ubiquitousStore.set(
-                (remoteMenuBarPresentationMode ?? .compact).rawValue,
-                forKey: Keys.menuBarPresentationMode
-            )
         }
         if let remoteMenuBarWorkspaceLabelMode,
            remoteMenuBarWorkspaceLabelMode != menuBarWorkspaceLabelMode {
@@ -2875,26 +2848,10 @@ final class SettingsStore: ObservableObject {
                 forKey: Keys.menuBarWorkspaceLabelMode
             )
         }
-        if let remoteMenuBarWorkspaceLabelMode {
-            ubiquitousStore.set(
-                remoteMenuBarWorkspaceLabelMode.rawValue,
-                forKey: Keys.menuBarWorkspaceLabelMode
-            )
-        } else if remoteMenuBarWorkspaceLabelRawValue != nil {
-            ubiquitousStore.set(
-                menuBarWorkspaceLabelMode.rawValue,
-                forKey: Keys.menuBarWorkspaceLabelMode
-            )
-        }
         if let remoteMenuBarHighlightColor,
            remoteMenuBarHighlightColor != menuBarHighlightColor {
             menuBarHighlightColor = remoteMenuBarHighlightColor
             defaults.set(remoteMenuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
-        }
-        if let remoteMenuBarHighlightColor {
-            ubiquitousStore.set(remoteMenuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
-        } else if remoteMenuBarHighlightRawValue != nil {
-            ubiquitousStore.set(menuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
         }
         if let remoteFocusFollowsMovedWindow,
            remoteFocusFollowsMovedWindow != focusFollowsMovedWindow {
@@ -2910,6 +2867,7 @@ final class SettingsStore: ObservableObject {
             )
         }
         isApplyingRemoteChange = false
+        iCloudSyncState = .active
     }
 
     /// Profile definitions form one versioned, atomic iCloud value. A valid remote value replaces
@@ -2923,16 +2881,42 @@ final class SettingsStore: ObservableObject {
         return library
     }
 
+    /// Explicitly establishes this Mac as the source of truth. This is the only path that may write
+    /// while iCloud availability is unresolved or the remote profile library was rejected.
     @discardableResult
-    func replaceICloudProfileLibraryWithLocalCopy() -> Bool {
-        guard iCloudSyncEnabled,
-              let ubiquitousStore,
-              let data = encodedLocalProfileLibrary(),
-              case .accepted = SyncedProfileLibraryPolicy.validate(data)
-        else { return false }
-        ubiquitousStore.set(data, forKey: Keys.profileLibrary)
-        ubiquitousStore.synchronize()
+    func replaceICloudSettingsWithLocalCopy() -> Bool {
+        guard ubiquitousStore != nil, let data = encodedLocalProfileLibrary() else { return false }
+        switch SyncedProfileLibraryPolicy.validate(data) {
+        case .accepted:
+            break
+        case let .rejected(rejection):
+            iCloudProfileLibraryIssue = ICloudProfileLibraryIssue(
+                source: .local,
+                rejection: rejection,
+                canReplaceCloudCopy: false
+            )
+            if iCloudSyncEnabled {
+                iCloudSyncState = .needsAttention
+            }
+            diagnostics.log(
+                category: "profile",
+                event: "icloud-library-replacement-skipped",
+                fields: ["reason": String(describing: rejection)]
+            )
+            return false
+        case .absent:
+            return false
+        }
+        if !iCloudSyncEnabled {
+            isApplyingRemoteChange = true
+            iCloudSyncEnabled = true
+            isApplyingRemoteChange = false
+            defaults.set(true, forKey: Keys.iCloudSync)
+        }
         iCloudProfileLibraryIssue = nil
+        iCloudSyncState = .active
+        pushToICloud()
+        ubiquitousStore?.synchronize()
         return true
     }
 
@@ -2969,12 +2953,16 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    private var canWriteToICloud: Bool {
+        iCloudSyncEnabled && iCloudSyncState == .active
+    }
+
     private func persistRadialMenuSettings() {
         guard !isApplyingRemoteChange else { return }
         defaults.set(radialMenuEnabled, forKey: Keys.radialMenuEnabled)
         let wheelData = try? JSONEncoder().encode(radialWheelDefinition)
         if let wheelData { defaults.set(wheelData, forKey: Keys.radialWheelDefinition) }
-        if iCloudSyncEnabled, let ubiquitousStore {
+        if canWriteToICloud, let ubiquitousStore {
             ubiquitousStore.set(radialMenuEnabled, forKey: Keys.radialMenuEnabled)
             if let wheelData { ubiquitousStore.set(wheelData, forKey: Keys.radialWheelDefinition) }
             ubiquitousStore.synchronize()
@@ -2996,7 +2984,7 @@ final class SettingsStore: ObservableObject {
     private func persistMenuBarPresentationMode() {
         guard !isApplyingRemoteChange else { return }
         defaults.set(menuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
-        if iCloudSyncEnabled, let ubiquitousStore {
+        if canWriteToICloud, let ubiquitousStore {
             ubiquitousStore.set(menuBarPresentationMode.rawValue, forKey: Keys.menuBarPresentationMode)
             ubiquitousStore.synchronize()
         }
@@ -3005,7 +2993,7 @@ final class SettingsStore: ObservableObject {
     private func persistMenuBarWorkspaceLabelMode() {
         guard !isApplyingRemoteChange else { return }
         defaults.set(menuBarWorkspaceLabelMode.rawValue, forKey: Keys.menuBarWorkspaceLabelMode)
-        if iCloudSyncEnabled, let ubiquitousStore {
+        if canWriteToICloud, let ubiquitousStore {
             ubiquitousStore.set(
                 menuBarWorkspaceLabelMode.rawValue,
                 forKey: Keys.menuBarWorkspaceLabelMode
@@ -3017,10 +3005,18 @@ final class SettingsStore: ObservableObject {
     private func persistMenuBarHighlightColor() {
         guard !isApplyingRemoteChange else { return }
         defaults.set(menuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
-        if iCloudSyncEnabled, let ubiquitousStore {
+        if canWriteToICloud, let ubiquitousStore {
             ubiquitousStore.set(menuBarHighlightColor.hex, forKey: Keys.menuBarHighlightColor)
             ubiquitousStore.synchronize()
         }
+    }
+
+    private func persistWorkspacePreviewThumbnailsEnabled() {
+        guard !isApplyingRemoteChange else { return }
+        defaults.set(
+            workspacePreviewThumbnailsEnabled,
+            forKey: Keys.workspacePreviewThumbnailsEnabled
+        )
     }
 
     private func persistFocusedWindowHighlightEnabled() {
@@ -3067,7 +3063,7 @@ final class SettingsStore: ObservableObject {
               let data = try? JSONEncoder().encode(hotKeyConfiguration)
         else { return }
         defaults.set(data, forKey: Keys.hotKeyConfiguration)
-        if iCloudSyncEnabled, let ubiquitousStore {
+        if canWriteToICloud, let ubiquitousStore {
             ubiquitousStore.set(data, forKey: Keys.hotKeyConfiguration)
             ubiquitousStore.synchronize()
         }
@@ -3076,7 +3072,7 @@ final class SettingsStore: ObservableObject {
     private func persistFocusFollowsMovedWindow() {
         guard !isApplyingRemoteChange else { return }
         defaults.set(focusFollowsMovedWindow, forKey: Keys.focusFollowsMovedWindow)
-        if iCloudSyncEnabled, let ubiquitousStore {
+        if canWriteToICloud, let ubiquitousStore {
             ubiquitousStore.set(focusFollowsMovedWindow, forKey: Keys.focusFollowsMovedWindow)
             ubiquitousStore.synchronize()
         }
@@ -3085,7 +3081,7 @@ final class SettingsStore: ObservableObject {
     private func persistAutomaticallyUnhideApplications() {
         guard !isApplyingRemoteChange else { return }
         defaults.set(automaticallyUnhideApplications, forKey: Keys.automaticallyUnhideApplications)
-        if iCloudSyncEnabled, let ubiquitousStore {
+        if canWriteToICloud, let ubiquitousStore {
             ubiquitousStore.set(
                 automaticallyUnhideApplications,
                 forKey: Keys.automaticallyUnhideApplications

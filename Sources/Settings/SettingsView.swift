@@ -79,6 +79,7 @@ struct SettingsView: View {
     let windowCoordinator: SettingsWindowCoordinator
     let diagnostics: DiagnosticLogger
     @ObservedObject var updateController: UpdateController
+    let workspacePreviewRepository: WorkspacePreviewRepository?
     let shortcutRecordingStateChanged: (Bool) -> Void
     let onboardingRestartRequested: () -> Void
 
@@ -89,6 +90,7 @@ struct SettingsView: View {
         windowCoordinator: SettingsWindowCoordinator,
         diagnostics: DiagnosticLogger,
         updateController: UpdateController,
+        workspacePreviewRepository: WorkspacePreviewRepository? = nil,
         shortcutRecordingStateChanged: @escaping (Bool) -> Void,
         onboardingRestartRequested: @escaping () -> Void = {}
     ) {
@@ -98,6 +100,7 @@ struct SettingsView: View {
         self.windowCoordinator = windowCoordinator
         self.diagnostics = diagnostics
         self.updateController = updateController
+        self.workspacePreviewRepository = workspacePreviewRepository
         self.shortcutRecordingStateChanged = shortcutRecordingStateChanged
         self.onboardingRestartRequested = onboardingRestartRequested
     }
@@ -248,6 +251,7 @@ struct SettingsView: View {
             WorkspaceSettingsView(
                 store: store,
                 engine: engine,
+                previewRepository: workspacePreviewRepository,
                 highlightedEntry: highlightedEntry,
                 requestedWorkspaceID: navigation.requestedWorkspaceID
             )
@@ -262,6 +266,7 @@ struct SettingsView: View {
                     GeneralSettingsView(
                         store: store,
                         engine: engine,
+                        previewRepository: workspacePreviewRepository,
                         category: navigation.selectedCategory,
                         onboardingRestartRequested: onboardingRestartRequested
                     )
@@ -605,6 +610,7 @@ private struct ProfileSidebarContext: View {
 @MainActor
 final class AccessibilityPermissionMonitor: ObservableObject {
     typealias TrustProvider = () -> Bool
+    typealias Sleep = (UInt64) async throws -> Void
 
     static let missingPermissionRefreshIntervalNanoseconds: UInt64 = 750_000_000
 
@@ -622,26 +628,49 @@ final class AccessibilityPermissionMonitor: ObservableObject {
         if latest != isGranted { isGranted = latest }
         return latest
     }
+
+    func refreshUntilGranted(
+        sleep: @escaping Sleep = { try await Task.sleep(nanoseconds: $0) }
+    ) async {
+        refresh()
+        while !Task.isCancelled, !isGranted {
+            do {
+                try await sleep(Self.missingPermissionRefreshIntervalNanoseconds)
+            } catch {
+                return
+            }
+            refresh()
+        }
+    }
 }
 
 private struct GeneralSettingsView: View {
     @ObservedObject var store: SettingsStore
     let engine: WorkspaceEngine
+    let previewRepository: WorkspacePreviewRepository?
     let category: SettingsCategory
     let onboardingRestartRequested: () -> Void
     @Environment(\.undoManager) private var undoManager
     @StateObject private var accessibilityPermission = AccessibilityPermissionMonitor()
     @StateObject private var launchAtLogin = LaunchAtLoginController()
     @State private var showsFocusBorderAppPicker = false
+    @State private var showsICloudReplacementConfirmation = false
 
     private var iCloudSyncStatusTitle: String {
-        guard store.iCloudSyncEnabled else { return "Off" }
-        return store.iCloudProfileLibraryIssue == nil ? "On" : "Needs Attention"
+        switch store.iCloudSyncState {
+        case .disabled: "Off"
+        case .waitingForCloud: "Waiting for iCloud"
+        case .active: "On"
+        case .needsAttention: "Needs Attention"
+        }
     }
 
     private var iCloudSyncStatusColor: Color {
-        guard store.iCloudSyncEnabled else { return .secondary }
-        return store.iCloudProfileLibraryIssue == nil ? .green : .orange
+        switch store.iCloudSyncState {
+        case .disabled: .secondary
+        case .waitingForCloud, .needsAttention: .orange
+        case .active: .green
+        }
     }
 
     var body: some View {
@@ -661,6 +690,36 @@ private struct GeneralSettingsView: View {
                         }
                     }
                     Text("Accessibility access lets the app discover, move, resize, and focus windows.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Toggle("Show window previews", isOn: Binding(
+                        get: { store.workspacePreviewThumbnailsEnabled },
+                        set: { enabled in
+                            store.workspacePreviewThumbnailsEnabled = enabled
+                            previewRepository?.isEnabled = enabled
+                            if enabled {
+                                previewRepository?.requestAuthorizationFromUser()
+                            } else {
+                                previewRepository?.purgeImages()
+                            }
+                        }
+                    ))
+                    LabeledContent("Screen Recording") {
+                        HStack {
+                            Text(screenRecordingStatusTitle)
+                                .foregroundStyle(screenRecordingStatusColor)
+                            if store.workspacePreviewThumbnailsEnabled,
+                               previewRepository?.authorization != .authorized {
+                                Button("Open Screen Recording Settings") {
+                                    previewRepository?.openScreenRecordingSettings()
+                                }
+                            }
+                        }
+                    }
+                    Text("Off by default and stored only on this Mac. When enabled, WindowRanger adds the current desktop wallpaper and small window thumbnails to workspace previews. Preview pixels stay in memory and are never synced, saved, exported, or included in diagnostics; unavailable images fall back safely.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -708,13 +767,30 @@ private struct GeneralSettingsView: View {
                     Text("iCloud does not provide WindowRanger with a reliable list of the Macs participating in this sync.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if store.iCloudSyncEnabled, let issue = store.iCloudProfileLibraryIssue {
+                    if store.iCloudSyncState == .disabled,
+                       store.iCloudProfileLibraryIssue?.source != .local {
+                        Button("Replace iCloud with This Mac’s Settings…") {
+                            showsICloudReplacementConfirmation = true
+                        }
+                    }
+                    if store.iCloudSyncState == .waitingForCloud {
+                        Label(
+                            "WindowRanger is waiting for an existing profile library. Nothing from this Mac will be uploaded while it waits.",
+                            systemImage: "icloud.and.arrow.down"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        Button("Use This Mac’s Settings in iCloud…") {
+                            showsICloudReplacementConfirmation = true
+                        }
+                    }
+                    if let issue = store.iCloudProfileLibraryIssue {
                         Label(issue.message, systemImage: "exclamationmark.icloud")
                             .font(.caption)
                             .foregroundStyle(.orange)
                         if issue.canReplaceCloudCopy {
-                            Button("Replace iCloud Profile Library with This Mac") {
-                                store.replaceICloudProfileLibraryWithLocalCopy()
+                            Button("Use This Mac’s Settings in iCloud…") {
+                                showsICloudReplacementConfirmation = true
                             }
                         }
                     }
@@ -995,27 +1071,41 @@ private struct GeneralSettingsView: View {
             guard category == .general else { return }
             accessibilityPermission.refresh()
             launchAtLogin.refresh()
+            previewRepository?.isEnabled = store.workspacePreviewThumbnailsEnabled
+            previewRepository?.refreshAuthorization()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             guard category == .general else { return }
             accessibilityPermission.refresh()
             launchAtLogin.refresh()
+            previewRepository?.refreshAuthorization()
         }
         .task(id: accessibilityPermission.isGranted) {
             guard category == .general else { return }
-            guard !accessibilityPermission.isGranted else { return }
-            while !Task.isCancelled, !accessibilityPermission.isGranted {
-                do {
-                    try await Task.sleep(
-                        nanoseconds: AccessibilityPermissionMonitor
-                            .missingPermissionRefreshIntervalNanoseconds
-                    )
-                } catch {
-                    return
-                }
-                accessibilityPermission.refresh()
-            }
+            await accessibilityPermission.refreshUntilGranted()
         }
+        .confirmationDialog(
+            "Use this Mac’s settings in iCloud?",
+            isPresented: $showsICloudReplacementConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Replace iCloud Settings", role: .destructive) {
+                store.replaceICloudSettingsWithLocalCopy()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This uploads this Mac’s profiles and supported global settings. Any existing WindowRanger settings in iCloud that have not arrived yet will be replaced. If Sync is off, it will be turned on and remain enabled.")
+        }
+    }
+
+    private var screenRecordingStatusTitle: String {
+        guard store.workspacePreviewThumbnailsEnabled else { return "Off" }
+        return previewRepository?.authorization == .authorized ? "Granted" : "Required"
+    }
+
+    private var screenRecordingStatusColor: Color {
+        guard store.workspacePreviewThumbnailsEnabled else { return .secondary }
+        return previewRepository?.authorization == .authorized ? .green : .orange
     }
 
     private var automaticFocusBorderCornerRadius: Double {
@@ -1966,6 +2056,15 @@ enum WorkspaceSettingsSelectionPolicy {
     }
 }
 
+enum WorkspaceSettingsPreviewRefreshPolicy {
+    static func captureOrder(workspaceIDs: [UUID], selectedWorkspaceID: UUID?) -> [UUID] {
+        guard let selectedWorkspaceID,
+              workspaceIDs.contains(selectedWorkspaceID)
+        else { return workspaceIDs }
+        return [selectedWorkspaceID] + workspaceIDs.filter { $0 != selectedWorkspaceID }
+    }
+}
+
 @MainActor
 enum WorkspaceSettingsFieldBindings {
     static func name(store: SettingsStore, workspaceID: UUID) -> Binding<String> {
@@ -2143,25 +2242,49 @@ enum WorkspaceSettingsAccessibility {
     }
 }
 
+enum WorkspaceLayoutMiniatureKind: Equatable, Sendable {
+    case freeform
+    case tiled
+    case accordion
+
+    init(layout: WorkspaceLayout) {
+        self = switch layout {
+        case .none: .freeform
+        case .tiled: .tiled
+        case .accordion: .accordion
+        }
+    }
+
+    var accessibilityDescription: String {
+        switch self {
+        case .freeform: "Freeform layout preview"
+        case .tiled: "Tiled layout preview"
+        case .accordion: "Accordion layout preview"
+        }
+    }
+}
+
 struct WorkspaceSettingsView: View {
     @ObservedObject var store: SettingsStore
     let engine: WorkspaceEngine
+    let previewRepository: WorkspacePreviewRepository?
     let highlightedEntry: SettingsSearchEntry?
     let requestedWorkspaceID: UUID?
     @Environment(\.undoManager) private var undoManager
     @State private var selectedWorkspaceID: UUID?
-    @State private var showsCompactInspector: Bool
     @State private var tiledGeometryEditingLinks = TiledGeometryEditingLinks()
 
     init(
         store: SettingsStore,
         engine: WorkspaceEngine,
+        previewRepository: WorkspacePreviewRepository? = nil,
         highlightedEntry: SettingsSearchEntry? = nil,
         requestedWorkspaceID: UUID? = nil,
         initiallySelectedWorkspaceID: UUID? = nil
     ) {
         self.store = store
         self.engine = engine
+        self.previewRepository = previewRepository
         self.highlightedEntry = highlightedEntry
         self.requestedWorkspaceID = requestedWorkspaceID
         let initialWorkspaceID = requestedWorkspaceID ?? highlightedEntry?.workspaceID
@@ -2169,7 +2292,6 @@ struct WorkspaceSettingsView: View {
         _selectedWorkspaceID = State(
             initialValue: initialWorkspaceID
         )
-        _showsCompactInspector = State(initialValue: initialWorkspaceID != nil)
     }
 
     var body: some View {
@@ -2177,429 +2299,552 @@ struct WorkspaceSettingsView: View {
             responsiveContent(for: SettingsDetailLayout.resolve(availableWidth: geometry.size.width))
         }
         .onAppear {
+            engine.setWorkspacePreviewObservationEnabled(store.isEditingActiveProfile)
             reconcileSelection(preferred: requestedWorkspaceID ?? highlightedEntry?.workspaceID)
+            refreshWorkspacePreviews()
         }
-        .onChange(of: store.settingsWorkspaces.map(\.id)) { _, _ in reconcileSelection() }
+        .onDisappear {
+            engine.setWorkspacePreviewObservationEnabled(false)
+        }
+        .onChange(of: store.settingsWorkspaces.map(\.id)) { _, _ in
+            reconcileSelection()
+            refreshWorkspacePreviews()
+        }
         .onChange(of: store.settingsProfileID) { _, _ in
+            engine.setWorkspacePreviewObservationEnabled(store.isEditingActiveProfile)
             resetTiledGeometryEditingLinks()
             reconcileSelection()
+            refreshWorkspacePreviews()
+        }
+        .onChange(of: store.activeProfileID) { _, _ in
+            engine.setWorkspacePreviewObservationEnabled(store.isEditingActiveProfile)
+            refreshWorkspacePreviews()
         }
         .onChange(of: store.settingsWorkspaces.map { "\($0.id.uuidString):\($0.layout.rawValue)" }) { _, _ in
             resetTiledGeometryEditingLinks()
+            refreshWorkspacePreviews()
         }
-        .onChange(of: selectedWorkspaceID) { _, _ in resetTiledGeometryEditingLinks() }
+        .onChange(of: selectedWorkspaceID) { _, _ in
+            resetTiledGeometryEditingLinks()
+            refreshSelectedWorkspacePreview()
+        }
+        .onChange(of: store.workspacePreviewThumbnailsEnabled) { _, _ in
+            refreshSelectedWorkspacePreview()
+        }
+        .onChange(of: previewRepository?.invalidationGeneration) { _, _ in
+            refreshWorkspacePreviews()
+        }
         .onChange(of: highlightedEntry?.workspaceID) { _, workspaceID in
             reconcileSelection(preferred: workspaceID)
-            if workspaceID != nil { showsCompactInspector = true }
         }
         .onChange(of: requestedWorkspaceID) { _, workspaceID in
             reconcileSelection(preferred: workspaceID)
-            if workspaceID != nil { showsCompactInspector = true }
         }
     }
 
     @ViewBuilder
     private func responsiveContent(for layout: SettingsDetailLayout) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                workspaceTabStrip
+                if hasIdentityConflict {
+                    Label(
+                        "Resolve duplicate or empty names and keys before relying on shortcuts.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+                if let highlightedEntry {
+                    searchHighlight(highlightedEntry)
+                }
+                if let workspace = selectedWorkspace {
+                    workspaceInspector(workspace, layout: layout)
+                        .id(workspace.id)
+                } else {
+                    ContentUnavailableView(
+                        "No Workspace Selected",
+                        systemImage: "square.grid.3x3",
+                        description: Text("Add or select a workspace to configure it.")
+                    )
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var workspaceTabStrip: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 10) {
+                    ForEach(store.settingsWorkspaces) { workspace in
+                        workspaceTab(workspace)
+                            .id(workspace.id)
+                    }
+                    Button {
+                        selectedWorkspaceID = store.addSettingsWorkspace()
+                    } label: {
+                        VStack(spacing: 8) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 26, weight: .medium))
+                            Text("Add Workspace")
+                                .font(.caption)
+                        }
+                        .foregroundStyle(.secondary)
+                        .frame(width: 168, height: 126)
+                        .contentShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(
+                                    Color(nsColor: .separatorColor),
+                                    style: StrokeStyle(lineWidth: 1, dash: [5, 4])
+                                )
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Add workspace")
+                    .dropDestination(for: String.self) { values, _ in
+                        guard let source = values.first.flatMap(UUID.init(uuidString:)),
+                              let sourceIndex = store.settingsWorkspaces.firstIndex(where: { $0.id == source })
+                        else { return false }
+                        store.moveSettingsWorkspaces(
+                            fromOffsets: IndexSet(integer: sourceIndex),
+                            toOffset: store.settingsWorkspaces.count
+                        )
+                        return true
+                    }
+                }
+                .padding(8)
+            }
+            .scrollIndicators(.hidden)
+            .onAppear {
+                if let selectedWorkspaceID {
+                    proxy.scrollTo(selectedWorkspaceID, anchor: .center)
+                }
+            }
+            .onChange(of: selectedWorkspaceID) { _, workspaceID in
+                guard let workspaceID else { return }
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    proxy.scrollTo(workspaceID, anchor: .center)
+                }
+            }
+        }
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Workspaces")
+    }
+
+    private func workspaceTab(_ workspace: WorkspaceDefinition) -> some View {
+        let isSelected = selectedWorkspaceID == workspace.id
+        return Button {
+            selectedWorkspaceID = workspace.id
+        } label: {
+            VStack(spacing: 7) {
+                workspaceTabPreview(workspace)
+                    .frame(height: 82)
+                HStack(spacing: 8) {
+                    Text(workspace.name)
+                        .font(.subheadline.weight(isSelected ? .semibold : .medium))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 2)
+                    Text(workspace.key.uppercased().isEmpty ? "—" : workspace.key.uppercased())
+                        .font(.caption.monospaced().weight(.semibold))
+                        .foregroundStyle(isSelected ? Color.white : .secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(
+                            isSelected ? Color.accentColor : Color.primary.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 6)
+                        )
+                }
+            }
+            .padding(8)
+            .frame(width: 168, height: 126)
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .background(
+                isSelected ? Color.accentColor.opacity(0.12) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5)
+            }
+        }
+        .buttonStyle(.plain)
+        .draggable(workspace.id.uuidString)
+        .dropDestination(for: String.self) { values, _ in
+            guard let source = values.first.flatMap(UUID.init(uuidString:)) else { return false }
+            store.moveSettingsWorkspace(id: source, before: workspace.id)
+            return true
+        }
+        .contextMenu { workspaceContextMenu(workspace) }
+        .help("\(workspace.name) — \(displayRoleName(for: workspace.id)), \(workspace.layout.title), key \(workspace.key.uppercased())")
+        .accessibilityLabel(WorkspaceSettingsAccessibility.rowLabel(
+            workspace: workspace,
+            displayRoleName: displayRoleName(for: workspace.id)
+        ))
+        .accessibilityHint("Selects this workspace for editing")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityAction(named: "Move earlier") {
+            store.moveSettingsWorkspace(id: workspace.id, offset: -1)
+        }
+        .accessibilityAction(named: "Move later") {
+            store.moveSettingsWorkspace(id: workspace.id, offset: 1)
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceTabPreview(_ workspace: WorkspaceDefinition) -> some View {
+        if store.isEditingActiveProfile,
+           let entry = previewRepository?.entries[workspace.id] {
+            WorkspacePreviewView(
+                descriptor: entry.descriptor,
+                background: entry.background,
+                images: entry.images,
+                interactionMode: .workspaceOnly
+            )
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        } else {
+            WorkspaceLayoutMiniature(kind: WorkspaceLayoutMiniatureKind(layout: workspace.layout))
+        }
+    }
+
+    private func searchHighlight(_ entry: SettingsSearchEntry) -> some View {
+        Label {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.title).font(.subheadline.weight(.semibold))
+                Text(entry.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } icon: {
+            Image(systemName: "magnifyingglass")
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 9))
+        .accessibilityLabel("Search result: \(entry.title). \(entry.description)")
+    }
+
+    @ViewBuilder
+    private func workspaceInspector(_ workspace: WorkspaceDefinition, layout: SettingsDetailLayout) -> some View {
         switch layout {
         case .wide:
-            HStack(spacing: 0) {
-                masterColumn()
-                    .frame(width: SettingsWindowMetrics.masterListWidth)
-                    .frame(maxHeight: .infinity)
-                Divider()
-                inspectorColumn
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            HStack(alignment: .top, spacing: 16) {
+                workspaceDetailsPanel(workspace)
+                    .frame(width: 320)
+                VStack(alignment: .leading, spacing: 16) {
+                    workspaceLayoutPanel(workspace)
+                    workspaceRepairPanel(workspace)
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         case .compact:
-            VStack(spacing: 0) {
-                if showsCompactInspector {
-                    SettingsCompactDetailHeader(
-                        backTitle: "Workspaces",
-                        title: selectedWorkspace?.name ?? "Workspace",
-                        goBack: { showsCompactInspector = false }
-                    )
-                    Divider()
-                    inspectorColumn
-                } else {
-                    masterColumn(showsDisclosure: true)
-                }
+            VStack(alignment: .leading, spacing: 16) {
+                workspaceDetailsPanel(workspace)
+                workspaceLayoutPanel(workspace)
+                workspaceRepairPanel(workspace)
             }
         }
     }
 
-    private func masterColumn(showsDisclosure: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Workspaces")
-                .font(.headline)
-                .padding(.horizontal, 20)
-                .padding(.top, 14)
-                .padding(.bottom, 6)
-
-            if hasIdentityConflict {
-                Label(
-                    "Resolve duplicate or empty names and keys before relying on shortcuts.",
-                    systemImage: "exclamationmark.triangle.fill"
-                )
-                .font(.caption)
-                .foregroundStyle(.orange)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 6)
-            }
-
-            List(selection: Binding(
-                get: { selectedWorkspaceID },
-                set: { workspaceID in
-                    selectedWorkspaceID = workspaceID
-                    if showsDisclosure, workspaceID != nil {
-                        showsCompactInspector = true
-                    }
-                }
-            )) {
-                ForEach(store.settingsWorkspaces) { workspace in
-                    workspaceRow(workspace, showsDisclosure: showsDisclosure)
-                        .tag(workspace.id)
-                        .onTapGesture {
-                            selectedWorkspaceID = workspace.id
-                            if showsDisclosure { showsCompactInspector = true }
-                        }
-                        .draggable(workspace.id.uuidString)
-                        .dropDestination(for: String.self) { values, _ in
-                            guard let source = values.first.flatMap(UUID.init(uuidString:)) else {
-                                return false
-                            }
-                            store.moveSettingsWorkspace(id: source, before: workspace.id)
-                            return true
-                        }
-                        .contextMenu { workspaceContextMenu(workspace) }
-                        .accessibilityAction(named: "Move up") {
-                            store.moveSettingsWorkspace(id: workspace.id, offset: -1)
-                        }
-                        .accessibilityAction(named: "Move down") {
-                            store.moveSettingsWorkspace(id: workspace.id, offset: 1)
-                        }
-                }
-                .onMove(perform: store.moveSettingsWorkspaces)
-            }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .environment(
-                \.defaultMinListRowHeight,
-                SettingsWindowMetrics.masterRowMinimumHeight
+    private func workspaceDetailsPanel(_ workspace: WorkspaceDefinition) -> some View {
+        workspaceSettingsPanel("Workspace details") {
+            Text("Name")
+                .font(.subheadline.weight(.medium))
+            TextField(
+                "Workspace name",
+                text: WorkspaceSettingsFieldBindings.name(store: store, workspaceID: workspace.id)
             )
+            .textFieldStyle(.roundedBorder)
+            .accessibilityLabel("Workspace name")
+
+            Divider()
+
+            Picker("Home Display", selection: roleBinding(for: workspace.id)) {
+                ForEach(store.settingsProfile.displayRoles) { role in
+                    Text(role.name).tag(role.id)
+                }
+            }
+            Text(roleNote(for: workspace.id))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider()
+
+            LabeledContent("Workspace Key") {
+                TextField(
+                    "Key",
+                    text: WorkspaceSettingsFieldBindings.key(store: store, workspaceID: workspace.id)
+                )
+                .labelsHidden()
+                .multilineTextAlignment(.center)
+                .frame(width: 68)
+                .accessibilityLabel("Workspace key")
+            }
+
+            workspaceIdentityWarnings(workspace)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Generated shortcuts")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                workspaceShortcutSummaryRow("Switch workspace", workspace: workspace, family: .navigate)
+                workspaceShortcutSummaryRow("Move window", workspace: workspace, family: .arrange)
+                Text("Change the workspace key above to update both. Modifier keys are set globally in Shortcuts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Divider()
 
             HStack(spacing: 8) {
-                SettingsMasterActionButton(systemImage: "plus") {
-                    selectedWorkspaceID = store.addSettingsWorkspace()
-                    if showsDisclosure { showsCompactInspector = true }
-                }
-                .help("Add workspace")
-                .accessibilityLabel("Add workspace")
-
-                SettingsMasterActionButton(systemImage: "square.on.square") {
+                Button {
                     duplicateSelectedWorkspace()
+                } label: {
+                    Label("Duplicate", systemImage: "square.on.square")
+                        .frame(maxWidth: .infinity)
                 }
-                .disabled(selectedWorkspace == nil)
-                .help("Duplicate selected workspace")
                 .accessibilityLabel("Duplicate selected workspace")
-
-                SettingsMasterActionButton(systemImage: "trash", role: .destructive) {
+                Button(role: .destructive) {
                     deleteSelectedWorkspace()
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
                 }
-                .disabled(store.settingsWorkspaces.count <= 1 || selectedWorkspace == nil)
-                .help("Delete selected workspace")
+                .disabled(store.settingsWorkspaces.count <= 1)
                 .accessibilityLabel("Delete selected workspace")
-
-                Spacer()
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, SettingsWindowMetrics.masterActionRowVerticalPadding)
+            .buttonStyle(.bordered)
 
             Divider()
 
-            VStack(spacing: 12) {
-                if store.isEditingActiveProfile {
-                    SettingsActionRow(
-                        title: "Active workspace",
-                        description: "Recover the interaction display's active workspace, clear transient positioning, and reapply its current layout."
-                    ) {
-                        Button("Bring Windows Back On Screen") {
-                            engine.resetCurrentWorkspace()
-                        }
-                    }
-
-                    Divider()
+            SettingsActionRow(
+                title: "Workspace collection",
+                description: "Restore WindowRanger's built-in workspace names, order, keys, and layout choices."
+            ) {
+                Button("Restore Defaults") {
+                    store.resetSettingsWorkspacesToDefaults()
+                    reconcileSelection()
                 }
-
-                SettingsActionRow(
-                    title: "Workspace collection",
-                    description: "Restore WindowRanger's built-in workspace names, order, keys, and layout choices."
-                ) {
-                    Button("Restore Defaults") {
-                        store.resetSettingsWorkspacesToDefaults()
-                        reconcileSelection()
-                    }
-                    .help(SettingsCopy.restoreWindowManagerDefaultsTitle)
-                    .accessibilityLabel(SettingsCopy.restoreWindowManagerDefaultsTitle)
-                }
+                .help(SettingsCopy.restoreWindowManagerDefaultsTitle)
+                .accessibilityLabel(SettingsCopy.restoreWindowManagerDefaultsTitle)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
         }
-        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     @ViewBuilder
-    private var inspectorColumn: some View {
-        if let workspace = selectedWorkspace {
-            VStack(alignment: .leading, spacing: 0) {
-                if let highlightedEntry {
-                    Label {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(highlightedEntry.title).font(.subheadline.weight(.semibold))
-                            Text(highlightedEntry.description)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: "magnifyingglass")
-                    }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 9))
-                    .padding(.horizontal, 22)
-                    .padding(.top, 14)
-                    .accessibilityLabel(
-                        "Search result: \(highlightedEntry.title). \(highlightedEntry.description)"
-                    )
-                }
-
-                inspectorHeader(workspace)
-                Divider()
-                inspectorForm(workspace)
-            }
-            .id(workspace.id)
-        } else {
-            ContentUnavailableView(
-                "No Workspace Selected",
-                systemImage: "square.grid.3x3",
-                description: Text("Add or select a workspace to configure it.")
-            )
+    private func workspaceIdentityWarnings(_ workspace: WorkspaceDefinition) -> some View {
+        if workspace.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            isDuplicateName(workspace) {
+            Label("Workspace names must be non-empty and unique.", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        }
+        if workspace.key.isEmpty || isDuplicateKey(workspace) {
+            Label("Choose a unique supported workspace key.", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        }
+        ForEach(shortcutConfigurationReport.issues(forWorkspace: workspace.id)) { issue in
+            Label(issue.message, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .accessibilityLabel("Shortcut conflict. \(issue.message)")
+        }
+        ForEach(store.hotKeyRuntimeIssues.filter { $0.owner.workspaceID == workspace.id }) { issue in
+            Label(issue.message, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .accessibilityLabel("Shortcut registration failed. \(issue.message)")
         }
     }
 
-    private func inspectorHeader(_ workspace: WorkspaceDefinition) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: workspace.layout.systemImage)
-                .font(.system(size: 22, weight: .medium))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 30)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 3) {
-                TextField(
-                    "Workspace name",
-                    text: WorkspaceSettingsFieldBindings.name(
-                        store: store,
-                        workspaceID: workspace.id
-                    )
-                )
-                .textFieldStyle(.roundedBorder)
-                .font(.headline)
-                .accessibilityLabel("Workspace name")
-
-                Text("\(displayRoleName(for: workspace.id)) · \(workspace.layout.title)")
-                    .font(.subheadline)
+    private func workspaceShortcutSummaryRow(
+        _ title: String,
+        workspace: WorkspaceDefinition,
+        family: ShortcutFamily
+    ) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+            Spacer(minLength: 8)
+            if let keyCode = HotKeyManager.keyCodes[workspace.key.lowercased()] {
+                let keys = store.hotKeyConfiguration
+                    .chord(forWorkspaceKeyCode: keyCode, family: family)
+                    .keyCaps
+                Text(keys.joined())
+                    .font(.system(.callout, design: .monospaced).weight(.medium))
                     .foregroundStyle(.secondary)
+                    .accessibilityLabel(keys.joined(separator: " "))
+            } else {
+                Text("Not set").foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .accessibilityElement(children: .combine)
     }
 
-    private func inspectorForm(_ workspace: WorkspaceDefinition) -> some View {
-        Form {
-            Section("General") {
-                Picker("Home Display", selection: roleBinding(for: workspace.id)) {
-                    ForEach(store.settingsProfile.displayRoles) { role in
-                        Text(role.name).tag(role.id)
-                    }
-                }
-                Text(roleNote(for: workspace.id))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                LabeledContent("Workspace Key") {
-                    TextField(
-                        "Key",
-                        text: WorkspaceSettingsFieldBindings.key(
-                            store: store,
-                            workspaceID: workspace.id
-                        )
-                    )
-                    .labelsHidden()
-                    .multilineTextAlignment(.center)
-                    .frame(width: 68)
-                    .accessibilityLabel("Workspace key")
-                }
-
-                if workspace.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                    isDuplicateName(workspace) {
-                    Label("Workspace names must be non-empty and unique.", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-                if workspace.key.isEmpty || isDuplicateKey(workspace) {
-                    Label("Choose a unique supported workspace key.", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-
-                ForEach(shortcutConfigurationReport.issues(forWorkspace: workspace.id)) { issue in
-                    Label(issue.message, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .accessibilityLabel("Shortcut conflict. \(issue.message)")
-                }
-                ForEach(store.hotKeyRuntimeIssues.filter { $0.owner.workspaceID == workspace.id }) { issue in
-                    Label(issue.message, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .accessibilityLabel("Shortcut registration failed. \(issue.message)")
-                }
-
-                LabeledContent("Switch to \(workspace.name)") {
-                    if let keyCode = HotKeyManager.keyCodes[workspace.key.lowercased()] {
-                        WorkspaceShortcutCaps(keys: store.hotKeyConfiguration
-                            .chord(forWorkspaceKeyCode: keyCode, family: .navigate)
-                            .keyCaps)
-                    } else {
-                        Text("Not set").foregroundStyle(.secondary)
-                    }
-                }
-                LabeledContent("Move Window to \(workspace.name)") {
-                    if let keyCode = HotKeyManager.keyCodes[workspace.key.lowercased()] {
-                        WorkspaceShortcutCaps(keys: store.hotKeyConfiguration
-                            .chord(forWorkspaceKeyCode: keyCode, family: .arrange)
-                            .keyCaps)
-                    } else {
-                        Text("Not set").foregroundStyle(.secondary)
-                    }
-                }
-                Text("Workspace keys are synced with this profile. These two shortcuts are derived from the key; global command shortcuts remain in Shortcuts.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Layout") {
+    private func workspaceLayoutPanel(_ workspace: WorkspaceDefinition) -> some View {
+        workspaceSettingsPanel("Layout") {
+            LabeledContent("Layout Style") {
                 Picker(
                     "Layout Style",
-                    selection: WorkspaceSettingsFieldBindings.layout(
-                        store: store,
-                        workspaceID: workspace.id
-                    )
+                    selection: WorkspaceSettingsFieldBindings.layout(store: store, workspaceID: workspace.id)
                 ) {
                     ForEach(WorkspaceLayout.allCases) { layout in
                         Text(layout.title).tag(layout)
                     }
                 }
+                .labelsHidden()
                 .pickerStyle(.segmented)
+                .frame(width: 330)
+            }
 
-                LabeledContent("Copy Layout") {
-                    Menu("Choose Workspace…") {
-                        ForEach(store.settingsWorkspaces.filter { $0.id != workspace.id }) { source in
-                            Button {
-                                store.copySettingsLayout(
-                                    from: source.id,
-                                    to: workspace.id,
-                                    undoManager: undoManager
-                                )
-                            } label: {
-                                Label(
-                                    "\(source.name) — \(source.layout.title)",
-                                    systemImage: source.layout.systemImage
-                                )
-                            }
+            Divider()
+
+            LabeledContent("Copy Layout") {
+                Menu("Choose Workspace…") {
+                    ForEach(store.settingsWorkspaces.filter { $0.id != workspace.id }) { source in
+                        Button {
+                            store.copySettingsLayout(from: source.id, to: workspace.id, undoManager: undoManager)
+                        } label: {
+                            Label("\(source.name) — \(source.layout.title)", systemImage: source.layout.systemImage)
                         }
                     }
-                    .disabled(store.settingsWorkspaces.count <= 1)
-                    .help("Copy another workspace's layout style and geometry")
                 }
-                Text(
-                    "Copies the layout style, orientation, gaps and padding from another workspace. "
-                        + "Its name, key, Home Display, app rules and window membership stay unchanged."
-                )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .disabled(store.settingsWorkspaces.count <= 1)
+                .help("Copy another workspace's layout style and geometry")
+                .frame(minWidth: 220, alignment: .trailing)
+            }
+            Text(
+                "Copies the layout style, orientation, gaps and padding from another workspace. "
+                    + "Its name, key, Home Display, app rules and window membership stay unchanged."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
 
-                if store.settingsUsesLegacyLayoutGeometry(for: workspace.id), workspace.layout != .none {
-                    Label(
-                        "This workspace is preserving its pre-upgrade geometry.",
-                        systemImage: "clock.arrow.circlepath"
-                    )
+            if store.settingsUsesLegacyLayoutGeometry(for: workspace.id), workspace.layout != .none {
+                Divider()
+                Label(
+                    "This workspace is preserving its pre-upgrade geometry.",
+                    systemImage: "clock.arrow.circlepath"
+                )
+                .foregroundStyle(.secondary)
+                Button("Use Current Layout Defaults") {
+                    store.setSettingsLayoutConfiguration(.aeroSpaceUserDefaults, for: workspace.id)
+                }
+            }
+
+            let controls = WorkspaceInspectorControlVisibility(layout: workspace.layout)
+            if controls.showsFreeformExplanation {
+                Divider()
+                Text("Freeform leaves window frames under manual control. WindowRanger still manages workspace visibility, focus, persistence, display assignment, and quit/wake recovery.")
                     .foregroundStyle(.secondary)
-                    Button("Use Current Layout Defaults") {
-                        store.setSettingsLayoutConfiguration(
-                            .aeroSpaceUserDefaults,
-                            for: workspace.id
+            }
+            if controls.showsOrientation {
+                Divider()
+                orientationPicker(workspace.id)
+            }
+            if controls.showsTiledGeometry {
+                tiledGeometryControls(workspace.id)
+            }
+            if controls.showsAccordionPadding {
+                Divider()
+                LabeledContent("Visible edge padding") {
+                    HStack(spacing: 8) {
+                        Text("\(Int(configuration(for: workspace.id).accordionPadding)) pt")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                        Stepper(
+                            "Visible edge padding",
+                            value: configurationBinding(\.accordionPadding, workspaceID: workspace.id),
+                            in: 0...800,
+                            step: 5
                         )
+                        .labelsHidden()
                     }
                 }
-
-                let controls = WorkspaceInspectorControlVisibility(layout: workspace.layout)
-                if controls.showsFreeformExplanation {
-                    Text("Freeform leaves window frames under manual control. WindowRanger still manages workspace visibility, focus, persistence, display assignment, and quit/wake recovery.")
-                        .foregroundStyle(.secondary)
-                }
-                if controls.showsOrientation {
-                    orientationPicker(workspace.id)
-                }
-                if controls.showsTiledGeometry {
-                    tiledGeometryControls(workspace.id)
-                }
-                if controls.showsAccordionPadding {
-                    Stepper(
-                        "Visible edge padding: \(Int(configuration(for: workspace.id).accordionPadding)) pt",
-                        value: configurationBinding(\.accordionPadding, workspaceID: workspace.id),
-                        in: 0...800,
-                        step: 5
-                    )
-                    Text("Padding controls how much of neighbouring Accordion windows remains visible.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Text("Floating windows, automatically detected dialogs, and apps excluded by a rule keep their own frames and never affect layout geometry.")
+                Text("Padding controls how much of neighbouring Accordion windows remains visible.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Repair") {
+            Divider()
+            Text("Floating windows, automatically detected dialogs, and apps excluded by a rule keep their own frames and never affect layout geometry.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func workspaceRepairPanel(_ workspace: WorkspaceDefinition) -> some View {
+        workspaceSettingsPanel("Repair") {
+            SettingsActionRow(
+                title: "Selected workspace",
+                description: "Restore Freeform and WindowRanger's built-in geometry while keeping its name, key, Home Display, app rules, and live window membership. This settings change can be undone."
+            ) {
+                Button("Reset Workspace", systemImage: "arrow.counterclockwise") {
+                    store.resetSettingsWorkspace(workspace.id, undoManager: undoManager)
+                }
+            }
+
+            if store.isEditingActiveProfile {
+                Divider()
                 SettingsActionRow(
-                    title: "Selected workspace",
-                    description: "Restore Freeform and WindowRanger's built-in geometry while keeping its name, key, Home Display, app rules, and live window membership. This settings change can be undone."
+                    title: "Active workspace",
+                    description: "Recover the interaction display's active workspace, clear transient positioning, and reapply its current layout."
                 ) {
-                    Button("Reset Workspace", systemImage: "arrow.counterclockwise") {
-                        store.resetSettingsWorkspace(workspace.id, undoManager: undoManager)
+                    Button("Bring Windows Back On Screen") {
+                        engine.resetCurrentWorkspace()
                     }
                 }
             }
         }
-        .formStyle(.grouped)
+    }
+
+    private func workspaceSettingsPanel<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+            Divider()
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+        }
     }
 
     private func orientationPicker(_ workspaceID: UUID) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Picker(
-                "Orientation",
-                selection: configurationBinding(\.orientation, workspaceID: workspaceID)
-            ) {
-                ForEach(WorkspaceLayoutOrientation.allCases) { orientation in
-                    Text(orientation.title).tag(orientation)
+            LabeledContent("Orientation") {
+                Picker(
+                    "Orientation",
+                    selection: configurationBinding(\.orientation, workspaceID: workspaceID)
+                ) {
+                    ForEach(WorkspaceLayoutOrientation.allCases) { orientation in
+                        Text(orientation.title).tag(orientation)
+                    }
                 }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 330)
             }
-            .pickerStyle(.segmented)
             Text("Automatic uses horizontal windows on a wide display and vertical windows on a portrait display.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -2628,12 +2873,15 @@ struct WorkspaceSettingsView: View {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 16) {
                     outerPaddingPreview(configuration(for: workspaceID).gaps)
-                    outerPaddingControls(workspaceID, usesGrid: true)
+                    outerPaddingValueControls(workspaceID, usesGrid: true)
                         .frame(width: 276, alignment: .leading)
+                    outerPaddingLinkToggle(workspaceID)
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     outerPaddingPreview(configuration(for: workspaceID).gaps)
-                    outerPaddingControls(workspaceID, usesGrid: false)
+                    outerPaddingValueControls(workspaceID, usesGrid: false)
+                    outerPaddingLinkToggle(workspaceID)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
         }
@@ -2647,18 +2895,26 @@ struct WorkspaceSettingsView: View {
     }
 
     private func innerGapLinkToggle(_ workspaceID: UUID) -> some View {
+        geometryLinkToggle("Keep equal", isOn: innerLinkBinding(workspaceID))
+    }
+
+    private func outerPaddingLinkToggle(_ workspaceID: UUID) -> some View {
+        geometryLinkToggle("Keep all sides equal", isOn: outerLinkBinding(workspaceID))
+    }
+
+    private func geometryLinkToggle(_ title: String, isOn: Binding<Bool>) -> some View {
         HStack(spacing: 8) {
-            Label("Keep equal", systemImage: "link")
+            Label(title, systemImage: "link")
                 .lineLimit(1)
             Spacer(minLength: 8)
-            Toggle("Keep equal", isOn: innerLinkBinding(workspaceID))
+            Toggle(title, isOn: isOn)
                 .labelsHidden()
-                .accessibilityLabel("Keep equal")
+                .accessibilityLabel(title)
         }
     }
 
     @ViewBuilder
-    private func outerPaddingControls(_ workspaceID: UUID, usesGrid: Bool) -> some View {
+    private func outerPaddingValueControls(_ workspaceID: UUID, usesGrid: Bool) -> some View {
         if usesGrid {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
                 GridRow {
@@ -2674,18 +2930,12 @@ struct WorkspaceSettingsView: View {
                         .frame(width: 132)
                 }
             }
-            Toggle(isOn: outerLinkBinding(workspaceID)) {
-                Label("Keep all sides equal", systemImage: "link")
-            }
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 outerPaddingStepper(.outerTop, workspaceID: workspaceID)
                 outerPaddingStepper(.outerRight, workspaceID: workspaceID)
                 outerPaddingStepper(.outerBottom, workspaceID: workspaceID)
                 outerPaddingStepper(.outerLeft, workspaceID: workspaceID)
-                Toggle(isOn: outerLinkBinding(workspaceID)) {
-                    Label("Keep all sides equal", systemImage: "link")
-                }
             }
         }
     }
@@ -2812,57 +3062,11 @@ struct WorkspaceSettingsView: View {
         .accessibilityHidden(true)
     }
 
-    private func workspaceRow(
-        _ workspace: WorkspaceDefinition,
-        showsDisclosure: Bool
-    ) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: workspace.layout.systemImage)
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 22)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(workspace.name)
-                    .font(.body.weight(.medium))
-                    .lineLimit(1)
-                Text("\(displayRoleName(for: workspace.id)) · \(workspace.layout.title)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 6)
-            if let keyCode = HotKeyManager.keyCodes[workspace.key.lowercased()] {
-                Text(store.hotKeyConfiguration
-                    .chord(forWorkspaceKeyCode: keyCode, family: .navigate)
-                    .title)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-            }
-            if showsDisclosure {
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
-            }
-        }
-        .padding(.vertical, 3)
-        .frame(minHeight: SettingsWindowMetrics.masterRowMinimumHeight)
-        .contentShape(Rectangle())
-        .help("\(workspace.name) — \(displayRoleName(for: workspace.id)), \(workspace.layout.title), key \(workspace.key.uppercased())")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(WorkspaceSettingsAccessibility.rowLabel(
-            workspace: workspace,
-            displayRoleName: displayRoleName(for: workspace.id)
-        ))
-        .accessibilityHint(showsDisclosure ? "Opens workspace details" : "Selects this workspace")
-    }
-
     @ViewBuilder
     private func workspaceContextMenu(_ workspace: WorkspaceDefinition) -> some View {
-        Button("Move Up") { store.moveSettingsWorkspace(id: workspace.id, offset: -1) }
+        Button("Move Left") { store.moveSettingsWorkspace(id: workspace.id, offset: -1) }
             .disabled(store.settingsWorkspaces.first?.id == workspace.id)
-        Button("Move Down") { store.moveSettingsWorkspace(id: workspace.id, offset: 1) }
+        Button("Move Right") { store.moveSettingsWorkspace(id: workspace.id, offset: 1) }
             .disabled(store.settingsWorkspaces.last?.id == workspace.id)
         Divider()
         Button("Duplicate") {
@@ -3070,23 +3274,123 @@ struct WorkspaceSettingsView: View {
             workspaceIDs: store.settingsWorkspaces.map(\.id)
         )
     }
-}
 
-private struct WorkspaceShortcutCaps: View {
-    let keys: [String]
-    var compact = false
+    private func refreshSelectedWorkspacePreview() {
+        guard store.isEditingActiveProfile,
+              let workspace = selectedWorkspace,
+              let previewRepository
+        else { return }
+        let expectedProfileID = store.settingsProfileID
+        previewRepository.isEnabled = store.workspacePreviewThumbnailsEnabled
+        engine.workspacePreviewDescriptor(
+            for: workspace.id,
+            workspaceName: workspace.name
+        ) { [weak store, weak previewRepository] descriptor in
+            guard let store,
+                  let previewRepository,
+                  store.settingsProfileID == expectedProfileID,
+                  store.isEditingActiveProfile,
+                  store.settingsWorkspaces.contains(where: { $0.id == descriptor.workspaceID })
+            else { return }
+            previewRepository.update(
+                descriptor: descriptor,
+                captureEnabled: store.workspacePreviewThumbnailsEnabled
+            )
+        }
+    }
 
-    var body: some View {
-        HStack(spacing: compact ? 1 : 3) {
-            ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
-                Text(key.isEmpty ? "—" : key)
-                    .font(.system(size: compact ? 10 : 12, weight: .medium, design: .rounded))
+    /// Populate every active-profile tab when Settings opens. Capture batches remain serialized and
+    /// bounded by the shared repository; asking for the selected workspace first makes the current
+    /// editor fill promptly while the remaining tab previews arrive progressively.
+    private func refreshWorkspacePreviews() {
+        guard store.isEditingActiveProfile,
+              let previewRepository
+        else { return }
+        let expectedProfileID = store.settingsProfileID
+        let selectedWorkspaceID = selectedWorkspaceID
+        previewRepository.isEnabled = store.workspacePreviewThumbnailsEnabled
+        let workspacesByID = Dictionary(uniqueKeysWithValues: store.settingsWorkspaces.map { ($0.id, $0) })
+        let captureOrder = WorkspaceSettingsPreviewRefreshPolicy.captureOrder(
+            workspaceIDs: store.settingsWorkspaces.map(\.id),
+            selectedWorkspaceID: selectedWorkspaceID
+        )
+        for workspaceID in captureOrder {
+            guard let workspace = workspacesByID[workspaceID] else { continue }
+            engine.workspacePreviewDescriptor(
+                for: workspace.id,
+                workspaceName: workspace.name
+            ) { [weak store, weak previewRepository] descriptor in
+                guard let store,
+                      let previewRepository,
+                      store.settingsProfileID == expectedProfileID,
+                      store.isEditingActiveProfile,
+                      store.settingsWorkspaces.contains(where: { $0.id == descriptor.workspaceID })
+                else { return }
+                previewRepository.update(
+                    descriptor: descriptor,
+                    captureEnabled: store.workspacePreviewThumbnailsEnabled
+                )
             }
         }
-        .padding(.horizontal, compact ? 6 : 8)
-        .padding(.vertical, compact ? 3 : 4)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
-        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct WorkspaceLayoutMiniature: View {
+    let kind: WorkspaceLayoutMiniatureKind
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color.primary.opacity(0.035))
+                miniature(in: geometry.size)
+                    .padding(8)
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func miniature(in size: CGSize) -> some View {
+        switch kind {
+        case .freeform:
+            ZStack {
+                miniaturePane
+                    .frame(width: size.width * 0.48, height: size.height * 0.48)
+                    .offset(x: -size.width * 0.14, y: -size.height * 0.11)
+                miniaturePane
+                    .frame(width: size.width * 0.52, height: size.height * 0.45)
+                    .offset(x: size.width * 0.13, y: size.height * 0.12)
+                miniaturePane
+                    .frame(width: size.width * 0.36, height: size.height * 0.34)
+                    .offset(x: size.width * 0.18, y: -size.height * 0.17)
+            }
+        case .tiled:
+            HStack(spacing: 3) {
+                miniaturePane
+                VStack(spacing: 3) {
+                    miniaturePane
+                    miniaturePane
+                }
+            }
+        case .accordion:
+            VStack(spacing: 3) {
+                miniaturePane
+                miniaturePane
+                miniaturePane
+            }
+        }
+    }
+
+    private var miniaturePane: some View {
+        RoundedRectangle(cornerRadius: 3)
+            .fill(Color.primary.opacity(0.1))
+            .overlay {
+                RoundedRectangle(cornerRadius: 3)
+                    .stroke(Color.primary.opacity(0.24), lineWidth: 0.7)
+            }
     }
 }
 

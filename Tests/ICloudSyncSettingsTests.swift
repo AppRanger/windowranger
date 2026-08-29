@@ -38,6 +38,8 @@ final class ICloudSyncSettingsTests: XCTestCase {
             XCTAssertEqual(store.iCloudSyncEnabled, enabled)
             XCTAssertEqual(defaults.bool(forKey: "iCloudSyncEnabled"), enabled)
             XCTAssertEqual(cloud.synchronizeCount > 0, enabled)
+            XCTAssertEqual(store.iCloudSyncState, enabled ? .waitingForCloud : .disabled)
+            XCTAssertEqual(cloud.writeCount, 0)
         }
     }
 
@@ -80,7 +82,7 @@ final class ICloudSyncSettingsTests: XCTestCase {
             HotKeyConfiguration.self,
             from: normalizedCloudData
         )
-        XCTAssertNil(normalizedCloud.optionalChord(for: .toggleFloating))
+        XCTAssertNotNil(normalizedCloud.optionalChord(for: .toggleFloating))
     }
 
     @MainActor
@@ -111,13 +113,15 @@ final class ICloudSyncSettingsTests: XCTestCase {
     }
 
     @MainActor
-    func testReenablingPushesLocalSettingsWithoutDeletingExistingCloudData() {
+    func testEnablingUsesExistingCloudSettingsWithoutWritingLocalDefaults() throws {
         let (defaults, suite) = isolatedDefaults("Reenable")
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(false, forKey: "iCloudSyncEnabled")
+        let remote = ProfileLibrary(profiles: [profile(name: "Existing Cloud")])
         let cloud = InspectableUbiquitousStore()
         cloud.seed("keep-me", forKey: "unrelated.remote.value")
-        cloud.seed("workspace-label", forKey: "menuBarPresentationMode.v1")
+        cloud.seed(try JSONEncoder().encode(remote), forKey: "profileLibrary.v1")
+        cloud.seed("medium", forKey: "menuBarPresentationMode.v1")
         let store = SettingsStore(
             defaults: defaults,
             ubiquitousStore: cloud,
@@ -129,11 +133,98 @@ final class ICloudSyncSettingsTests: XCTestCase {
         store.iCloudSyncEnabled = true
 
         XCTAssertTrue(defaults.bool(forKey: "iCloudSyncEnabled"))
-        XCTAssertEqual(cloud.peekString(forKey: "menuBarPresentationMode.v1"), "full")
+        XCTAssertEqual(store.iCloudSyncState, .active)
+        XCTAssertEqual(store.profiles.map(\.name), ["Existing Cloud"])
+        XCTAssertEqual(store.menuBarPresentationMode, .medium)
+        XCTAssertEqual(cloud.peekString(forKey: "menuBarPresentationMode.v1"), "medium")
         XCTAssertEqual(cloud.peekString(forKey: "unrelated.remote.value"), "keep-me")
-        XCTAssertEqual(cloud.readCount, 0)
-        XCTAssertGreaterThan(cloud.writeCount, 0)
+        XCTAssertGreaterThan(cloud.readCount, 0)
+        XCTAssertEqual(cloud.writeCount, 0)
         XCTAssertGreaterThan(cloud.synchronizeCount, 0)
+    }
+
+    @MainActor
+    func testEmptyCloudWaitsWithoutWritingUntilUserExplicitlyUsesThisMac() throws {
+        let (defaults, suite) = isolatedDefaults("ExplicitInitialization")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let local = ProfileLibrary(profiles: [profile(name: "Local Source")])
+        defaults.set(try JSONEncoder().encode(local), forKey: "profileLibrary.v1")
+        let cloud = InspectableUbiquitousStore()
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+
+        store.iCloudSyncEnabled = true
+
+        XCTAssertEqual(store.iCloudSyncState, .waitingForCloud)
+        XCTAssertEqual(cloud.writeCount, 0)
+        cloud.resetCounters()
+
+        XCTAssertTrue(store.replaceICloudSettingsWithLocalCopy())
+        XCTAssertEqual(store.iCloudSyncState, .active)
+        XCTAssertGreaterThan(cloud.writeCount, 0)
+        let cloudData = try XCTUnwrap(cloud.peekData(forKey: "profileLibrary.v1"))
+        XCTAssertEqual(SettingsStore.decodedRemoteProfileLibrary(cloudData)?.profiles.map(\.name), ["Local Source"])
+    }
+
+    @MainActor
+    func testExplicitReplacementCanPublishLocalSettingsBeforeEnablingPull() throws {
+        let (defaults, suite) = isolatedDefaults("ReplaceWhileOff")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let local = ProfileLibrary(profiles: [profile(name: "Recovered Local")])
+        defaults.set(try JSONEncoder().encode(local), forKey: "profileLibrary.v1")
+        let cloud = InspectableUbiquitousStore()
+        cloud.seed(
+            try JSONEncoder().encode(ProfileLibrary(profiles: [profile(name: "Damaged Cloud")])),
+            forKey: "profileLibrary.v1"
+        )
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        cloud.resetCounters()
+
+        XCTAssertTrue(store.replaceICloudSettingsWithLocalCopy())
+
+        XCTAssertTrue(store.iCloudSyncEnabled)
+        XCTAssertTrue(defaults.bool(forKey: "iCloudSyncEnabled"))
+        XCTAssertEqual(store.iCloudSyncState, .active)
+        XCTAssertEqual(cloud.readCount, 0)
+        let cloudData = try XCTUnwrap(cloud.peekData(forKey: "profileLibrary.v1"))
+        XCTAssertEqual(SettingsStore.decodedRemoteProfileLibrary(cloudData)?.profiles.map(\.name), ["Recovered Local"])
+    }
+
+    @MainActor
+    func testDelayedCloudLibraryWinsWhileLocalWritesRemainBlocked() async throws {
+        let (defaults, suite) = isolatedDefaults("DelayedArrival")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let cloud = InspectableUbiquitousStore()
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+
+        store.iCloudSyncEnabled = true
+        store.renameProfile(store.activeProfileID, to: "Edited While Waiting")
+        store.menuBarPresentationMode = .full
+
+        XCTAssertEqual(store.iCloudSyncState, .waitingForCloud)
+        XCTAssertEqual(cloud.writeCount, 0)
+
+        cloud.seed(
+            try JSONEncoder().encode(ProfileLibrary(profiles: [profile(name: "Arrived Later")])),
+            forKey: "profileLibrary.v1"
+        )
+        cloud.notifyExternalChange()
+        for _ in 0..<4 { await Task.yield() }
+
+        XCTAssertEqual(store.iCloudSyncState, .active)
+        XCTAssertEqual(store.profiles.map(\.name), ["Arrived Later"])
+        XCTAssertEqual(cloud.writeCount, 0)
     }
 
     @MainActor
@@ -324,7 +415,7 @@ final class ICloudSyncSettingsTests: XCTestCase {
             connectedDisplaysProvider: { [] }
         )
 
-        XCTAssertTrue(store.replaceICloudProfileLibraryWithLocalCopy())
+        XCTAssertTrue(store.replaceICloudSettingsWithLocalCopy())
         let cloudData = try XCTUnwrap(cloud.peekData(forKey: "profileLibrary.v1"))
         XCTAssertEqual(SettingsStore.decodedRemoteProfileLibrary(cloudData)?.profiles.map(\.name), ["Kept Local"])
         XCTAssertNil(store.iCloudProfileLibraryIssue)
@@ -377,7 +468,38 @@ final class ICloudSyncSettingsTests: XCTestCase {
     }
 
     @MainActor
-    func testEnablingSyncWithOversizedLocalLibraryDoesNotOverwriteCloudProfiles() throws {
+    func testExplicitReplacementRejectsOversizedLocalLibraryWithoutEnablingOrWriting() throws {
+        let (defaults, suite) = isolatedDefaults("OversizedLocalReplacement")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let profiles = (0...SyncedProfileLibraryPolicy.maximumProfiles).map {
+            profile(name: "Private \($0)")
+        }
+        defaults.set(
+            try JSONEncoder().encode(ProfileLibrary(profiles: profiles)),
+            forKey: "profileLibrary.v1"
+        )
+        let cloud = InspectableUbiquitousStore()
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        cloud.resetCounters()
+
+        XCTAssertFalse(store.replaceICloudSettingsWithLocalCopy())
+
+        XCTAssertFalse(store.iCloudSyncEnabled)
+        XCTAssertFalse(defaults.bool(forKey: "iCloudSyncEnabled"))
+        XCTAssertEqual(store.iCloudSyncState, .disabled)
+        XCTAssertEqual(store.iCloudProfileLibraryIssue?.source, .local)
+        XCTAssertEqual(store.iCloudProfileLibraryIssue?.canReplaceCloudCopy, false)
+        XCTAssertEqual(cloud.readCount, 0)
+        XCTAssertEqual(cloud.writeCount, 0)
+        XCTAssertEqual(cloud.synchronizeCount, 0)
+    }
+
+    @MainActor
+    func testEnablingSyncWithOversizedLocalLibraryStillAcceptsValidCloudProfiles() throws {
         let (defaults, suite) = isolatedDefaults("OversizedLocalEnable")
         defer { defaults.removePersistentDomain(forName: suite) }
         let oversized = (0...SyncedProfileLibraryPolicy.maximumProfiles).map {
@@ -400,8 +522,9 @@ final class ICloudSyncSettingsTests: XCTestCase {
 
         store.iCloudSyncEnabled = true
 
-        XCTAssertEqual(store.profiles.count, oversized.count)
-        XCTAssertEqual(store.iCloudProfileLibraryIssue?.source, .local)
+        XCTAssertEqual(store.profiles.map(\.name), ["Existing Cloud"])
+        XCTAssertNil(store.iCloudProfileLibraryIssue)
+        XCTAssertEqual(store.iCloudSyncState, .active)
         XCTAssertEqual(cloud.peekData(forKey: "profileLibrary.v1"), existingCloud)
     }
 
@@ -487,5 +610,12 @@ private final class InspectableUbiquitousStore: UbiquitousKeyValueStoring {
         readCount = 0
         writeCount = 0
         synchronizeCount = 0
+    }
+
+    func notifyExternalChange() {
+        NotificationCenter.default.post(
+            name: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
+            object: self
+        )
     }
 }

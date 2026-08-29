@@ -7,6 +7,7 @@ struct OnboardingWizardView: View {
     @ObservedObject private var store: SettingsStore
     @StateObject private var accessibilityPermission = AccessibilityPermissionMonitor()
     @State private var showsApplicationPicker = false
+    @State private var showsICloudReplacementConfirmation = false
 
     init(coordinator: OnboardingCoordinator) {
         self.coordinator = coordinator
@@ -54,6 +55,29 @@ struct OnboardingWizardView: View {
             ) { application in
                 coordinator.addQuickApp(application)
             }
+        }
+        .confirmationDialog(
+            "Use this Mac’s settings in iCloud?",
+            isPresented: $showsICloudReplacementConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Replace iCloud Settings", role: .destructive) {
+                store.replaceICloudSettingsWithLocalCopy()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This uploads this Mac’s profiles and supported global settings. Any existing WindowRanger settings in iCloud that have not arrived yet will be replaced. If Sync is off, it will be turned on and remain enabled.")
+        }
+        .onAppear {
+            accessibilityPermission.refresh()
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification
+        )) { _ in
+            accessibilityPermission.refresh()
+        }
+        .task(id: accessibilityPermission.isGranted) {
+            await accessibilityPermission.refreshUntilGranted()
         }
     }
 
@@ -163,10 +187,30 @@ struct OnboardingWizardView: View {
                 .contentShape(Rectangle())
             }
 
-            if let issue = store.iCloudProfileLibraryIssue {
+            if store.iCloudSyncState == .disabled,
+               store.iCloudProfileLibraryIssue?.source != .local {
+                Button("Replace iCloud with This Mac’s Settings…") {
+                    showsICloudReplacementConfirmation = true
+                }
+            } else if store.iCloudSyncState == .waitingForCloud {
+                Label(
+                    "Waiting for existing iCloud settings. Nothing from this Mac will be uploaded while WindowRanger waits.",
+                    systemImage: "icloud.and.arrow.down"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                Button("Use This Mac’s Settings in iCloud…") {
+                    showsICloudReplacementConfirmation = true
+                }
+            } else if let issue = store.iCloudProfileLibraryIssue {
                 Label(issue.message, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
+                if issue.canReplaceCloudCopy {
+                    Button("Use This Mac’s Settings in iCloud…") {
+                        showsICloudReplacementConfirmation = true
+                    }
+                }
             } else {
                 Label(store.iCloudSyncEnabled ? "iCloud sync is on" : "This Mac will stay local-only",
                       systemImage: store.iCloudSyncEnabled ? "checkmark.icloud.fill" : "macbook")
@@ -234,7 +278,8 @@ struct OnboardingWizardView: View {
                     ColorPicker("Border colour", selection: Binding(
                         get: { store.focusedWindowHighlightColor.color },
                         set: { color in
-                            let resolved = MenuBarHighlightColor(nsColor: NSColor(color)) ?? .default
+                            let resolved = MenuBarHighlightColor(nsColor: NSColor(color))
+                                ?? .focusBorderDefault
                             coordinator.setFocusBorderColor(resolved)
                         }
                     ), supportsOpacity: false)

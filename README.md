@@ -55,8 +55,16 @@ not an installable macOS app.
   menu-bar presentation, the Quick App Shelf, and keyboard/trackpad workspace navigation. Every
   choice edits the same setting used by the app; only the wizard's versioned progress remains local.
   General Settings can close Settings and restart the walkthrough from Welcome without resetting
-  those choices.
+  those choices. The wizard stays above ordinary windows on every macOS Space while shortcuts are
+  tested, and its permission status updates automatically after access is granted in System Settings.
 - Three native, display-aware menu-bar presentations: Compact by default, Medium chips, or a Full display-grouped workspace strip.
+- Full menu-bar workspace hover can use an opt-in interactive desktop preview: the background
+  switches workspace and each managed-window item focuses that exact window when it still exists,
+  with a same-app fallback if it vanished. Its canvas matches the workspace's resolved home screen,
+  preserving that screen's aspect ratio and each window's relative position. Without Screen Recording
+  access it remains a metadata-and-icon preview; with the local off-by-default setting it adds the
+  home display's current wallpaper when macOS exposes one, plus bounded, one-shot, in-memory window
+  thumbnails.
 - A standard menu from the primary app item with Settings and a graceful Quit command; the primary item never switches workspaces.
 - Virtual workspaces that remember window membership and the active workspace across app restarts.
 - Named reusable profiles with local manual/automatic selection, Game Mode, dock and exact-topology triggers, synced abstract display roles, and per-Mac monitor bindings.
@@ -68,10 +76,10 @@ not an installable macOS app.
 - Native sidebar-based, searchable and resizable Settings gives General, Sync, Behavior, Menu Bar,
   Shortcut Guide, and Focus Border their own destinations, separate from reusable configuration
   and controls.
-  Workspaces retains one consolidated master
-  list and inspector for workspace identity, display mode/home, layout geometry, derived shortcuts,
-  reset, and recovery. Wide panes keep their multi-column hierarchy; at compact sizes they switch to
-  explicit sections and stack dense controls instead of clipping them. Its sidebar footer identifies
+  Workspaces uses a horizontal strip of visual tabs followed by Details, Layout, and Repair panels
+  for workspace identity, display home, layout geometry, derived shortcuts, reset, and recovery.
+  Wide panes keep their multi-column hierarchy; at compact sizes they stack dense controls instead
+  of clipping them. Its sidebar footer identifies
   the running version, build, source commit, and Dev configuration when applicable.
 - Two multiple-display modes: unified switching across all displays, or independent active workspaces assigned per display.
 - Workspace-local window focus cycling with `Control-Option-,` and `Control-Option-.` by default, wrapping without selecting
@@ -210,11 +218,15 @@ views. It runs in the same non-hosted test bundle and does not start the app or 
 ./scripts/render-menu-bar-previews.sh /path/to/output-directory
 ```
 
-The selected three-column Workspaces Settings screen has the same isolated production-render path:
+The selected visual-tab Workspaces Settings screen has the same isolated production-render path:
 
 ```sh
 ./scripts/render-settings-preview.sh /path/to/output-directory
 ```
+
+That command renders the selected visual-tab screen in wide and minimum-width Light/Dark states,
+plus wide and minimum-width Dark fixtures with nine workspaces and a selected long name. The focused
+scope is the script default, so the documented command reproduces the overflow evidence directly.
 
 The seven production onboarding stages can likewise be rendered without starting the app:
 
@@ -334,8 +346,13 @@ no-op rather than trying to control those separate application lifecycles as one
 
 Profile definitions are stored as one versioned value and sync atomically through iCloud when sync is
 enabled. New installations start local-only until **Sync settings with iCloud** is explicitly enabled.
-Turning sync off stops cloud reads and writes without deleting local settings or previously synced
-cloud data. The Sync pane lists the complete boundary: the profile library, Menu Bar presentation,
+Enabling sync first requests and validates the existing cloud profile library; that first pull is
+read-only, and all local cloud writes remain blocked until a valid library arrives. An immediate
+empty read is treated as unresolved because iCloud delivery can be delayed. If the account is
+actually empty—or this Mac must deliberately become the source of truth—**Replace iCloud with This
+Mac’s Settings…** is a separately confirmed action and is available before enabling the ordinary
+pull. Turning sync off stops cloud reads and writes without deleting local settings or previously
+synced cloud data. The Sync pane lists the complete boundary: the profile library, Menu Bar presentation,
 global shortcuts, Command Palette activation, focus-following moves, and automatic app unhide can
 sync. This Mac always keeps its active profile and manual pin, automatic trigger mappings,
 per-profile active workspace state and selected Quick App, conservative monitor fingerprints and
@@ -349,8 +366,8 @@ workspaces and 64 display roles per profile, 512 app rules per profile, and 256 
 user-facing name. These deliberately leave room inside iCloud key-value storage's shared 1 MB quota.
 Existing local private-install data is never deleted or truncated to meet a sync limit. If a local
 or remote library exceeds a limit, the local library remains authoritative and General Settings
-shows the reason; when the local copy is valid, recovery requires the explicit **Replace iCloud
-Profile Library with This Mac** action.
+shows the reason; when the local copy is valid, recovery requires the explicit confirmed replacement
+action rather than an ordinary edit or sync toggle.
 
 Automatic selection resolves in a fixed order: a manual pin; this Mac's profile for a foreground
 full-screen declared-game session; an exact known display topology; a generic docked or undocked
@@ -393,11 +410,15 @@ sole configuration authority.
 Workspaces is the single place for workspace-specific configuration. A full-row profile selector in
 the Settings sidebar makes the owner explicit and provides the same non-activating selection used by
 Displays, Applications, and Quick App Shelf. Explicit activation remains in Profile Status rather
-than appearing as another sidebar row. The normal Settings sidebar
-stays on the left, a reorderable workspace master list sits in the centre, and the selected
-workspace's inspector fills the right. At compact widths the master list and selected inspector
-become switchable segments, and paired geometry controls stack when horizontal room runs out. The
-page owns workspace names/order/keys, abstract Home Display roles, Freeform/Tiled/Accordion choice, orientation, Tiled
+than appearing as another sidebar row. The normal Settings sidebar stays on the left. A horizontally
+scrollable row of large workspace tabs shows each workspace's name, key, and a reusable desktop
+preview. Active-profile tabs may read the engine's existing managed-window metadata and reuse the
+same optional in-memory thumbnails as menu-bar hover; inactive-profile tabs retain the truthful
+saved Freeform, Tiled, or Accordion miniature. Selecting a Settings tab only changes what is edited
+and never activates a live workspace. The selected workspace's compact Details panel sits beside the wider Layout and Repair
+inspector. At compact widths the same panels stack beneath the tab strip, and paired geometry
+controls stack when horizontal room runs out. The page owns workspace names/order/keys, abstract
+Home Display roles, Freeform/Tiled/Accordion choice, orientation, Tiled
 gaps and screen padding, Accordion visible-edge padding, and both reusable-setting reset and live
 window recovery. Profiles remains separate for reusable profile management, Displays owns the
 profile's display mode and this Mac's physical monitor bindings, and Shortcuts remains separate for
@@ -413,7 +434,10 @@ native Undo.
 
 Each workspace key produces read-only summaries of the exact derived commands: Navigate-key
 switches to it and Arrange-key sends the focused window there. Add and Duplicate resolve a
-unique name and supported key automatically. Drag reorder, context-menu and VoiceOver Move Up/Down,
+unique name and supported key automatically. Shortcut updates preserve unchanged system
+registrations and add or remove only the affected workspace bindings, so edits take effect without
+relaunching. Drag reorder, context-menu Move Left/Right, VoiceOver
+Move earlier/later,
 safe deletion, native Undo for **Reset This Workspace**, and **Restore WindowRanger Defaults** all
 use the same profile-backed storage path. **Copy Layout** copies another workspace's layout style,
 orientation, gaps, and padding without changing identity, display home, app rules, or window
@@ -578,7 +602,7 @@ focus.
 
 Shortcuts Settings owns the global Navigate and Arrange modifier prefixes and the key-only action map. Recording a key suffix temporarily suspends WindowRanger's Carbon registrations and rejects conflicts with workspace or other command bindings; actions can also be reset or left unassigned for palette-only use. Workspaces owns each profile workspace's one suffix and shows both derived family chords; no default chord is invented for selecting Freeform.
 
-Moving a focused window is send-only by default: the source workspace remains active and focus moves to the next eligible visible window on the same interaction display. **Focus follows moved window** is opt-in in Behavior, and the Command Palette always offers a one-shot **Move & Follow** action. If no local source window remains, internal focus state is cleared rather than selecting a parked or other-display fallback. Focus Border can also opt this Mac into a click-through focused-window border with its own local colour, defaulting to white. Independent local filters can limit the border to Tiled workspaces, workspaces with multiple managed windows, or both. While enabled, Tiled and Accordion reserve four points at each screen edge for the border even when a filter currently hides it; Freeform frames remain user-controlled. The border uses a conservative default corner radius selected by macOS generation because public window metadata does not expose another app's rendered corner radius: macOS 27 and later use 16 points, while earlier releases retain the 10-point fallback. Focus Border owns optional application-specific radius overrides on this Mac. They are independent of profile-owned Application Rules and Quick Apps, so removing or converting either does not erase the local appearance correction. The border also hides for WindowRanger-owned windows, apps identified as games through public bundle metadata, full-screen windows, and while the session is suspended.
+Moving a focused window is send-only by default: the source workspace remains active and focus moves to the next eligible visible window on the same interaction display. **Focus follows moved window** is opt-in in Behavior, and the Command Palette always offers a one-shot **Move & Follow** action. If no local source window remains, internal focus state is cleared rather than selecting a parked or other-display fallback. Focus Border can also opt this Mac into a click-through focused-window border with its own local colour, defaulting to light blue independently of the menu bar's white highlight default. Independent local filters can limit the border to Tiled workspaces, workspaces with multiple managed windows, or both. While enabled, Tiled and Accordion reserve four points at each screen edge for the border even when a filter currently hides it; Freeform frames remain user-controlled. The border uses a conservative default corner radius selected by macOS generation because public window metadata does not expose another app's rendered corner radius: macOS 27 and later use 16 points, while earlier releases retain the 10-point fallback. Focus Border owns optional application-specific radius overrides on this Mac. They are independent of profile-owned Application Rules and Quick Apps, so removing or converting either does not erase the local appearance correction. The border also hides for WindowRanger-owned windows, apps identified as games through public bundle metadata, full-screen windows, and while the session is suspended.
 
 Menu-bar presentation is selected in Menu Bar Settings and syncs with other global settings through iCloud when enabled. **Compact** (the migration-safe default) adapts to the workspace-label choice for each connected logical display: a shortcut key sits in a symbol-specific safe area inside the horizontal-monitor, vertical-monitor, laptop, or combined-display symbol, while a compacted name appears as bare text beside a smaller symbol. It adds no status dot or enclosing badge. Name labels retain up to five characters rather than collapsing to the shortest pressure abbreviation. If that display role's icon is set to None, Compact keeps the workspace key or name as bare text. **Medium** uses an equal-height chip for every display's full active-workspace label. In both modes the interaction display receives a restrained accent, every indicator is informational, and every item opens the app menu. **Full** uses lightweight display groups containing explicit workspace actions; only a primary click on a workspace switches to it. A primary click on the app or display area where present, a secondary click anywhere, or the primary VoiceOver action opens the app menu. Independent Displays shows each connected display's own active workspace simultaneously, while Unified uses one combined-displays signal and one workspace set. Each profile display role has its own Automatic, Horizontal Monitor, Vertical Monitor, Laptop, or None icon choice in Menu Bar Settings. The choice follows profile cloning, transfer, and optional iCloud sync; the actual monitor binding remains local to each Mac and is edited in Displays. Automatic derives the display-aware symbol from the monitor currently bound to the role. None removes only that display block's icon and gap while retaining workspace labels, controls, menu ownership, and accessibility context. Unified keeps one Automatic combined-displays symbol because its block does not represent one physical display. Menu Bar Settings renders these same production display groups in its macOS 27 preview; earlier macOS releases preview their single-item compatibility presentation.
 

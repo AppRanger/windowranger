@@ -36,7 +36,9 @@ installing production hotkeys, asking for Accessibility permission or moving liv
    After the runtime publishers are wired, the onboarding controller presents when its local
    completion version is stale and binds every choice back to this same store. General Settings can
    explicitly restart only that local progress; the Settings window closes before onboarding is
-   presented on the next main-loop turn, and existing configuration remains intact.
+   presented on the next main-loop turn, and existing configuration remains intact. The wizard is
+   a floating auxiliary window on every native macOS Space so testing workspace navigation cannot
+   hide it; permission state comes from the same bounded, prompt-free monitor used by Settings.
 3. `WorkspaceEngine.start()` checks Accessibility trust, enumerates applications/windows and sends
    each candidate through the central admission classifier before it can enter any other subsystem.
 4. Hotkeys, the optional local workspace-swipe monitor, the menu bar, and the Command Palette emit
@@ -224,14 +226,28 @@ when it exceeds the newer sync envelope; writing that library to iCloud is withh
 recovery state until it is eligible. Replacing a rejected remote value is a separate explicit user
 action and never occurs as a side effect of a failed pull.
 
+Joining iCloud is pull-first and write-gated. The initial pull, startup refresh, and external-change
+refresh perform no cloud writes. A valid remote profile library establishes the writable state and
+remains authoritative; an absent value leaves the store waiting because iCloud availability may be
+delayed, while a rejected value leaves it blocked with visible recovery state. Profile edits and all
+supported global-setting writers share the same gate. Establishing this Mac as the source of truth,
+including while ordinary sync is still off, is a separately confirmed action that validates the
+local library before enabling writes and publishing the complete supported payload.
+
 ### Local to one Mac
 
 The active/manual profile selection, automatic trigger mappings, runtime active-workspace state,
 the selected Quick App identity for each profile, monitor fingerprints, role-to-physical-monitor
 bindings, trackpad preferences, Shortcut Guide enablement/size/position, focused-window border
 preferences and per-application radius overrides, versioned onboarding progress/completion,
-Accessibility state, login-item state, diagnostics, and live window
-session remain local. The Workspaces inspector's optional equal-gap and equal-padding links are even
+Accessibility and Screen Recording state, the workspace-thumbnail opt-in, login-item state,
+diagnostics, and live window session remain local. Workspaces visual tabs for the active profile may
+render a read-only descriptor from the engine's existing tracked-window state; inactive-profile tabs
+remain saved-layout miniatures. Selecting a tab never activates a workspace. Optional window
+thumbnails and the home display's current wallpaper are decoded only to bounded preview resolution,
+remain memory-only, and never enter profile, local-session, iCloud, export, or diagnostic storage.
+The inspector's optional equal-gap and
+equal-padding links are even
 narrower ephemeral UI state: they reset when inspection moves to another workspace and never enter
 `WorkspaceLayoutConfiguration`, profile storage, or iCloud. Activating a link on an untouched
 legacy workspace also preserves its nil geometry boundary; only an actual value edit or the explicit
@@ -433,18 +449,25 @@ area; on macOS 27 the standard parent status button owns workspace-shaped tracki
 resolves enter/exit with the same global screen-space geometry as clicks. This compatibility path
 does not add event monitors, access the system menu-bar process, or change gesture exclusivity.
 After a short dwell, the menu-bar controller may attach a nonactivating application shelf beneath
-the hovered workspace. The shelf reads an asynchronous, read-only application summary from the
-workspace engine's existing managed-window state; it does not enumerate Accessibility windows or
-perform writes merely because the pointer hovered. Applications are grouped by normalized bundle
+the hovered workspace. By default it reads an asynchronous, read-only application summary from the
+workspace engine's existing managed-window state. When the local thumbnail option is enabled, the
+same panel instead hosts the reusable interactive desktop preview. Its descriptor uses already
+tracked identity and geometry and never enumerates, unparks, moves, or focuses Accessibility windows
+merely because the pointer hovered. ScreenCaptureKit performs at most one shareable-content
+enumeration for that refresh followed by bounded sequential one-shot captures; failures and
+permission loss retain metadata/icon placeholders. Applications are grouped by normalized bundle
 identifier, with a process fallback for bundle-less apps, and the workspace's focus history chooses
-the representative window before stable layout order. Selecting a shelf row returns one target to
+the representative window before stable layout order. Selecting a shelf row or preview item returns one target to
 the engine, which performs the normal workspace transition and filters its existing verified focus
 pipeline to that application. If the target disappeared, the operation leaves focus neutral instead
 of selecting a different app. Keep-on-all-workspaces apps are omitted because the shelf describes
 direct workspace membership. The shelf embeds its content in AppKit's native regular Liquid Glass
-surface on macOS 26 and later, with the system menu material as the older-OS fallback. It enables a
-vertical scroller only when the bounded eight-row viewport actually overflows; the empty state and
-ordinary app lists do not advertise scrolling. Returning from the shelf to the macOS 27 status item
+surface on macOS 26 and later, with the system menu material as the older-OS fallback. The list
+enables a vertical scroller only when its bounded eight-row viewport overflows; the preview uses a
+bounded canvas matching the resolved home display's full bounds and aspect ratio. Windows are mapped
+in that display's coordinate space, and windows wholly on other displays are omitted. Preview
+background clicks perform the ordinary workspace switch and item
+clicks preserve application-focus behavior. Returning from the shelf to the macOS 27 status item
 crosses a small non-window gap where AppKit may omit a new tracking-area enter. During the existing
 dismissal grace, the controller therefore performs one delayed re-sample through the display
 group's existing global-pointer resolver. A resolved workspace restores the normal hover state and
@@ -507,12 +530,16 @@ the Shelf opens or closes. Arrange content is suppressed because ordinary focuse
 arrangement does not act on a Shelf-owned window. The Focus Border remains independent. Shortcut
 recording, protected game sessions, sleep, inactive login sessions, display changes and termination
 stop the passive monitor and clear the panel so a missed modifier release cannot leave it visible.
+Hot-key refreshes reconcile owner/chord identities: unchanged Carbon tokens remain live and only
+added, removed, or changed bindings touch the system registration service. Every refresh uses the
+same workspace snapshot that triggered the runtime update and records privacy-safe completion counts
+and owner IDs, so a dynamic registration fault can be separated from command dispatch.
 
 The optional focused-window highlight
 uses the same nonactivating, click-through boundary, polls only while enabled on this Mac, and excludes
 WindowRanger-owned windows, apps identified as games through the same public bundle metadata used by
-full-screen safety, and full-screen windows. Its local white-by-default colour is independent of the
-synced menu-bar accent. Automated Tiled and
+full-screen safety, and full-screen windows. Its local light-blue default is independent of the
+synced white menu-bar accent. Automated Tiled and
 Accordion geometry reserves a four-point screen-edge clearance while it is enabled; Freeform
 geometry remains untouched. Optional Tiled-only and multiple-window filters consume the engine's
 managed-window workspace snapshot; if a requested workspace condition cannot be proven, the border

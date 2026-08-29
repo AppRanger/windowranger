@@ -130,6 +130,7 @@ struct SettingsSearchEntry: Identifiable, Equatable, Sendable {
 enum SettingsCatalog {
     static let entries: [SettingsSearchEntry] = [
         SettingsSearchEntry(id: "accessibility", category: .general, title: "Accessibility permission", description: "Allow WindowRanger to discover, move, resize, and focus windows.", synonyms: ["privacy", "grant access", "TCC"]),
+        SettingsSearchEntry(id: "workspace-window-previews", category: .general, title: "Workspace window previews", description: "Optionally use Screen Recording access for in-memory window thumbnails in workspace previews.", synonyms: ["screen capture", "screenshot", "thumbnail", "privacy", "menu bar hover", "fake desktop"]),
         SettingsSearchEntry(id: "launch-at-login", category: .general, title: "Open at login", description: "Start WindowRanger automatically after signing in.", synonyms: ["startup", "login item"]),
         SettingsSearchEntry(id: "run-setup-again", category: .general, title: "Run Setup Again", description: "Reopen the guided WindowRanger setup from the Welcome step without resetting existing choices.", synonyms: ["onboarding", "wizard", "welcome", "walkthrough", "restart setup"]),
         SettingsSearchEntry(id: "check-for-updates", category: .updates, title: "Check for updates", description: "Check the signed WindowRanger update feed from a Stable or Beta build.", synonyms: ["Sparkle", "new version", "software update"]),

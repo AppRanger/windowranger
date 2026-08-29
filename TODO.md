@@ -171,6 +171,103 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-102 — Keep newly added workspace shortcuts live without relaunching
+
+- **Type:** Global shortcut registration bug
+- **Priority:** P1
+- **Status:** Live validation — diagnostic-supported hardening is implemented and focused automated
+  verification passes; the exact original Carbon delivery failure was repaired by restart but could
+  not be deterministically isolated from the old diagnostics.
+- **User-observed:** On a new Mac, the four initial workspace switch and move shortcuts worked, but
+  the shortcut pair for a newly added fifth workspace did nothing until WindowRanger was restarted.
+- **Expected:** Adding, removing, renaming, reordering, or rekeying a workspace updates its global
+  switch and move shortcuts immediately, without disrupting unchanged shortcuts or requiring a
+  relaunch.
+- **Diagnostic support:** The affected session repeatedly completed five-workspace profile
+  transitions and the Shortcut Guide exposed five valid, conflict-free Navigate actions. The first
+  four shortcuts continued to dispatch, while the reported fifth action produced no recorded Carbon
+  event. After a clean restart, the added workspace UUID dispatched successfully. Pause, shortcut
+  recording, fullscreen/game scope, invalid keys, conflicts, and logged Carbon registration or
+  unregistration failures do not fit the captured session. The prior diagnostics did not record
+  successful registration snapshots, so the failed internal step remains unproven.
+- **Implemented:** Hot-key refreshes now reconcile the desired owner/chord set instead of tearing
+  down every working Carbon registration. An unchanged binding retains its known-good token; adding
+  one workspace registers only its switch and move bindings. Runtime callers pass the exact emitted
+  workspace snapshot, and privacy-safe completion diagnostics record the trigger, scope, workspace
+  IDs, eligible/registered counts and owners, issue counts, plus deferred shortcut-recording refreshes.
+- **Automated evidence:** The focused Hot Key and Settings suite proves a four-to-five workspace
+  update preserves every existing token, adds exactly two registrations, exposes both new owners,
+  retries isolated failures without replacing working bindings, safely retries failed removals, and
+  records the completed snapshot without workspace names. The combined 216 focused shortcut,
+  Settings, onboarding, permission and colour tests pass. The complete non-hosted suite passes all
+  814 tests; test isolation, Release static analysis, the unsigned universal Release app build, both
+  unsigned Stable/Beta DMG smoke packages, and whitespace verification also pass.
+- **Review evidence:** Skeptical read-only review found no P0-P2 correctness or regression issue in
+  the registration reconciliation, exact AppDelegate snapshot wiring, onboarding window/permission
+  behavior, or colour migration. Its independent focused run passed all 170 selected tests.
+- **Live boundary:** In the signed candidate, add a fifth workspace, immediately switch to it and
+  move a focused window to it, then change its key and repeat without relaunching. Also confirm the
+  first four shortcuts remain responsive throughout. If it fails, capture the new
+  `registration-completed` record before restarting.
+
+### WR-101 — Prevent a new Mac from replacing existing iCloud settings with defaults
+
+- **Type:** Data-loss sync bug and recovery
+- **Priority:** P0
+- **Status:** Live validation — local recovery completed and independently verified with sync off;
+  the pull-first write barrier and explicit replacement path are implemented, fully verified, and
+  installed as a signed daily build, and verified against the recovered local data after launch.
+  Live recovery publication remains.
+- **Observed:** On a newly installed Mac, enabling **Sync settings with iCloud** replaced the existing
+  custom cloud profile library with the new installation's defaults. This Mac then received that
+  valid default library and replaced its local custom configuration. Both Macs now show the same
+  default setup.
+- **Expected:** Joining iCloud from a new Mac must first use an existing valid cloud library and must
+  never publish a fresh/default local library over it. Replacing iCloud with this Mac must be a
+  separate explicit action with clear consequences.
+- **Reproduction and cause:** `SettingsStore.iCloudSyncEnabled.didSet` calls `pushToICloud()` as soon
+  as the switch becomes true, before any cloud pull. The onboarding switch uses the same setter. The
+  existing `testReenablingPushesLocalSettingsWithoutDeletingExistingCloudData` codifies this unsafe
+  direction. A later pull then correctly treats the newly uploaded default library as authoritative.
+- **Recovery evidence:** The live preference domain contains a 2,452-byte `Default` profile library
+  with five workspaces and no app rules. The 08:37 Time Machine backup contains the pre-incident
+  9,394-byte library: `Desktop 2 screens` and `Laptop`, nine workspaces each, 14 and 3 app rules, and
+  the configured Quick Apps. Its 2,759-byte Mac-local state is also present. Do not restore while
+  either Mac can continue syncing. Preserve the backed-up preference file and verify decoded profile
+  names before any replacement.
+- **Recovery result:** With both installations closed, preserved the damaged live preferences and
+  the 08:37 Time Machine source separately, restored a third working copy with iCloud sync forced
+  off, and read the live preference domain back through macOS. It contains `Desktop 2 screens` and
+  `Laptop`, nine named workspaces each, 14 and 3 app rules, the configured Quick Apps, and the prior
+  `key` menu-bar label mode. WindowRanger remained closed throughout the restore.
+- **Implemented:** Enabling sync now synchronizes and performs a read-only pull. Every profile and
+  supported global-setting cloud writer is blocked until a valid remote library arrives; absent
+  data remains waiting for delayed delivery and rejected data remains blocked. Settings and
+  onboarding expose the waiting state and a separately confirmed complete replacement action. That
+  action can publish a verified local library while ordinary sync is still off, which preserves a
+  recovery source before replacing known-bad but valid cloud content. The confirmation states that
+  this also enables ongoing sync, and an invalid local library now produces a visible issue without
+  enabling sync or writing anything.
+- **Focused evidence:** 21 iCloud tests cover local-only startup, saved enablement, valid remote
+  precedence with zero writes, delayed arrival, edits while waiting, rejected data, oversized local
+  data, explicit empty-cloud initialization, and recovery replacement before any pull. The related
+  Menu Bar and Settings tests also pass.
+- **Complete automated evidence:** The complete isolated non-hosted suite passes all 809 tests, test
+  isolation passes, Debug static analysis passes, and the working tree has no whitespace errors.
+- **Review evidence:** Skeptical review found no ordinary P0/P1 data-loss path. Its two P2 recovery
+  UI findings—the silent invalid-local failure and undisclosed sync enablement—were corrected and
+  the 21-test iCloud suite rerun successfully. Real iCloud delayed-delivery behavior remains a signed
+  live-validation boundary.
+- **Installed evidence:** Signed universal Debug daily build `539e0bf945e9-dirty` was installed and
+  launched from `/Applications/WindowRanger.app`. Strict code-sign verification passed. The live
+  domain still has iCloud sync off and retains `Desktop 2 screens` with 9 workspaces, 14 app rules,
+  and 2 Quick Apps plus `Laptop` with 9 workspaces and 3 app rules.
+- **Acceptance:** First enable from Settings and onboarding never writes before resolving an existing
+  cloud library; a valid existing remote wins without any local write; replacing cloud content is an
+  explicit confirmed action; an actually empty cloud store has a safe, deliberate initialization
+  path; disabling remains local-only and non-destructive. Cover delayed cloud availability, valid and
+  rejected remote data, defaults versus customised local data, both enablement surfaces, and recovery.
+
 ### WR-097 — Remove the focused application from Applications via Command Palette
 
 - **Type:** Command Palette and application-configuration improvement
@@ -392,6 +489,107 @@ smallest useful outcome and acceptance boundary.
 - **Live validation remaining:** Complete the wider immediate-layout, both-link, Undo,
   workspace/profile reset, compact resizing,
   keyboard-adjustment, and VoiceOver checks.
+
+### WR-100 — Add reusable interactive workspace previews
+
+- **Type:** Feature and privacy-sensitive presentation infrastructure
+- **Priority:** P2
+- **Status:** Live validation — implemented, skeptically reviewed, visual-fixture checked, all 806
+  non-hosted tests passed, static analysis passed, and the unsigned universal Debug app built on
+  28 August 2026. The signed daily Debug build including the home-display aspect-ratio refinement
+  was installed on 29 August 2026. The subsequent per-window capture-aspect fix is automated-test
+  verified and installed for live validation. The subsequent Settings initial-fill fix is also
+  automated-test verified and installed for live validation. The wallpaper refinement is implemented
+  and has passed its focused and complete non-hosted suites plus Debug static analysis. Its signed
+  daily Debug build was installed on 29 August 2026; the manual matrix below remains unverified.
+- **Requested:** Add one reusable workspace-preview component that can present a workspace as a
+  scaled desktop, optionally enrich eligible managed windows with ScreenCaptureKit thumbnails, and
+  support whole-workspace activation, independent item activation, or both interaction modes.
+- **Selected direction:** Keep the permission-free metadata preview as the universal fallback. Add
+  a separate Mac-local, off-by-default **Show window previews** setting for captured pixels. Request
+  Screen Recording access only from that explicit Settings action; never request it at startup,
+  merely by opening Settings or the menu-bar shelf, or from tests. Use bounded one-shot captures and
+  a shared in-memory cache rather than a stream or polling loop.
+- **First integration boundary:** Reuse the same component in Workspace Settings tabs and the Full
+  menu-bar workspace hover shelf. Settings tab selection remains editing-only and must not activate
+  a live workspace. The menu-bar instance keeps the existing click semantics: background activation
+  switches to the workspace, while an item switches to that workspace and focuses its exact
+  managed window when still valid, with a same-app fallback if that window vanished.
+- **Display geometry refinement:** Following installed-build feedback, each preview canvas uses the
+  workspace's resolved home-display bounds rather than the union of all connected displays. The
+  preview therefore has the same aspect ratio as that screen and preserves each window's relative
+  position on it; windows wholly on another screen are not captured into that screen's preview.
+  A second installed-build report showed empty side bars inside captured windows on an ultrawide
+  display. Each one-shot capture now uses an aspect-correct size bounded by the shared thumbnail
+  maximum instead of forcing every window into a 320-by-200 pixel buffer; this removes
+  ScreenCaptureKit letterboxing without stretching content and reduces retained pixels where the
+  window is not 16:10.
+- **Privacy and safety boundary:** Captured pixels are never persisted, synced, exported, logged, or
+  included in diagnostics. Preview construction never unparks, moves, resizes, raises, unhides, or
+  focuses a window. Denial, revocation, capture failure, protected content, parked-window capture
+  limitations, and a disabled setting all fall back to app icons and privacy-safe placeholders.
+  Cache entries are discarded on semantic window-identity/geometry invalidation and app lifecycle
+  teardown. Authorization is rechecked on app activation, menu presentation, and after capture.
+- **Performance boundary:** Capture only final thumbnail-sized one-shot images, coalesce stale
+  requests, serialize capture batches globally, cap each workspace at 32 captured items, and
+  enforce hard cache count and approximate-byte ceilings before and during capture. Do
+  not create an `SCStream`, background refresh timer, or full-resolution per-workspace bitmap cache.
+- **Settings initial-fill refinement:** Installed-build testing showed that tabs initially displayed
+  metadata icons until each workspace was selected. Settings now requests pixel enrichment for all
+  active-profile workspace tabs on appearance, with the selected tab requested first. Those batches
+  remain globally serialized and subject to the existing item, entry, and 24 MB cache ceilings.
+- **Wallpaper refinement:** When pixel previews are enabled and Screen Recording is authorized, the
+  reusable preview also resolves the current wallpaper for the workspace's home display through
+  AppKit, decodes it directly to the final preview size, and lays managed windows over it. Wallpaper
+  pixels share the existing 24 MB repository budget and lifecycle purge rules; the provider's small
+  per-display decode cache is explicitly cleared on disable, revocation, and repository teardown.
+  Dynamic, protected, or unavailable wallpaper keeps the neutral fallback rather than triggering
+  any additional capture or permission request.
+- **Acceptance:** Pure model tests cover geometry normalization and the three interaction modes;
+  injected permission/capture tests cover no-prompt metadata fallback, grant/deny/revoke, stale
+  result rejection, and cache bounds; Settings persistence proves the opt-in remains local and
+  absent from profile/iCloud data. Focused menu-bar and Settings tests, complete non-hosted
+  verification, an unsigned universal build, skeptical review, and a separately approved signed
+  install are required. Live validation must exercise permission grant/revoke, protected or blank
+  content, inactive parked workspaces, multiple windows from one app, multiple displays, hover
+  dismissal, whole-workspace clicks, item clicks, and Settings tab rendering.
+- **Automated evidence:** `WorkspacePreviewTests` has 20 focused tests for three-mode interaction,
+  clicked-window priority with same-app fallback, geometry, explicit permission request and
+  revocation, no-prompt fallback, empty-workspace suppression, hard entry/byte/item budgets,
+  semantic invalidation, stale-result rejection, globally serialized byte-budget reservation, and
+  non-blocking purge plus automatic deferred retry around a non-cooperative capture, home-display
+  canvas selection, negative-coordinate per-screen geometry, aspect-correct bounded capture sizing
+  for ultrawide half-screen windows, final-size wallpaper decoding, empty-workspace wallpaper loading
+  without ScreenCaptureKit enumeration, and complete wallpaper-pixel purge on permission revocation.
+  The reusable fallback also has an offscreen Retina fixture.
+  Landscape and portrait Retina fixtures were rendered and inspected. The local quick verification
+  script passed all 806 tests; Debug static analysis
+  and an unsigned `arm64` + `x86_64` app build also passed. The Apple Development-signed universal
+  daily build from `539e0bf945e9-dirty` was installed at `/Applications/WindowRanger.app`, launched
+  successfully, and retained the prior daily bundle at `/Applications/.WindowRanger.previous`.
+  The home-display aspect-ratio refinement was subsequently installed on 29 August 2026 from the
+  same dirty source marker and relaunched as process `89169`. The installed executable, Debug dylib,
+  and preview dylib match the just-built signed candidate byte for byte; the previous daily bundle
+  remains recoverable at `/Applications/.WindowRanger.previous`. The per-window capture-aspect fix
+  passed the 17 focused tests and the complete 802-test non-hosted suite, then was installed on
+  29 August 2026 as an Apple Development-signed universal Debug build from dirty source marker
+  `539e0bf945e9-dirty`. The installed executable and Debug dylib match the signed build products byte
+  for byte. Fresh diagnostics session `199E96F3-BB3F-4859-B3AC-F4A8D6C55DAC` reached
+  `startup-state-ready` without a new error, fault, timeout, or failed event. The previous daily
+  bundle remains recoverable at `/Applications/.WindowRanger.previous`; visual validation of the
+  ultrawide capture remains with the maintainer. The later Settings initial-fill policy is covered
+  by a focused ordering test and the complete 803-test non-hosted suite. It was then installed on
+  29 August 2026 in an Apple Development-signed universal Debug candidate from dirty source marker
+  `539e0bf945e9-dirty`. The installed executable and Debug dylib match that build byte for byte;
+  fresh diagnostics session `43D8C424-03A7-42CA-ADB5-CEBDEDB0EEC7` reached
+  `startup-state-ready` without a new error, fault, timeout, or failed event. Live initial-fill
+  validation remains with the maintainer. The wallpaper refinement subsequently passed all 20
+  focused preview tests, the complete 806-test non-hosted suite, and Debug static analysis. It was
+  installed on 29 August 2026 as an Apple Development-signed universal Debug daily build from dirty
+  source marker `539e0bf945e9-dirty`; the installed executable, Debug dylib, and preview dylib match
+  the signed build products byte for byte. Fresh diagnostics session
+  `C1A6558D-F155-4441-8C6D-9FF5F3DBA4B9` reached `startup-state-ready` without a new error, fault,
+  timeout, or failed event. Live wallpaper composition remains with the maintainer.
 
 ### WR-096 — Suppress unchanged periodic engine-state callbacks
 
@@ -1548,6 +1746,13 @@ smallest useful outcome and acceptance boundary.
   signature verification, matched the tested daily build bundle exactly, and resumed from
   `/Applications/WindowRanger.app`. The maintainer confirmed the complete visible shortcut-menu
   targets, Focus Border switch, and colour picker all respond correctly in this installed build.
+- **New-machine correction:** The wizard window is now a floating auxiliary surface that joins all
+  native macOS Spaces, so exercising workspace shortcuts cannot strand it elsewhere. Its
+  Accessibility step shares the bounded, prompt-free permission monitor used by Settings, refreshes
+  on appearance and app activation, and continues polling while the grant is missing so an external
+  System Settings change turns green without a second click. Ten focused onboarding and 24 Utility
+  Settings tests pass as part of the 216-test combined verification and complete 814-test suite.
+  Release static analysis and the unsigned universal Release build pass. Signed live validation remains.
 - **Live boundary:** The first-run gate, app activation/Space placement, Accessibility permission
   handoff, keyboard traversal, application picker, resume after closing, and final completion still
   require explicit maintainer validation before Done.
@@ -1715,9 +1920,8 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Settings information-architecture improvement
 - **Priority:** P1
-- **Status:** Live validation — the selected profile-tabs follow-up is implemented, rendered, fully
-  verified, installed, and accepted for its core interaction; optional visual polish and a dedicated
-  keyboard/VoiceOver interaction pass remain before marking the broader Settings item Done.
+- **Status:** Live validation — visual direction 2 for Workspaces is implemented and passes the
+  complete automated/design gate; signed installed-app interaction remains pending.
 - **Requested:** 21 August 2026.
 - **Smallest useful outcome:** Keep General focused on permissions and startup; give Sync, Menu Bar,
   and Focus Border their own destinations; and move recovery, focus-following moves, trackpad
@@ -1796,6 +2000,57 @@ smallest useful outcome and acceptance boundary.
   routing, and merged search. Render the production screen at wide, compact, Light, Dark, inactive,
   and several-profile states; compare it with selected direction 3; then run the complete non-hosted
   gate and unsigned universal build before requesting a signed daily install.
+- **Ninth user-observed follow-up:** Replace the Workspaces master-list column with a horizontal row
+  of visual workspace tabs and a trailing add tab. The maintainer selected direction 2: each tab
+  uses a truthful miniature of its Freeform, Tiled, or Accordion layout, with the workspace name and
+  key beneath it; the selected workspace then uses a compact Details panel beside the wider Layout
+  and Repair inspector.
+- **Ninth follow-up boundary:** This is a presentation and interaction recomposition, not a new
+  workspace model. Preserve stable UUID selection, profile-owned definitions/order, drag and
+  accessible reordering, add/duplicate/delete, unique names and keys, search deep links, Home
+  Display roles, derived shortcuts, layout copy/reset, legacy geometry, live repair, inactive-profile
+  isolation, and the transient Tiled link state. Miniatures describe saved layout style only and do
+  not represent or activate current windows. Compact Settings must retain every action without
+  requiring a second master-list screen.
+- **Ninth follow-up acceptance:** Wide and compact layouts keep the tab strip, truthful layout
+  miniatures, selected-workspace identity, and all existing controls usable with keyboard and
+  VoiceOver. Deterministic coverage proves selection reconciliation across reorder/delete/profile
+  changes, search-to-tab selection, CRUD/reorder behavior, layout-preview semantics, and no live
+  activation side effect. Render production Light/Dark, Freeform/Tiled/Accordion, long-name,
+  many-workspace, conflict, and minimum-width states against selected direction 2; then run the
+  complete non-hosted gate, static analysis, universal build, and skeptical review before requesting
+  a signed daily install.
+- **Tenth user-observed follow-up:** After installing the visual-tab candidate, place Duplicate and
+  Delete together on one balanced row and remove the redundant visible Move Left/Right buttons.
+  Drag reorder remains the primary pointer interaction; context-menu Move Left/Right and VoiceOver
+  Move earlier/later remain available as non-drag alternatives.
+- **Eleventh user-observed follow-up:** The two derived workspace shortcuts consumed too much space
+  and their filled keycaps looked like editable shortcut recorders. Replace them with a compact
+  Generated shortcuts summary using short action names and plain read-only shortcut text. State
+  directly that the Workspace Key above updates both commands and global Shortcuts owns their
+  modifiers.
+- **Tenth/eleventh follow-up installed candidate:** With explicit maintainer approval on 28 August
+  2026, the consolidated Duplicate/Delete row and compact Generated shortcuts summary were built,
+  signed, installed, and relaunched as Debug daily candidate `539e0bf945e9-dirty` from
+  `/Applications/WindowRanger.app` as process `9508`. Strict signature validation, Apple Development
+  authority, Team ID `44NAD22AK6`, canonical bundle identifier, embedded dirty source marker,
+  universal `x86_64 arm64` architectures, running executable path, and byte-for-byte equality with
+  the just-built executable and Debug/preview dylibs were verified. The previous daily remains
+  recoverable at `/Applications/.WindowRanger.previous`; hands-on visual and interaction validation
+  remains pending.
+- **Twelfth user-observed follow-up:** In Tiled geometry, Keep equal placed its checkbox after the
+  label while Keep all sides equal placed it before the label, so the related controls looked
+  mirrored and did not align. Use one shared label-then-checkbox row and the same wide-layout column
+  for both link controls; preserve the stacked compact fallback and existing link behavior.
+- **Twelfth follow-up installed candidate:** With explicit maintainer approval on 28 August 2026,
+  the equality-row alignment and dedicated Tiled visual fixture were built, signed, installed, and
+  relaunched as Debug daily candidate `539e0bf945e9-dirty` from
+  `/Applications/WindowRanger.app` as process `14239`. Strict signature validation, Apple
+  Development authority, Team ID `44NAD22AK6`, canonical bundle identifier, embedded dirty source
+  marker, universal `x86_64 arm64` architecture, running executable path, and byte-for-byte equality
+  with the just-built executable and Debug/preview dylibs were verified. The previous daily remains
+  recoverable at `/Applications/.WindowRanger.previous`; hands-on Tiled Settings validation remains
+  pending.
 - **Implemented:** Added General, Sync, Behavior, Menu Bar, and Focus Border destinations; collected
   reusable feature configuration beneath Configuration and global input surfaces beneath Controls.
   Settings search opens the owning destination. Saved Appearance selections resolve to Menu Bar,
@@ -1844,6 +2099,34 @@ smallest useful outcome and acceptance boundary.
   display-setup ownership remain visibly distinct. The first visual direction is accepted as a good
   functional starting point; unspecified refinement is intentionally deferred until the related
   Workspaces direction is explored rather than guessed into this checkpoint.
+- **Workspace-tabs implementation:** Replaced the Workspaces master list and compact list/detail
+  mode with a horizontally scrollable row of equal visual tabs plus a trailing dashed Add Workspace
+  tab. Freeform, Tiled, and Accordion use abstract saved-style miniatures only; selection remains a
+  Settings-local UUID and automatically scrolls into view without activating the engine. Wide
+  Settings places a 320-point Details panel beside the flexible Layout/Repair column; compact
+  Settings stacks the same complete panels beneath the retained tab strip. Drag/drop, drop-to-end,
+  a single Duplicate/Delete action row, context-menu Move Left/Right, VoiceOver Move earlier/later,
+  CRUD, Home Display, shortcuts, layout
+  copy/geometry/reset, collection reset, and active-workspace repair retain their existing store or
+  engine owners.
+- **Workspace-tabs automated evidence:** The complete non-hosted suite passes 783 tests with zero
+  failures. Focused coverage proves UUID selection reconciliation, exact search deep links, profile-
+  scoped CRUD/reorder/bindings, layout-specific controls, and saved-style miniature semantics. The
+  documented production renderer emits six Light/Dark, wide/minimum-width, conflict, long-name, and
+  nine-workspace fixtures by default; combined full and focused comparisons against selected
+  direction 2 have no remaining P0-P2 mismatch. Release static analysis passes, the unsigned Release
+  app builds as universal `x86_64 arm64`, unsigned Stable/Beta DMG smoke packages verify, and a
+  skeptical review found no P0/P1 code regression after its two documentation/render-wiring P2
+  findings were corrected. Pointer drag/drop, keyboard traversal, VoiceOver, inactive-profile
+  switching, search deep links, and live repair remain signed installed-app validation.
+- **Workspace-tabs installed candidate:** With explicit maintainer approval on 28 August 2026,
+  signed universal Debug daily candidate `539e0bf945e9-dirty` was installed and relaunched from
+  `/Applications/WindowRanger.app` as process `3786`. Strict signature validation, Apple Development
+  authority, Team ID `44NAD22AK6`, canonical bundle identifier, embedded dirty source marker,
+  `x86_64 arm64` architectures, running executable path, and byte-for-byte equality of the installed
+  executable and Debug/preview dylibs with the just-built candidate were verified. The previous
+  signed daily remains recoverable at `/Applications/.WindowRanger.previous`; hands-on Workspace
+  interaction remains pending.
 - **Automated evidence:** The revised Settings/navigation selection passes 131 focused tests. The
   final profile-icon refinement passes 46 focused profile, transfer, and rendering tests, and the
   complete non-hosted suite passes 649 tests, including inactive-profile editing across workspaces,
@@ -2268,13 +2551,17 @@ smallest useful outcome and acceptance boundary.
   has already been granted directly in macOS System Settings rather than through WindowRanger's
   Grant Access button.
 - **Expected:** The status reflects the running app identity's current Accessibility trust whenever
-  General Settings appears or WindowRanger becomes active. While the pane is visible and access is
-  still missing, it performs a lightweight bounded-frequency trust check so an external grant is
-  reflected without closing or reopening Settings. It must not repeat the system prompt.
+  General Settings or the setup wizard appears, or WindowRanger becomes active. While either surface
+  is visible and access is still missing, it performs a lightweight bounded-frequency trust check so
+  an external grant is reflected without closing, reopening, or clicking twice. It must not repeat
+  the system prompt.
 - **Acceptance:** An injected monitor test proves false-to-true external grants and later revocation
   are reflected without requesting permission. Focused Settings tests, the complete non-hosted
   suite, and an unsigned universal app build pass; signed live validation remains required.
-- **Automated evidence:** All 21 focused Utility Settings tests and all 577 non-hosted tests pass;
+- **Automated evidence:** All 24 focused Utility Settings tests, including deterministic wizard-style
+  polling from false to true, pass in the 216-test combined verification. The earlier complete 577-test
+  non-hosted suite is superseded by the complete 814-test pass; test isolation, Release static
+  analysis, and the unsigned universal Release app build also pass;
   test isolation and the unsigned universal Debug app build also pass. With explicit approval, the
   signed universal Debug candidate was installed, its signature/running path were verified, and its
   startup Accessibility geometry write succeeded. Live Settings status confirmation remains.
@@ -3155,7 +3442,8 @@ smallest useful outcome and acceptance boundary.
 - **Priority:** P1
 - **Status:** Live validation
 - **Implemented:** General Settings now has an off-by-default, per-Mac option with its own local
-  border colour, defaulting to white. It monitors only while enabled and draws a nonactivating,
+  border colour, defaulting to light blue (`#3399FF`) independently of the menu bar's white default.
+  Existing valid saved colours, including white, are preserved. It monitors only while enabled and draws a nonactivating,
   click-through panel. Tiled and Accordion layouts reserve four points at screen edges while the
   option is enabled so the border remains visible; Freeform geometry stays user-controlled. Two
   independent local filters can restrict the border to Tiled workspaces and to workspaces containing
@@ -3183,9 +3471,14 @@ smallest useful outcome and acceptance boundary.
   per-app radius override, and 16-point macOS 27 automatic default work as intended. The follow-up
   declared-game exclusion is installed in the signed Debug daily build for `8b649ad3f3f9` but still
   needs live validation with a detected game window.
+- **Default-colour correction:** Focus Border now uses a dedicated light-blue default token rather
+  than inheriting the menu-bar highlight default. Missing and malformed focus colours repair to light
+  blue; valid stored colours remain unchanged. Menu-bar white and focus-border light blue are covered
+  independently by the 216-test combined verification and complete 814-test suite. Release static
+  analysis and the unsigned universal Release build pass.
 - **Remaining live boundary:** Enable **Highlight the focused window** in General Settings and
   confirm the border tracks real focus, movement, and resizing on both displays without taking focus
-  or intercepting clicks. Confirm the white default and custom colours, the Tiled/Accordion edge
+  or intercepting clicks. Confirm the light-blue default and custom colours, the Tiled/Accordion edge
   margin on both displays, unchanged Freeform geometry, Settings, declared-game and full-screen
   exclusion, returning a per-app radius override to Automatic,
   disable/reenable, and sleep/wake before marking this Done.

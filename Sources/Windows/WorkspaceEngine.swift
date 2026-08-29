@@ -1643,6 +1643,21 @@ struct WorkspaceApplicationTarget: Equatable, Sendable {
     }
 }
 
+enum WorkspacePreviewFocusCandidatePolicy {
+    static func prioritizing(
+        _ selectedWindowKey: WindowKey?,
+        in candidates: [WindowKey]
+    ) -> [WindowKey] {
+        guard let selectedWindowKey,
+              let selectedIndex = candidates.firstIndex(of: selectedWindowKey)
+        else { return candidates }
+        var result = candidates
+        result.remove(at: selectedIndex)
+        result.insert(selectedWindowKey, at: 0)
+        return result
+    }
+}
+
 struct WorkspaceApplicationSummary: Identifiable, Equatable, Sendable {
     let id: String
     let target: WorkspaceApplicationTarget
@@ -1721,6 +1736,7 @@ enum WorkspaceApplicationSummaryPolicy {
 
 final class WorkspaceEngine {
     var onStateChanged: ((WorkspaceEngineState) -> Void)?
+    var onWorkspacePreviewStateChanged: ((Set<UUID>) -> Void)?
     var onQuickAppSelectionChanged: ((String) -> Void)?
     var onWorkspaceLayoutChanged: ((UUID, WorkspaceLayout) -> Void)?
     var onWorkspaceLayoutConfigurationChanged: ((UUID, WorkspaceLayoutConfiguration) -> Void)?
@@ -1751,6 +1767,13 @@ final class WorkspaceEngine {
         let key: WindowKey
         let element: AXUIElement
         let frame: WindowFrame?
+    }
+
+    private struct WorkspacePreviewStateMember: Equatable {
+        let key: WindowKey
+        let intendedFrame: CGRect
+        let layoutOrder: Int
+        let isLastFocused: Bool
     }
 
     private struct FullscreenWindowSession {
@@ -2054,6 +2077,9 @@ final class WorkspaceEngine {
     private var foregroundFullscreenGameSessionKey: WindowKey?
     private var lastEmittedFullscreenGameSession: FullscreenGameSessionSnapshot?
     private var stateEmissionGate = WorkspaceEngineStateEmissionGate()
+    private var workspacePreviewObservationEnabled = false
+    private var hasWorkspacePreviewStateBaseline = false
+    private var workspacePreviewStateByWorkspace: [UUID: [WorkspacePreviewStateMember]] = [:]
     private var declaredGameByBundleIdentifier: [String: Bool] = [:]
     private var gameModeEligibilityByBundleIdentifier: [String: Bool] = [:]
     private var lastBroadWindowRefreshDate = Date.distantPast
@@ -4610,12 +4636,181 @@ final class WorkspaceEngine {
         }
     }
 
+    /// Builds a read-only description for the reusable workspace preview. This reuses already
+    /// tracked windows and never enumerates, unparks, focuses, or writes to an Accessibility
+    /// element. Active windows contribute their current frame; inactive managed layouts use their
+    /// last solved geometry so the preview does not mistake the parking coordinate for the desktop.
+    func setWorkspacePreviewObservationEnabled(_ enabled: Bool) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.workspacePreviewObservationEnabled = enabled
+            if !enabled {
+                self.hasWorkspacePreviewStateBaseline = false
+                self.workspacePreviewStateByWorkspace.removeAll()
+            }
+        }
+    }
+
+    func workspacePreviewDescriptor(
+        for workspaceID: UUID,
+        workspaceName: String,
+        completion: @escaping (WorkspacePreviewDescriptor) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self,
+                  self.workspaces.contains(where: { $0.id == workspaceID })
+            else {
+                DispatchQueue.main.async {
+                    completion(WorkspacePreviewDescriptor(
+                        workspaceID: workspaceID,
+                        name: workspaceName,
+                        canvasFrame: CGRect(x: 0, y: 0, width: 1, height: 1),
+                        items: []
+                    ))
+                }
+                return
+            }
+
+            let displays = Self.activeDisplays()
+            let homeDisplayIdentifier = self.workspaceHomeDisplayIdentifier(
+                for: workspaceID,
+                displays: displays
+            )
+            let trackedItems = self.windows.values.filter { tracked in
+                guard !self.isDropDownAppWindow(tracked.key),
+                      tracked.workspaceID == workspaceID,
+                      !self.ignoredWindowKeys.contains(tracked.key),
+                      !self.temporarilyDeferredWindowKeys.contains(tracked.key),
+                      !self.resolvedRule(for: tracked.bundleIdentifier).keepsOnAllWorkspaces,
+                      NSRunningApplication(processIdentifier: tracked.processIdentifier) != nil
+                else { return false }
+                return true
+            }
+            let layout = self.workspaceLayout(for: workspaceID)
+            let isActive = self.isWorkspaceActive(workspaceID)
+            var previewFrames: [WindowKey: WindowFrame] = [:]
+
+            for tracked in trackedItems {
+                if isActive,
+                   let current = AccessibilityWindow.frame(of: tracked.element),
+                   Self.isMeaningfullyVisible(current, displays: displays) {
+                    previewFrames[tracked.key] = current
+                } else if layout == .tiled,
+                          let solved = self.lastSolvedTiledFrames[tracked.key] {
+                    previewFrames[tracked.key] = solved
+                } else {
+                    previewFrames[tracked.key] = tracked.restoreFrame
+                }
+            }
+
+            // Accordion frames are deterministic but are not retained like the Tiled solver's
+            // frames. Reconstruct inactive participants from existing session metadata only.
+            if !isActive, layout == .accordion {
+                let participants = trackedItems.filter {
+                    Self.shouldIncludeInLayout(
+                        layoutOverride: $0.layoutOverride,
+                        admissionDecision: $0.admissionDecision,
+                        rule: self.resolvedRule(for: $0.bundleIdentifier)
+                    )
+                }
+                let grouped = Dictionary(grouping: participants) { tracked -> String in
+                    Self.layoutDisplayIdentifier(
+                        preferredDisplayIdentifier: tracked.displayPlacement?.displayIdentifier,
+                        savedFrame: tracked.restoreFrame,
+                        mode: self.displayMode,
+                        workspaceHomeDisplayIdentifier: self.displayMode == .independent
+                            ? self.workspaceHomeDisplayIdentifier(for: workspaceID, displays: displays)
+                            : nil,
+                        displays: displays
+                    ) ?? displays.first?.identifier ?? "main-display"
+                }
+                for (displayIdentifier, windows) in grouped {
+                    guard let display = displays.first(where: { $0.identifier == displayIdentifier })
+                        ?? displays.first(where: \.isMain)
+                        ?? displays.first
+                    else { continue }
+                    let ordered = windows.sorted { lhs, rhs in
+                        if lhs.layoutOrder != rhs.layoutOrder { return lhs.layoutOrder < rhs.layoutOrder }
+                        if lhs.processIdentifier != rhs.processIdentifier {
+                            return lhs.processIdentifier < rhs.processIdentifier
+                        }
+                        return lhs.key.windowIdentifier < rhs.key.windowIdentifier
+                    }
+                    let focusedIndex = self.lastFocusedWindow[workspaceID].flatMap { key in
+                        ordered.firstIndex(where: { $0.key == key })
+                    }
+                    let frames = Self.layoutFrames(
+                        .accordion,
+                        count: ordered.count,
+                        in: self.managedLayoutBounds(display.usableBounds),
+                        accordionFocusedIndex: focusedIndex,
+                        layoutConfiguration: self.workspaceLayoutConfiguration(for: workspaceID)
+                    )
+                    for (tracked, frame) in zip(ordered, frames) {
+                        previewFrames[tracked.key] = frame
+                    }
+                }
+            }
+
+            let candidateItems = trackedItems.compactMap { tracked -> WorkspacePreviewItemDescriptor? in
+                guard let application = NSRunningApplication(
+                    processIdentifier: tracked.processIdentifier
+                ), let frame = previewFrames[tracked.key] else { return nil }
+                return WorkspacePreviewItemDescriptor(
+                    key: tracked.key,
+                    applicationTarget: WorkspaceApplicationTarget(
+                        workspaceID: workspaceID,
+                        bundleIdentifier: tracked.bundleIdentifier ?? application.bundleIdentifier,
+                        processIdentifier: tracked.processIdentifier
+                    ),
+                    name: application.localizedName
+                        ?? tracked.bundleIdentifier
+                        ?? "Application",
+                    applicationURL: application.bundleURL,
+                    frame: CGRect(origin: frame.position, size: frame.size)
+                )
+            }.sorted { lhs, rhs in
+                guard let lhsTracked = self.windows[lhs.key],
+                      let rhsTracked = self.windows[rhs.key]
+                else { return lhs.key.windowIdentifier < rhs.key.windowIdentifier }
+                if lhsTracked.layoutOrder != rhsTracked.layoutOrder {
+                    return lhsTracked.layoutOrder < rhsTracked.layoutOrder
+                }
+                return lhs.key.windowIdentifier < rhs.key.windowIdentifier
+            }
+            let canvasDisplay = WorkspacePreviewGeometry.canvasDisplay(
+                homeDisplayIdentifier: homeDisplayIdentifier,
+                displays: displays
+            )
+            let canvasFrame = WorkspacePreviewGeometry.canvasFrame(
+                homeDisplayIdentifier: homeDisplayIdentifier,
+                displays: displays,
+                fallbackItemFrames: candidateItems.map(\.frame)
+            )
+            // A workspace preview represents its home screen, not the union of every connected
+            // display. A window spanning the boundary is clipped naturally by the preview canvas;
+            // windows wholly on another screen are omitted from this screen's preview and capture.
+            let items = candidateItems.filter {
+                WorkspacePreviewGeometry.intersectsCanvas($0.frame, canvasFrame: canvasFrame)
+            }
+            let descriptor = WorkspacePreviewDescriptor(
+                workspaceID: workspaceID,
+                name: workspaceName,
+                canvasFrame: canvasFrame,
+                displayIdentifier: canvasDisplay?.identifier,
+                items: items
+            )
+            DispatchQueue.main.async { completion(descriptor) }
+        }
+    }
+
     func switchToWorkspace(_ id: UUID, correlationID: String? = nil) {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             self?.activateWorkspace(
                 id,
                 selectedApplication: nil,
+                selectedWindowKey: nil,
                 correlationID: correlationID
             )
         }
@@ -4630,6 +4825,22 @@ final class WorkspaceEngine {
             self?.activateWorkspace(
                 target.workspaceID,
                 selectedApplication: target,
+                selectedWindowKey: nil,
+                correlationID: correlationID
+            )
+        }
+    }
+
+    func activateWorkspacePreviewItem(
+        _ item: WorkspacePreviewItemDescriptor,
+        correlationID: String? = nil
+    ) {
+        let correlationID = correlationID ?? diagnostics.makeCorrelationID()
+        queue.async { [weak self] in
+            self?.activateWorkspace(
+                item.applicationTarget.workspaceID,
+                selectedApplication: item.applicationTarget,
+                selectedWindowKey: item.key,
                 correlationID: correlationID
             )
         }
@@ -4638,6 +4849,7 @@ final class WorkspaceEngine {
     private func activateWorkspace(
         _ id: UUID,
         selectedApplication: WorkspaceApplicationTarget?,
+        selectedWindowKey: WindowKey?,
         correlationID: String
     ) {
         guard workspaces.contains(where: { $0.id == id }) else { return }
@@ -4657,7 +4869,8 @@ final class WorkspaceEngine {
                 previousFocusKey: rawFocusedBefore?.key,
                 displays: displays,
                 correlationID: correlationID,
-                selectedApplication: selectedApplication
+                selectedApplication: selectedApplication,
+                selectedWindowKey: selectedWindowKey
             )
             return
         }
@@ -4697,7 +4910,8 @@ final class WorkspaceEngine {
             correlationID: correlationID,
             token: token,
             previousFocusKey: rawFocusedBefore?.key,
-            selectedApplication: selectedApplication
+            selectedApplication: selectedApplication,
+            selectedWindowKey: selectedWindowKey
         )
     }
 
@@ -11149,6 +11363,11 @@ final class WorkspaceEngine {
             pendingRestoredWindows.removeAll()
         }
 
+        emitWorkspacePreviewStateChangesIfNeeded(
+            observedFrames: observedFrames,
+            displays: displays
+        )
+
         return WindowRefreshReport(
             displays: displays,
             topologySignature: topologySignature,
@@ -11159,6 +11378,76 @@ final class WorkspaceEngine {
             retainedLayoutSlotWindowKeys: retainedLayoutSlotWindowKeys,
             managedWindowCount: windows.count
         )
+    }
+
+    /// Reuses the engine's existing broad refresh while Workspaces Settings is visible. This adds
+    /// no timer or AX enumeration: it compares only the tracked identities and intended geometry
+    /// already read by `refreshWindows`, then reports the exact workspaces whose preview is stale.
+    private func emitWorkspacePreviewStateChangesIfNeeded(
+        observedFrames: [WindowKey: WindowFrame],
+        displays: [DisplaySnapshot]
+    ) {
+        guard workspacePreviewObservationEnabled else { return }
+        var nextState: [UUID: [WorkspacePreviewStateMember]] = [:]
+        for tracked in windows.values {
+            guard !isDropDownAppWindow(tracked.key),
+                  !ignoredWindowKeys.contains(tracked.key),
+                  !temporarilyDeferredWindowKeys.contains(tracked.key),
+                  !resolvedRule(for: tracked.bundleIdentifier).keepsOnAllWorkspaces
+            else { continue }
+            let layout = workspaceLayout(for: tracked.workspaceID)
+            let intendedFrame: WindowFrame
+            if isWorkspaceActive(tracked.workspaceID),
+               let observed = observedFrames[tracked.key],
+               Self.isMeaningfullyVisible(observed, displays: displays) {
+                intendedFrame = observed
+            } else if layout == .tiled,
+                      let solved = lastSolvedTiledFrames[tracked.key] {
+                intendedFrame = solved
+            } else {
+                intendedFrame = tracked.restoreFrame
+            }
+            nextState[tracked.workspaceID, default: []].append(
+                WorkspacePreviewStateMember(
+                    key: tracked.key,
+                    intendedFrame: CGRect(
+                        origin: intendedFrame.position,
+                        size: intendedFrame.size
+                    ),
+                    layoutOrder: tracked.layoutOrder,
+                    isLastFocused: lastFocusedWindow[tracked.workspaceID] == tracked.key
+                )
+            )
+        }
+        for workspaceID in nextState.keys {
+            nextState[workspaceID]?.sort {
+                if $0.key.processIdentifier != $1.key.processIdentifier {
+                    return $0.key.processIdentifier < $1.key.processIdentifier
+                }
+                return $0.key.windowIdentifier < $1.key.windowIdentifier
+            }
+        }
+        guard hasWorkspacePreviewStateBaseline else {
+            hasWorkspacePreviewStateBaseline = true
+            workspacePreviewStateByWorkspace = nextState
+            let initialWorkspaceIDs = Set(nextState.keys)
+            if !initialWorkspaceIDs.isEmpty {
+                DispatchQueue.main.async { [weak self] in
+                    self?.onWorkspacePreviewStateChanged?(initialWorkspaceIDs)
+                }
+            }
+            return
+        }
+        let allWorkspaceIDs = Set(workspacePreviewStateByWorkspace.keys)
+            .union(nextState.keys)
+        let changedWorkspaceIDs = Set(allWorkspaceIDs.filter {
+            workspacePreviewStateByWorkspace[$0] != nextState[$0]
+        })
+        workspacePreviewStateByWorkspace = nextState
+        guard !changedWorkspaceIDs.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.onWorkspacePreviewStateChanged?(changedWorkspaceIDs)
+        }
     }
 
     private func reconcileFullscreenSession(
@@ -12390,7 +12679,8 @@ final class WorkspaceEngine {
         previousFocusKey: WindowKey?,
         displays: [DisplaySnapshot],
         correlationID: String,
-        selectedApplication: WorkspaceApplicationTarget? = nil
+        selectedApplication: WorkspaceApplicationTarget? = nil,
+        selectedWindowKey: WindowKey? = nil
     ) {
         reconcileIndependentActiveWorkspaces(displays: displays)
         let logicalDisplayIdentifier = workspaceHomeDisplayIdentifier(
@@ -12466,7 +12756,8 @@ final class WorkspaceEngine {
             correlationID: correlationID,
             token: token,
             previousFocusKey: previousFocusKey,
-            selectedApplication: selectedApplication
+            selectedApplication: selectedApplication,
+            selectedWindowKey: selectedWindowKey
         )
     }
 
@@ -15651,7 +15942,8 @@ final class WorkspaceEngine {
         correlationID: String,
         token: FocusVerificationToken,
         previousFocusKey: WindowKey?,
-        selectedApplication: WorkspaceApplicationTarget? = nil
+        selectedApplication: WorkspaceApplicationTarget? = nil,
+        selectedWindowKey: WindowKey? = nil
     ) {
         guard isFocusActionGenerationCurrent(token.generation) else {
             diagnostics.log(
@@ -15662,7 +15954,25 @@ final class WorkspaceEngine {
             )
             return
         }
-        if let preferredKey = lastFocusedWindow[workspaceID],
+        if let selectedWindowKey,
+           let selectedSession = fullscreenSessions[selectedWindowKey],
+           selectedSession.workspaceID == workspaceID,
+           selectedSession.displayIdentifier == destinationDisplayIdentifier,
+           selectedApplication?.matches(
+            bundleIdentifier: selectedSession.bundleIdentifier,
+            processIdentifier: selectedSession.processIdentifier
+           ) != false {
+            focusFullscreenSessionAfterSwitch(
+                selectedSession,
+                workspaceID: workspaceID,
+                destinationDisplayIdentifier: destinationDisplayIdentifier,
+                correlationID: correlationID,
+                token: token
+            )
+            return
+        }
+        if selectedWindowKey == nil,
+           let preferredKey = lastFocusedWindow[workspaceID],
            let preferredSession = fullscreenSessions[preferredKey],
            preferredSession.workspaceID == workspaceID,
            preferredSession.displayIdentifier == destinationDisplayIdentifier,
@@ -15685,7 +15995,7 @@ final class WorkspaceEngine {
             displays: displays,
             correlationID: correlationID
         )
-        let attemptOrder = selectedApplication.map { selectedApplication in
+        let applicationAttemptOrder = selectedApplication.map { selectedApplication in
             unfilteredAttemptOrder.filter { key in
                 guard let tracked = windows[key] else { return false }
                 return selectedApplication.matches(
@@ -15694,6 +16004,10 @@ final class WorkspaceEngine {
                 )
             }
         } ?? unfilteredAttemptOrder
+        let attemptOrder = WorkspacePreviewFocusCandidatePolicy.prioritizing(
+            selectedWindowKey,
+            in: applicationAttemptOrder
+        )
         guard let target = attemptOrder.first else {
             if let fallbackSession = fullscreenSessions.values
                 .filter({
