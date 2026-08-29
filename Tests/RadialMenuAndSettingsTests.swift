@@ -1696,6 +1696,77 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
+    func testDisplayWorkspaceModeChoicesLeadWithTheSwitchingOutcome() {
+        XCTAssertEqual(
+            DisplayWorkspaceModePresentation.value(for: .unified),
+            DisplayWorkspaceModePresentation(
+                title: "Switch together",
+                supportingText: "All displays change workspace together",
+                technicalTerm: "Unified",
+                explanation: "Switching changes every display at once. Windows remain on their current display.",
+                accessibilityHint: "All displays share one active workspace and switch together."
+            )
+        )
+        XCTAssertEqual(
+            DisplayWorkspaceModePresentation.value(for: .independent),
+            DisplayWorkspaceModePresentation(
+                title: "Switch separately",
+                supportingText: "Each display keeps its own workspace",
+                technicalTerm: "Independent",
+                explanation: "Switching changes only the display you are using. Each workspace has a Home Display.",
+                accessibilityHint: "Each display has its own active workspace and switches independently."
+            )
+        )
+    }
+
+    func testDisplayBindingStatusesUsePlainLanguageWithoutLeakingIdentityMechanics() {
+        XCTAssertEqual(
+            DisplayRoleBindingPresentation.value(for: .exactIdentifier("main")),
+            DisplayRoleBindingPresentation(
+                title: "Connected",
+                systemImage: "checkmark.circle.fill",
+                detail: nil,
+                tone: .connected
+            )
+        )
+        XCTAssertEqual(
+            DisplayRoleBindingPresentation.value(for: .portableFingerprint("external")),
+            DisplayRoleBindingPresentation(
+                title: "Connected",
+                systemImage: "checkmark.circle.fill",
+                detail: nil,
+                tone: .connected
+            )
+        )
+        XCTAssertEqual(
+            DisplayRoleBindingPresentation.value(for: .ambiguous),
+            DisplayRoleBindingPresentation(
+                title: "Needs attention",
+                systemImage: "exclamationmark.triangle.fill",
+                detail: "Two matching displays were found. Choose the intended display.",
+                tone: .attention
+            )
+        )
+        XCTAssertEqual(
+            DisplayRoleBindingPresentation.value(for: .disconnected),
+            DisplayRoleBindingPresentation(
+                title: "Disconnected",
+                systemImage: "exclamationmark.triangle.fill",
+                detail: "Will reconnect automatically when the display is available.",
+                tone: .attention
+            )
+        )
+        XCTAssertEqual(
+            DisplayRoleBindingPresentation.value(for: nil),
+            DisplayRoleBindingPresentation(
+                title: "Not assigned on this Mac",
+                systemImage: "circle.dashed",
+                detail: "Workspaces use the safe main-display fallback.",
+                tone: .inactive
+            )
+        )
+    }
+
     func testWorkspaceInspectorShowsOnlyLayoutSpecificControls() {
         XCTAssertEqual(
             WorkspaceInspectorControlVisibility(layout: .none),

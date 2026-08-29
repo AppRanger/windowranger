@@ -2092,8 +2092,8 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Settings information-architecture improvement
 - **Priority:** P1
-- **Status:** Live validation — visual direction 2 for Workspaces is implemented and passes the
-  complete automated/design gate; signed installed-app interaction remains pending.
+- **Status:** Live validation — the selected Displays refinement passes the complete automated and
+  design gate and is installed as a signed daily candidate; hands-on interaction remains pending.
 - **Requested:** 21 August 2026.
 - **Smallest useful outcome:** Keep General focused on permissions and startup; give Sync, Menu Bar,
   and Focus Border their own destinations; and move recovery, focus-following moves, trackpad
@@ -2223,6 +2223,41 @@ smallest useful outcome and acceptance boundary.
   with the just-built executable and Debug/preview dylibs were verified. The previous daily remains
   recoverable at `/Applications/.WindowRanger.previous`; hands-on Tiled Settings validation remains
   pending.
+- **Thirteenth user-observed follow-up:** Displays is functionally correct but exposes its storage
+  model as three disconnected steps: choose abstract Unified/Independent terminology, edit reusable
+  role names in one list, then mentally match those names to physical monitors in another list.
+  Replace the mode picker with two outcome-led visual choices: **Switch together** shows both
+  displays on one workspace and retains **Unified** only as a secondary term; **Switch separately**
+  shows different workspaces and retains **Independent** as a secondary term. Combine each role's
+  profile-owned name and this Mac's physical-monitor picker into one mapping row, with plain
+  Connected, Disconnected, Needs attention, or Not assigned status instead of fingerprint jargon.
+  The selected direction uses one grouped native surface and preserves the existing Settings
+  sidebar, role CRUD, menu-bar icon ownership, safe fallback, profile/iCloud boundary, and local
+  `WorkspaceDisplayPin` persistence without a schema or runtime-behaviour change.
+- **Thirteenth follow-up acceptance:** The visual choice diagrams, selected state, combined mapping
+  rows, sync/local labels, status copy, add/delete actions, and wide/compact reflow match the approved
+  mockup in Light and Dark appearance. VoiceOver exposes outcome, selection, role identity, local
+  monitor, and textual status without relying on diagrams or colour. Focused Settings tests, a
+  Displays-only production render, the complete non-hosted gate, and the unsigned app build pass
+  before a separately approved signed daily install.
+- **Thirteenth follow-up implementation and evidence:** Displays now leads with native visual
+  **Switch together** and **Switch separately** choices while retaining Unified and Independent as
+  secondary terms. Each display role uses one row for its profile/iCloud name, this Mac's physical
+  monitor, plain textual connection status, and delete action; the existing store and persistence
+  operations are unchanged. Wide Light/Dark and 760 x 560-point compact Dark production renders
+  pass, with compact mode stacking the choices inside the existing scrollable Form. Full and focused
+  comparisons against the selected mockup have no remaining P0-P2 mismatch. Focused Settings
+  coverage passes 138 tests, the complete non-hosted suite passes 814 tests with zero failures, and
+  the unsigned Debug app builds successfully as universal `x86_64 arm64`. Pointer, keyboard,
+  VoiceOver, and real-monitor interaction remain signed installed-app validation.
+- **Thirteenth follow-up installed candidate:** With explicit maintainer approval on 29 August
+  2026, signed universal Debug daily candidate `2956284c3097-dirty` was installed and relaunched
+  from `/Applications/WindowRanger.app` as process `61541`. Strict signature validation, Apple
+  Development authority, Team ID `44NAD22AK6`, canonical bundle identifier, embedded dirty source
+  marker, `x86_64 arm64` architectures, running executable path, and byte-for-byte equality of the
+  installed executable and Debug/preview dylibs with the just-built candidate were verified. The
+  previous daily remains recoverable at `/Applications/.WindowRanger.previous`; hands-on Displays
+  Settings validation remains pending.
 - **Implemented:** Added General, Sync, Behavior, Menu Bar, and Focus Border destinations; collected
   reusable feature configuration beneath Configuration and global input surfaces beneath Controls.
   Settings search opens the owning destination. Saved Appearance selections resolve to Menu Bar,
