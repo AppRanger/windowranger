@@ -171,6 +171,178 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-106 — Reconstruct Tiled preview geometry before its first visit
+
+- **Type:** Workspace preview correctness bug
+- **Priority:** P1
+- **Status:** Live validation — calculated first-visit geometry and the bounded startup preparation
+  are implemented and pass complete automated verification; signed restart testing remains.
+- **User-observed:** After restarting WindowRanger, a workspace that has not yet been visited can
+  show its applications at the wrong positions and sizes in the workspace preview. Switching to
+  that workspace once immediately corrects the preview.
+- **Expected:** An inactive workspace preview uses the layout geometry it would receive on first
+  activation, without requiring the workspace to be visited.
+- **Reproduced cause:** Inactive Accordion previews reconstruct deterministic geometry from tracked
+  session metadata. Inactive Tiled previews use the last solved frame only when that workspace has
+  already been laid out during the current process; after restart they otherwise fall back to each
+  window's restore frame until the first activation populates the solver cache.
+- **Smallest useful outcome:** Reconstruct inactive Tiled preview frames on demand from the saved BSP
+  tree, window identities and weights, current display bounds, orientation, gaps, and padding. When
+  captured thumbnails are already enabled and authorized at launch, first park inactive windows and
+  then give eligible Tiled and Accordion participants their predicted size once while they remain
+  parked, so applications render truthful pixels before first activation. Do not activate or focus
+  the workspace, add a timer, perform another AX scan or capture, or retain a second layout cache.
+- **Acceptance:** Before first activation, Tiled preview geometry matches the normal solver for the
+  same tree and display configuration, and eligible inactive automatic-layout windows have that
+  predicted size while remaining non-meaningfully-visible at the parking edge. The startup pass is
+  disabled when thumbnail previews or authorization are unavailable; active, Freeform, floating,
+  excluded, fixed-size, deferred, minimized, full-screen, and keep-on-all-workspaces windows are
+  untouched. Focused preview tests and the complete non-hosted gate pass before a separately
+  approved install; signed restart validation checks for flashes, rejected sizing, and exact pixels.
+- **Implemented:** Inactive Tiled previews reconstruct their would-be activation frames from the
+  existing saved BSP tree, ordered window identities and weights, current display bounds,
+  orientation, gaps, and padding. When captured previews are enabled and Screen Recording is
+  already authorized at launch, restoration parks inactive windows normally and then performs one
+  bounded preparation pass. Eligible resizable Tiled and Accordion participants must already be
+  non-meaningfully-visible; each retains its parked position while receiving its predicted size and
+  is verified still parked afterwards, with one defensive re-park if macOS moved it into a visible
+  area. Active, Freeform, floating, excluded, fixed-size, deferred, minimized, full-screen, and
+  keep-on-all-workspaces windows are excluded. One of several light-hearted messages is shown through
+  the existing nonactivating feedback overlay when work is actually required. The pass adds no
+  capture, timer, polling, second layout cache, or ongoing CPU or memory cost.
+- **Automated evidence (29 August 2026):** All 23 focused Workspace Preview tests pass, including
+  exact equality between pre-visit preview reconstruction and the production Tiled solver for a
+  saved nested tree on an external display with automatic orientation, asymmetric outer padding,
+  and unequal inner gaps, plus the startup eligibility boundary and deterministic message rotation.
+  The Debug app target builds successfully. The complete quick gate passes all 812 non-hosted tests
+  plus project generation, release-ledger, Sparkle workflow, and test-isolation checks. Signed-app
+  validation must still restart WindowRanger, watch for any visible flash or rejected resize, and
+  inspect Tiled and Accordion workspaces before visiting them.
+- **Earlier installed evidence (29 August 2026):** With explicit maintainer approval, signed universal
+  Debug daily revision `7bcdbefd1d75-dirty` was installed and relaunched from
+  `/Applications/WindowRanger.app` as process `34882`. Strict deep signature verification passed
+  under Team `44NAD22AK6`; the executable contains `x86_64 arm64`, has CDHash
+  `a6fc08ee17d84cb050e9d81c08cc69b5c7aa7e5e`, and the installed Debug library matches the
+  just-built library byte for byte. Fresh diagnostics session
+  `5AD28AC8-1DFB-49B1-893A-9040973BA718` reached `startup-state-ready`.
+- **Live finding (29 August 2026):** Before workspace 1's first visit, its calculated preview
+  positions and 50/50 full-height Tiled frames were correct, and the current session contained zero
+  layout solves for that workspace. Read-only Window Server evidence showed its parked Claude source
+  at `1200x800` while Chrome was already `1913x1582`. The capturer sizes both output buffers from
+  the predicted descriptor frame while asking ScreenCaptureKit to preserve the current source aspect
+  ratio. Chrome therefore fills its preview, while Claude leaves transparent pixels that reveal a
+  wallpaper strip and make it appear too short.
+- **Approved follow-up (29 August 2026):** The maintainer chose truthful application rendering over
+  cropping, stretching, or fitting stale restore-size pixels. The bounded startup pass must park
+  first, resize only eligible inactive automatic-layout windows in place, and show one rotating
+  light-hearted preparation message while it runs. This intentionally changes the earlier
+  no-window-write preview boundary, but only when captured thumbnails are enabled and authorized.
+- **Current installed candidate (29 August 2026):** With explicit maintainer approval, signed
+  universal Debug daily revision `7bcdbefd1d75-dirty` was installed and relaunched from
+  `/Applications/WindowRanger.app` as process `52300`; the prior daily remains recoverable at
+  `/Applications/.WindowRanger.previous`. Strict deep signature verification passed under Team
+  `44NAD22AK6`, the app contains `x86_64 arm64`, has CDHash
+  `1650d389fbfea4dc3ceea02956b36ac85635cea1`, and its Debug library matches the just-built library
+  byte for byte. Fresh diagnostics session `D9CDD757-8004-467B-B6FE-2D5FE8D5816E` reached
+  `startup-state-ready`, prepared four parked windows with four successful frame writes, settled all
+  four at their target sizes, required zero defensive re-parks, and recorded no error or fault. A
+  visual check of an unvisited Accordion workspace remains before acceptance. The maintainer
+  inspected the original unvisited Tiled workspace before activating it and confirmed its prepared
+  first-visit preview was correct.
+
+### WR-105 — Make workspace layout choices visually self-explanatory
+
+- **Type:** Workspace Settings visual refinement
+- **Priority:** P2
+- **Status:** Live validation — implemented, visually inspected, and complete non-hosted verification
+  passes; signed installed-app interaction remains.
+- **Requested:** 29 August 2026.
+- **Smallest useful outcome:** Replace the text-only Layout Style and Orientation segmented controls
+  with compact visual choices. Freeform, Tiled, and Accordion must depict their actual window
+  relationship; Automatic, Horizontal, and Vertical must show the direction the selected automatic
+  layout will use rather than relying on its name alone.
+- **Functionality boundary:** This is presentation only. Preserve the existing workspace layout and
+  orientation values, profile ownership, persistence, layout reconciliation, Copy Layout, legacy
+  geometry migration, Undo behavior, conditional geometry controls, and inactive-profile isolation.
+- **Acceptance:** Every choice remains clearly named, keyboard reachable, and VoiceOver-labelled;
+  the selected state remains unambiguous in Light and Dark appearance; diagrams truthfully show
+  left-to-right versus top-to-bottom flow and Accordion overlap; the production Workspaces screen
+  remains usable at its minimum supported width; focused Settings tests and the complete non-hosted
+  gate pass before a separately approved signed daily install.
+- **Implemented:** Layout Style and Orientation now use one reusable labelled visual-choice card.
+  Freeform shows independently overlapping windows, Tiled shows non-overlapping panes, and
+  Accordion shows an overlapping stack with visible neighbouring edges. Horizontal and Vertical
+  use the selected layout's actual left-to-right or top-to-bottom geometry; Automatic pairs a wide
+  horizontal result with a portrait vertical result. Selection has a native accent outline, tint,
+  and checkmark, while every button retains a plain-language VoiceOver label, selected value, and
+  explanatory hint. No model, persistence, or layout-engine path changed.
+- **Automated and visual evidence (29 August 2026):** All 136 focused Radial Menu and Settings tests
+  pass, including deterministic wording for the actual window relationships. The complete quick
+  gate passes all 809 non-hosted tests plus project generation, release-ledger, Sparkle workflow,
+  and test-isolation checks. The production Workspaces hierarchy rendered offscreen in Light/Dark,
+  Tiled/Accordion, wide/minimum-width compact, long-name, conflict, and many-workspace fixtures.
+  Inspection found all diagrams and labels legible, distinct selected state without colour alone,
+  and no truncation or horizontal overflow. Pointer selection, keyboard traversal, and VoiceOver
+  announcement remain signed installed-app validation.
+- **Installed candidate (29 August 2026):** With explicit maintainer approval, signed universal
+  Debug daily revision `7bcdbefd1d75-dirty` was installed and relaunched from
+  `/Applications/WindowRanger.app` as process `29087`. Strict deep signature verification passed
+  under Team `44NAD22AK6`; the executable contains `x86_64 arm64`, has CDHash
+  `f7611f1bec69c640c363d8ea278fda4a53f4f8bf`, and matches the just-built executable and Debug
+  library byte for byte. Fresh diagnostics session `FB539292-7267-46EB-8564-BE1DB28E6251`
+  reached `startup-state-ready` without a recorded error, fault, or timeout. The previous daily
+  remains recoverable at `/Applications/.WindowRanger.previous`. The maintainer subsequently
+  confirmed the visual selectors look good in the installed app; keyboard traversal and VoiceOver
+  announcement remain the outstanding acceptance boundary.
+
+### WR-104 — Use one menu-bar composition on every supported macOS release
+
+- **Type:** Menu-bar consistency and code simplification
+- **Priority:** P1
+- **Status:** Live validation — implementation, complete automation, and the macOS 26 one-display
+  compatibility pass are complete; an exact release-signed physical-Mac check remains.
+- **Evidence:** User-observed on 29 August 2026 after installing Beta 9 on a macOS 26 Mac. Full mode
+  used the retained pre-27 custom strip, including a redundant app glyph and visibly heavier
+  workspace capsules, while the newer Mac used the grouped standard-status-item presentation.
+- **Expected behavior:** Compact, Medium, and Full have the same display-group composition and
+  interaction model on every supported macOS release; operating-system material and tint may still
+  differ naturally.
+- **Smallest useful outcome:** Make the standard per-display-group status items the sole production
+  path without raising WindowRanger's minimum macOS version. Remove the superseded single custom
+  host, its standalone app glyph, native child workspace buttons, version switch, and obsolete
+  tests and documentation.
+- **Acceptance:** Focused menu-bar and complete non-hosted gates pass. A signed candidate is installed
+  in the persistent macOS 26 UTM guest and visibly checked in Compact, Medium, and Full. Full must
+  switch explicit workspaces, open the menu from non-workspace/secondary/Control-click actions,
+  preserve hover previews, and retain coherent ordering and press feedback. Automated, guest
+  installation, and observed GUI evidence remain separate.
+- **Implemented:** Every supported macOS release now uses one standard status item per logical
+  display group and the same rendered hit-target geometry. The superseded custom status host,
+  standalone app glyph, native child buttons, operating-system composition switch, compatibility
+  preview, and their obsolete tests were removed. The Settings preview now always represents the
+  production grouped composition.
+- **Automated evidence (29 August 2026):** The focused 41-test menu-bar presentation suite and two
+  visual snapshot tests passed. `./scripts/verify-local-ci.sh --quick` passed all 808 non-hosted
+  tests plus the release-build registry, Sparkle workflow, project-generation, and test-isolation
+  checks. The final universal Debug app built successfully for macOS 14+ with no new compiler
+  warning, passed strict deep signature verification, and embedded source revision
+  `e9358197fdcb-dirty`.
+- **macOS 26 guest evidence (29 August 2026):** The persistent UTM guest was visibly identified as
+  UUID `74D1CCD5-8C65-45B0-8D4C-4B22A24E9191`, macOS 26.6.2 build 25G83, arm64. The exact source
+  candidate replaced Beta 9 recoverably. Its host Apple Development profile was correctly rejected
+  because that profile does not include the VM, so the same guest test bundle was re-signed ad hoc
+  after removing the machine-specific profile; version 0.1.0, build 1, bundle identifier, and source
+  revision remained verified. With Accessibility granted, Compact, Medium, and Full each rendered
+  visibly through the grouped status item. Full visibly switched 1 → 2 → 3 with the selected segment
+  updating, opened the application menu from a secondary click, and presented the hover shelf using
+  its no-app fallback. Diagnostics then recorded real AX candidates and a verified Finder focus
+  restoration while switching 3 → 2 → 1 → 3.
+- **Remaining live boundary:** The guest proves the macOS 26 grouped composition and one-display
+  interaction path, not Developer ID/release packaging, multi-display ordering, or a physical Mac.
+  UTM's nested input did not give a reliable held-Control-click or final display-icon primary-click
+  observation; those routes retain focused automated coverage. Screen Recording remained off, so
+  the hover check exercised the icon/fallback shelf rather than captured window thumbnails.
+
 ### WR-102 — Keep newly added workspace shortcuts live without relaunching
 
 - **Type:** Global shortcut registration bug
@@ -1920,8 +2092,8 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Settings information-architecture improvement
 - **Priority:** P1
-- **Status:** Live validation — visual direction 2 for Workspaces is implemented and passes the
-  complete automated/design gate; signed installed-app interaction remains pending.
+- **Status:** Live validation — the selected Displays refinement passes the complete automated and
+  design gate and is installed as a signed daily candidate; hands-on interaction remains pending.
 - **Requested:** 21 August 2026.
 - **Smallest useful outcome:** Keep General focused on permissions and startup; give Sync, Menu Bar,
   and Focus Border their own destinations; and move recovery, focus-following moves, trackpad
@@ -2051,6 +2223,41 @@ smallest useful outcome and acceptance boundary.
   with the just-built executable and Debug/preview dylibs were verified. The previous daily remains
   recoverable at `/Applications/.WindowRanger.previous`; hands-on Tiled Settings validation remains
   pending.
+- **Thirteenth user-observed follow-up:** Displays is functionally correct but exposes its storage
+  model as three disconnected steps: choose abstract Unified/Independent terminology, edit reusable
+  role names in one list, then mentally match those names to physical monitors in another list.
+  Replace the mode picker with two outcome-led visual choices: **Switch together** shows both
+  displays on one workspace and retains **Unified** only as a secondary term; **Switch separately**
+  shows different workspaces and retains **Independent** as a secondary term. Combine each role's
+  profile-owned name and this Mac's physical-monitor picker into one mapping row, with plain
+  Connected, Disconnected, Needs attention, or Not assigned status instead of fingerprint jargon.
+  The selected direction uses one grouped native surface and preserves the existing Settings
+  sidebar, role CRUD, menu-bar icon ownership, safe fallback, profile/iCloud boundary, and local
+  `WorkspaceDisplayPin` persistence without a schema or runtime-behaviour change.
+- **Thirteenth follow-up acceptance:** The visual choice diagrams, selected state, combined mapping
+  rows, sync/local labels, status copy, add/delete actions, and wide/compact reflow match the approved
+  mockup in Light and Dark appearance. VoiceOver exposes outcome, selection, role identity, local
+  monitor, and textual status without relying on diagrams or colour. Focused Settings tests, a
+  Displays-only production render, the complete non-hosted gate, and the unsigned app build pass
+  before a separately approved signed daily install.
+- **Thirteenth follow-up implementation and evidence:** Displays now leads with native visual
+  **Switch together** and **Switch separately** choices while retaining Unified and Independent as
+  secondary terms. Each display role uses one row for its profile/iCloud name, this Mac's physical
+  monitor, plain textual connection status, and delete action; the existing store and persistence
+  operations are unchanged. Wide Light/Dark and 760 x 560-point compact Dark production renders
+  pass, with compact mode stacking the choices inside the existing scrollable Form. Full and focused
+  comparisons against the selected mockup have no remaining P0-P2 mismatch. Focused Settings
+  coverage passes 138 tests, the complete non-hosted suite passes 814 tests with zero failures, and
+  the unsigned Debug app builds successfully as universal `x86_64 arm64`. Pointer, keyboard,
+  VoiceOver, and real-monitor interaction remain signed installed-app validation.
+- **Thirteenth follow-up installed candidate:** With explicit maintainer approval on 29 August
+  2026, signed universal Debug daily candidate `2956284c3097-dirty` was installed and relaunched
+  from `/Applications/WindowRanger.app` as process `61541`. Strict signature validation, Apple
+  Development authority, Team ID `44NAD22AK6`, canonical bundle identifier, embedded dirty source
+  marker, `x86_64 arm64` architectures, running executable path, and byte-for-byte equality of the
+  installed executable and Debug/preview dylibs with the just-built candidate were verified. The
+  previous daily remains recoverable at `/Applications/.WindowRanger.previous`; hands-on Displays
+  Settings validation remains pending.
 - **Implemented:** Added General, Sync, Behavior, Menu Bar, and Focus Border destinations; collected
   reusable feature configuration beneath Configuration and global input surfaces beneath Controls.
   Settings search opens the owning destination. Saved Appearance selections resolve to Menu Bar,
@@ -3630,28 +3837,27 @@ design notes, but every active candidate must map back to a work item here or be
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
-### WR-103 — Publish WindowRanger 0.1.0 Beta 9
+### WR-107 — Publish WindowRanger 0.1.0 Beta 10
 
 - **Type:** Beta release preparation
 - **Status:** Candidate preparation and validation in progress.
-- **Requested:** 29 August 2026 after the signed daily candidate was installed for the accumulated
-  performance, Settings, workspace-preview, iCloud-safety, onboarding, and dynamic-shortcut work.
-- **Smallest useful outcome:** Publish signed, notarized universal Beta `0.1.0-beta.9` as public
-  build `10`, containing the reviewed work since Beta 8. Keep public appcast generation and website
+- **Requested:** 29 August 2026 after the signed daily candidate was installed and accepted for the
+  post-Beta 9 menu-bar, workspace-preview, and Settings refinements.
+- **Smallest useful outcome:** Publish signed, notarized universal Beta `0.1.0-beta.10` as public
+  build `11`, containing the reviewed work since Beta 9. Keep public appcast generation and website
   deployment outside this checkpoint.
-- **Acceptance boundary:** Central `develop` owns the single build-10 allocation; the reviewed tree
+- **Acceptance boundary:** Central `develop` owns the single build-11 allocation; the reviewed tree
   is promoted without force-updating `release/0.1.0`; stable Xcode passes the exact release tree's
   isolated suite and static analysis, then produces the Developer ID-signed, notarized and stapled
   DMG/ZIP. The immutable tag, five GitHub assets, checksums, and provenance must round-trip to that
-  exact tree, and GitHub must publish it as a prerelease. Existing signed-daily evidence remains
-  distinct from exact packaged-artifact and new-machine validation.
-- **Current evidence:** The complete dirty-tree checkpoint passed all 814 non-hosted tests, test
-  isolation, Release static analysis, an unsigned universal Release build, both DMG smoke layouts,
-  and whitespace verification. A skeptical full-diff review found no P0-P2 code, privacy,
-  persistence, migration, or project-membership blocker after adding this build allocation and the
-  Beta 9 release notes. Signed daily revision `539e0bf945e9-dirty` is installed on the maintainer's
-  Mac; live validation of the latest onboarding, fifth-workspace shortcut, optional capture, and
-  new-Mac iCloud paths remains explicit.
+  exact tree, and GitHub must publish it as a prerelease. Existing signed-daily and macOS 26 UTM
+  evidence remain distinct from exact packaged-artifact and physical multi-display validation.
+- **Current evidence:** The complete post-Beta 9 checkpoint passes all 814 non-hosted tests, test
+  isolation, a universal unsigned Debug build, targeted production Settings renders, and whitespace
+  verification. The signed daily exercised the same product code on the maintainer's Mac, while the
+  grouped menu-bar composition also passed the macOS 26 UTM acceptance path. The release contains no
+  packaging, signing, entitlement, identity, updater, migration, or minimum-system change, so the
+  documented repeat-Beta validation path applies.
 
 ### WR-012 — Clean build and package verification
 
@@ -3717,6 +3923,28 @@ second copy of that checklist.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
+
+### WR-103 — Publish WindowRanger 0.1.0 Beta 9
+
+- **Result:** Published
+  [`v0.1.0-beta.9`](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.9) as a
+  GitHub prerelease on 29 August 2026. The protected annotated tag points to exact release commit
+  `ff2e38d80d864a7c767479f0e98ad02617b196be`; central `develop` owns build `10`, and the
+  [release-branch CI run](https://github.com/AppRanger/windowranger/actions/runs/33245036560) passed
+  814 tests, static analysis, an unsigned universal Release build, and both DMG smoke layouts.
+- **Distribution evidence:** Stable Xcode 26.6 reproduced the 814-test pass and static analysis,
+  then built the Developer ID-signed universal `arm64`/`x86_64` archive. Apple accepted the app
+  (`69987b7b-5297-4f92-b2e8-a3c77439c051`) and DMG
+  (`10a1268d-072b-4334-b56b-2c8fff18415b`) notarizations with zero issues; both stapled artifacts
+  passed validation and Gatekeeper. The five public assets round-tripped against the tag, build,
+  channel, provenance, and SHA-256 values `a2bf886e7d96620a465b39750fd56e1ff2371c123c8a4e473b5e1e646ba8b4eb`
+  (DMG) and `fa6064179ff41c072a6bcec62ffc4cc68c7689f9eb77cca59ea39c232b347f0e`
+  (ZIP).
+- **Validation boundary:** The maintainer's Mac still runs signed daily revision
+  `539e0bf945e9-dirty`, not the packaged Beta. Exact packaged-artifact installation and the new-Mac
+  first-enable iCloud path remain live validation, together with the latest onboarding permission
+  refresh, setup-wizard Space behavior, fifth-workspace shortcuts, and optional captured previews.
+  Public appcast generation and website deployment were intentionally outside this checkpoint.
 
 ### WR-082 — Publish WindowRanger 0.1.0 Beta 8
 

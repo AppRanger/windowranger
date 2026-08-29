@@ -1661,6 +1661,112 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         )
     }
 
+    func testWorkspaceLayoutChoiceDescriptionsExplainActualWindowRelationships() {
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.layout(.none),
+            "Overlapping windows stay where you place them."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.layout(.tiled),
+            "Windows fill the screen without overlapping."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.layout(.accordion),
+            "Windows overlap while neighbouring edges remain visible."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.orientation(.automatic, layout: .tiled),
+            "Flows left to right on a wide display and top to bottom on a portrait display."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.orientation(.horizontal, layout: .tiled),
+            "Windows tile from left to right."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.orientation(.vertical, layout: .tiled),
+            "Windows tile from top to bottom."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.orientation(.horizontal, layout: .accordion),
+            "Accordion windows overlap from left to right."
+        )
+        XCTAssertEqual(
+            WorkspaceLayoutChoiceDescription.orientation(.vertical, layout: .accordion),
+            "Accordion windows overlap from top to bottom."
+        )
+    }
+
+    func testDisplayWorkspaceModeChoicesLeadWithTheSwitchingOutcome() {
+        XCTAssertEqual(
+            DisplayWorkspaceModePresentation.value(for: .unified),
+            DisplayWorkspaceModePresentation(
+                title: "Switch together",
+                supportingText: "All displays change workspace together",
+                technicalTerm: "Unified",
+                explanation: "Switching changes every display at once. Windows remain on their current display.",
+                accessibilityHint: "All displays share one active workspace and switch together."
+            )
+        )
+        XCTAssertEqual(
+            DisplayWorkspaceModePresentation.value(for: .independent),
+            DisplayWorkspaceModePresentation(
+                title: "Switch separately",
+                supportingText: "Each display keeps its own workspace",
+                technicalTerm: "Independent",
+                explanation: "Switching changes only the display you are using. Each workspace has a Home Display.",
+                accessibilityHint: "Each display has its own active workspace and switches independently."
+            )
+        )
+    }
+
+    func testDisplayBindingStatusesUsePlainLanguageWithoutLeakingIdentityMechanics() {
+        XCTAssertEqual(
+            DisplayRoleBindingPresentation.value(for: .exactIdentifier("main")),
+            DisplayRoleBindingPresentation(
+                title: "Connected",
+                systemImage: "checkmark.circle.fill",
+                detail: nil,
+                tone: .connected
+            )
+        )
+        XCTAssertEqual(
+            DisplayRoleBindingPresentation.value(for: .portableFingerprint("external")),
+            DisplayRoleBindingPresentation(
+                title: "Connected",
+                systemImage: "checkmark.circle.fill",
+                detail: nil,
+                tone: .connected
+            )
+        )
+        XCTAssertEqual(
+            DisplayRoleBindingPresentation.value(for: .ambiguous),
+            DisplayRoleBindingPresentation(
+                title: "Needs attention",
+                systemImage: "exclamationmark.triangle.fill",
+                detail: "Two matching displays were found. Choose the intended display.",
+                tone: .attention
+            )
+        )
+        XCTAssertEqual(
+            DisplayRoleBindingPresentation.value(for: .disconnected),
+            DisplayRoleBindingPresentation(
+                title: "Disconnected",
+                systemImage: "exclamationmark.triangle.fill",
+                detail: "Will reconnect automatically when the display is available.",
+                tone: .attention
+            )
+        )
+        XCTAssertEqual(
+            DisplayRoleBindingPresentation.value(for: nil),
+            DisplayRoleBindingPresentation(
+                title: "Not assigned on this Mac",
+                systemImage: "circle.dashed",
+                detail: "Workspaces use the safe main-display fallback.",
+                tone: .inactive
+            )
+        )
+    }
+
     func testWorkspaceInspectorShowsOnlyLayoutSpecificControls() {
         XCTAssertEqual(
             WorkspaceInspectorControlVisibility(layout: .none),
@@ -2175,35 +2281,6 @@ final class RadialMenuAndSettingsTests: XCTestCase {
                 displayIdentifier: "external"
             )),
             .switchWorkspace(workspaceID: workspaceB.id, displayIdentifier: "external")
-        )
-    }
-
-    func testMenuBarPresentationModesKeepPrimaryMenuSeparateFromWorkspaceButtons() {
-        XCTAssertEqual(
-            MenuBarPresentationMode.compact.primaryLabelDescriptor,
-            MenuBarPrimaryLabelDescriptor(
-                showsIcon: true,
-                indicatorStyle: .compact,
-                showsWorkspaceStrip: false
-            )
-        )
-        XCTAssertEqual(
-            MenuBarPresentationMode.medium.primaryLabelDescriptor,
-            MenuBarPrimaryLabelDescriptor(
-                showsIcon: true,
-                indicatorStyle: .medium,
-                showsWorkspaceStrip: false
-            )
-        )
-        XCTAssertTrue(MenuBarPresentationMode.full.primaryLabelDescriptor.showsWorkspaceStrip)
-        XCTAssertTrue(MenuBarPresentationMode.full.primaryLabelDescriptor.showsIcon)
-        XCTAssertEqual(
-            MenuBarPresentationMode.full.primaryLabelDescriptor,
-            MenuBarPrimaryLabelDescriptor(
-                showsIcon: true,
-                indicatorStyle: .none,
-                showsWorkspaceStrip: true
-            )
         )
     }
 

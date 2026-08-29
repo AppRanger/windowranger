@@ -357,7 +357,7 @@ final class MenuBarPresentationTests: XCTestCase {
     }
 
     @MainActor
-    func testWorkspaceKeyLabelsRenderWithoutReplacingFullAccessibilityNames() {
+    func testWorkspaceKeyLabelsRenderInUniversalDisplayGroupContent() throws {
         let snapshot = MenuBarPresentationResolver.resolve(
             mode: .full,
             workspaceLabelMode: .key,
@@ -367,20 +367,24 @@ final class MenuBarPresentationTests: XCTestCase {
             connectedDisplays: [mainDisplay],
             workspaceDisplayAssignments: [:]
         )
-        let content = MenuBarStatusContentView(
-            snapshot: snapshot,
-            availableWidth: 620,
-            workspaceAction: nil
+        let plan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+            for: snapshot,
+            availableWidth: 620
+        ).first)
+        let content = MenuBarDisplayGroupContentView(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: .default
         )
 
         layout(content)
-        XCTAssertEqual(Set(workspaceButtons(in: content).map(\.title)), Set(["1", "W", "9"]))
+        XCTAssertEqual(Set(textFields(in: content).map(\.stringValue)), Set(["1", "W", "9"]))
+        XCTAssertEqual(content.workspaceTrackingRegions(in: content).count, 3)
         XCTAssertEqual(
             snapshot.displays[0].activeWorkspaceLabel(mode: .key),
             "W"
         )
-        XCTAssertTrue(snapshot.primaryTooltip.contains(workspace2.name))
-        XCTAssertTrue(snapshot.primaryAccessibilityLabel.contains(workspace2.name))
+        XCTAssertTrue(snapshot.displays[0].accessibilityLabel.contains(workspace2.name))
         XCTAssertEqual(MenuBarWorkspaceLabelFormatter.key(""), "—")
     }
 
@@ -518,9 +522,8 @@ final class MenuBarPresentationTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.displays[0].activeWorkspaceCompactName, "Ve…")
-        XCTAssertTrue(snapshot.primaryTooltip.contains(long.name))
-        XCTAssertTrue(snapshot.primaryAccessibilityLabel.contains(long.name))
-        XCTAssertFalse(snapshot.primaryAccessibilityLabel.contains(mainDisplay.identifier))
+        XCTAssertTrue(snapshot.displays[0].accessibilityLabel.contains(long.name))
+        XCTAssertFalse(snapshot.displays[0].accessibilityLabel.contains(mainDisplay.identifier))
     }
 
     func testExtremePressureKeepsEveryDisplayActiveWorkspaceAndHidesInactiveItems() {
@@ -571,27 +574,6 @@ final class MenuBarPresentationTests: XCTestCase {
             XCTAssertTrue(group.visibleWorkspaces.contains { workspace in workspace.isActive })
         }
         XCTAssertNotNil(layout.overflowSummary)
-    }
-
-    func testDisplayGroupStatusItemsCoverEveryModeOnMacOS27AndLater() {
-        let macOS26 = OperatingSystemVersion(majorVersion: 26, minorVersion: 6, patchVersion: 0)
-        let macOS27 = OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 0)
-        let macOS28 = OperatingSystemVersion(majorVersion: 28, minorVersion: 0, patchVersion: 0)
-
-        for mode in MenuBarPresentationMode.allCases {
-            XCTAssertFalse(MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
-                for: mode,
-                operatingSystemVersion: macOS26
-            ))
-            XCTAssertTrue(MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
-                for: mode,
-                operatingSystemVersion: macOS27
-            ))
-            XCTAssertTrue(MenuBarStatusItemCompositionPolicy.usesDisplayGroups(
-                for: mode,
-                operatingSystemVersion: macOS28
-            ))
-        }
     }
 
     func testDisplayGroupStatusItemActivationSeparatesPointerAndMenuActions() {
@@ -1193,99 +1175,57 @@ final class MenuBarPresentationTests: XCTestCase {
     }
 
     @MainActor
-    func testHiddenDisplayIconRemovesImageAndReclaimsGroupWidth() throws {
-        let snapshot = independentSnapshot(displays: [mainDisplay]).replacingMode(.full)
+    func testHiddenDisplayIconReclaimsUniversalDisplayGroupWidth() throws {
         let hiddenConfiguration = MenuBarDisplayIconConfiguration(
             stylesByDisplayIdentifier: [mainDisplay.identifier: .none]
         )
-        let automaticPlan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
-            for: snapshot,
-            availableWidth: 620,
-            displayIconConfiguration: .automatic
-        ).first)
-        let hiddenPlan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
-            for: snapshot,
-            availableWidth: 620,
-            displayIconConfiguration: hiddenConfiguration
-        ).first)
-        let automatic = MenuBarDisplayGroupContentView(
-            plan: automaticPlan,
-            workspaceLabelMode: snapshot.workspaceLabelMode,
-            highlightColor: .default,
-            displayIconConfiguration: .automatic
-        )
-        let hidden = MenuBarDisplayGroupContentView(
-            plan: hiddenPlan,
-            workspaceLabelMode: snapshot.workspaceLabelMode,
-            highlightColor: .default,
-            displayIconConfiguration: hiddenConfiguration
-        )
-        layout(automatic)
-        layout(hidden)
-
-        XCTAssertEqual(imageViews(in: automatic).count, 1)
-        XCTAssertTrue(imageViews(in: hidden).isEmpty)
-        XCTAssertEqual(
-            automatic.intrinsicContentSize.width - hidden.intrinsicContentSize.width,
-            MenuBarVisualTokens.displayIconWidth + MenuBarVisualTokens.displayWorkspaceGap,
-            accuracy: 1
-        )
-        XCTAssertEqual(
-            hidden.workspaceTrackingRegions(in: hidden).map(\.hitTarget),
-            automatic.workspaceTrackingRegions(in: automatic).map(\.hitTarget)
-        )
-    }
-
-    @MainActor
-    func testHiddenDisplayIconReclaimsCompactMediumAndFullStripWidth() {
-        let hiddenConfiguration = MenuBarDisplayIconConfiguration(
-            stylesByDisplayIdentifier: [mainDisplay.identifier: .none]
-        )
-        for mode in [MenuBarPresentationMode.compact, .medium] {
+        for mode in MenuBarPresentationMode.allCases {
             let snapshot = independentSnapshot(displays: [mainDisplay]).replacingMode(mode)
-            let automatic = MenuBarStatusContentView(
-                snapshot: snapshot,
+            let automaticPlan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+                for: snapshot,
                 availableWidth: 620,
-                displayIconConfiguration: .automatic,
-                workspaceAction: nil
+                displayIconConfiguration: .automatic
+            ).first)
+            let hiddenPlan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+                for: snapshot,
+                availableWidth: 620,
+                displayIconConfiguration: hiddenConfiguration
+            ).first)
+            let automatic = MenuBarDisplayGroupContentView(
+                plan: automaticPlan,
+                workspaceLabelMode: snapshot.workspaceLabelMode,
+                highlightColor: .default,
+                displayIconConfiguration: .automatic
             )
-            let hidden = MenuBarStatusContentView(
-                snapshot: snapshot,
-                availableWidth: 620,
-                displayIconConfiguration: hiddenConfiguration,
-                workspaceAction: nil
+            let hidden = MenuBarDisplayGroupContentView(
+                plan: hiddenPlan,
+                workspaceLabelMode: snapshot.workspaceLabelMode,
+                highlightColor: .default,
+                displayIconConfiguration: hiddenConfiguration
             )
             layout(automatic)
             layout(hidden)
 
-            XCTAssertLessThan(
-                hidden.intrinsicContentSize.width,
-                automatic.intrinsicContentSize.width,
+            let reclaimedWidth = automatic.intrinsicContentSize.width
+                - hidden.intrinsicContentSize.width
+            XCTAssertGreaterThan(
+                reclaimedWidth,
+                0,
                 "\(mode.title) should reclaim the hidden icon width"
             )
+            if mode == .full {
+                XCTAssertEqual(
+                    reclaimedWidth,
+                    MenuBarVisualTokens.displayIconWidth
+                        + MenuBarVisualTokens.displayWorkspaceGap,
+                    accuracy: 1
+                )
+            }
+            XCTAssertEqual(
+                hidden.workspaceTrackingRegions(in: hidden).map(\.hitTarget),
+                automatic.workspaceTrackingRegions(in: automatic).map(\.hitTarget)
+            )
         }
-
-        let snapshot = independentSnapshot(displays: [mainDisplay]).replacingMode(.full)
-        let automatic = MenuBarFullStripView(
-            snapshot: snapshot,
-            availableWidth: 620,
-            displayIconConfiguration: .automatic,
-            workspaceAction: nil
-        )
-        let hidden = MenuBarFullStripView(
-            snapshot: snapshot,
-            availableWidth: 620,
-            displayIconConfiguration: hiddenConfiguration,
-            workspaceAction: nil
-        )
-        layout(automatic)
-        layout(hidden)
-
-        XCTAssertLessThan(hidden.intrinsicContentSize.width, automatic.intrinsicContentSize.width)
-        XCTAssertEqual(
-            workspaceButtons(in: hidden).map(\.title),
-            workspaceButtons(in: automatic).map(\.title)
-        )
     }
 
     func testInformationalTargetsNeverRouteToWorkspaceSwitch() {
@@ -1304,132 +1244,6 @@ final class MenuBarPresentationTests: XCTestCase {
                 displayIdentifier: externalDisplay.identifier
             )
         )
-    }
-
-    @MainActor
-    func testStableStatusContentTransitionsRemoveAndRestoreOnlyExplicitWorkspaceButtons() {
-        let medium = independentSnapshot(displays: [mainDisplay, externalDisplay])
-        let full = medium.replacingMode(.full)
-        let compact = medium.replacingMode(.compact)
-        var actions: [MenuBarHitTarget] = []
-        let content = MenuBarStatusContentView(
-            snapshot: full,
-            availableWidth: 620,
-            workspaceAction: { actions.append($0) }
-        )
-        let originalIdentity = ObjectIdentifier(content)
-
-        layout(content)
-        let fullButtons = workspaceButtons(in: content)
-        XCTAssertEqual(Set(fullButtons.map(\.title)), Set(["1", "Writing", "9"]))
-        XCTAssertNil(content.hitTest(NSPoint(x: 2, y: content.bounds.midY)))
-        for button in fullButtons {
-            let point = content.convert(
-                NSPoint(x: button.bounds.midX, y: button.bounds.midY),
-                from: button
-            )
-            XCTAssertTrue(content.hitTest(point) === button)
-        }
-
-        content.configure(snapshot: medium, availableWidth: 620, workspaceAction: { actions.append($0) })
-        layout(content)
-        XCTAssertEqual(ObjectIdentifier(content), originalIdentity)
-        XCTAssertTrue(workspaceButtons(in: content).isEmpty)
-        XCTAssertNil(content.hitTest(NSPoint(x: content.bounds.midX, y: content.bounds.midY)))
-
-        content.configure(snapshot: full, availableWidth: 620, workspaceAction: { actions.append($0) })
-        layout(content)
-        let restoredButtons = workspaceButtons(in: content)
-        XCTAssertEqual(restoredButtons.count, 3)
-        restoredButtons.first(where: { $0.title == "Writing" })?.performClick(nil)
-        XCTAssertEqual(actions, [
-            .workspace(workspaceID: workspace2.id, displayIdentifier: mainDisplay.identifier),
-        ])
-
-        content.configure(snapshot: compact, availableWidth: 620, workspaceAction: { actions.append($0) })
-        layout(content)
-        XCTAssertEqual(ObjectIdentifier(content), originalIdentity)
-        XCTAssertTrue(workspaceButtons(in: content).isEmpty)
-        XCTAssertNil(content.hitTest(NSPoint(x: content.bounds.midX, y: content.bounds.midY)))
-    }
-
-    @MainActor
-    func testCustomStatusHostSeparatesWorkspacePrimaryClicksFromMenuClicks() throws {
-        let snapshot = independentSnapshot(displays: [mainDisplay, externalDisplay]).replacingMode(.full)
-        var workspaceActions: [MenuBarHitTarget] = []
-        var menuRequestCount = 0
-        let requestMenu = { menuRequestCount += 1 }
-        let content = MenuBarStatusContentView(
-            snapshot: snapshot,
-            availableWidth: 620,
-            workspaceAction: { workspaceActions.append($0) },
-            menuAction: requestMenu
-        )
-        let host = MenuBarStatusHostView(contentView: content, menuAction: requestMenu)
-        host.configure(
-            menuAction: requestMenu,
-            accessibilityLabel: snapshot.primaryAccessibilityLabel,
-            accessibilityHelp: "Opens the WindowRanger menu."
-        )
-        layout(host)
-
-        let primaryPoint = NSPoint(x: 2, y: host.bounds.midY)
-        XCTAssertTrue(host.hitTest(primaryPoint) === host)
-        host.mouseDown(with: mouseEvent(type: .leftMouseDown))
-        host.rightMouseDown(with: mouseEvent(type: .rightMouseDown))
-        XCTAssertEqual(menuRequestCount, 2)
-
-        let writingButton = try XCTUnwrap(
-            workspaceButtons(in: content).first(where: { $0.title == "Writing" })
-        )
-        let workspacePoint = host.convert(
-            NSPoint(x: writingButton.bounds.midX, y: writingButton.bounds.midY),
-            from: writingButton
-        )
-        XCTAssertTrue(host.hitTest(workspacePoint) === writingButton)
-
-        writingButton.performClick(nil)
-        XCTAssertEqual(workspaceActions, [
-            .workspace(workspaceID: workspace2.id, displayIdentifier: mainDisplay.identifier),
-        ])
-        XCTAssertEqual(menuRequestCount, 2)
-
-        writingButton.rightMouseDown(with: mouseEvent(type: .rightMouseDown))
-        writingButton.mouseDown(with: mouseEvent(type: .leftMouseDown, modifierFlags: .control))
-        XCTAssertEqual(menuRequestCount, 4)
-        XCTAssertEqual(workspaceActions.count, 1)
-    }
-
-    @MainActor
-    func testCustomStatusHostPreservesMenuAccessibilityAndTrackingHighlight() {
-        let snapshot = independentSnapshot(displays: [mainDisplay]).replacingMode(.compact)
-        var menuRequestCount = 0
-        let content = MenuBarStatusContentView(
-            snapshot: snapshot,
-            availableWidth: 620,
-            workspaceAction: nil
-        )
-        let host = MenuBarStatusHostView(
-            contentView: content,
-            menuAction: { menuRequestCount += 1 }
-        )
-        host.configure(
-            menuAction: { menuRequestCount += 1 },
-            accessibilityLabel: "WindowRanger, workspace Writing",
-            accessibilityHelp: "Opens the WindowRanger menu."
-        )
-
-        XCTAssertEqual(host.accessibilityRole(), .button)
-        XCTAssertEqual(host.accessibilityLabel(), "WindowRanger, workspace Writing")
-        XCTAssertEqual(host.accessibilityHelp(), "Opens the WindowRanger menu.")
-        XCTAssertTrue(host.accessibilityPerformPress())
-        XCTAssertEqual(menuRequestCount, 1)
-
-        XCTAssertFalse(host.isMenuPresented)
-        host.setMenuPresented(true)
-        XCTAssertTrue(host.isMenuPresented)
-        host.setMenuPresented(false)
-        XCTAssertFalse(host.isMenuPresented)
     }
 
     @MainActor
@@ -1562,23 +1376,6 @@ final class MenuBarPresentationTests: XCTestCase {
         }
     }
 
-    private func mouseEvent(
-        type: NSEvent.EventType,
-        location: NSPoint = .zero,
-        modifierFlags: NSEvent.ModifierFlags = []
-    ) -> NSEvent {
-        NSEvent.mouseEvent(
-            with: type,
-            location: location,
-            modifierFlags: modifierFlags,
-            timestamp: 0,
-            windowNumber: 0,
-            context: nil,
-            eventNumber: 0,
-            clickCount: 1,
-            pressure: 1
-        )!
-    }
 }
 
 private final class FakeUbiquitousKeyValueStore: UbiquitousKeyValueStoring {
