@@ -27,6 +27,7 @@ not an installable macOS app.
 - [Release channels and branching](docs/release-channels-and-branching.md)
 - [First GitHub release runbook](docs/first-github-release.md)
 - [Release notes template](docs/release-notes-template.md)
+- [WindowRanger 0.1.0 Beta 9 release notes](docs/releases/v0.1.0-beta.9.md)
 - [Sparkle update design and release flow](docs/sparkle-updates.md)
 - [WindowRanger 0.1.0 Beta 8 release notes](docs/releases/v0.1.0-beta.8.md)
 - [WindowRanger 0.1.0 Beta 7 release notes](docs/releases/v0.1.0-beta.7.md)

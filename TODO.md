@@ -3630,6 +3630,29 @@ design notes, but every active candidate must map back to a work item here or be
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
 second copy of that checklist.
 
+### WR-103 — Publish WindowRanger 0.1.0 Beta 9
+
+- **Type:** Beta release preparation
+- **Status:** Candidate preparation and validation in progress.
+- **Requested:** 29 August 2026 after the signed daily candidate was installed for the accumulated
+  performance, Settings, workspace-preview, iCloud-safety, onboarding, and dynamic-shortcut work.
+- **Smallest useful outcome:** Publish signed, notarized universal Beta `0.1.0-beta.9` as public
+  build `10`, containing the reviewed work since Beta 8. Keep public appcast generation and website
+  deployment outside this checkpoint.
+- **Acceptance boundary:** Central `develop` owns the single build-10 allocation; the reviewed tree
+  is promoted without force-updating `release/0.1.0`; stable Xcode passes the exact release tree's
+  isolated suite and static analysis, then produces the Developer ID-signed, notarized and stapled
+  DMG/ZIP. The immutable tag, five GitHub assets, checksums, and provenance must round-trip to that
+  exact tree, and GitHub must publish it as a prerelease. Existing signed-daily evidence remains
+  distinct from exact packaged-artifact and new-machine validation.
+- **Current evidence:** The complete dirty-tree checkpoint passed all 814 non-hosted tests, test
+  isolation, Release static analysis, an unsigned universal Release build, both DMG smoke layouts,
+  and whitespace verification. A skeptical full-diff review found no P0-P2 code, privacy,
+  persistence, migration, or project-membership blocker after adding this build allocation and the
+  Beta 9 release notes. Signed daily revision `539e0bf945e9-dirty` is installed on the maintainer's
+  Mac; live validation of the latest onboarding, fifth-workspace shortcut, optional capture, and
+  new-Mac iCloud paths remains explicit.
+
 ### WR-012 — Clean build and package verification
 
 - **Type:** Release epic
