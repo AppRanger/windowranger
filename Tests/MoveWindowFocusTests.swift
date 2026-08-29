@@ -104,6 +104,69 @@ final class MoveWindowFocusTests: XCTestCase {
         ))
     }
 
+    func testBackgroundLayoutUsesEnumeratedFrameWithoutAnotherAccessibilityRead() {
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 7)
+        let observedFrame = WindowFrame(
+            position: CGPoint(x: 100, y: 200),
+            size: CGSize(width: 800, height: 600)
+        )
+        var fallbackReadCount = 0
+
+        let result = WorkspaceEngine.backgroundLayoutFrame(
+            for: key,
+            observedFrames: [key: observedFrame]
+        ) {
+            fallbackReadCount += 1
+            return nil
+        }
+
+        XCTAssertEqual(result, observedFrame)
+        XCTAssertEqual(fallbackReadCount, 0)
+    }
+
+    func testBackgroundLayoutRetriesFrameWhenEnumerationHadNoReadableFrame() {
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 7)
+        let recoveredFrame = WindowFrame(
+            position: CGPoint(x: 120, y: 240),
+            size: CGSize(width: 640, height: 480)
+        )
+        var fallbackReadCount = 0
+
+        let result = WorkspaceEngine.backgroundLayoutFrame(
+            for: key,
+            observedFrames: [:]
+        ) {
+            fallbackReadCount += 1
+            return recoveredFrame
+        }
+
+        XCTAssertEqual(result, recoveredFrame)
+        XCTAssertEqual(fallbackReadCount, 1)
+    }
+
+    func testBackgroundLayoutRereadsOnlyAfterApplyingGeometry() {
+        var postWriteReadCount = 0
+        let unchanged = WorkspaceEngine.settledBackgroundLayoutSignature(
+            observedSignature: "enumerated",
+            didApplyVisibility: false
+        ) {
+            postWriteReadCount += 1
+            return "post-write"
+        }
+        XCTAssertEqual(unchanged, "enumerated")
+        XCTAssertEqual(postWriteReadCount, 0)
+
+        let changed = WorkspaceEngine.settledBackgroundLayoutSignature(
+            observedSignature: "enumerated",
+            didApplyVisibility: true
+        ) {
+            postWriteReadCount += 1
+            return "post-write"
+        }
+        XCTAssertEqual(changed, "post-write")
+        XCTAssertEqual(postWriteReadCount, 1)
+    }
+
     func testHiddenRegularApplicationCannotBecomeWakeFocusOrQuitGeometryTarget() {
         let excluded = WorkspaceEngine.isExcludedFromWorkspaceParticipation(
             isApplicationHidden: true,

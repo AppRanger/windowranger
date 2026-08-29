@@ -351,6 +351,29 @@ enum WindowEnumerationLifecycle {
         })
     }
 
+    static func hasCurrentFullscreenObservation(
+        sessionWindowKeys: Set<WindowKey>,
+        enumeratedWindowKeys: Set<WindowKey>
+    ) -> Bool {
+        !sessionWindowKeys.isDisjoint(with: enumeratedWindowKeys)
+    }
+
+    static func diagnosticFocusKeyAfterEnumeration(
+        previousKey: WindowKey?,
+        observedKey: WindowKey?,
+        ownProcessIdentifier: pid_t,
+        removedWindowKeys: Set<WindowKey>
+    ) -> WindowKey? {
+        let retainedPreviousKey = previousKey.flatMap {
+            removedWindowKeys.contains($0) ? nil : $0
+        }
+        guard let observedKey,
+              observedKey.processIdentifier != ownProcessIdentifier,
+              !removedWindowKeys.contains(observedKey)
+        else { return retainedPreviousKey }
+        return observedKey
+    }
+
     static func pruning(
         _ trees: [TiledLayoutPartitionKey: TiledNode],
         removedWindowKeys: Set<WindowKey>
@@ -370,6 +393,51 @@ enum WindowEnumerationLifecycle {
         removedWindowKeys: Set<WindowKey>
     ) -> [UUID: WindowKey] {
         history.filter { !removedWindowKeys.contains($0.value) }
+    }
+}
+
+/// A screen lock or native fullscreen Space can make still-running applications lose their
+/// Accessibility windows in stages. Preserve a coordinated collapse across multiple applications
+/// while that lifecycle boundary is active, with a short grace period around otherwise fully active
+/// transitions, while keeping a single application's successful absence authoritative immediately.
+struct CoordinatedWindowEnumerationCollapseState {
+    static let graceDuration: TimeInterval = 0.5
+
+    private var deferralDeadline: Date?
+
+    mutating func processIdentifiersToDefer(
+        requiredProcessIdentifiers: Set<pid_t>,
+        successfullyEnumeratedProcessIdentifiers: Set<pid_t>,
+        enumeratedWindowProcessIdentifiers: Set<pid_t>,
+        isLifecycleTransitionActive: Bool,
+        hasCurrentFullscreenObservation: Bool = false,
+        at now: Date = Date()
+    ) -> Set<pid_t> {
+        let successfullyEmptyProcessIdentifiers = requiredProcessIdentifiers
+            .intersection(successfullyEnumeratedProcessIdentifiers)
+            .subtracting(enumeratedWindowProcessIdentifiers)
+        let isCoordinatedCollapse = requiredProcessIdentifiers.count >= 2 &&
+            successfullyEmptyProcessIdentifiers.count >= 2 &&
+            successfullyEmptyProcessIdentifiers.count * 2 >= requiredProcessIdentifiers.count
+
+        guard isCoordinatedCollapse else {
+            deferralDeadline = nil
+            return []
+        }
+        if isLifecycleTransitionActive || hasCurrentFullscreenObservation {
+            deferralDeadline = nil
+            return successfullyEmptyProcessIdentifiers
+        }
+        if let deferralDeadline {
+            guard now < deferralDeadline else {
+                self.deferralDeadline = nil
+                return []
+            }
+            return successfullyEmptyProcessIdentifiers
+        }
+
+        deferralDeadline = now.addingTimeInterval(Self.graceDuration)
+        return successfullyEmptyProcessIdentifiers
     }
 }
 
@@ -535,9 +603,9 @@ struct DropDownAppWindowHandoffCandidate {
 
 /// A native tab switch can replace an application's AX window identifier while leaving the same
 /// visible window and process in place. Quick App ownership may follow that replacement only when
-/// the authoritative refresh leaves exactly one eligible window for the configured bundle and that
-/// window is both newly tracked and owned by the same process. Anything ambiguous keeps the normal
-/// exact-window safety boundary.
+/// the authoritative refresh leaves exactly one newly tracked eligible replacement for the
+/// configured bundle and process. Other retained members of the same application group do not make
+/// that exact one-for-one handoff ambiguous.
 enum DropDownAppWindowHandoffPolicy {
     static func replacementWindowKey(
         sessionWindowKey: WindowKey,
@@ -548,12 +616,13 @@ enum DropDownAppWindowHandoffPolicy {
     ) -> WindowKey? {
         guard removedWindowKeys.contains(sessionWindowKey) else { return nil }
         let matching = availableWindows.filter { candidate in
-            candidate.bundleIdentifier?.caseInsensitiveCompare(sessionBundleIdentifier) == .orderedSame
+            candidate.key.processIdentifier == sessionWindowKey.processIdentifier &&
+                newlyTrackedWindowKeys.contains(candidate.key) &&
+                candidate.bundleIdentifier?.caseInsensitiveCompare(
+                    sessionBundleIdentifier
+                ) == .orderedSame
         }
         guard matching.count == 1, let replacement = matching.first else { return nil }
-        guard replacement.key.processIdentifier == sessionWindowKey.processIdentifier,
-              newlyTrackedWindowKeys.contains(replacement.key)
-        else { return nil }
         return replacement.key
     }
 }
@@ -591,10 +660,79 @@ struct DropDownAppStartupSelection: Equatable {
     let wasHiddenByWindowRanger: Bool
 }
 
-/// Startup claims each configured Quick App only when one eligible window is unambiguous. A claimed
-/// entry always begins hidden; launching WindowRanger must never present a Shelf app merely because
-/// that application was visible before startup.
+enum QuickAppApplicationWindowPolicy {
+    static func orderedWindowKeys(
+        candidates: [WindowKey],
+        existingOrder: [WindowKey] = [],
+        requiredProcessIdentifier: pid_t? = nil
+    ) -> [WindowKey]? {
+        var seenCandidates = Set<WindowKey>()
+        let candidates = candidates.filter { seenCandidates.insert($0).inserted }
+        let processIdentifiers = Set(candidates.map(\.processIdentifier))
+        guard !candidates.isEmpty,
+              processIdentifiers.count == 1,
+              requiredProcessIdentifier.map({ processIdentifiers == Set([$0]) }) ?? true
+        else { return nil }
+        var existingIndices = [WindowKey: Int]()
+        for (index, key) in existingOrder.enumerated() where existingIndices[key] == nil {
+            existingIndices[key] = index
+        }
+        return candidates.sorted { lhs, rhs in
+            let leftIndex = existingIndices[lhs]
+            let rightIndex = existingIndices[rhs]
+            if leftIndex != rightIndex {
+                return (leftIndex ?? Int.max) < (rightIndex ?? Int.max)
+            }
+            return lhs.windowIdentifier < rhs.windowIdentifier
+        }
+    }
+
+    static func removing(
+        _ key: WindowKey,
+        from orderedWindowKeys: [WindowKey]
+    ) -> [WindowKey] {
+        orderedWindowKeys.filter { $0 != key }
+    }
+
+    static func presentedMembershipChanged(
+        previousWindowKeys: [WindowKey],
+        currentWindowKeys: [WindowKey],
+        isPresented: Bool
+    ) -> Bool {
+        isPresented && previousWindowKeys != currentWindowKeys
+    }
+
+    static func cycleTarget(
+        in orderedWindowKeys: [WindowKey],
+        selectedWindowKey: WindowKey,
+        offset: Int,
+        wrapsWithinGroup: Bool
+    ) -> WindowKey? {
+        guard offset != 0,
+              let currentIndex = orderedWindowKeys.firstIndex(of: selectedWindowKey)
+        else { return nil }
+        let nextIndex = currentIndex + (offset > 0 ? 1 : -1)
+        if orderedWindowKeys.indices.contains(nextIndex) {
+            return orderedWindowKeys[nextIndex]
+        }
+        guard wrapsWithinGroup else { return nil }
+        return nextIndex < 0 ? orderedWindowKeys.last : orderedWindowKeys.first
+    }
+}
+
+/// Startup claims every eligible window from one application process. A claimed application group
+/// always begins hidden; launching WindowRanger must never present Shelf windows merely because the
+/// application was visible before startup.
 enum DropDownAppStartupPolicy {
+    static func matchingCandidateCount(
+        bundleIdentifier: String,
+        candidates: [DropDownAppStartupCandidate]
+    ) -> Int {
+        candidates.filter {
+            $0.bundleIdentifier?.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }.count
+    }
+
     static func selection(
         bundleIdentifier: String,
         candidates: [DropDownAppStartupCandidate]
@@ -609,16 +747,47 @@ enum DropDownAppStartupPolicy {
             wasHiddenByWindowRanger: candidate.wasHiddenByWindowRanger
         )
     }
+
+    /// A configured Shelf application owns all of its eligible windows when they come from one
+    /// running application process. A second process remains ambiguous because one AppKit Hide
+    /// request cannot truthfully govern both process lifecycles as one Shelf group.
+    static func selections(
+        bundleIdentifier: String,
+        candidates: [DropDownAppStartupCandidate]
+    ) -> [DropDownAppStartupSelection]? {
+        var seen = Set<WindowKey>()
+        let matching = candidates.filter {
+            $0.bundleIdentifier?.caseInsensitiveCompare(bundleIdentifier) == .orderedSame &&
+                seen.insert($0.key).inserted
+        }
+        guard !matching.isEmpty,
+              Set(matching.map { $0.key.processIdentifier }).count == 1
+        else { return nil }
+        return matching.sorted { lhs, rhs in
+            if lhs.key.processIdentifier != rhs.key.processIdentifier {
+                return lhs.key.processIdentifier < rhs.key.processIdentifier
+            }
+            return lhs.key.windowIdentifier < rhs.key.windowIdentifier
+        }.map {
+            DropDownAppStartupSelection(
+                windowKey: $0.key,
+                wasMeaningfullyVisible: $0.isMeaningfullyVisible,
+                wasHiddenByWindowRanger: $0.wasHiddenByWindowRanger
+            )
+        }
+    }
 }
 
 struct PersistedDropDownAppSession: Codable, Equatable, Sendable {
     let windowKey: WindowKey
+    let windowKeys: [WindowKey]
     let bundleIdentifier: String
     let displayIdentifier: String?
     let isApplicationHiddenByWindowRanger: Bool
 
     private enum CodingKeys: String, CodingKey {
         case windowKey
+        case windowKeys
         case bundleIdentifier
         case displayIdentifier
         case isApplicationHiddenByWindowRanger
@@ -626,11 +795,16 @@ struct PersistedDropDownAppSession: Codable, Equatable, Sendable {
 
     init(
         windowKey: WindowKey,
+        windowKeys: [WindowKey]? = nil,
         bundleIdentifier: String,
         displayIdentifier: String?,
         isApplicationHiddenByWindowRanger: Bool
     ) {
         self.windowKey = windowKey
+        self.windowKeys = Self.normalizedWindowKeys(
+            primary: windowKey,
+            candidates: windowKeys ?? [windowKey]
+        )
         self.bundleIdentifier = bundleIdentifier
         self.displayIdentifier = displayIdentifier
         self.isApplicationHiddenByWindowRanger = isApplicationHiddenByWindowRanger
@@ -639,12 +813,25 @@ struct PersistedDropDownAppSession: Codable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         windowKey = try container.decode(WindowKey.self, forKey: .windowKey)
+        windowKeys = Self.normalizedWindowKeys(
+            primary: windowKey,
+            candidates: try container.decodeIfPresent([WindowKey].self, forKey: .windowKeys)
+                ?? [windowKey]
+        )
         bundleIdentifier = try container.decode(String.self, forKey: .bundleIdentifier)
         displayIdentifier = try container.decodeIfPresent(String.self, forKey: .displayIdentifier)
         isApplicationHiddenByWindowRanger = try container.decodeIfPresent(
             Bool.self,
             forKey: .isApplicationHiddenByWindowRanger
         ) ?? false
+    }
+
+    private static func normalizedWindowKeys(
+        primary: WindowKey,
+        candidates: [WindowKey]
+    ) -> [WindowKey] {
+        var seen = Set<WindowKey>()
+        return ([primary] + candidates).filter { seen.insert($0).inserted }
     }
 }
 
@@ -660,7 +847,7 @@ enum DropDownAppHiddenSessionRecoveryPolicy {
               isApplicationHidden,
               let persisted,
               persisted.isApplicationHiddenByWindowRanger,
-              persisted.windowKey == windowKey,
+              persisted.windowKeys.contains(windowKey),
               let bundleIdentifier
         else { return false }
         return persisted.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
@@ -798,6 +985,24 @@ enum QuickAppTransitionPolicy {
     }
 }
 
+enum QuickAppApplicationSwitchActivationDisposition: Equatable, Sendable {
+    case incoming
+    case outgoing
+    case unrelated
+}
+
+enum QuickAppApplicationSwitchPolicy {
+    static func activationDisposition(
+        activatedProcessIdentifier: pid_t,
+        incomingProcessIdentifier: pid_t,
+        outgoingProcessIdentifier: pid_t
+    ) -> QuickAppApplicationSwitchActivationDisposition {
+        if activatedProcessIdentifier == incomingProcessIdentifier { return .incoming }
+        if activatedProcessIdentifier == outgoingProcessIdentifier { return .outgoing }
+        return .unrelated
+    }
+}
+
 /// A window that becomes an ignored companion surface must leave Quick App ownership without ever
 /// receiving a recovery frame. Application visibility is separate from window geometry: if
 /// WindowRanger hid the application, discarding the session requests an unhide and confirms it on
@@ -864,6 +1069,23 @@ struct IgnoredQuickAppVisibilityRecovery: Codable, Equatable, Sendable {
 }
 
 enum QuickAppInteractionPolicy {
+    struct PresentedActivationDecision: Equatable {
+        let selectsActivatedConfiguration: Bool
+        let restacksPresentedGroup: Bool
+    }
+
+    static func presentedActivationDecision(
+        activatedBundleIdentifier: String,
+        selectedBundleIdentifier: String?
+    ) -> PresentedActivationDecision {
+        PresentedActivationDecision(
+            selectsActivatedConfiguration: selectedBundleIdentifier.map {
+                $0.caseInsensitiveCompare(activatedBundleIdentifier) != .orderedSame
+            } ?? true,
+            restacksPresentedGroup: true
+        )
+    }
+
     static func preservesPresentedShelfForActivation(
         activatedProcessIdentifier: pid_t,
         ownProcessIdentifier: pid_t,
@@ -874,9 +1096,10 @@ enum QuickAppInteractionPolicy {
 
     static func routesWindowCycleToShelf(
         shelfIsPresented: Bool,
-        configuredAppCount: Int
+        configuredAppCount: Int,
+        transitionInProgress: Bool
     ) -> Bool {
-        shelfIsPresented && configuredAppCount > 0
+        (shelfIsPresented || transitionInProgress) && configuredAppCount > 0
     }
 
     static func routesDirectionalFocusToShelf(
@@ -906,8 +1129,11 @@ enum QuickAppInteractionPolicy {
         shelfProcessIdentifier == precedingProcessIdentifier
     }
 
-    static func activatesApplicationForLaunch(commandPalettePresented: Bool) -> Bool {
-        !commandPalettePresented
+    static func activatesApplicationForLaunch(
+        commandPalettePresented: Bool,
+        applicationSwitchInProgress: Bool = false
+    ) -> Bool {
+        !commandPalettePresented && !applicationSwitchInProgress
     }
 
     static func focusesQuickAppAfterShow(commandPalettePresented: Bool) -> Bool {
@@ -1308,6 +1534,55 @@ struct WorkspaceEngineState: Equatable {
     }
 }
 
+struct WorkspaceEngineStateEmissionGate {
+    private var lastScheduledState: WorkspaceEngineState?
+
+    mutating func shouldSchedule(
+        _ state: WorkspaceEngineState,
+        force: Bool
+    ) -> Bool {
+        guard force || lastScheduledState != state else { return false }
+        lastScheduledState = state
+        return true
+    }
+}
+
+/// Immutable derived lookups for the engine's active workspace and app-rule configuration.
+/// Replacing the source arrays/maps replaces this value as one unit on the engine queue.
+struct WorkspaceEngineLookupIndex {
+    let validWorkspaceIDs: Set<UUID>
+
+    private let workspacesByID: [UUID: WorkspaceDefinition]
+    private let resolvedRulesByBundleIdentifier: [String: ResolvedAppRule]
+
+    init(
+        workspaces: [WorkspaceDefinition],
+        appRulesByBundleIdentifier: [String: AppRule]
+    ) {
+        let workspaceIDs = Set(workspaces.map(\.id))
+        validWorkspaceIDs = workspaceIDs
+
+        var indexedWorkspaces: [UUID: WorkspaceDefinition] = [:]
+        for workspace in workspaces where indexedWorkspaces[workspace.id] == nil {
+            // Preserve the existing `first(where:)` behavior if malformed input repeats an ID.
+            indexedWorkspaces[workspace.id] = workspace
+        }
+        workspacesByID = indexedWorkspaces
+
+        resolvedRulesByBundleIdentifier = appRulesByBundleIdentifier.mapValues {
+            $0.resolved(validWorkspaceIDs: workspaceIDs)
+        }
+    }
+
+    func workspace(for workspaceID: UUID) -> WorkspaceDefinition? {
+        workspacesByID[workspaceID]
+    }
+
+    func resolvedRule(forBundleIdentifier bundleIdentifier: String) -> ResolvedAppRule {
+        resolvedRulesByBundleIdentifier[bundleIdentifier.lowercased()] ?? .none
+    }
+}
+
 struct WindowAdmissionSupportRecord: Identifiable, Equatable, Sendable, Codable {
     let id: String
     let bundleIdentifier: String
@@ -1365,6 +1640,21 @@ struct WorkspaceApplicationTarget: Equatable, Sendable {
     private static func normalizedBundleIdentifier(_ value: String?) -> String? {
         let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return normalized?.isEmpty == false ? normalized : nil
+    }
+}
+
+enum WorkspacePreviewFocusCandidatePolicy {
+    static func prioritizing(
+        _ selectedWindowKey: WindowKey?,
+        in candidates: [WindowKey]
+    ) -> [WindowKey] {
+        guard let selectedWindowKey,
+              let selectedIndex = candidates.firstIndex(of: selectedWindowKey)
+        else { return candidates }
+        var result = candidates
+        result.remove(at: selectedIndex)
+        result.insert(selectedWindowKey, at: 0)
+        return result
     }
 }
 
@@ -1446,6 +1736,7 @@ enum WorkspaceApplicationSummaryPolicy {
 
 final class WorkspaceEngine {
     var onStateChanged: ((WorkspaceEngineState) -> Void)?
+    var onWorkspacePreviewStateChanged: ((Set<UUID>) -> Void)?
     var onQuickAppSelectionChanged: ((String) -> Void)?
     var onWorkspaceLayoutChanged: ((UUID, WorkspaceLayout) -> Void)?
     var onWorkspaceLayoutConfigurationChanged: ((UUID, WorkspaceLayoutConfiguration) -> Void)?
@@ -1455,6 +1746,7 @@ final class WorkspaceEngine {
     var onWorkspaceDisplayAssignmentsChanged: (([UUID: String]) -> Void)?
     var onFullscreenGameSessionChanged: ((FullscreenGameSessionSnapshot?) -> Void)?
     var onVerifiedFocusTarget: ((FocusedWindowHighlightTarget) -> Void)?
+    var onTiledResizePreviewChanged: ((TiledResizePreviewEvent) -> Void)?
 
     private struct TrackedWindow {
         let key: WindowKey
@@ -1475,6 +1767,13 @@ final class WorkspaceEngine {
         let key: WindowKey
         let element: AXUIElement
         let frame: WindowFrame?
+    }
+
+    private struct WorkspacePreviewStateMember: Equatable {
+        let key: WindowKey
+        let intendedFrame: CGRect
+        let layoutOrder: Int
+        let isLastFocused: Bool
     }
 
     private struct FullscreenWindowSession {
@@ -1549,8 +1848,43 @@ final class WorkspaceEngine {
         let candidateTarget: WindowKey?
     }
 
+    private struct ManualTiledMovePreviewSession {
+        let token: UUID
+        let focusedWindow: WindowKey
+        let partition: TiledLayoutPartitionKey
+        let participantKeys: Set<WindowKey>
+        let originalTree: TiledNode
+        let originalFrames: [WindowKey: WindowFrame]
+        let configuration: WorkspaceLayoutConfiguration
+        let layoutBounds: CGRect
+        let topologySignature: String
+        let profileID: UUID?
+        var candidateTarget: WindowKey?
+        var proposedTree: TiledNode
+        var proposedFrames: [WindowKey: WindowFrame]
+    }
+
+    private struct ManualTiledResizeSession {
+        let token: UUID
+        let focusedWindow: WindowKey
+        let partition: TiledLayoutPartitionKey
+        let participantKeys: Set<WindowKey>
+        let originalTree: TiledNode
+        let originalFrames: [WindowKey: WindowFrame]
+        let configuration: WorkspaceLayoutConfiguration
+        let layoutBounds: CGRect
+        let topologySignature: String
+        let profileID: UUID?
+        let draggedEdges: TiledResizeDraggedEdges
+        let anchorFrame: WindowFrame
+        let anchorPointer: CGPoint
+        var proposedTree: TiledNode
+        var proposedFrames: [WindowKey: WindowFrame]
+    }
+
     private struct DropDownAppSession {
         var windowKey: WindowKey
+        var additionalWindowKeys: [WindowKey] = []
         let bundleIdentifier: String
         var direction: DropDownAppDirection
         var isAnimationEnabled: Bool
@@ -1558,6 +1892,48 @@ final class WorkspaceEngine {
         var isApplicationHiddenByWindowRanger: Bool
         var displayIdentifier: String?
         var previousFocusKey: WindowKey?
+
+        var windowKeys: [WindowKey] {
+            var seen = Set<WindowKey>()
+            return ([windowKey] + additionalWindowKeys)
+                .filter { seen.insert($0).inserted }
+                .sorted { lhs, rhs in
+                    if lhs.processIdentifier != rhs.processIdentifier {
+                        return lhs.processIdentifier < rhs.processIdentifier
+                    }
+                    return lhs.windowIdentifier < rhs.windowIdentifier
+                }
+        }
+
+        mutating func selectWindow(_ key: WindowKey) {
+            guard windowKeys.contains(key), key != windowKey else { return }
+            let previousPrimary = windowKey
+            additionalWindowKeys.removeAll { $0 == key }
+            additionalWindowKeys.insert(previousPrimary, at: 0)
+            windowKey = key
+        }
+
+        mutating func synchronizeWindowKeys(_ keys: [WindowKey]) {
+            var seen = Set<WindowKey>()
+            let normalized = keys.filter { seen.insert($0).inserted }
+            guard !normalized.isEmpty else {
+                additionalWindowKeys = []
+                return
+            }
+            if normalized.contains(windowKey) {
+                additionalWindowKeys = normalized.filter { $0 != windowKey }
+            } else {
+                windowKey = normalized[0]
+                additionalWindowKeys = Array(normalized.dropFirst())
+            }
+        }
+
+        mutating func removeWindow(_ key: WindowKey) -> Bool {
+            let remaining = QuickAppApplicationWindowPolicy.removing(key, from: windowKeys)
+            guard !remaining.isEmpty else { return false }
+            synchronizeWindowKeys(remaining)
+            return true
+        }
     }
 
     private struct PendingDropDownAppLaunch {
@@ -1566,8 +1942,18 @@ final class WorkspaceEngine {
         let generation: UInt64
     }
 
+    private struct PendingQuickAppPresentationContext {
+        let previousFocusKey: WindowKey?
+    }
+
     private struct PendingQuickAppSelection {
         let bundleIdentifier: String
+        let correlationID: String
+    }
+
+    private struct QuickAppApplicationSwitchHandoff {
+        let outgoingBundleKey: String
+        let incomingBundleKey: String
         let correlationID: String
     }
 
@@ -1582,7 +1968,9 @@ final class WorkspaceEngine {
         qos: .userInitiated
     )
     private var timer: DispatchSourceTimer?
-    private var workspaces: [WorkspaceDefinition]
+    private var workspaces: [WorkspaceDefinition] {
+        didSet { rebuildWorkspaceEngineLookupIndex() }
+    }
     private var currentProfileID: UUID?
     private var currentWorkspaceID: UUID
     private var previousWorkspaceID: UUID?
@@ -1590,7 +1978,13 @@ final class WorkspaceEngine {
     private var activeWorkspaceIDByDisplay: [String: UUID]
     private var displayMode: MultiDisplayMode
     private var workspaceDisplayAssignments: [UUID: String]
-    private var appRulesByBundleIdentifier: [String: AppRule]
+    private var appRulesByBundleIdentifier: [String: AppRule] {
+        didSet { rebuildWorkspaceEngineLookupIndex() }
+    }
+    private var workspaceEngineLookupIndex = WorkspaceEngineLookupIndex(
+        workspaces: [],
+        appRulesByBundleIdentifier: [:]
+    )
     private var quickAppConfigurations: [DropDownAppConfiguration]
     private var quickAppShelfPresentation: QuickAppShelfPresentation
     /// Exact ownership is retained per configured Quick App, including entries that are currently
@@ -1623,8 +2017,10 @@ final class WorkspaceEngine {
     private var dropDownAnimationGeneration: UInt64 = 0
     private var dropDownLaunchGeneration: UInt64 = 0
     private var pendingDropDownAppLaunch: PendingDropDownAppLaunch?
+    private var pendingQuickAppPresentationContext: PendingQuickAppPresentationContext?
     private var pendingQuickAppSelection: PendingQuickAppSelection?
     private var pendingQuickAppHideAfterPresentation = false
+    private var quickAppApplicationSwitchHandoff: QuickAppApplicationSwitchHandoff?
     private var quickAppTransition: QuickAppTransitionPhase = .idle
     private var quickAppNeighborVisibilityGeneration: [String: UInt64] = [:]
     private var ignoredQuickAppVisibilityRecoveryGeneration: UInt64 = 0
@@ -1643,6 +2039,8 @@ final class WorkspaceEngine {
     private var radialFreeformPlacementCommitContext: FreeformPlacementCommitContext? = nil
     private var directionalMoveGestureContext: DirectionalMoveGestureContext? = nil
     private var manualTiledDragSession: ManualTiledDragSession? = nil
+    private var manualTiledMovePreviewSession: ManualTiledMovePreviewSession? = nil
+    private var manualTiledResizeSession: ManualTiledResizeSession? = nil
     private var ignoredWindowKeys = Set<WindowKey>()
     private var admissionDecisionByWindow: [WindowKey: WindowAdmissionDecision] = [:]
     private var admissionMetadataByWindow: [WindowKey: WindowAdmissionMetadata] = [:]
@@ -1678,6 +2076,10 @@ final class WorkspaceEngine {
     private var fullscreenAuthoritativeFalseCounts: [WindowKey: Int] = [:]
     private var foregroundFullscreenGameSessionKey: WindowKey?
     private var lastEmittedFullscreenGameSession: FullscreenGameSessionSnapshot?
+    private var stateEmissionGate = WorkspaceEngineStateEmissionGate()
+    private var workspacePreviewObservationEnabled = false
+    private var hasWorkspacePreviewStateBaseline = false
+    private var workspacePreviewStateByWorkspace: [UUID: [WorkspacePreviewStateMember]] = [:]
     private var declaredGameByBundleIdentifier: [String: Bool] = [:]
     private var gameModeEligibilityByBundleIdentifier: [String: Bool] = [:]
     private var lastBroadWindowRefreshDate = Date.distantPast
@@ -1691,6 +2093,8 @@ final class WorkspaceEngine {
     private var lastWakeCompletionDate = Date.distantPast
     private var lastWakeCompletedTopologySignature: String?
     private var consecutiveGlobalEmptySnapshots = 0
+    private var coordinatedWindowEnumerationCollapseState =
+        CoordinatedWindowEnumerationCollapseState()
     private var postSleepWindowRecoveryState = PostSleepWindowRecoveryState()
     private let stateStore: WorkspaceStateStore
     private let diagnostics: DiagnosticLogger
@@ -1722,6 +2126,10 @@ final class WorkspaceEngine {
         self.displayMode = displayMode
         self.workspaceDisplayAssignments = workspaceDisplayAssignments
         appRulesByBundleIdentifier = Self.indexedAppRules(appRules)
+        workspaceEngineLookupIndex = WorkspaceEngineLookupIndex(
+            workspaces: initial,
+            appRulesByBundleIdentifier: appRulesByBundleIdentifier
+        )
         quickAppConfigurations = QuickAppShelfPolicy.normalized(
             quickApps.isEmpty ? dropDownApp.map { [$0] } ?? [] : quickApps
         )
@@ -1834,7 +2242,7 @@ final class WorkspaceEngine {
                     performAXWrites: !self.isWindowManagementPaused
                 )
                 self.persistState(preservingPendingRestores: Date() < self.startupGraceDeadline)
-                self.emitState()
+                self.emitState(force: self.commandPalettePresented)
             }
             self.timer = timer
             timer.resume()
@@ -1848,12 +2256,14 @@ final class WorkspaceEngine {
         queue.async { [weak self] in
             guard let self, self.isWindowManagementPaused != paused else { return }
             if paused {
+                self.cancelManualTiledPreviewTransactions(reason: "pause-mode")
                 self.isWindowManagementPaused = true
                 self.dropDownAnimationGeneration &+= 1
                 self.quickAppNeighborVisibilityGeneration.removeAll()
                 self.cancelPendingDropDownAppLaunch()
                 self.pendingQuickAppSelection = nil
                 self.pendingQuickAppHideAfterPresentation = false
+                self.quickAppApplicationSwitchHandoff = nil
                 self.quickAppTransition = .idle
                 self.directionalMoveGestureContext = nil
                 self.manualTiledDragSession = nil
@@ -1933,6 +2343,7 @@ final class WorkspaceEngine {
     /// synchronous queue hand-off gives persistence a bounded opportunity to finish.
     func prepareForSystemSleep() {
         queue.sync {
+            cancelManualTiledPreviewTransactions(reason: "system-sleep")
             postSleepWindowRecoveryState.prepareForSleep(protecting: Set(windows.keys))
             restoreAndClearDropDownAppSession(reason: "system-sleep")
             let focused = interactionFocusedWindowSnapshot()
@@ -1976,6 +2387,7 @@ final class WorkspaceEngine {
     /// obtains a fresh Accessibility snapshot.
     func prepareForScreenSleep(source: ScreenSessionSuspensionSource) {
         queue.sync {
+            cancelManualTiledPreviewTransactions(reason: source.rawValue)
             screenSessionLifecycleState.suspend(source)
             postSleepWindowRecoveryState.prepareForSleep(protecting: Set(windows.keys))
             if wakeReconciliationState.isSleeping {
@@ -2007,6 +2419,7 @@ final class WorkspaceEngine {
             cancelPendingDropDownAppLaunch()
             pendingQuickAppSelection = nil
             pendingQuickAppHideAfterPresentation = false
+            quickAppApplicationSwitchHandoff = nil
             quickAppTransition = .idle
             invalidateFocusWorkForLifecycle()
             persistState(preservingPendingRestores: true, waitForCompletion: true)
@@ -2117,6 +2530,7 @@ final class WorkspaceEngine {
 
     func stopAndRestoreAllWindows() {
         queue.sync {
+            cancelManualTiledPreviewTransactions(reason: "application-stop")
             timer?.cancel()
             timer = nil
             wakeReconciliationWorkItem?.cancel()
@@ -2266,6 +2680,12 @@ final class WorkspaceEngine {
     }
 
     private func cycleQuickAppInternal(offset: Int, correlationID: String) {
+        if focusNextWindowInSelectedQuickAppGroup(
+            offset: offset,
+            correlationID: correlationID
+        ) {
+            return
+        }
         guard !quickAppConfigurations.isEmpty,
               let index = QuickAppShelfSelectionPolicy.index(
                   currentBundleIdentifier: QuickAppTransitionPolicy.cycleOriginBundleIdentifier(
@@ -2291,6 +2711,49 @@ final class WorkspaceEngine {
             return
         }
         switchQuickApp(to: target, correlationID: correlationID)
+    }
+
+    private func focusNextWindowInSelectedQuickAppGroup(
+        offset: Int,
+        correlationID: String
+    ) -> Bool {
+        guard offset != 0,
+              let configuration = dropDownAppConfiguration
+        else { return false }
+        let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
+        guard var session = quickAppSessions[bundleKey],
+              session.isPresented,
+              session.windowKeys.count > 1,
+              let targetKey = QuickAppApplicationWindowPolicy.cycleTarget(
+                  in: session.windowKeys,
+                  selectedWindowKey: session.windowKey,
+                  offset: offset,
+                  wrapsWithinGroup: quickAppConfigurations.count == 1
+              )
+        else { return false }
+        guard let target = windows[targetKey] else { return false }
+        let sourceKey = session.windowKey
+        session.selectWindow(targetKey)
+        quickAppSessions[bundleKey] = session
+        _ = AXUIElementPerformAction(target.element, kAXRaiseAction as CFString)
+        if QuickAppInteractionPolicy.focusesQuickAppAfterShow(
+            commandPalettePresented: commandPalettePresented
+        ) {
+            focusManagedWindow(targetKey, tracked: target, correlationID: correlationID)
+        }
+        diagnostics.log(
+            category: "focus-cycle",
+            event: "routed-within-quick-app-window-group",
+            correlation: correlationID,
+            fields: [
+                "bundle": configuration.bundleIdentifier,
+                "source-window": Self.diagnosticWindowKey(sourceKey),
+                "target-window": Self.diagnosticWindowKey(targetKey),
+                "offset": String(offset),
+            ]
+        )
+        persistState(preservingPendingRestores: true)
+        return true
     }
 
     func commandPalettePresentationChanged(_ isPresented: Bool) {
@@ -2382,15 +2845,36 @@ final class WorkspaceEngine {
         case .ignore:
             return
         }
-        if isQuickAppShelfPresented {
-            pendingQuickAppSelection = PendingQuickAppSelection(
-                bundleIdentifier: configuration.bundleIdentifier,
+        if isQuickAppShelfPresented,
+           let outgoingSession = dropDownAppSession,
+           outgoingSession.isPresented {
+            let outgoingBundleKey = Self.normalizedBundleIdentifier(
+                outgoingSession.bundleIdentifier
+            )
+            quickAppApplicationSwitchHandoff = QuickAppApplicationSwitchHandoff(
+                outgoingBundleKey: outgoingBundleKey,
+                incomingBundleKey: targetBundleKey,
                 correlationID: correlationID
             )
-            hideDropDownApp(
-                restorePreviousFocus: false,
-                reason: "quick-app-selection",
-                correlationID: correlationID
+            pendingQuickAppPresentationContext = PendingQuickAppPresentationContext(
+                previousFocusKey: outgoingSession.previousFocusKey
+            )
+            dropDownAppConfiguration = configuration
+            onQuickAppSelectionChanged?(configuration.bundleIdentifier)
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "application-switch-started",
+                correlation: correlationID,
+                fields: [
+                    "outgoing-bundle": outgoingSession.bundleIdentifier,
+                    "incoming-bundle": configuration.bundleIdentifier,
+                    "ordering": "show-focus-hide",
+                ]
+            )
+            toggleDropDownAppInternal(
+                correlationID: correlationID,
+                allowsLaunchAttempt: true,
+                refreshBeforeResolving: true
             )
             return
         }
@@ -2403,7 +2887,10 @@ final class WorkspaceEngine {
         )
     }
 
-    func toggleDropDownApp(correlationID: String? = nil) {
+    func toggleDropDownApp(
+        source _: WindowManagerCommandSource,
+        correlationID: String? = nil
+    ) {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self else { return }
@@ -2437,6 +2924,7 @@ final class WorkspaceEngine {
         allowsLaunchAttempt: Bool,
         refreshBeforeResolving: Bool
     ) {
+        cancelManualTiledPreviewTransactions(reason: "quick-app-shelf-command")
         guard let configuration = dropDownAppConfiguration else {
             emitCommandFeedback(
                 "Choose a Quick App in Applications first.",
@@ -2447,7 +2935,8 @@ final class WorkspaceEngine {
         if refreshBeforeResolving {
             refreshWindows(correlationID: correlationID)
         }
-        if isQuickAppShelfPresented {
+        if isQuickAppShelfPresented,
+           quickAppApplicationSwitchHandoff == nil {
             hideDropDownApp(
                 restorePreviousFocus: true,
                 reason: "shortcut-toggle",
@@ -2458,11 +2947,19 @@ final class WorkspaceEngine {
 
         let matching = availableDropDownAppWindows(for: configuration)
         let target: TrackedWindow
-        if let session = dropDownAppSession,
+        if var session = dropDownAppSession,
            let existing = windows[session.windowKey],
            session.isApplicationHiddenByWindowRanger ||
             matching.contains(where: { $0.key == existing.key }) {
-            target = existing
+            if let owned = orderedQuickAppWindows(
+                matching,
+                existingOrder: session.windowKeys,
+                requiredProcessIdentifier: existing.processIdentifier
+            ) {
+                session.synchronizeWindowKeys(owned.map(\.key))
+                dropDownAppSession = session
+            }
+            target = windows[session.windowKey] ?? existing
         } else {
             if matching.isEmpty {
                 if allowsLaunchAttempt {
@@ -2478,16 +2975,19 @@ final class WorkspaceEngine {
                 }
                 return
             }
-            guard matching.count == 1, let only = matching.first else {
+            guard let owned = orderedQuickAppWindows(matching),
+                  let primary = owned.first
+            else {
                 emitCommandFeedback(
-                    "\(configuration.displayName) has more than one available window. Close the extras before using it as the Quick App.",
+                    "\(configuration.displayName) is running in more than one process, so its Shelf windows cannot be governed safely.",
                     correlationID: correlationID
                 )
                 return
             }
-            target = only
+            target = primary
             dropDownAppSession = DropDownAppSession(
-                windowKey: only.key,
+                windowKey: primary.key,
+                additionalWindowKeys: Array(owned.dropFirst()).map(\.key),
                 bundleIdentifier: configuration.bundleIdentifier,
                 direction: configuration.direction,
                 isAnimationEnabled: configuration.isAnimationEnabled,
@@ -2514,23 +3014,89 @@ final class WorkspaceEngine {
         }
     }
 
-    private func quickAppGroupTarget(
+    private func orderedQuickAppWindows(
+        _ candidates: [TrackedWindow],
+        existingOrder: [WindowKey] = [],
+        requiredProcessIdentifier: pid_t? = nil
+    ) -> [TrackedWindow]? {
+        guard let orderedKeys = QuickAppApplicationWindowPolicy.orderedWindowKeys(
+            candidates: candidates.map(\.key),
+            existingOrder: existingOrder,
+            requiredProcessIdentifier: requiredProcessIdentifier
+        ) else { return nil }
+        let byKey = Dictionary(uniqueKeysWithValues: candidates.map { ($0.key, $0) })
+        return orderedKeys.compactMap { byKey[$0] }
+    }
+
+    /// Keep application-group ownership aligned with authoritative window discovery. New standard
+    /// windows from the owned process join without disturbing their saved workspace state; closing
+    /// one window removes only that exact member while another owned window remains.
+    @discardableResult
+    private func reconcileQuickAppSessionWindowSets(correlationID: String?) -> Bool {
+        var presentedMembershipChanged = false
+        for configuration in quickAppConfigurations {
+            let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
+            guard var session = quickAppSessions[bundleKey],
+                  let primary = windows[session.windowKey]
+            else { continue }
+            let matching = availableDropDownAppWindows(for: configuration)
+            guard let owned = orderedQuickAppWindows(
+                matching,
+                existingOrder: session.windowKeys,
+                requiredProcessIdentifier: primary.processIdentifier
+            ) else { continue }
+            let previousKeys = session.windowKeys
+            let nextKeys = owned.map(\.key)
+            guard previousKeys != nextKeys else { continue }
+            session.synchronizeWindowKeys(nextKeys)
+            quickAppSessions[bundleKey] = session
+            presentedMembershipChanged = presentedMembershipChanged || session.isPresented
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "application-window-group-updated",
+                correlation: correlationID,
+                fields: [
+                    "bundle": configuration.bundleIdentifier,
+                    "previous-window-count": String(previousKeys.count),
+                    "window-count": String(nextKeys.count),
+                    "added-window-count": String(Set(nextKeys).subtracting(previousKeys).count),
+                    "removed-window-count": String(Set(previousKeys).subtracting(nextKeys).count),
+                    "presented": String(session.isPresented),
+                ]
+            )
+        }
+        return presentedMembershipChanged
+    }
+
+    private func quickAppGroupTargets(
         for configuration: DropDownAppConfiguration
-    ) -> TrackedWindow? {
+    ) -> [TrackedWindow]? {
         let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
-        if let session = quickAppSessions[bundleKey],
+        if var session = quickAppSessions[bundleKey],
            let exact = windows[session.windowKey],
            session.isPresented || session.isApplicationHiddenByWindowRanger {
-            return exact
+            let retained = session.windowKeys.compactMap { windows[$0] }
+            let available = availableDropDownAppWindows(for: configuration)
+            if let owned = orderedQuickAppWindows(
+                available,
+                existingOrder: retained.map(\.key),
+                requiredProcessIdentifier: exact.processIdentifier
+            ) {
+                session.synchronizeWindowKeys(owned.map(\.key))
+                quickAppSessions[bundleKey] = session
+                return owned
+            }
+            return retained.isEmpty ? nil : retained
         }
         let matching = availableDropDownAppWindows(for: configuration)
-        guard matching.count == 1, let target = matching.first,
+        guard let targets = orderedQuickAppWindows(matching),
+              let target = targets.first,
               isDropDownApplicationHidden(
                 processIdentifier: target.processIdentifier,
                 bundleIdentifier: configuration.bundleIdentifier
               ) != true
         else { return nil }
-        return target
+        return targets
     }
 
     private func reconcilePresentedQuickAppGroup(
@@ -2549,9 +3115,9 @@ final class WorkspaceEngine {
         else { return }
 
         let targets = Dictionary(uniqueKeysWithValues: quickAppConfigurations.compactMap {
-            configuration -> (String, TrackedWindow)? in
-            guard let target = quickAppGroupTarget(for: configuration) else { return nil }
-            return (Self.normalizedBundleIdentifier(configuration.bundleIdentifier), target)
+            configuration -> (String, [TrackedWindow])? in
+            guard let targets = quickAppGroupTargets(for: configuration) else { return nil }
+            return (Self.normalizedBundleIdentifier(configuration.bundleIdentifier), targets)
         })
         let desired = QuickAppShelfGroupPolicy.visibleConfigurations(
             selectedBundleIdentifier: selected.bundleIdentifier,
@@ -2578,12 +3144,12 @@ final class WorkspaceEngine {
         for configuration in desired {
             let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
             guard bundleKey != Self.normalizedBundleIdentifier(selected.bundleIdentifier),
-                  let target = targets[bundleKey],
+                  let appTargets = targets[bundleKey],
                   quickAppSessions[bundleKey]?.isPresented != true
             else { continue }
             beginPresentingQuickAppNeighbor(
                 configuration: configuration,
-                target: target,
+                targets: appTargets,
                 display: display,
                 correlationID: correlationID
             )
@@ -2593,6 +3159,22 @@ final class WorkspaceEngine {
             display: display,
             correlationID: correlationID,
             focusSelected: focusSelected
+        )
+    }
+
+    private func restackPresentedQuickAppGroup(correlationID: String?) {
+        guard let selectedSession = dropDownAppSession,
+              selectedSession.isPresented
+        else { return }
+        let displays = Self.activeDisplays()
+        guard let display = selectedSession.displayIdentifier.flatMap({ identifier in
+            displays.first { $0.identifier == identifier }
+        }) ?? dropDownTargetDisplay(displays: displays)
+        else { return }
+        layoutPresentedQuickAppGroup(
+            display: display,
+            correlationID: correlationID,
+            focusSelected: false
         )
     }
 
@@ -2620,25 +3202,47 @@ final class WorkspaceEngine {
             sizeFraction: quickAppShelfPresentation.heightFraction,
             direction: quickAppShelfPresentation.direction
         )
+        let visibleTargets = visible.reduce(
+            into: [(bundleKey: String, target: TrackedWindow)]()
+        ) { result, configuration in
+            let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
+            guard let session = quickAppSessions[bundleKey] else { return }
+            for key in session.windowKeys {
+                if let target = windows[key] {
+                    result.append((bundleKey: bundleKey, target: target))
+                }
+            }
+        }
         let frames = DropDownAppGeometry.groupFrames(
             in: container,
-            count: visible.count,
+            count: visibleTargets.count,
             style: quickAppShelfPresentation.layoutStyle,
             direction: quickAppShelfPresentation.direction
         )
-        for (configuration, frame) in zip(visible, frames) {
-            let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
-            guard var session = quickAppSessions[bundleKey],
-                  let target = windows[session.windowKey]
-            else { continue }
+        for (visibleTarget, frame) in zip(visibleTargets, frames) {
+            guard var session = quickAppSessions[visibleTarget.bundleKey] else { continue }
             session.displayIdentifier = display.identifier
             session.direction = quickAppShelfPresentation.direction
             session.isAnimationEnabled = quickAppShelfPresentation.isAnimationEnabled
-            quickAppSessions[bundleKey] = session
-            _ = setDropDownAppFrame(frame, target: target)
+            quickAppSessions[visibleTarget.bundleKey] = session
+            _ = setDropDownAppFrame(frame, target: visibleTarget.target)
+        }
+        let raiseTargets = visibleTargets.filter { visibleTarget in
+            guard let session = quickAppSessions[visibleTarget.bundleKey] else { return false }
+            return isDropDownApplicationHidden(
+                processIdentifier: visibleTarget.target.processIdentifier,
+                bundleIdentifier: session.bundleIdentifier
+            ) == false
+        }
+        let raiseOrder = QuickAppShelfGroupPolicy.raiseOrder(
+            visibleWindowKeys: raiseTargets.map { $0.target.key },
+            selectedWindowKey: selectedSession.windowKey
+        )
+        for key in raiseOrder {
+            guard let target = windows[key] else { continue }
+            _ = AXUIElementPerformAction(target.element, kAXRaiseAction as CFString)
         }
         if let selectedTarget = windows[selectedSession.windowKey] {
-            _ = AXUIElementPerformAction(selectedTarget.element, kAXRaiseAction as CFString)
             if focusSelected,
                QuickAppInteractionPolicy.focusesQuickAppAfterShow(
                 commandPalettePresented: commandPalettePresented
@@ -2657,7 +3261,9 @@ final class WorkspaceEngine {
             fields: [
                 "style": quickAppShelfPresentation.layoutStyle.rawValue,
                 "configured-visible-count": String(quickAppShelfPresentation.visibleCount),
-                "presented-count": String(visible.count),
+                "presented-app-count": String(visible.count),
+                "presented-count": String(visibleTargets.count),
+                "raised-count": String(raiseOrder.count),
                 "selected-bundle": selected.bundleIdentifier,
                 "display": display.identifier,
             ]
@@ -2672,16 +3278,18 @@ final class WorkspaceEngine {
 
     private func beginPresentingQuickAppNeighbor(
         configuration: DropDownAppConfiguration,
-        target: TrackedWindow,
+        targets: [TrackedWindow],
         display: DisplaySnapshot,
         correlationID: String?
     ) {
         guard !isWindowManagementPaused else { return }
+        guard let target = targets.first else { return }
         let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
         let generation = nextQuickAppNeighborVisibilityGeneration(bundleKey: bundleKey)
         let previous = quickAppSessions[bundleKey]
-        quickAppSessions[bundleKey] = DropDownAppSession(
+        var pendingSession = DropDownAppSession(
             windowKey: target.key,
+            additionalWindowKeys: Array(targets.dropFirst()).map(\.key),
             bundleIdentifier: configuration.bundleIdentifier,
             direction: quickAppShelfPresentation.direction,
             isAnimationEnabled: quickAppShelfPresentation.isAnimationEnabled,
@@ -2690,10 +3298,25 @@ final class WorkspaceEngine {
             displayIdentifier: display.identifier,
             previousFocusKey: nil
         )
+        quickAppSessions[bundleKey] = pendingSession
         let applicationIsHidden = isDropDownApplicationHidden(
             processIdentifier: target.processIdentifier,
             bundleIdentifier: configuration.bundleIdentifier
         ) == true
+        if applicationIsHidden {
+            // Stage all of the neighbour's exact windows while its application is still hidden.
+            // The temporary presented marker includes them in the shared Shelf geometry only for
+            // this write; confirmation still owns the actual presented state transition.
+            pendingSession.isPresented = true
+            quickAppSessions[bundleKey] = pendingSession
+            layoutPresentedQuickAppGroup(
+                display: display,
+                correlationID: correlationID,
+                focusSelected: false
+            )
+            pendingSession.isPresented = false
+            quickAppSessions[bundleKey] = pendingSession
+        }
         guard !applicationIsHidden || requestDropDownApplicationHidden(
             false,
             processIdentifier: target.processIdentifier,
@@ -2916,6 +3539,11 @@ final class WorkspaceEngine {
                 correlation: correlationID,
                 fields: ["bundle": configuration.bundleIdentifier]
             )
+            abandonQuickAppApplicationSwitchHandoff(
+                reason: "launch-missing-application",
+                correlationID: correlationID
+            )
+            continuePendingQuickAppSelectionIfPossible()
             return
         }
 
@@ -2934,7 +3562,8 @@ final class WorkspaceEngine {
             correlationID: correlationID
         )
         let activatesApplication = QuickAppInteractionPolicy.activatesApplicationForLaunch(
-            commandPalettePresented: commandPalettePresented
+            commandPalettePresented: commandPalettePresented,
+            applicationSwitchInProgress: quickAppApplicationSwitchHandoff != nil
         )
         diagnostics.log(
             category: "drop-down-app",
@@ -2971,6 +3600,10 @@ final class WorkspaceEngine {
                     )
                     self.emitCommandFeedback(
                         "Could not launch \(configuration.displayName).",
+                        correlationID: correlationID
+                    )
+                    self.abandonQuickAppApplicationSwitchHandoff(
+                        reason: "launch-failed",
                         correlationID: correlationID
                     )
                     self.continuePendingQuickAppSelectionIfPossible()
@@ -3063,6 +3696,10 @@ final class WorkspaceEngine {
                     "remaining-attempts": "0",
                 ]
             )
+            abandonQuickAppApplicationSwitchHandoff(
+                reason: "launch-window-watchdog-exhausted",
+                correlationID: correlationID
+            )
             continuePendingQuickAppSelectionIfPossible()
         }
     }
@@ -3070,6 +3707,7 @@ final class WorkspaceEngine {
     private func cancelPendingDropDownAppLaunch() {
         dropDownLaunchGeneration &+= 1
         pendingDropDownAppLaunch = nil
+        pendingQuickAppPresentationContext = nil
         if case .launching = quickAppTransition {
             quickAppTransition = .idle
         }
@@ -3090,10 +3728,98 @@ final class WorkspaceEngine {
         switchQuickApp(to: configuration, correlationID: pending.correlationID)
     }
 
+    private func quickAppApplicationSwitchActivationDisposition(
+        processIdentifier: pid_t
+    ) -> QuickAppApplicationSwitchActivationDisposition? {
+        guard let handoff = quickAppApplicationSwitchHandoff,
+              let incoming = quickAppSessions[handoff.incomingBundleKey],
+              let outgoing = quickAppSessions[handoff.outgoingBundleKey]
+        else { return nil }
+        return QuickAppApplicationSwitchPolicy.activationDisposition(
+            activatedProcessIdentifier: processIdentifier,
+            incomingProcessIdentifier: incoming.windowKey.processIdentifier,
+            outgoingProcessIdentifier: outgoing.windowKey.processIdentifier
+        )
+    }
+
+    private func completeQuickAppApplicationSwitchHandoff(
+        continuePendingSelection: Bool = true
+    ) {
+        guard let handoff = quickAppApplicationSwitchHandoff,
+              let incoming = quickAppSessions[handoff.incomingBundleKey],
+              incoming.isPresented
+        else { return }
+        quickAppApplicationSwitchHandoff = nil
+        if case let .showing(activeBundleKey) = quickAppTransition,
+           activeBundleKey == handoff.incomingBundleKey {
+            quickAppTransition = .idle
+        }
+        if let outgoing = quickAppSessions[handoff.outgoingBundleKey],
+           outgoing.isPresented {
+            beginHidingQuickAppNeighbor(
+                bundleKey: handoff.outgoingBundleKey,
+                session: outgoing,
+                reason: "application-switch-activated",
+                correlationID: handoff.correlationID
+            )
+        }
+        diagnostics.log(
+            category: "drop-down-app",
+            event: "application-switch-completed",
+            correlation: handoff.correlationID,
+            fields: [
+                "incoming-bundle": incoming.bundleIdentifier,
+                "outgoing-hidden-after-activation": "true",
+            ]
+        )
+        if continuePendingSelection {
+            continuePendingQuickAppSelectionIfPossible()
+        }
+    }
+
+    private func abandonQuickAppApplicationSwitchHandoff(
+        reason: String,
+        correlationID: String?
+    ) {
+        guard let handoff = quickAppApplicationSwitchHandoff else { return }
+        quickAppApplicationSwitchHandoff = nil
+        pendingQuickAppPresentationContext = nil
+        pendingQuickAppHideAfterPresentation = false
+        dropDownAnimationGeneration &+= 1
+        if pendingDropDownAppLaunch.map({
+            Self.normalizedBundleIdentifier($0.bundleIdentifier) == handoff.incomingBundleKey
+        }) == true {
+            dropDownLaunchGeneration &+= 1
+            pendingDropDownAppLaunch = nil
+        }
+        if let incoming = quickAppSessions[handoff.incomingBundleKey],
+           incoming.isApplicationHiddenByWindowRanger {
+            _ = requestDropDownApplicationHidden(
+                true,
+                processIdentifier: incoming.windowKey.processIdentifier,
+                bundleIdentifier: incoming.bundleIdentifier
+            )
+        }
+        if let outgoing = quickAppConfigurations.first(where: {
+            Self.normalizedBundleIdentifier($0.bundleIdentifier) == handoff.outgoingBundleKey
+        }) {
+            dropDownAppConfiguration = outgoing
+            onQuickAppSelectionChanged?(outgoing.bundleIdentifier)
+        }
+        quickAppTransition = .idle
+        diagnostics.log(
+            category: "drop-down-app",
+            event: "application-switch-abandoned",
+            correlation: correlationID ?? handoff.correlationID,
+            fields: ["reason": reason]
+        )
+    }
+
     func updateWorkspaces(_ definitions: [WorkspaceDefinition]) {
         guard !definitions.isEmpty else { return }
         queue.async { [weak self] in
             guard let self else { return }
+            self.cancelManualTiledPreviewTransactions(reason: "workspace-configuration-changed")
             let validIDs = Set(definitions.map(\.id))
             let fallbackID = definitions[0].id
             let newLayouts = Dictionary(uniqueKeysWithValues: definitions.map { ($0.id, $0.layout) })
@@ -3142,6 +3868,7 @@ final class WorkspaceEngine {
                 return
             }
             let switchingProfile = self.currentProfileID != configuration.profileID
+            self.cancelManualTiledPreviewTransactions(reason: "profile-transition")
             self.cancelPendingDropDownAppLaunch()
             self.pendingQuickAppSelection = nil
             self.pendingPausedQuickAppConfigurationUpdate = nil
@@ -3627,6 +4354,7 @@ final class WorkspaceEngine {
             appBuild: build,
             buildMode: buildMode,
             macOSVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            displaysHaveSeparateSpaces: NSScreen.screensHaveSeparateSpaces,
             session: Self.shortIdentifier(WorkspaceStateStore.currentWindowServerSession())
         )
 
@@ -3637,6 +4365,7 @@ final class WorkspaceEngine {
                 appBuild: base.appBuild,
                 buildMode: base.buildMode,
                 macOSVersion: base.macOSVersion,
+                displaysHaveSeparateSpaces: base.displaysHaveSeparateSpaces,
                 windowServerSession: base.session,
                 targetStatus: "accessibility-unavailable",
                 targetBundleIdentifier: .unavailable("Accessibility permission is not granted"),
@@ -3657,6 +4386,7 @@ final class WorkspaceEngine {
                 appBuild: base.appBuild,
                 buildMode: base.buildMode,
                 macOSVersion: base.macOSVersion,
+                displaysHaveSeparateSpaces: base.displaysHaveSeparateSpaces,
                 windowServerSession: base.session,
                 targetStatus: "no-target",
                 targetBundleIdentifier: .unavailable("no externally focused window"),
@@ -3794,6 +4524,7 @@ final class WorkspaceEngine {
             appBuild: base.appBuild,
             buildMode: base.buildMode,
             macOSVersion: base.macOSVersion,
+            displaysHaveSeparateSpaces: base.displaysHaveSeparateSpaces,
             windowServerSession: base.session,
             targetStatus: targetStatus,
             targetBundleIdentifier: bundleIdentifier.map(DiagnosticReportValue.value) ?? .unavailable("bundle identifier unavailable"),
@@ -3905,12 +4636,181 @@ final class WorkspaceEngine {
         }
     }
 
+    /// Builds a read-only description for the reusable workspace preview. This reuses already
+    /// tracked windows and never enumerates, unparks, focuses, or writes to an Accessibility
+    /// element. Active windows contribute their current frame; inactive managed layouts use their
+    /// last solved geometry so the preview does not mistake the parking coordinate for the desktop.
+    func setWorkspacePreviewObservationEnabled(_ enabled: Bool) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.workspacePreviewObservationEnabled = enabled
+            if !enabled {
+                self.hasWorkspacePreviewStateBaseline = false
+                self.workspacePreviewStateByWorkspace.removeAll()
+            }
+        }
+    }
+
+    func workspacePreviewDescriptor(
+        for workspaceID: UUID,
+        workspaceName: String,
+        completion: @escaping (WorkspacePreviewDescriptor) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self,
+                  self.workspaces.contains(where: { $0.id == workspaceID })
+            else {
+                DispatchQueue.main.async {
+                    completion(WorkspacePreviewDescriptor(
+                        workspaceID: workspaceID,
+                        name: workspaceName,
+                        canvasFrame: CGRect(x: 0, y: 0, width: 1, height: 1),
+                        items: []
+                    ))
+                }
+                return
+            }
+
+            let displays = Self.activeDisplays()
+            let homeDisplayIdentifier = self.workspaceHomeDisplayIdentifier(
+                for: workspaceID,
+                displays: displays
+            )
+            let trackedItems = self.windows.values.filter { tracked in
+                guard !self.isDropDownAppWindow(tracked.key),
+                      tracked.workspaceID == workspaceID,
+                      !self.ignoredWindowKeys.contains(tracked.key),
+                      !self.temporarilyDeferredWindowKeys.contains(tracked.key),
+                      !self.resolvedRule(for: tracked.bundleIdentifier).keepsOnAllWorkspaces,
+                      NSRunningApplication(processIdentifier: tracked.processIdentifier) != nil
+                else { return false }
+                return true
+            }
+            let layout = self.workspaceLayout(for: workspaceID)
+            let isActive = self.isWorkspaceActive(workspaceID)
+            var previewFrames: [WindowKey: WindowFrame] = [:]
+
+            for tracked in trackedItems {
+                if isActive,
+                   let current = AccessibilityWindow.frame(of: tracked.element),
+                   Self.isMeaningfullyVisible(current, displays: displays) {
+                    previewFrames[tracked.key] = current
+                } else if layout == .tiled,
+                          let solved = self.lastSolvedTiledFrames[tracked.key] {
+                    previewFrames[tracked.key] = solved
+                } else {
+                    previewFrames[tracked.key] = tracked.restoreFrame
+                }
+            }
+
+            // Accordion frames are deterministic but are not retained like the Tiled solver's
+            // frames. Reconstruct inactive participants from existing session metadata only.
+            if !isActive, layout == .accordion {
+                let participants = trackedItems.filter {
+                    Self.shouldIncludeInLayout(
+                        layoutOverride: $0.layoutOverride,
+                        admissionDecision: $0.admissionDecision,
+                        rule: self.resolvedRule(for: $0.bundleIdentifier)
+                    )
+                }
+                let grouped = Dictionary(grouping: participants) { tracked -> String in
+                    Self.layoutDisplayIdentifier(
+                        preferredDisplayIdentifier: tracked.displayPlacement?.displayIdentifier,
+                        savedFrame: tracked.restoreFrame,
+                        mode: self.displayMode,
+                        workspaceHomeDisplayIdentifier: self.displayMode == .independent
+                            ? self.workspaceHomeDisplayIdentifier(for: workspaceID, displays: displays)
+                            : nil,
+                        displays: displays
+                    ) ?? displays.first?.identifier ?? "main-display"
+                }
+                for (displayIdentifier, windows) in grouped {
+                    guard let display = displays.first(where: { $0.identifier == displayIdentifier })
+                        ?? displays.first(where: \.isMain)
+                        ?? displays.first
+                    else { continue }
+                    let ordered = windows.sorted { lhs, rhs in
+                        if lhs.layoutOrder != rhs.layoutOrder { return lhs.layoutOrder < rhs.layoutOrder }
+                        if lhs.processIdentifier != rhs.processIdentifier {
+                            return lhs.processIdentifier < rhs.processIdentifier
+                        }
+                        return lhs.key.windowIdentifier < rhs.key.windowIdentifier
+                    }
+                    let focusedIndex = self.lastFocusedWindow[workspaceID].flatMap { key in
+                        ordered.firstIndex(where: { $0.key == key })
+                    }
+                    let frames = Self.layoutFrames(
+                        .accordion,
+                        count: ordered.count,
+                        in: self.managedLayoutBounds(display.usableBounds),
+                        accordionFocusedIndex: focusedIndex,
+                        layoutConfiguration: self.workspaceLayoutConfiguration(for: workspaceID)
+                    )
+                    for (tracked, frame) in zip(ordered, frames) {
+                        previewFrames[tracked.key] = frame
+                    }
+                }
+            }
+
+            let candidateItems = trackedItems.compactMap { tracked -> WorkspacePreviewItemDescriptor? in
+                guard let application = NSRunningApplication(
+                    processIdentifier: tracked.processIdentifier
+                ), let frame = previewFrames[tracked.key] else { return nil }
+                return WorkspacePreviewItemDescriptor(
+                    key: tracked.key,
+                    applicationTarget: WorkspaceApplicationTarget(
+                        workspaceID: workspaceID,
+                        bundleIdentifier: tracked.bundleIdentifier ?? application.bundleIdentifier,
+                        processIdentifier: tracked.processIdentifier
+                    ),
+                    name: application.localizedName
+                        ?? tracked.bundleIdentifier
+                        ?? "Application",
+                    applicationURL: application.bundleURL,
+                    frame: CGRect(origin: frame.position, size: frame.size)
+                )
+            }.sorted { lhs, rhs in
+                guard let lhsTracked = self.windows[lhs.key],
+                      let rhsTracked = self.windows[rhs.key]
+                else { return lhs.key.windowIdentifier < rhs.key.windowIdentifier }
+                if lhsTracked.layoutOrder != rhsTracked.layoutOrder {
+                    return lhsTracked.layoutOrder < rhsTracked.layoutOrder
+                }
+                return lhs.key.windowIdentifier < rhs.key.windowIdentifier
+            }
+            let canvasDisplay = WorkspacePreviewGeometry.canvasDisplay(
+                homeDisplayIdentifier: homeDisplayIdentifier,
+                displays: displays
+            )
+            let canvasFrame = WorkspacePreviewGeometry.canvasFrame(
+                homeDisplayIdentifier: homeDisplayIdentifier,
+                displays: displays,
+                fallbackItemFrames: candidateItems.map(\.frame)
+            )
+            // A workspace preview represents its home screen, not the union of every connected
+            // display. A window spanning the boundary is clipped naturally by the preview canvas;
+            // windows wholly on another screen are omitted from this screen's preview and capture.
+            let items = candidateItems.filter {
+                WorkspacePreviewGeometry.intersectsCanvas($0.frame, canvasFrame: canvasFrame)
+            }
+            let descriptor = WorkspacePreviewDescriptor(
+                workspaceID: workspaceID,
+                name: workspaceName,
+                canvasFrame: canvasFrame,
+                displayIdentifier: canvasDisplay?.identifier,
+                items: items
+            )
+            DispatchQueue.main.async { completion(descriptor) }
+        }
+    }
+
     func switchToWorkspace(_ id: UUID, correlationID: String? = nil) {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             self?.activateWorkspace(
                 id,
                 selectedApplication: nil,
+                selectedWindowKey: nil,
                 correlationID: correlationID
             )
         }
@@ -3925,6 +4825,22 @@ final class WorkspaceEngine {
             self?.activateWorkspace(
                 target.workspaceID,
                 selectedApplication: target,
+                selectedWindowKey: nil,
+                correlationID: correlationID
+            )
+        }
+    }
+
+    func activateWorkspacePreviewItem(
+        _ item: WorkspacePreviewItemDescriptor,
+        correlationID: String? = nil
+    ) {
+        let correlationID = correlationID ?? diagnostics.makeCorrelationID()
+        queue.async { [weak self] in
+            self?.activateWorkspace(
+                item.applicationTarget.workspaceID,
+                selectedApplication: item.applicationTarget,
+                selectedWindowKey: item.key,
                 correlationID: correlationID
             )
         }
@@ -3933,9 +4849,11 @@ final class WorkspaceEngine {
     private func activateWorkspace(
         _ id: UUID,
         selectedApplication: WorkspaceApplicationTarget?,
+        selectedWindowKey: WindowKey?,
         correlationID: String
     ) {
         guard workspaces.contains(where: { $0.id == id }) else { return }
+        cancelManualTiledPreviewTransactions(reason: "workspace-command")
 
         let rawFocusedBefore = focusedWindowSnapshot()
         refreshWindows(correlationID: correlationID)
@@ -3951,7 +4869,8 @@ final class WorkspaceEngine {
                 previousFocusKey: rawFocusedBefore?.key,
                 displays: displays,
                 correlationID: correlationID,
-                selectedApplication: selectedApplication
+                selectedApplication: selectedApplication,
+                selectedWindowKey: selectedWindowKey
             )
             return
         }
@@ -3991,7 +4910,8 @@ final class WorkspaceEngine {
             correlationID: correlationID,
             token: token,
             previousFocusKey: rawFocusedBefore?.key,
-            selectedApplication: selectedApplication
+            selectedApplication: selectedApplication,
+            selectedWindowKey: selectedWindowKey
         )
     }
 
@@ -3999,6 +4919,7 @@ final class WorkspaceEngine {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self else { return }
+            self.cancelManualTiledPreviewTransactions(reason: "workspace-command")
             let rawFocusedBefore = self.focusedWindowSnapshot()
             self.refreshWindows(correlationID: correlationID)
             let displays = Self.activeDisplays()
@@ -4065,6 +4986,7 @@ final class WorkspaceEngine {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self else { return }
+            self.cancelManualTiledPreviewTransactions(reason: "workspace-command")
             let rawFocusedBefore = self.focusedWindowSnapshot()
             self.refreshWindows(correlationID: correlationID)
             let displays = Self.activeDisplays()
@@ -4147,7 +5069,8 @@ final class WorkspaceEngine {
             guard let self, offset != 0 else { return }
             if QuickAppInteractionPolicy.routesWindowCycleToShelf(
                 shelfIsPresented: self.isQuickAppShelfPresented,
-                configuredAppCount: self.quickAppConfigurations.count
+                configuredAppCount: self.quickAppConfigurations.count,
+                transitionInProgress: self.quickAppTransition != .idle
             ) {
                 self.diagnostics.log(
                     category: "focus-cycle",
@@ -4344,7 +5267,7 @@ final class WorkspaceEngine {
             let rawFocusedBefore = self.focusedWindowSnapshot()
             self.refreshWindows(correlationID: correlationID)
             let presentedShelfWindowCount = self.quickAppSessions.values.reduce(into: 0) {
-                if $1.isPresented { $0 += 1 }
+                if $1.isPresented { $0 += $1.windowKeys.count }
             }
             if QuickAppInteractionPolicy.routesDirectionalFocusToShelf(
                 shelfIsPresented: self.isQuickAppShelfPresented,
@@ -4491,22 +5414,24 @@ final class WorkspaceEngine {
             return
         }
 
-        let presented = quickAppSessions.compactMap {
+        let presented = quickAppSessions.flatMap {
             bundleKey,
-            session -> (bundleKey: String, session: DropDownAppSession, candidate: DirectionalWindowCandidate<WindowKey>)? in
-            guard session.isPresented,
-                  session.windowKey != sourceSession.windowKey,
-                  let target = windows[session.windowKey],
-                  let frame = AccessibilityWindow.frame(of: target.element)
-            else { return nil }
-            return (
-                bundleKey,
-                session,
-                DirectionalWindowCandidate(
-                    key: session.windowKey,
-                    frame: CGRect(origin: frame.position, size: frame.size)
+            session -> [(bundleKey: String, session: DropDownAppSession, candidate: DirectionalWindowCandidate<WindowKey>)] in
+            guard session.isPresented else { return [] }
+            return session.windowKeys.compactMap { key in
+                guard key != sourceSession.windowKey,
+                      let target = windows[key],
+                      let frame = AccessibilityWindow.frame(of: target.element)
+                else { return nil }
+                return (
+                    bundleKey,
+                    session,
+                    DirectionalWindowCandidate(
+                        key: key,
+                        frame: CGRect(origin: frame.position, size: frame.size)
+                    )
                 )
-            )
+            }
         }.sorted { lhs, rhs in
             let leftOrder = quickAppConfigurations.firstIndex {
                 Self.normalizedBundleIdentifier($0.bundleIdentifier) == lhs.bundleKey
@@ -4523,9 +5448,10 @@ final class WorkspaceEngine {
         )
         let order = focusOrder.candidates
         guard let targetKey = order.first,
-              let targetSession = presented.first(where: {
-                  $0.session.windowKey == targetKey
-              })?.session,
+              let targetEntry = presented.first(where: {
+                  $0.candidate.key == targetKey
+              }),
+              let targetSession = quickAppSessions[targetEntry.bundleKey],
               let targetConfiguration = quickAppConfigurations.first(where: {
                   $0.bundleIdentifier.caseInsensitiveCompare(targetSession.bundleIdentifier) == .orderedSame
               })
@@ -4543,6 +5469,9 @@ final class WorkspaceEngine {
             return
         }
 
+        var selectedTargetSession = targetSession
+        selectedTargetSession.selectWindow(targetKey)
+        quickAppSessions[targetEntry.bundleKey] = selectedTargetSession
         dropDownAppConfiguration = targetConfiguration
         onQuickAppSelectionChanged?(targetConfiguration.bundleIdentifier)
         diagnostics.log(
@@ -5261,6 +6190,7 @@ final class WorkspaceEngine {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self, offset != 0 else { return }
+            self.cancelManualTiledPreviewTransactions(reason: "layout-command")
             let rawFocusedBefore = self.focusedWindowSnapshot()
             self.refreshWindows(correlationID: correlationID)
             let focusedBefore = self.interactionFocusedWindowSnapshot(rawFocusedBefore)
@@ -5353,6 +6283,7 @@ final class WorkspaceEngine {
         let correlationID = correlationID ?? diagnostics.makeCorrelationID()
         queue.async { [weak self] in
             guard let self else { return }
+            self.cancelManualTiledPreviewTransactions(reason: "layout-command")
             let rawFocusedBefore = self.focusedWindowSnapshot()
             self.refreshWindows(correlationID: correlationID)
             let focusedBefore = self.interactionFocusedWindowSnapshot(rawFocusedBefore)
@@ -5591,6 +6522,12 @@ final class WorkspaceEngine {
     ) {
         queue.async { [weak self] in
             guard let self else { return }
+            let previewProcessIdentifier = self.manualTiledMovePreviewSession?.focusedWindow
+                .processIdentifier ?? self.manualTiledResizeSession?.focusedWindow.processIdentifier
+            if let previewProcessIdentifier,
+               previewProcessIdentifier != processIdentifier {
+                self.cancelManualTiledPreviewTransactions(reason: "application-activated")
+            }
             self.noteApplicationActivation(processIdentifier: processIdentifier)
             let shouldCancelRadialInteraction = Self.shouldCancelRadialInteractionForActivation(
                 activatedProcessIdentifier: processIdentifier,
@@ -5619,11 +6556,33 @@ final class WorkspaceEngine {
                 activatedProcessIdentifier: processIdentifier,
                 ownProcessIdentifier: self.ownProcessIdentifier,
                 commandPalettePresented: self.commandPalettePresented
-            ) || self.quickAppSessions.values.contains {
+            )
+            let applicationSwitchActivation =
+                self.quickAppApplicationSwitchActivationDisposition(
+                    processIdentifier: processIdentifier
+                )
+            if applicationSwitchActivation == .incoming {
+                self.completeQuickAppApplicationSwitchHandoff(
+                    continuePendingSelection: false
+                )
+                self.queue.async { [weak self] in
+                    self?.continuePendingQuickAppSelectionIfPossible()
+                }
+            } else if applicationSwitchActivation == .outgoing {
+                self.diagnostics.log(
+                    category: "drop-down-app",
+                    event: "application-switch-outgoing-activation-preserved",
+                    fields: ["process": String(processIdentifier)]
+                )
+            }
+            let activationTargetsPresentedShelf = self.quickAppSessions.values.contains {
                 $0.isPresented && $0.windowKey.processIdentifier == processIdentifier
             }
+            let preservesShelf = preservesPresentedShelf ||
+                activationTargetsPresentedShelf ||
+                applicationSwitchActivation != nil
             if self.isQuickAppShelfPresented,
-               !preservesPresentedShelf {
+               !preservesShelf {
                 self.hideDropDownApp(
                     restorePreviousFocus: false,
                     reason: "another-app-focused",
@@ -5631,7 +6590,8 @@ final class WorkspaceEngine {
                 )
             } else if case .showing = self.quickAppTransition,
                       let dropDownSession = self.dropDownAppSession,
-                      dropDownSession.windowKey.processIdentifier != processIdentifier {
+                      dropDownSession.windowKey.processIdentifier != processIdentifier,
+                      applicationSwitchActivation == nil {
                 self.pendingQuickAppHideAfterPresentation = true
             }
             guard Self.shouldProcessApplicationActivation(
@@ -5648,17 +6608,21 @@ final class WorkspaceEngine {
             if let dropDownSession = self.quickAppSessions.values.first(where: {
                 $0.isPresented && $0.windowKey.processIdentifier == processIdentifier
             }) {
+                let decision = QuickAppInteractionPolicy.presentedActivationDecision(
+                    activatedBundleIdentifier: dropDownSession.bundleIdentifier,
+                    selectedBundleIdentifier: self.dropDownAppConfiguration?.bundleIdentifier
+                )
                 if let selected = self.quickAppConfigurations.first(where: {
                     $0.bundleIdentifier.caseInsensitiveCompare(
                         dropDownSession.bundleIdentifier
                     ) == .orderedSame
-                }), selected != self.dropDownAppConfiguration {
+                }), decision.selectsActivatedConfiguration,
+                   applicationSwitchActivation != .outgoing {
                     self.dropDownAppConfiguration = selected
                     self.onQuickAppSelectionChanged?(selected.bundleIdentifier)
-                    self.reconcilePresentedQuickAppGroup(
-                        correlationID: nil,
-                        focusSelected: false
-                    )
+                }
+                if decision.restacksPresentedGroup {
+                    self.restackPresentedQuickAppGroup(correlationID: nil)
                 }
                 self.diagnostics.log(
                     category: "drop-down-app",
@@ -6695,6 +7659,794 @@ final class WorkspaceEngine {
         return .swapped
     }
 
+    /// Pointer delivery is intentionally separate from the broad discovery timer. Tiled move and
+    /// resize previews need to follow the gesture promptly, while discovery remains deliberately
+    /// coarse to avoid continuously enumerating every application window.
+    func tiledResizePointerDragged() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if self.manualTiledMovePreviewSession != nil {
+                self.updateConcealedManualTiledMovePreview()
+            } else if self.manualTiledResizeSession != nil {
+                self.updateManualTiledResizePreview()
+            } else {
+                self.updateManualTiledResizePreview()
+                if self.manualTiledResizeSession == nil {
+                    self.updateManualTiledMovePreview()
+                }
+            }
+        }
+    }
+
+    func tiledResizePointerReleased() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if self.manualTiledMovePreviewSession != nil {
+                self.commitManualTiledMovePreview()
+            } else if self.manualTiledResizeSession != nil {
+                self.commitManualTiledResizePreview()
+            }
+        }
+    }
+
+    private func commitManualTiledResizePreview() {
+            guard var session = manualTiledResizeSession else { return }
+            let correlationID = "manual-resize-\(session.token.uuidString.prefix(8))"
+
+            // Capture the final pointer position because a throttled drag event can precede the
+            // mouse-up by one render interval.
+            updateManualTiledResizePreview(allowStartingSession: false)
+            guard let updatedSession = manualTiledResizeSession else { return }
+            session = updatedSession
+
+            let displays = Self.activeDisplays()
+            guard !isWindowManagementPaused,
+                  !wakeReconciliationState.isSleeping,
+                  !wakeReconciliationState.isPending,
+                  windowServerSessionValidated,
+                  currentProfileID == session.profileID,
+                  Self.displayTopologySignature(displays) == session.topologySignature,
+                  tiledTrees[session.partition] == session.originalTree,
+                  let tracked = windows[session.focusedWindow],
+                  isWorkspaceActive(tracked.workspaceID),
+                  workspaceLayout(for: tracked.workspaceID) == .tiled,
+                  fullscreenSessions[session.focusedWindow] == nil,
+                  !isQuickAppShelfPresented,
+                  let display = displays.first(where: {
+                      $0.identifier == session.partition.displayIdentifier
+                  })
+            else {
+                cancelManualTiledResizePreview(reason: "release-validation-failed")
+                return
+            }
+
+            let currentConfiguration = workspaceLayoutConfiguration(for: tracked.workspaceID)
+                ?? .aeroSpaceUserDefaults
+            guard currentConfiguration == session.configuration,
+                  managedLayoutBounds(display.usableBounds) == session.layoutBounds,
+                  Self.shouldIncludeInLayout(
+                      layoutOverride: tracked.layoutOverride,
+                      admissionDecision: tracked.admissionDecision,
+                      rule: resolvedRule(for: tracked.bundleIdentifier)
+                  )
+            else {
+                cancelManualTiledResizePreview(reason: "layout-configuration-changed")
+                return
+            }
+
+            let participants = orderedLayoutParticipants(
+                workspaceID: tracked.workspaceID,
+                displayIdentifier: display.identifier,
+                displays: displays,
+                correlationID: correlationID
+            )
+            guard Set(participants) == session.participantKeys,
+                  let effectiveShares = TiledLayoutEngine.leafShares(session.proposedTree)
+            else {
+                cancelManualTiledResizePreview(reason: "participants-changed")
+                return
+            }
+
+            manualTiledResizeSession = nil
+            tiledTrees[session.partition] = session.proposedTree
+            for key in participants {
+                windows[key]?.layoutWeight = effectiveShares[key] ?? 1
+            }
+            radialPlacementCommitContext = nil
+            radialFreeformPlacementCommitContext = nil
+            directionalMoveGestureContext = nil
+            manualTiledDragSession = nil
+
+            let changes = participants.compactMap { key -> FrameChange? in
+                guard let window = windows[key], let frame = session.proposedFrames[key] else {
+                    return nil
+                }
+                lastSolvedTiledFrames[key] = frame
+                return FrameChange(window: window, frame: frame)
+            }
+            applyFrameChanges(changes, correlationID: correlationID)
+            lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
+            persistState(preservingPendingRestores: true)
+            diagnostics.log(
+                category: "manual-resize-preview",
+                event: "committed",
+                correlation: correlationID,
+                fields: [
+                    "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                    "display": Self.shortIdentifier(display.identifier),
+                    "window": Self.diagnosticWindowKey(session.focusedWindow),
+                    "window-count": String(participants.count),
+                    "tree-before": TiledLayoutEngine.fingerprint(session.originalTree),
+                    "tree-after": TiledLayoutEngine.fingerprint(session.proposedTree),
+                ]
+            )
+            emitTiledResizePreviewEvent(
+                .dismiss(token: session.token, reason: "committed")
+            )
+    }
+
+    private func updateManualTiledMovePreview() {
+        guard manualTiledMovePreviewSession == nil,
+              manualTiledResizeSession == nil,
+              !isWindowManagementPaused,
+              !wakeReconciliationState.isSleeping,
+              !wakeReconciliationState.isPending,
+              windowServerSessionValidated,
+              !isQuickAppShelfPresented,
+              let focused = focusedWindowSnapshot(),
+              let observedFrame = focused.frame,
+              let tracked = windows[focused.key],
+              isWorkspaceActive(tracked.workspaceID),
+              workspaceLayout(for: tracked.workspaceID) == .tiled,
+              fullscreenSessions[focused.key] == nil,
+              !temporarilyDeferredWindowKeys.contains(focused.key),
+              Self.shouldIncludeInLayout(
+                  layoutOverride: tracked.layoutOverride,
+                  admissionDecision: tracked.admissionDecision,
+                  rule: resolvedRule(for: tracked.bundleIdentifier)
+              )
+        else { return }
+
+        let displays = Self.activeDisplays()
+        guard let display = targetDisplay(
+            for: tracked,
+            workspaceID: tracked.workspaceID,
+            displays: displays,
+            correlationID: nil
+        ) else { return }
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier,
+            displays: displays,
+            correlationID: nil
+        )
+        let configuration = workspaceLayoutConfiguration(for: tracked.workspaceID)
+            ?? .aeroSpaceUserDefaults
+        let layoutBounds = managedLayoutBounds(display.usableBounds)
+        let partition = TiledLayoutPartitionKey(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier
+        )
+        guard participants.count > 1,
+              participants.contains(focused.key),
+              let originalTree = TiledLayoutEngine.reconciled(
+                  tiledTrees[partition],
+                  windowKeys: participants,
+                  weights: participants.map {
+                      CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
+                  },
+                  orientation: configuration.orientation.resolved(for: layoutBounds)
+              ),
+              let originalFrames = try? TiledLayoutEngine.frames(
+                  for: originalTree,
+                  in: layoutBounds,
+                  configuration: configuration
+              ),
+              let expectedFocusedFrame = originalFrames[focused.key],
+              let lastSolvedFrame = lastSolvedTiledFrames[focused.key],
+              AccessibilityWindow.framesMatch(lastSolvedFrame, expectedFocusedFrame),
+              TiledLayoutEngine.observedDrag(
+                  in: originalTree,
+                  focusedWindow: focused.key,
+                  observedFrame: observedFrame,
+                  pointerLocation: CGEvent(source: nil)?.location,
+                  expectedFrames: originalFrames
+              ) != nil
+        else { return }
+
+        let token = UUID()
+        let session = ManualTiledMovePreviewSession(
+            token: token,
+            focusedWindow: focused.key,
+            partition: partition,
+            participantKeys: Set(participants),
+            originalTree: originalTree,
+            originalFrames: originalFrames,
+            configuration: configuration,
+            layoutBounds: layoutBounds,
+            topologySignature: Self.displayTopologySignature(displays),
+            profileID: currentProfileID,
+            candidateTarget: nil,
+            proposedTree: originalTree,
+            proposedFrames: originalFrames
+        )
+        manualTiledMovePreviewSession = session
+        manualTiledDragSession = nil
+        emitTiledResizePreviewEvent(.present(TiledResizePreviewPresentation(
+            token: token,
+            displayIdentifier: display.identifier,
+            layoutBounds: WindowFrame(position: layoutBounds.origin, size: layoutBounds.size),
+            frames: originalFrames,
+            transition: .immediate
+        )))
+        let correlationID = "manual-move-\(token.uuidString.prefix(8))"
+        guard concealManualTiledParticipants(
+            session.participantKeys,
+            diagnosticCategory: "manual-move-preview",
+            correlationID: correlationID
+        ) else {
+            cancelManualTiledMovePreview(reason: "participant-concealment-failed")
+            return
+        }
+        diagnostics.log(
+            category: "manual-move-preview",
+            event: "started",
+            correlation: correlationID,
+            fields: [
+                "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                "display": Self.shortIdentifier(display.identifier),
+                "window": Self.diagnosticWindowKey(focused.key),
+                "window-count": String(participants.count),
+            ]
+        )
+        updateConcealedManualTiledMovePreview()
+    }
+
+    private func updateConcealedManualTiledMovePreview() {
+        guard var session = manualTiledMovePreviewSession else { return }
+        let correlationID = "manual-move-\(session.token.uuidString.prefix(8))"
+        let displays = Self.activeDisplays()
+        guard !isWindowManagementPaused,
+              !wakeReconciliationState.isSleeping,
+              !wakeReconciliationState.isPending,
+              windowServerSessionValidated,
+              !isQuickAppShelfPresented,
+              currentProfileID == session.profileID,
+              Self.displayTopologySignature(displays) == session.topologySignature,
+              tiledTrees[session.partition] == session.originalTree,
+              let tracked = windows[session.focusedWindow],
+              isWorkspaceActive(tracked.workspaceID),
+              workspaceLayout(for: tracked.workspaceID) == .tiled,
+              fullscreenSessions[session.focusedWindow] == nil,
+              !temporarilyDeferredWindowKeys.contains(session.focusedWindow),
+              let display = displays.first(where: {
+                  $0.identifier == session.partition.displayIdentifier
+              }),
+              (workspaceLayoutConfiguration(for: tracked.workspaceID)
+                ?? .aeroSpaceUserDefaults) == session.configuration,
+              managedLayoutBounds(display.usableBounds) == session.layoutBounds
+        else {
+            cancelManualTiledMovePreview(reason: "context-changed")
+            return
+        }
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier,
+            displays: displays,
+            correlationID: correlationID
+        )
+        guard Set(participants) == session.participantKeys,
+              let pointer = CGEvent(source: nil)?.location
+        else {
+            cancelManualTiledMovePreview(reason: "participants-or-pointer-changed")
+            return
+        }
+
+        let target = TiledLayoutEngine.swapTarget(
+            at: pointer,
+            focusedWindow: session.focusedWindow,
+            expectedFrames: session.originalFrames
+        )
+        let proposedTree = target.flatMap {
+            TiledLayoutEngine.swappingWindows(session.focusedWindow, $0, in: session.originalTree)
+        } ?? session.originalTree
+        guard let proposedFrames = try? TiledLayoutEngine.frames(
+            for: proposedTree,
+            in: session.layoutBounds,
+            configuration: session.configuration
+        ) else {
+            cancelManualTiledMovePreview(reason: "proposal-invalid")
+            return
+        }
+
+        let targetChanged = target != session.candidateTarget
+        session.candidateTarget = target
+        session.proposedTree = proposedTree
+        session.proposedFrames = proposedFrames
+        manualTiledMovePreviewSession = session
+        if targetChanged {
+            emitTiledResizePreviewEvent(.present(TiledResizePreviewPresentation(
+                token: session.token,
+                displayIdentifier: display.identifier,
+                layoutBounds: WindowFrame(
+                    position: session.layoutBounds.origin,
+                    size: session.layoutBounds.size
+                ),
+                frames: proposedFrames,
+                transition: .animated
+            )))
+            diagnostics.log(
+                category: "manual-move-preview",
+                event: "target-changed",
+                correlation: correlationID,
+                fields: [
+                    "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                    "display": Self.shortIdentifier(display.identifier),
+                    "window": Self.diagnosticWindowKey(session.focusedWindow),
+                    "target": target.map(Self.diagnosticWindowKey) ?? "none",
+                    "tree-proposed": TiledLayoutEngine.fingerprint(proposedTree),
+                ]
+            )
+        }
+        guard concealManualTiledParticipants(
+            session.participantKeys,
+            diagnosticCategory: "manual-move-preview",
+            correlationID: correlationID
+        ) else {
+            cancelManualTiledMovePreview(reason: "participant-concealment-failed")
+            return
+        }
+    }
+
+    private func commitManualTiledMovePreview() {
+        guard var session = manualTiledMovePreviewSession else { return }
+        updateConcealedManualTiledMovePreview()
+        guard let updatedSession = manualTiledMovePreviewSession else { return }
+        session = updatedSession
+        let correlationID = "manual-move-\(session.token.uuidString.prefix(8))"
+        let displays = Self.activeDisplays()
+        guard !isWindowManagementPaused,
+              !wakeReconciliationState.isSleeping,
+              !wakeReconciliationState.isPending,
+              windowServerSessionValidated,
+              currentProfileID == session.profileID,
+              Self.displayTopologySignature(displays) == session.topologySignature,
+              tiledTrees[session.partition] == session.originalTree,
+              let tracked = windows[session.focusedWindow],
+              isWorkspaceActive(tracked.workspaceID),
+              workspaceLayout(for: tracked.workspaceID) == .tiled,
+              fullscreenSessions[session.focusedWindow] == nil,
+              !isQuickAppShelfPresented,
+              let display = displays.first(where: {
+                  $0.identifier == session.partition.displayIdentifier
+              }),
+              (workspaceLayoutConfiguration(for: tracked.workspaceID)
+                ?? .aeroSpaceUserDefaults) == session.configuration,
+              managedLayoutBounds(display.usableBounds) == session.layoutBounds
+        else {
+            cancelManualTiledMovePreview(reason: "release-validation-failed")
+            return
+        }
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier,
+            displays: displays,
+            correlationID: correlationID
+        )
+        guard Set(participants) == session.participantKeys,
+              let target = session.candidateTarget,
+              participants.contains(target),
+              session.proposedTree != session.originalTree,
+              let effectiveShares = TiledLayoutEngine.leafShares(session.proposedTree)
+        else {
+            cancelManualTiledMovePreview(reason: "released-without-target")
+            return
+        }
+
+        manualTiledMovePreviewSession = nil
+        tiledTrees[session.partition] = session.proposedTree
+        for (index, key) in session.proposedTree.windowKeys.enumerated() {
+            windows[key]?.layoutOrder = index
+            windows[key]?.layoutWeight = effectiveShares[key] ?? 1
+        }
+        lastFocusedWindow[tracked.workspaceID] = session.focusedWindow
+        radialPlacementCommitContext = nil
+        radialFreeformPlacementCommitContext = nil
+        directionalMoveGestureContext = nil
+        manualTiledDragSession = nil
+        let changes = participants.compactMap { key -> FrameChange? in
+            guard let window = windows[key], let frame = session.proposedFrames[key] else {
+                return nil
+            }
+            lastSolvedTiledFrames[key] = frame
+            return FrameChange(window: window, frame: frame)
+        }
+        applyFrameChanges(changes, correlationID: correlationID)
+        lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
+        persistState(preservingPendingRestores: true)
+        diagnostics.log(
+            category: "manual-move-preview",
+            event: "committed",
+            correlation: correlationID,
+            fields: [
+                "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                "display": Self.shortIdentifier(display.identifier),
+                "window": Self.diagnosticWindowKey(session.focusedWindow),
+                "swapped-with": Self.diagnosticWindowKey(target),
+                "window-count": String(participants.count),
+                "tree-before": TiledLayoutEngine.fingerprint(session.originalTree),
+                "tree-after": TiledLayoutEngine.fingerprint(session.proposedTree),
+            ]
+        )
+        emitTiledResizePreviewEvent(.dismiss(token: session.token, reason: "committed"))
+    }
+
+    private func cancelManualTiledMovePreview(reason: String) {
+        guard let session = manualTiledMovePreviewSession else { return }
+        manualTiledMovePreviewSession = nil
+        lastBackgroundLayoutSignature = nil
+        let correlationID = "manual-move-\(session.token.uuidString.prefix(8))"
+        restoreManualTiledParticipants(
+            session.participantKeys,
+            frames: session.originalFrames,
+            correlationID: correlationID
+        )
+        diagnostics.log(
+            category: "manual-move-preview",
+            event: "cancelled",
+            correlation: correlationID,
+            fields: ["reason": reason]
+        )
+        emitTiledResizePreviewEvent(.dismiss(token: session.token, reason: reason))
+    }
+
+    func cancelTiledResizePreview(reason: String) {
+        queue.async { [weak self] in
+            self?.cancelManualTiledPreviewTransactions(reason: reason)
+        }
+    }
+
+    private func updateManualTiledResizePreview(allowStartingSession: Bool = true) {
+        if let existingSession = manualTiledResizeSession {
+            updateConcealedManualTiledResizePreview(existingSession)
+            return
+        }
+        guard !isWindowManagementPaused,
+              !wakeReconciliationState.isSleeping,
+              !wakeReconciliationState.isPending,
+              windowServerSessionValidated,
+              !isQuickAppShelfPresented,
+              let focused = focusedWindowSnapshot(),
+              let observedFrame = focused.frame,
+              let tracked = windows[focused.key],
+              isWorkspaceActive(tracked.workspaceID),
+              workspaceLayout(for: tracked.workspaceID) == .tiled,
+              fullscreenSessions[focused.key] == nil,
+              !temporarilyDeferredWindowKeys.contains(focused.key),
+              Self.shouldIncludeInLayout(
+                  layoutOverride: tracked.layoutOverride,
+                  admissionDecision: tracked.admissionDecision,
+                  rule: resolvedRule(for: tracked.bundleIdentifier)
+              )
+        else {
+            return
+        }
+
+        let displays = Self.activeDisplays()
+        guard let display = targetDisplay(
+            for: tracked,
+            workspaceID: tracked.workspaceID,
+            displays: displays,
+            correlationID: nil
+        ) else {
+            return
+        }
+        let topologySignature = Self.displayTopologySignature(displays)
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier,
+            displays: displays,
+            correlationID: nil
+        )
+        let configuration = workspaceLayoutConfiguration(for: tracked.workspaceID)
+            ?? .aeroSpaceUserDefaults
+        let layoutBounds = managedLayoutBounds(display.usableBounds)
+        let partition = TiledLayoutPartitionKey(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier
+        )
+
+        guard allowStartingSession, participants.count > 1, participants.contains(focused.key),
+              let originalTree = TiledLayoutEngine.reconciled(
+                  tiledTrees[partition],
+                  windowKeys: participants,
+                  weights: participants.map {
+                      CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
+                  },
+                  orientation: configuration.orientation.resolved(for: layoutBounds)
+              )
+        else { return }
+
+        guard let originalFrames = try? TiledLayoutEngine.frames(
+            for: originalTree,
+            in: layoutBounds,
+            configuration: configuration
+        ), let expectedFocusedFrame = originalFrames[focused.key],
+              let lastSolvedFrame = lastSolvedTiledFrames[focused.key],
+              AccessibilityWindow.framesMatch(lastSolvedFrame, expectedFocusedFrame)
+        else {
+            return
+        }
+
+        guard let pointer = CGEvent(source: nil)?.location else { return }
+        let draggedEdges = TiledResizeDraggedEdges.inferred(
+            expectedFrame: expectedFocusedFrame,
+            observedFrame: observedFrame
+        )
+        guard !draggedEdges.isEmpty else { return }
+
+        let proposedTree = TiledLayoutEngine.resizedToMatchObservedFrame(
+            originalTree,
+            focusedWindow: focused.key,
+            observedFrame: observedFrame,
+            displayBounds: layoutBounds,
+            configuration: configuration
+        ) ?? originalTree
+        guard proposedTree != originalTree else { return }
+        guard let proposedFrames = try? TiledLayoutEngine.frames(
+            for: proposedTree,
+            in: layoutBounds,
+            configuration: configuration
+        ) else {
+            return
+        }
+
+        let token = UUID()
+        let session = ManualTiledResizeSession(
+            token: token,
+            focusedWindow: focused.key,
+            partition: partition,
+            participantKeys: Set(participants),
+            originalTree: originalTree,
+            originalFrames: originalFrames,
+            configuration: configuration,
+            layoutBounds: layoutBounds,
+            topologySignature: topologySignature,
+            profileID: currentProfileID,
+            draggedEdges: draggedEdges,
+            anchorFrame: observedFrame,
+            anchorPointer: pointer,
+            proposedTree: proposedTree,
+            proposedFrames: proposedFrames
+        )
+        manualTiledResizeSession = session
+        manualTiledDragSession = nil
+        let presentation = TiledResizePreviewPresentation(
+            token: token,
+            displayIdentifier: display.identifier,
+            layoutBounds: WindowFrame(position: layoutBounds.origin, size: layoutBounds.size),
+            frames: proposedFrames,
+            transition: .immediate
+        )
+        emitTiledResizePreviewEvent(.present(presentation))
+        guard concealManualTiledResizeParticipants(
+            session,
+            correlationID: "manual-resize-\(token.uuidString.prefix(8))"
+        ) else {
+            cancelManualTiledResizePreview(reason: "participant-concealment-failed")
+            return
+        }
+        diagnostics.log(
+            category: "manual-resize-preview",
+            event: "started",
+            correlation: "manual-resize-\(token.uuidString.prefix(8))",
+            fields: [
+                "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                "display": Self.shortIdentifier(display.identifier),
+                "window": Self.diagnosticWindowKey(focused.key),
+                "window-count": String(participants.count),
+                "tree-proposed": TiledLayoutEngine.fingerprint(proposedTree),
+            ]
+        )
+    }
+
+    private func updateConcealedManualTiledResizePreview(
+        _ session: ManualTiledResizeSession
+    ) {
+        let correlationID = "manual-resize-\(session.token.uuidString.prefix(8))"
+        let displays = Self.activeDisplays()
+        guard !isWindowManagementPaused,
+              !wakeReconciliationState.isSleeping,
+              !wakeReconciliationState.isPending,
+              windowServerSessionValidated,
+              !isQuickAppShelfPresented,
+              currentProfileID == session.profileID,
+              Self.displayTopologySignature(displays) == session.topologySignature,
+              tiledTrees[session.partition] == session.originalTree,
+              let tracked = windows[session.focusedWindow],
+              isWorkspaceActive(tracked.workspaceID),
+              workspaceLayout(for: tracked.workspaceID) == .tiled,
+              fullscreenSessions[session.focusedWindow] == nil,
+              !temporarilyDeferredWindowKeys.contains(session.focusedWindow),
+              let display = displays.first(where: {
+                  $0.identifier == session.partition.displayIdentifier
+              }),
+              (workspaceLayoutConfiguration(for: tracked.workspaceID)
+                ?? .aeroSpaceUserDefaults) == session.configuration,
+              managedLayoutBounds(display.usableBounds) == session.layoutBounds
+        else {
+            cancelManualTiledResizePreview(reason: "context-changed")
+            return
+        }
+
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier,
+            displays: displays,
+            correlationID: correlationID
+        )
+        guard Set(participants) == session.participantKeys,
+              let pointer = CGEvent(source: nil)?.location,
+              let observedFrame = session.draggedEdges.projectedFrame(
+                  from: session.anchorFrame,
+                  anchorPointer: session.anchorPointer,
+                  pointer: pointer
+              )
+        else {
+            cancelManualTiledResizePreview(reason: "participants-or-pointer-changed")
+            return
+        }
+
+        let proposedTree = TiledLayoutEngine.resizedToMatchObservedFrame(
+            session.originalTree,
+            focusedWindow: session.focusedWindow,
+            observedFrame: observedFrame,
+            displayBounds: session.layoutBounds,
+            configuration: session.configuration
+        ) ?? session.originalTree
+        guard let proposedFrames = try? TiledLayoutEngine.frames(
+            for: proposedTree,
+            in: session.layoutBounds,
+            configuration: session.configuration
+        ) else {
+            cancelManualTiledResizePreview(reason: "proposal-invalid")
+            return
+        }
+
+        var updated = session
+        updated.proposedTree = proposedTree
+        updated.proposedFrames = proposedFrames
+        manualTiledResizeSession = updated
+
+        let presentation = TiledResizePreviewPresentation(
+            token: session.token,
+            displayIdentifier: display.identifier,
+            layoutBounds: WindowFrame(
+                position: session.layoutBounds.origin,
+                size: session.layoutBounds.size
+            ),
+            frames: proposedFrames,
+            transition: .immediate
+        )
+        emitTiledResizePreviewEvent(.present(presentation))
+        guard concealManualTiledResizeParticipants(updated, correlationID: correlationID) else {
+            cancelManualTiledResizePreview(reason: "participant-concealment-failed")
+            return
+        }
+        diagnostics.log(
+            category: "manual-resize-preview",
+            event: "updated",
+            correlation: correlationID,
+            fields: [
+                "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                "display": Self.shortIdentifier(display.identifier),
+                "window": Self.diagnosticWindowKey(session.focusedWindow),
+                "window-count": String(participants.count),
+                "tree-proposed": TiledLayoutEngine.fingerprint(proposedTree),
+            ]
+        )
+    }
+
+    private func concealManualTiledResizeParticipants(
+        _ session: ManualTiledResizeSession,
+        correlationID: String
+    ) -> Bool {
+        concealManualTiledParticipants(
+            session.participantKeys,
+            diagnosticCategory: "manual-resize-preview",
+            correlationID: correlationID
+        )
+    }
+
+    private func concealManualTiledParticipants(
+        _ participantKeys: Set<WindowKey>,
+        diagnosticCategory: String,
+        correlationID: String
+    ) -> Bool {
+        let targets = participantKeys.compactMap { windows[$0] }
+        guard targets.count == participantKeys.count else { return false }
+        let parkingPosition = parkingPosition()
+        var allSucceeded = true
+        for (processIdentifier, applicationTargets) in Dictionary(
+            grouping: targets,
+            by: \.processIdentifier
+        ) {
+            AccessibilityWindow.withoutPositionAnimations(for: processIdentifier) {
+                for target in applicationTargets {
+                    let succeeded = AccessibilityWindow.setPositionIfNeeded(
+                        parkingPosition,
+                        of: target.element
+                    )
+                    allSucceeded = allSucceeded && succeeded
+                    diagnostics.log(
+                        category: diagnosticCategory,
+                        event: "participant-concealed",
+                        correlation: correlationID,
+                        fields: [
+                            "window": Self.diagnosticWindowKey(target.key),
+                            "success": String(succeeded),
+                        ]
+                    )
+                }
+            }
+        }
+        return allSucceeded
+    }
+
+    private func restoreManualTiledResizeParticipants(
+        _ session: ManualTiledResizeSession,
+        frames: [WindowKey: WindowFrame],
+        correlationID: String
+    ) {
+        restoreManualTiledParticipants(
+            session.participantKeys,
+            frames: frames,
+            correlationID: correlationID
+        )
+    }
+
+    private func restoreManualTiledParticipants(
+        _ participantKeys: Set<WindowKey>,
+        frames: [WindowKey: WindowFrame],
+        correlationID: String
+    ) {
+        let changes = participantKeys.compactMap { key -> FrameChange? in
+            guard let tracked = windows[key], let frame = frames[key] else { return nil }
+            return FrameChange(window: tracked, frame: frame)
+        }
+        applyFrameChanges(changes, correlationID: correlationID)
+    }
+
+    private func cancelManualTiledPreviewTransactions(reason: String) {
+        cancelManualTiledMovePreview(reason: reason)
+        cancelManualTiledResizePreview(reason: reason)
+    }
+
+    private func cancelManualTiledResizePreview(reason: String) {
+        guard let session = manualTiledResizeSession else { return }
+        manualTiledResizeSession = nil
+        lastBackgroundLayoutSignature = nil
+        let correlationID = "manual-resize-\(session.token.uuidString.prefix(8))"
+        restoreManualTiledResizeParticipants(
+            session,
+            frames: session.originalFrames,
+            correlationID: correlationID
+        )
+        diagnostics.log(
+            category: "manual-resize-preview",
+            event: "cancelled",
+            correlation: correlationID,
+            fields: ["reason": reason]
+        )
+        emitTiledResizePreviewEvent(.dismiss(token: session.token, reason: reason))
+    }
+
+    private func emitTiledResizePreviewEvent(_ event: TiledResizePreviewEvent) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onTiledResizePreviewChanged?(event)
+        }
+    }
+
     /// A normal refresh sees an externally resized tiled window before the background layout pass.
     /// Convert a focused window's moved internal edge into tree ratios first, so that pass resizes
     /// its neighbours around the user's divider rather than restoring the previous geometry.
@@ -7124,17 +8876,20 @@ final class WorkspaceEngine {
                    selectedSession.isPresented,
                    let selectedTarget = self.windows[selectedSession.windowKey],
                    let selectedFrame = AccessibilityWindow.frame(of: selectedTarget.element) {
-                    let shelfCandidates = self.quickAppSessions.values.compactMap {
-                        session -> DirectionalWindowCandidate<WindowKey>? in
-                        guard session.isPresented,
-                              session.windowKey != selectedSession.windowKey,
-                              let target = self.windows[session.windowKey],
-                              let frame = AccessibilityWindow.frame(of: target.element)
-                        else { return nil }
-                        return DirectionalWindowCandidate(
-                            key: session.windowKey,
-                            frame: CGRect(origin: frame.position, size: frame.size)
-                        )
+                    let shelfCandidates = self.quickAppSessions.values.reduce(
+                        into: [DirectionalWindowCandidate<WindowKey>]()
+                    ) { result, session in
+                        guard session.isPresented else { return }
+                        for key in session.windowKeys {
+                            guard key != selectedSession.windowKey,
+                                  let target = self.windows[key],
+                                  let frame = AccessibilityWindow.frame(of: target.element)
+                            else { continue }
+                            result.append(DirectionalWindowCandidate(
+                                key: key,
+                                frame: CGRect(origin: frame.position, size: frame.size)
+                            ))
+                        }
                     }
                     availableFocusDirections = Self.availableShelfFocusDirections(
                         from: CGRect(origin: selectedFrame.position, size: selectedFrame.size),
@@ -8611,6 +10366,11 @@ final class WorkspaceEngine {
         }
         if let selected = dropDownAppSession,
            selected.isPresented,
+           quickAppSessions.values
+               .filter(\.isPresented)
+               .allSatisfy({ session in
+                   session.windowKeys.allSatisfy(eligibleWindowKeys.contains)
+               }),
            let display = selected.displayIdentifier.flatMap({ identifier in
                displays.first { $0.identifier == identifier }
            }) ?? dropDownTargetDisplay(displays: displays) {
@@ -8638,7 +10398,7 @@ final class WorkspaceEngine {
         dropDownAnimationGeneration &+= 1
         let geometryWriteSucceeded: Bool
         if session.isPresented {
-            guard eligibleWindowKeys.contains(target.key) else { return }
+            guard session.windowKeys.allSatisfy(eligibleWindowKeys.contains) else { return }
             guard let display = session.displayIdentifier.flatMap({ identifier in
                       displays.first { $0.identifier == identifier }
                   }) ?? dropDownTargetDisplay(displays: displays)
@@ -8691,6 +10451,7 @@ final class WorkspaceEngine {
     }
 
     private func clearWindowServerBoundStateAfterSessionChange() {
+        cancelManualTiledPreviewTransactions(reason: "window-server-session-changed")
         windows.removeAll()
         pendingRestoredWindows.removeAll()
         ignoredWindowKeys.removeAll()
@@ -9138,27 +10899,26 @@ final class WorkspaceEngine {
             )
         }
 
-        let deferredProcessIdentifiers = requiredProcessIdentifiers
-            .subtracting(successfullyEnumeratedProcesses)
-        for key in windows.keys where deferredProcessIdentifiers.contains(key.processIdentifier) {
-            deferredWindowKeys.insert(key)
-            if let tracked = windows[key],
-               isManagedLayoutParticipant(tracked),
-               let reason = StableLayoutSlotPolicy.retentionReason(
-                   wasTracked: true,
-                   applicationEnumerationSucceeded: false,
-                   windowWasEnumerated: false,
-                   isCurrentlyIncludedInLayout: true,
-                   hasReadableFrame: false
-               ) {
-                retainedLayoutSlotReasons[key] = reason
-            }
-        }
-
-        let lifecycleTransitionActive = wakeReconciliationState.isSleeping ||
+        let lifecycleTransitionActive = screenSessionLifecycleState.isSuspended ||
+            wakeReconciliationState.isSleeping ||
             wakeReconciliationState.isPending ||
             wasPostSleepWindowRecoveryActive ||
             postSleepWindowRecoveryState.isActive
+        let hasCurrentFullscreenObservation = WindowEnumerationLifecycle
+            .hasCurrentFullscreenObservation(
+                sessionWindowKeys: Set(fullscreenSessions.keys),
+                enumeratedWindowKeys: enumeratedWindowKeys
+            )
+        let coordinatedEmptyProcessIdentifiers =
+            coordinatedWindowEnumerationCollapseState.processIdentifiersToDefer(
+                requiredProcessIdentifiers: requiredProcessIdentifiers,
+                successfullyEnumeratedProcessIdentifiers: successfullyEnumeratedProcesses,
+                enumeratedWindowProcessIdentifiers: Set(
+                    enumeratedWindowKeys.map(\.processIdentifier)
+                ),
+                isLifecycleTransitionActive: lifecycleTransitionActive,
+                hasCurrentFullscreenObservation: hasCurrentFullscreenObservation
+            )
         let deferredGlobalEmptySnapshot = WindowEnumerationLifecycle
             .shouldDeferGlobalEmptySnapshot(
                 trackedWindowCount: trackedWindowKeysBeforeEnumeration.count,
@@ -9177,6 +10937,25 @@ final class WorkspaceEngine {
         } else {
             consecutiveGlobalEmptySnapshots = 0
         }
+        if !coordinatedEmptyProcessIdentifiers.isEmpty {
+            successfullyEnumeratedProcesses.subtract(coordinatedEmptyProcessIdentifiers)
+            diagnostics.log(
+                category: "window-lifecycle",
+                event: "coordinated-enumeration-collapse-deferred",
+                correlation: correlationID,
+                fields: [
+                    "deferred-process-count": String(
+                        coordinatedEmptyProcessIdentifiers.count
+                    ),
+                    "required-process-count": String(requiredProcessIdentifiers.count),
+                    "lifecycle-transition": String(lifecycleTransitionActive),
+                    "fullscreen-observed": String(hasCurrentFullscreenObservation),
+                    "grace-milliseconds": String(Int(
+                        CoordinatedWindowEnumerationCollapseState.graceDuration * 1_000
+                    )),
+                ]
+            )
+        }
         if deferredGlobalEmptySnapshot {
             successfullyEnumeratedProcesses.subtract(requiredProcessIdentifiers)
             deferredWindowKeys.formUnion(trackedWindowKeysBeforeEnumeration)
@@ -9194,6 +10973,23 @@ final class WorkspaceEngine {
             )
         }
 
+        let deferredProcessIdentifiers = requiredProcessIdentifiers
+            .subtracting(successfullyEnumeratedProcesses)
+        for key in windows.keys where deferredProcessIdentifiers.contains(key.processIdentifier) {
+            deferredWindowKeys.insert(key)
+            if let tracked = windows[key],
+               isManagedLayoutParticipant(tracked),
+               let reason = StableLayoutSlotPolicy.retentionReason(
+                   wasTracked: true,
+                   applicationEnumerationSucceeded: false,
+                   windowWasEnumerated: false,
+                   isCurrentlyIncludedInLayout: true,
+                   hasReadableFrame: false
+               ) {
+                retainedLayoutSlotReasons[key] = reason
+            }
+        }
+
         if !quickAppSessions.isEmpty,
            DropDownAppLifecyclePolicy.shouldClearSessionForTopologyChange(
                topologyChanged: topologyChanged,
@@ -9209,7 +11005,9 @@ final class WorkspaceEngine {
 
         if performAXWrites,
            quickAppSessions.values.contains(where: {
-               postSleepRecoveryUpdate.newlyRecoveredWindowKeys.contains($0.windowKey)
+               !$0.windowKeys.allSatisfy {
+                   !postSleepRecoveryUpdate.newlyRecoveredWindowKeys.contains($0)
+               }
            }) {
             reconcileDropDownAppSessionAfterWake(
                 displays: displays,
@@ -9229,19 +11027,66 @@ final class WorkspaceEngine {
             enumeratedWindowKeys: enumeratedWindowKeys
         )
         let removedTrackedWindows = windows.filter { removedTrackedWindowKeys.contains($0.key) }
+        var presentedQuickAppMembershipRemoved = false
         if !removedTrackedWindowKeys.isEmpty {
             let sessionBundleKeys = Array(quickAppSessions.keys)
+            let newlyTrackedWindowKeys = Set(windows.keys).subtracting(
+                trackedWindowKeysBeforeEnumeration
+            )
             var reboundBundleKeys = Set<String>()
             for bundleKey in sessionBundleKeys {
-                if rebindDropDownAppSessionIfNeeded(
-                    bundleIdentifier: bundleKey,
-                    removedWindowKeys: removedTrackedWindowKeys,
-                    newlyTrackedWindowKeys: Set(windows.keys).subtracting(trackedWindowKeysBeforeEnumeration),
-                    displays: displays,
-                    performAXWrites: performAXWrites,
-                    correlationID: correlationID
-                ) {
-                    reboundBundleKeys.insert(bundleKey)
+                if let session = quickAppSessions[bundleKey] {
+                    let removedOwnedKeys = session.windowKeys.filter {
+                        removedTrackedWindowKeys.contains($0)
+                    }
+                    if removedOwnedKeys.count == 1,
+                       rebindDropDownAppSessionIfNeeded(
+                           bundleIdentifier: bundleKey,
+                           sessionWindowKey: removedOwnedKeys[0],
+                           removedWindowKeys: removedTrackedWindowKeys,
+                           newlyTrackedWindowKeys: newlyTrackedWindowKeys,
+                           displays: displays,
+                           performAXWrites: performAXWrites,
+                           correlationID: correlationID
+                       ) {
+                        reboundBundleKeys.insert(bundleKey)
+                    }
+                }
+                if var session = quickAppSessions[bundleKey] {
+                    let previousKeys = session.windowKeys
+                    let retainedKeys = session.windowKeys.filter {
+                        !removedTrackedWindowKeys.contains($0)
+                    }
+                    if !retainedKeys.isEmpty {
+                        session.synchronizeWindowKeys(retainedKeys)
+                        quickAppSessions[bundleKey] = session
+                        let membershipChanged = QuickAppApplicationWindowPolicy
+                            .presentedMembershipChanged(
+                                previousWindowKeys: previousKeys,
+                                currentWindowKeys: session.windowKeys,
+                                isPresented: session.isPresented
+                            )
+                        presentedQuickAppMembershipRemoved =
+                            presentedQuickAppMembershipRemoved || membershipChanged
+                        if previousKeys != session.windowKeys {
+                            diagnostics.log(
+                                category: "drop-down-app",
+                                event: "application-window-group-updated",
+                                correlation: correlationID,
+                                fields: [
+                                    "bundle": session.bundleIdentifier,
+                                    "previous-window-count": String(previousKeys.count),
+                                    "window-count": String(session.windowKeys.count),
+                                    "added-window-count": "0",
+                                    "removed-window-count": String(
+                                        Set(previousKeys).subtracting(session.windowKeys).count
+                                    ),
+                                    "presented": String(session.isPresented),
+                                ]
+                            )
+                        }
+                        continue
+                    }
                 }
             }
             for (bundleKey, session) in Array(quickAppSessions) where
@@ -9335,6 +11180,17 @@ final class WorkspaceEngine {
                 )
             }
         }
+        let presentedQuickAppMembershipReconciled = reconcileQuickAppSessionWindowSets(
+            correlationID: correlationID
+        )
+        let presentedQuickAppMembershipChanged = presentedQuickAppMembershipRemoved ||
+            presentedQuickAppMembershipReconciled
+        if performAXWrites, presentedQuickAppMembershipChanged {
+            reconcilePresentedQuickAppGroup(
+                correlationID: correlationID,
+                focusSelected: false
+            )
+        }
         let shouldRetainDiscoveryState: (WindowKey) -> Bool = { key in
             runningProcessIdentifiers.contains(key.processIdentifier) &&
                 (!successfullyEnumeratedProcesses.contains(key.processIdentifier) || enumeratedWindowKeys.contains(key))
@@ -9379,9 +11235,17 @@ final class WorkspaceEngine {
         }
 
         let focusedSnapshot = observeFocus ? focusedWindowSnapshot() : nil
-        if let focusedSnapshot,
-           focusedSnapshot.key.processIdentifier != ownProcessIdentifier {
+        let previousDiagnosticFocusKey = lastDiagnosticFocusedWindow?.key
+        let nextDiagnosticFocusKey = WindowEnumerationLifecycle.diagnosticFocusKeyAfterEnumeration(
+            previousKey: previousDiagnosticFocusKey,
+            observedKey: focusedSnapshot?.key,
+            ownProcessIdentifier: ownProcessIdentifier,
+            removedWindowKeys: removedTrackedWindowKeys
+        )
+        if let focusedSnapshot, nextDiagnosticFocusKey == focusedSnapshot.key {
             lastDiagnosticFocusedWindow = focusedSnapshot
+        } else if nextDiagnosticFocusKey == nil {
+            lastDiagnosticFocusedWindow = nil
         }
         let focused = focusedSnapshot?.key
         if observeFocus {
@@ -9398,24 +11262,42 @@ final class WorkspaceEngine {
             lastFocusedWindow[tracked.workspaceID] = focused
         }
 
-        var manualTiledDragInProgress = false
-        if performAXWrites, !isStartup, !topologyChanged, !lifecycleTransitionActive, let focused,
+        if let resizeSession = manualTiledResizeSession,
+           isStartup || topologyChanged || lifecycleTransitionActive ||
+            !resizeSession.participantKeys.isSubset(of: Set(windows.keys)) {
+            cancelManualTiledResizePreview(reason: topologyChanged
+                ? "display-topology-changed"
+                : lifecycleTransitionActive ? "lifecycle-transition" : "participants-changed")
+        }
+        if let moveSession = manualTiledMovePreviewSession,
+           isStartup || topologyChanged || lifecycleTransitionActive ||
+            !moveSession.participantKeys.isSubset(of: Set(windows.keys)) {
+            cancelManualTiledMovePreview(reason: topologyChanged
+                ? "display-topology-changed"
+                : lifecycleTransitionActive ? "lifecycle-transition" : "participants-changed")
+        }
+
+        var manualTiledDragInProgress = manualTiledMovePreviewSession != nil
+        if manualTiledResizeSession == nil, manualTiledMovePreviewSession == nil,
+           performAXWrites, !isStartup, !topologyChanged, !lifecycleTransitionActive, let focused,
            !isDropDownAppWindow(focused),
            let focusedTracked = windows[focused],
            !isExcludedFromWorkspaceParticipation(focusedTracked) {
+            let isLeftMouseButtonPressed = CGEventSource.buttonState(
+                .combinedSessionState,
+                button: .left
+            )
             let moveReconciliation = reconcileManualTiledMove(
                 focusedWindow: focused,
                 observedFrames: observedFrames,
                 displays: displays,
                 pointerLocation: CGEvent(source: nil)?.location,
-                isLeftMouseButtonPressed: CGEventSource.buttonState(
-                    .combinedSessionState,
-                    button: .left
-                ),
+                isLeftMouseButtonPressed: isLeftMouseButtonPressed,
                 correlationID: correlationID
             )
-            manualTiledDragInProgress = moveReconciliation == .dragInProgress
-            if moveReconciliation == .none {
+            manualTiledDragInProgress = moveReconciliation == .dragInProgress ||
+                (isLeftMouseButtonPressed && workspaceLayout(for: focusedTracked.workspaceID) == .tiled)
+            if moveReconciliation == .none, !isLeftMouseButtonPressed {
                 reconcileManualTiledResize(
                     focusedWindow: focused,
                     observedFrames: observedFrames,
@@ -9423,26 +11305,43 @@ final class WorkspaceEngine {
                     correlationID: correlationID
                 )
             }
-        } else if isStartup || topologyChanged || lifecycleTransitionActive || focused == nil {
+        } else if manualTiledResizeSession == nil, manualTiledMovePreviewSession == nil,
+                    (isStartup || topologyChanged || lifecycleTransitionActive || focused == nil) {
             manualTiledDragSession = nil
         }
 
-        let layoutSignatureBeforeApply = backgroundLayoutSignature(displays: displays)
+        let manualTiledInteractionInProgress = manualTiledDragInProgress ||
+            manualTiledMovePreviewSession != nil ||
+            manualTiledResizeSession != nil
+
+        let layoutSignatureBeforeApply = backgroundLayoutSignature(
+            displays: displays,
+            observedFrames: observedFrames
+        )
+        var didAttemptBackgroundVisibilityApplication = false
         if performAXWrites, topologyChanged, !isStartup {
             applyVisibility(displays: displays, correlationID: correlationID)
-        } else if performAXWrites, !manualTiledDragInProgress, Self.shouldApplyBackgroundLayout(
+            didAttemptBackgroundVisibilityApplication = true
+        } else if performAXWrites, !manualTiledInteractionInProgress, Self.shouldApplyBackgroundLayout(
             previousSignature: lastBackgroundLayoutSignature,
             currentSignature: layoutSignatureBeforeApply,
             isStartup: isStartup
         ) {
             applyVisibility(displays: displays, correlationID: correlationID)
+            didAttemptBackgroundVisibilityApplication = true
         }
-        if performAXWrites, !manualTiledDragInProgress, resizeRecoveryNeedsImmediateReflow {
+        if performAXWrites, !manualTiledInteractionInProgress, resizeRecoveryNeedsImmediateReflow {
             resizeRecoveryNeedsImmediateReflow = false
             applyVisibility(displays: displays, correlationID: correlationID)
+            didAttemptBackgroundVisibilityApplication = true
         }
-        if performAXWrites, !manualTiledDragInProgress {
-            lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
+        if performAXWrites, !manualTiledInteractionInProgress {
+            lastBackgroundLayoutSignature = Self.settledBackgroundLayoutSignature(
+                observedSignature: layoutSignatureBeforeApply,
+                didApplyVisibility: didAttemptBackgroundVisibilityApplication
+            ) {
+                backgroundLayoutSignature(displays: displays)
+            }
         }
 
         if observeFocus {
@@ -9464,6 +11363,11 @@ final class WorkspaceEngine {
             pendingRestoredWindows.removeAll()
         }
 
+        emitWorkspacePreviewStateChangesIfNeeded(
+            observedFrames: observedFrames,
+            displays: displays
+        )
+
         return WindowRefreshReport(
             displays: displays,
             topologySignature: topologySignature,
@@ -9474,6 +11378,76 @@ final class WorkspaceEngine {
             retainedLayoutSlotWindowKeys: retainedLayoutSlotWindowKeys,
             managedWindowCount: windows.count
         )
+    }
+
+    /// Reuses the engine's existing broad refresh while Workspaces Settings is visible. This adds
+    /// no timer or AX enumeration: it compares only the tracked identities and intended geometry
+    /// already read by `refreshWindows`, then reports the exact workspaces whose preview is stale.
+    private func emitWorkspacePreviewStateChangesIfNeeded(
+        observedFrames: [WindowKey: WindowFrame],
+        displays: [DisplaySnapshot]
+    ) {
+        guard workspacePreviewObservationEnabled else { return }
+        var nextState: [UUID: [WorkspacePreviewStateMember]] = [:]
+        for tracked in windows.values {
+            guard !isDropDownAppWindow(tracked.key),
+                  !ignoredWindowKeys.contains(tracked.key),
+                  !temporarilyDeferredWindowKeys.contains(tracked.key),
+                  !resolvedRule(for: tracked.bundleIdentifier).keepsOnAllWorkspaces
+            else { continue }
+            let layout = workspaceLayout(for: tracked.workspaceID)
+            let intendedFrame: WindowFrame
+            if isWorkspaceActive(tracked.workspaceID),
+               let observed = observedFrames[tracked.key],
+               Self.isMeaningfullyVisible(observed, displays: displays) {
+                intendedFrame = observed
+            } else if layout == .tiled,
+                      let solved = lastSolvedTiledFrames[tracked.key] {
+                intendedFrame = solved
+            } else {
+                intendedFrame = tracked.restoreFrame
+            }
+            nextState[tracked.workspaceID, default: []].append(
+                WorkspacePreviewStateMember(
+                    key: tracked.key,
+                    intendedFrame: CGRect(
+                        origin: intendedFrame.position,
+                        size: intendedFrame.size
+                    ),
+                    layoutOrder: tracked.layoutOrder,
+                    isLastFocused: lastFocusedWindow[tracked.workspaceID] == tracked.key
+                )
+            )
+        }
+        for workspaceID in nextState.keys {
+            nextState[workspaceID]?.sort {
+                if $0.key.processIdentifier != $1.key.processIdentifier {
+                    return $0.key.processIdentifier < $1.key.processIdentifier
+                }
+                return $0.key.windowIdentifier < $1.key.windowIdentifier
+            }
+        }
+        guard hasWorkspacePreviewStateBaseline else {
+            hasWorkspacePreviewStateBaseline = true
+            workspacePreviewStateByWorkspace = nextState
+            let initialWorkspaceIDs = Set(nextState.keys)
+            if !initialWorkspaceIDs.isEmpty {
+                DispatchQueue.main.async { [weak self] in
+                    self?.onWorkspacePreviewStateChanged?(initialWorkspaceIDs)
+                }
+            }
+            return
+        }
+        let allWorkspaceIDs = Set(workspacePreviewStateByWorkspace.keys)
+            .union(nextState.keys)
+        let changedWorkspaceIDs = Set(allWorkspaceIDs.filter {
+            workspacePreviewStateByWorkspace[$0] != nextState[$0]
+        })
+        workspacePreviewStateByWorkspace = nextState
+        guard !changedWorkspaceIDs.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.onWorkspacePreviewStateChanged?(changedWorkspaceIDs)
+        }
     }
 
     private func reconcileFullscreenSession(
@@ -9859,6 +11833,12 @@ final class WorkspaceEngine {
            dragSession.focusedWindow == key || dragSession.candidateTarget == key {
             manualTiledDragSession = nil
         }
+        if manualTiledMovePreviewSession?.participantKeys.contains(key) == true {
+            cancelManualTiledMovePreview(reason: "participant-removed")
+        }
+        if manualTiledResizeSession?.participantKeys.contains(key) == true {
+            cancelManualTiledResizePreview(reason: "participant-removed")
+        }
         for bundleKey in Array(quickAppSessions.keys) {
             guard var session = quickAppSessions[bundleKey] else { continue }
             if session.previousFocusKey == key {
@@ -9956,7 +11936,26 @@ final class WorkspaceEngine {
         !isStartup && previousSignature != currentSignature
     }
 
-    private func backgroundLayoutSignature(displays: [DisplaySnapshot]) -> String {
+    static func backgroundLayoutFrame(
+        for key: WindowKey,
+        observedFrames: [WindowKey: WindowFrame]?,
+        readFrame: () -> WindowFrame?
+    ) -> WindowFrame? {
+        observedFrames?[key] ?? readFrame()
+    }
+
+    static func settledBackgroundLayoutSignature(
+        observedSignature: String,
+        didApplyVisibility: Bool,
+        readPostWriteSignature: () -> String
+    ) -> String {
+        didApplyVisibility ? readPostWriteSignature() : observedSignature
+    }
+
+    private func backgroundLayoutSignature(
+        displays: [DisplaySnapshot],
+        observedFrames: [WindowKey: WindowFrame]? = nil
+    ) -> String {
         let fullActiveMap: String
         if displayMode == .unified {
             fullActiveMap = "all:\(currentWorkspaceID.uuidString)"
@@ -9984,24 +11983,20 @@ final class WorkspaceEngine {
             } ?? "legacy"
             return "workspace=\($0.id.uuidString)|\($0.layout.rawValue)|\(workspaceHomeDisplayIdentifier(for: $0.id, displays: displays))|\(primary)|\(geometry)"
         })
-        parts.append(contentsOf: windows.values.sorted {
+        let orderedWindows = windows.values.sorted {
             if $0.key.processIdentifier != $1.key.processIdentifier {
                 return $0.key.processIdentifier < $1.key.processIdentifier
             }
             return $0.key.windowIdentifier < $1.key.windowIdentifier
-        }.compactMap { tracked in
+        }
+        parts.append(contentsOf: orderedWindows.compactMap { tracked in
             guard let visibility = Self.backgroundApplicationVisibilityMarker(
                 isApplicationHidden: isExcludedFromWorkspaceParticipation(tracked),
                 isDropDownAppWindow: isDropDownAppWindow(tracked.key)
             ) else { return nil }
             return "application-visibility=\(Self.diagnosticWindowKey(tracked.key))|\(visibility)"
         })
-        parts.append(contentsOf: windows.values.sorted {
-            if $0.key.processIdentifier != $1.key.processIdentifier {
-                return $0.key.processIdentifier < $1.key.processIdentifier
-            }
-            return $0.key.windowIdentifier < $1.key.windowIdentifier
-        }.compactMap { tracked in
+        parts.append(contentsOf: orderedWindows.compactMap { tracked in
             guard !isDropDownAppWindow(tracked.key),
                   !isExcludedFromWorkspaceParticipation(tracked)
             else { return nil }
@@ -10011,7 +12006,12 @@ final class WorkspaceEngine {
                 activeWorkspaceIDs: activeWorkspaceIDs,
                 rule: rule
             ) else { return nil }
-            let currentFrame = AccessibilityWindow.frame(of: tracked.element)
+            let currentFrame = Self.backgroundLayoutFrame(
+                for: tracked.key,
+                observedFrames: observedFrames
+            ) {
+                AccessibilityWindow.frame(of: tracked.element)
+            }
                 .map(Self.diagnosticFrame) ?? "unknown"
             return [
                 "window=\(Self.diagnosticWindowKey(tracked.key))",
@@ -10679,7 +12679,8 @@ final class WorkspaceEngine {
         previousFocusKey: WindowKey?,
         displays: [DisplaySnapshot],
         correlationID: String,
-        selectedApplication: WorkspaceApplicationTarget? = nil
+        selectedApplication: WorkspaceApplicationTarget? = nil,
+        selectedWindowKey: WindowKey? = nil
     ) {
         reconcileIndependentActiveWorkspaces(displays: displays)
         let logicalDisplayIdentifier = workspaceHomeDisplayIdentifier(
@@ -10755,7 +12756,8 @@ final class WorkspaceEngine {
             correlationID: correlationID,
             token: token,
             previousFocusKey: previousFocusKey,
-            selectedApplication: selectedApplication
+            selectedApplication: selectedApplication,
+            selectedWindowKey: selectedWindowKey
         )
     }
 
@@ -10869,6 +12871,18 @@ final class WorkspaceEngine {
             focused: interactionFocusedWindowSnapshot(),
             displays: displays
         ).identifier
+    }
+
+    /// Returns only the live Shelf presentation facts needed by the passive Shortcut Guide.
+    /// Reading on the engine queue keeps presentation changes and display ownership coherent.
+    func currentShortcutGuideShelfContext() -> ShortcutGuideShelfRuntimeContext? {
+        queue.sync {
+            guard let session = dropDownAppSession, session.isPresented else { return nil }
+            return ShortcutGuideShelfRuntimeContext(
+                direction: quickAppShelfPresentation.direction,
+                displayIdentifier: session.displayIdentifier
+            )
+        }
     }
 
     static func interactionDisplaySelection(
@@ -11038,6 +13052,11 @@ final class WorkspaceEngine {
         let displays = Self.activeDisplays()
         guard let display = dropDownTargetDisplay(displays: displays) else {
             emitCommandFeedback("No display is available for the Quick App.", correlationID: correlationID)
+            abandonQuickAppApplicationSwitchHandoff(
+                reason: "no-display",
+                correlationID: correlationID
+            )
+            pendingQuickAppPresentationContext = nil
             pendingQuickAppHideAfterPresentation = false
             quickAppTransition = .idle
             continuePendingQuickAppSelectionIfPossible()
@@ -11046,16 +13065,35 @@ final class WorkspaceEngine {
         quickAppTransition = .showing(
             Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
         )
-        let focusedKey = interactionFocusedWindowSnapshot()?.key
-        let previousFocus = focusedKey == target.key ? nil : focusedKey
+        let previousFocus: WindowKey?
+        if let pendingContext = pendingQuickAppPresentationContext {
+            previousFocus = pendingContext.previousFocusKey == target.key
+                ? nil : pendingContext.previousFocusKey
+            pendingQuickAppPresentationContext = nil
+        } else {
+            let focusedKey = interactionFocusedWindowSnapshot()?.key
+            previousFocus = focusedKey == target.key ? nil : focusedKey
+        }
         let presentationBounds = dropDownAppPresentationBounds(for: display)
         let presented = DropDownAppGeometry.presentedFrame(
             in: presentationBounds,
             sizeFraction: configuration.heightFraction,
             direction: configuration.direction
         )
-        let retracted = DropDownAppGeometry.retractedFrame(
-            for: presented,
+        let ownedTargets = (dropDownAppSession?.windowKeys ?? [target.key]).compactMap {
+            windows[$0]
+        }
+        let ownsMultipleWindows = ownedTargets.count > 1
+        let ownedPresentedFrames = DropDownAppGeometry.groupFrames(
+            in: presented,
+            count: ownedTargets.count,
+            style: quickAppShelfPresentation.layoutStyle,
+            direction: quickAppShelfPresentation.direction
+        )
+        let targetPresented = zip(ownedTargets, ownedPresentedFrames)
+            .first(where: { $0.0.key == target.key })?.1 ?? presented
+        let targetRetracted = DropDownAppGeometry.retractedFrame(
+            for: targetPresented,
             in: presentationBounds,
             direction: configuration.direction
         )
@@ -11068,8 +13106,16 @@ final class WorkspaceEngine {
             processIdentifier: target.processIdentifier,
             bundleIdentifier: configuration.bundleIdentifier
         ) == true
-        let initialFrame = configuration.isAnimationEnabled ? retracted : presented
-        _ = setDropDownAppFrame(initialFrame, target: target)
+        if ownsMultipleWindows {
+            // App visibility is application-wide, so stage every owned window inside the Shelf
+            // before unhiding. This prevents sibling windows flashing at their workspace frames.
+            for (ownedTarget, frame) in zip(ownedTargets, ownedPresentedFrames) {
+                _ = setDropDownAppFrame(frame, target: ownedTarget)
+            }
+        } else {
+            let initialFrame = configuration.isAnimationEnabled ? targetRetracted : targetPresented
+            _ = setDropDownAppFrame(initialFrame, target: target)
+        }
         let shouldUnhideApplication = wasHiddenByWindowRanger || applicationWasHidden
         let unhideRequestAccepted = !shouldUnhideApplication || requestDropDownApplicationHidden(
             false,
@@ -11091,6 +13137,10 @@ final class WorkspaceEngine {
                         .map(String.init) ?? "unavailable",
                 ]
             )
+            abandonQuickAppApplicationSwitchHandoff(
+                reason: "application-unhide-request-rejected",
+                correlationID: correlationID
+            )
             pendingQuickAppHideAfterPresentation = false
             quickAppTransition = .idle
             continuePendingQuickAppSelectionIfPossible()
@@ -11106,8 +13156,8 @@ final class WorkspaceEngine {
                 target,
                 configuration: configuration,
                 display: display,
-                presented: presented,
-                retracted: retracted,
+                presented: targetPresented,
+                retracted: targetRetracted,
                 previousFocus: previousFocus,
                 generation: generation,
                 correlationID: correlationID,
@@ -11119,8 +13169,8 @@ final class WorkspaceEngine {
             target,
             configuration: configuration,
             display: display,
-            presented: presented,
-            retracted: retracted,
+            presented: targetPresented,
+            retracted: targetRetracted,
             previousFocus: previousFocus,
             generation: generation,
             correlationID: correlationID,
@@ -11182,6 +13232,10 @@ final class WorkspaceEngine {
                     "application-hidden-observed": observedHidden.map(String.init) ?? "unavailable",
                 ]
             )
+            abandonQuickAppApplicationSwitchHandoff(
+                reason: "application-unhide-confirmation-timeout",
+                correlationID: correlationID
+            )
             pendingQuickAppHideAfterPresentation = false
             quickAppTransition = .idle
             continuePendingQuickAppSelectionIfPossible()
@@ -11219,8 +13273,10 @@ final class WorkspaceEngine {
               dropDownAppSession?.windowKey == target.key,
               windows[target.key] != nil
         else { return }
+        let ownedWindowKeys = dropDownAppSession?.windowKeys ?? [target.key]
         dropDownAppSession = DropDownAppSession(
             windowKey: target.key,
+            additionalWindowKeys: ownedWindowKeys.filter { $0 != target.key },
             bundleIdentifier: configuration.bundleIdentifier,
             direction: configuration.direction,
             isAnimationEnabled: configuration.isAnimationEnabled,
@@ -11229,8 +13285,15 @@ final class WorkspaceEngine {
             displayIdentifier: display.identifier,
             previousFocusKey: previousFocus
         )
-        quickAppTransition = .idle
-        if configuration.isAnimationEnabled {
+        emitState()
+        let incomingBundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
+        let isApplicationSwitchHandoff = quickAppApplicationSwitchHandoff?.incomingBundleKey ==
+            incomingBundleKey
+        quickAppTransition = isApplicationSwitchHandoff
+            ? .showing(incomingBundleKey)
+            : .idle
+        let shouldAnimate = configuration.isAnimationEnabled && ownedWindowKeys.count == 1
+        if shouldAnimate {
             // Some applications defer hidden-window frame changes until restore. Reassert the
             // collapsed edge frame after unhiding before the first intentional animation step.
             _ = setDropDownAppFrame(retracted, target: target)
@@ -11247,13 +13310,19 @@ final class WorkspaceEngine {
                     correlationID: correlationID,
                     unhideConfirmationAttempts: unhideConfirmationAttempts
                 )
-                self?.reconcilePresentedQuickAppGroup(
-                    correlationID: correlationID,
-                    focusSelected: false
-                )
+                if isApplicationSwitchHandoff {
+                    self?.restackPresentedQuickAppGroup(correlationID: correlationID)
+                } else {
+                    self?.reconcilePresentedQuickAppGroup(
+                        correlationID: correlationID,
+                        focusSelected: false
+                    )
+                }
             }
         } else {
-            _ = setDropDownAppFrame(presented, target: target)
+            if ownedWindowKeys.count == 1 {
+                _ = setDropDownAppFrame(presented, target: target)
+            }
             logDropDownAppShown(
                 target,
                 display: display,
@@ -11262,10 +13331,14 @@ final class WorkspaceEngine {
                 correlationID: correlationID,
                 unhideConfirmationAttempts: unhideConfirmationAttempts
             )
-            reconcilePresentedQuickAppGroup(
-                correlationID: correlationID,
-                focusSelected: false
-            )
+            if isApplicationSwitchHandoff {
+                restackPresentedQuickAppGroup(correlationID: correlationID)
+            } else {
+                reconcilePresentedQuickAppGroup(
+                    correlationID: correlationID,
+                    focusSelected: false
+                )
+            }
         }
         if pendingQuickAppHideAfterPresentation {
             pendingQuickAppHideAfterPresentation = false
@@ -11276,14 +13349,23 @@ final class WorkspaceEngine {
             )
             return
         }
-        if pendingQuickAppSelection != nil {
+        if pendingQuickAppSelection != nil,
+           !isApplicationSwitchHandoff {
             continuePendingQuickAppSelectionIfPossible()
             if quickAppTransition != .idle { return }
         }
-        if QuickAppInteractionPolicy.focusesQuickAppAfterShow(
+        let focusesAfterShow = QuickAppInteractionPolicy.focusesQuickAppAfterShow(
             commandPalettePresented: commandPalettePresented
-        ) {
+        )
+        if focusesAfterShow {
+            let applicationWasAlreadyActive = NSRunningApplication(
+                processIdentifier: target.processIdentifier
+            )?.isActive == true
             focusManagedWindow(target.key, tracked: target, correlationID: correlationID)
+            if isApplicationSwitchHandoff,
+               applicationWasAlreadyActive {
+                completeQuickAppApplicationSwitchHandoff()
+            }
         } else {
             diagnostics.log(
                 category: "command-palette",
@@ -11291,6 +13373,9 @@ final class WorkspaceEngine {
                 correlation: correlationID,
                 fields: ["window": Self.diagnosticWindowKey(target.key)]
             )
+            if isApplicationSwitchHandoff {
+                completeQuickAppApplicationSwitchHandoff()
+            }
         }
         persistState(preservingPendingRestores: true)
     }
@@ -11334,6 +13419,14 @@ final class WorkspaceEngine {
         reason: String,
         correlationID: String?
     ) {
+        if quickAppApplicationSwitchHandoff != nil,
+           dropDownAppSession?.isPresented != true {
+            abandonQuickAppApplicationSwitchHandoff(
+                reason: "dismissed-before-incoming-presentation",
+                correlationID: correlationID
+            )
+        }
+        quickAppApplicationSwitchHandoff = nil
         guard var session = dropDownAppSession,
               session.isPresented,
               let target = windows[session.windowKey]
@@ -11354,6 +13447,7 @@ final class WorkspaceEngine {
         session.isPresented = false
         session.isApplicationHiddenByWindowRanger = false
         dropDownAppSession = session
+        emitState()
         dropDownAnimationGeneration &+= 1
         let generation = dropDownAnimationGeneration
         let displays = Self.activeDisplays()
@@ -11558,6 +13652,7 @@ final class WorkspaceEngine {
             restoredSession.isPresented = true
             restoredSession.isApplicationHiddenByWindowRanger = false
             dropDownAppSession = restoredSession
+            emitState()
             if let configuration = dropDownAppConfiguration,
                let display = session.displayIdentifier.flatMap({ identifier in
                    Self.activeDisplays().first { $0.identifier == identifier }
@@ -11713,13 +13808,35 @@ final class WorkspaceEngine {
         correlationID: String?
     ) {
         let matchingBundleKeys = quickAppSessions.compactMap { bundleKey, session in
-            session.windowKey == key ? bundleKey : nil
+            session.windowKeys.contains(key) ? bundleKey : nil
         }
         guard !matchingBundleKeys.isEmpty else { return }
 
         dropDownAnimationGeneration &+= 1
         for bundleKey in matchingBundleKeys {
-            guard let session = quickAppSessions[bundleKey] else { continue }
+            guard var session = quickAppSessions[bundleKey] else { continue }
+            if session.removeWindow(key) {
+                quickAppSessions[bundleKey] = session
+                diagnostics.log(
+                    category: "drop-down-app",
+                    event: "ignored-window-removed-from-application-group",
+                    correlation: correlationID,
+                    fields: [
+                        "window": Self.diagnosticWindowKey(key),
+                        "bundle": bundleKey,
+                        "remaining-window-count": String(session.windowKeys.count),
+                        "application-unhide": "not-requested",
+                        "frame-write": "false",
+                    ]
+                )
+                if session.isPresented {
+                    reconcilePresentedQuickAppGroup(
+                        correlationID: correlationID,
+                        focusSelected: false
+                    )
+                }
+                continue
+            }
             let phaseBeforeDiscard = quickAppTransition
             let transitionAfterDiscard = IgnoredQuickAppDiscardPolicy.transitionAfterDiscard(
                 phaseBeforeDiscard,
@@ -11743,6 +13860,11 @@ final class WorkspaceEngine {
                 pendingQuickAppSelection = nil
             }
             pendingQuickAppHideAfterPresentation = false
+            if quickAppApplicationSwitchHandoff.map({
+                $0.incomingBundleKey == bundleKey || $0.outgoingBundleKey == bundleKey
+            }) == true {
+                quickAppApplicationSwitchHandoff = nil
+            }
 
             _ = nextQuickAppNeighborVisibilityGeneration(bundleKey: bundleKey)
             quickAppSessions.removeValue(forKey: bundleKey)
@@ -11982,6 +14104,11 @@ final class WorkspaceEngine {
             pendingQuickAppSelection = nil
         }
         pendingQuickAppHideAfterPresentation = false
+        if quickAppApplicationSwitchHandoff.map({
+            $0.incomingBundleKey == bundleKey || $0.outgoingBundleKey == bundleKey
+        }) == true {
+            quickAppApplicationSwitchHandoff = nil
+        }
         switch quickAppTransition {
         case let .launching(activeKey) where activeKey == bundleKey,
              let .showing(activeKey) where activeKey == bundleKey,
@@ -11994,8 +14121,10 @@ final class WorkspaceEngine {
         dropDownAnimationGeneration &+= 1
         var frameWriteSucceeded: Bool?
         var unhideSucceeded: Bool?
-        if let target = windows[session.windowKey] {
-            frameWriteSucceeded = setDropDownAppFrame(target.restoreFrame, target: target)
+        let targets = session.windowKeys.compactMap { windows[$0] }
+        for target in targets {
+            let succeeded = setDropDownAppFrame(target.restoreFrame, target: target)
+            frameWriteSucceeded = (frameWriteSucceeded ?? true) && succeeded
         }
         if session.isApplicationHiddenByWindowRanger {
             unhideSucceeded = requestDropDownApplicationHidden(
@@ -12004,8 +14133,11 @@ final class WorkspaceEngine {
                 bundleIdentifier: session.bundleIdentifier,
                 allowWhilePaused: allowWhilePaused
             )
-            if unhideSucceeded == true, let target = windows[session.windowKey] {
-                frameWriteSucceeded = setDropDownAppFrame(target.restoreFrame, target: target)
+            if unhideSucceeded == true {
+                for target in targets {
+                    let succeeded = setDropDownAppFrame(target.restoreFrame, target: target)
+                    frameWriteSucceeded = (frameWriteSucceeded ?? true) && succeeded
+                }
             }
         }
         let unhideConfirmed = !session.isApplicationHiddenByWindowRanger ||
@@ -12033,6 +14165,7 @@ final class WorkspaceEngine {
             fields: [
                 "reason": reason,
                 "bundle": bundleKey,
+                "window-count": String(targets.count),
                 "frame-write": frameWriteSucceeded.map(String.init) ?? "not-requested",
                 "application-unhide": unhideSucceeded.map(String.init) ?? "not-requested",
             ]
@@ -12048,6 +14181,7 @@ final class WorkspaceEngine {
             pendingRestoredDropDownAppSessions.removeAll()
             pendingQuickAppSelection = nil
             pendingQuickAppHideAfterPresentation = false
+            quickAppApplicationSwitchHandoff = nil
             quickAppTransition = .idle
             return
         }
@@ -12061,6 +14195,7 @@ final class WorkspaceEngine {
         pendingRestoredDropDownAppSessions.removeAll()
         pendingQuickAppSelection = nil
         pendingQuickAppHideAfterPresentation = false
+        quickAppApplicationSwitchHandoff = nil
         quickAppTransition = .idle
     }
 
@@ -12073,60 +14208,88 @@ final class WorkspaceEngine {
         let persistedSessions = pendingRestoredDropDownAppSessions
         defer { pendingRestoredDropDownAppSessions.removeAll() }
 
-        // Every unambiguous configured entry begins hidden and outside ordinary layout. Persisted
-        // ownership can recover an already hidden application; externally hidden applications and
-        // ambiguous same-bundle window sets remain untouched.
+        // Every configured entry whose eligible windows belong to one process begins hidden and
+        // outside ordinary layout. Persisted ownership can recover an already hidden application;
+        // externally hidden applications and cross-process window sets remain untouched.
         for configuration in quickAppConfigurations {
             let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
             let persistedHiddenSession = persistedSessions[bundleKey]
-            guard quickAppSessions[bundleKey] == nil,
-                  let selection = DropDownAppStartupPolicy.selection(
+            guard quickAppSessions[bundleKey] == nil else {
+                continue
+            }
+            let candidates: [DropDownAppStartupCandidate] = windows.compactMap {
+                key, tracked -> DropDownAppStartupCandidate? in
+                let applicationHidden = isDropDownApplicationHidden(
+                    processIdentifier: tracked.processIdentifier,
+                    bundleIdentifier: configuration.bundleIdentifier
+                ) == true
+                let wasHiddenByWindowRanger = DropDownAppHiddenSessionRecoveryPolicy.matches(
+                    persistedHiddenSession,
+                    windowKey: key,
+                    bundleIdentifier: tracked.bundleIdentifier,
+                    isStartup: true,
+                    isApplicationHidden: applicationHidden
+                )
+                guard !applicationHidden || wasHiddenByWindowRanger else { return nil }
+                guard (!temporarilyDeferredWindowKeys.contains(key) || wasHiddenByWindowRanger),
+                      fullscreenSessions[key] == nil
+                else { return nil }
+                let observedFrame = observedFrames[key]
+                return DropDownAppStartupCandidate(
+                    key: key,
+                    bundleIdentifier: tracked.bundleIdentifier,
+                    isMeaningfullyVisible: observedFrame.map {
+                        Self.isMeaningfullyVisible($0, displays: displays)
+                    } == true,
+                    wasHiddenByWindowRanger: wasHiddenByWindowRanger
+                )
+            }
+            let matchingCandidateCount = DropDownAppStartupPolicy.matchingCandidateCount(
                 bundleIdentifier: configuration.bundleIdentifier,
-                candidates: windows.compactMap { key, tracked in
-                    let applicationHidden = isDropDownApplicationHidden(
-                        processIdentifier: tracked.processIdentifier,
-                        bundleIdentifier: configuration.bundleIdentifier
-                    ) == true
-                    let wasHiddenByWindowRanger = DropDownAppHiddenSessionRecoveryPolicy.matches(
-                        persistedHiddenSession,
-                        windowKey: key,
-                        bundleIdentifier: tracked.bundleIdentifier,
-                        isStartup: true,
-                        isApplicationHidden: applicationHidden
-                    )
-                    guard !applicationHidden || wasHiddenByWindowRanger else { return nil }
-                    guard (!temporarilyDeferredWindowKeys.contains(key) ||
-                            wasHiddenByWindowRanger),
-                          fullscreenSessions[key] == nil
-                    else { return nil }
-                    let observedFrame = observedFrames[key]
-                    return DropDownAppStartupCandidate(
-                        key: key,
-                        bundleIdentifier: tracked.bundleIdentifier,
-                        isMeaningfullyVisible: observedFrame.map {
-                            Self.isMeaningfullyVisible($0, displays: displays)
-                        } == true,
-                        wasHiddenByWindowRanger: wasHiddenByWindowRanger
+                candidates: candidates
+            )
+            guard var selections = DropDownAppStartupPolicy.selections(
+                bundleIdentifier: configuration.bundleIdentifier,
+                candidates: candidates
+            ) else {
+                if matchingCandidateCount > 0 {
+                    diagnostics.log(
+                        category: "drop-down-app",
+                        event: "startup-session-multiple-processes",
+                        correlation: correlationID,
+                        fields: [
+                            "bundle": configuration.bundleIdentifier,
+                            "window-count": String(matchingCandidateCount),
+                        ]
                     )
                 }
-              ),
-              let target = windows[selection.windowKey]
+                continue
+            }
+            if let persistedPrimary = persistedHiddenSession?.windowKey,
+               let persistedIndex = selections.firstIndex(where: {
+                   $0.windowKey == persistedPrimary
+               }) {
+                selections.swapAt(0, persistedIndex)
+            }
+            guard let selection = selections.first,
+                  let target = windows[selection.windowKey]
             else { continue }
 
             dropDownAnimationGeneration &+= 1
             var session = DropDownAppSession(
                 windowKey: target.key,
+                additionalWindowKeys: Array(selections.dropFirst()).map(\.windowKey),
                 bundleIdentifier: configuration.bundleIdentifier,
                 direction: configuration.direction,
                 isAnimationEnabled: configuration.isAnimationEnabled,
                 isPresented: false,
-                isApplicationHiddenByWindowRanger: selection.wasHiddenByWindowRanger,
+                isApplicationHiddenByWindowRanger: selections.allSatisfy(\.wasHiddenByWindowRanger),
                 displayIdentifier: persistedHiddenSession?.displayIdentifier,
                 previousFocusKey: nil
             )
 
             var hideRequestDispatched: Bool?
-            if performAXWrites, !selection.wasHiddenByWindowRanger {
+            if performAXWrites, !session.isApplicationHiddenByWindowRanger {
                 hideRequestDispatched = requestDropDownApplicationHidden(
                     true,
                     processIdentifier: target.processIdentifier,
@@ -12142,6 +14305,7 @@ final class WorkspaceEngine {
                 correlation: correlationID,
                 fields: [
                     "window": Self.diagnosticWindowKey(target.key),
+                    "window-count": String(session.windowKeys.count),
                     "bundle": configuration.bundleIdentifier,
                     "presented": "false",
                     "pre-launch-visible": String(selection.wasMeaningfullyVisible),
@@ -12162,6 +14326,7 @@ final class WorkspaceEngine {
     @discardableResult
     private func rebindDropDownAppSessionIfNeeded(
         bundleIdentifier: String,
+        sessionWindowKey: WindowKey? = nil,
         removedWindowKeys: Set<WindowKey>,
         newlyTrackedWindowKeys: Set<WindowKey>,
         displays: [DisplaySnapshot],
@@ -12171,10 +14336,13 @@ final class WorkspaceEngine {
         guard var session = quickAppSessions[bundleIdentifier],
               let configuration = quickAppConfigurations.first(where: {
                   Self.normalizedBundleIdentifier($0.bundleIdentifier) == bundleIdentifier
-              }),
-              let previous = windows[session.windowKey],
+              })
+        else { return false }
+        let previousKey = sessionWindowKey ?? session.windowKey
+        guard session.windowKeys.contains(previousKey),
+              let previous = windows[previousKey],
               let replacementKey = DropDownAppWindowHandoffPolicy.replacementWindowKey(
-                sessionWindowKey: session.windowKey,
+                sessionWindowKey: previousKey,
                 sessionBundleIdentifier: session.bundleIdentifier,
                 removedWindowKeys: removedWindowKeys,
                 newlyTrackedWindowKeys: newlyTrackedWindowKeys,
@@ -12204,8 +14372,13 @@ final class WorkspaceEngine {
         replacement.layoutWeight = previous.layoutWeight
         windows[replacementKey] = replacement
 
-        let previousKey = session.windowKey
-        session.windowKey = replacementKey
+        if session.windowKey == previousKey {
+            session.windowKey = replacementKey
+        } else {
+            session.additionalWindowKeys = session.additionalWindowKeys.map {
+                $0 == previousKey ? replacementKey : $0
+            }
+        }
         let interruptedTransition: Bool
         switch quickAppTransition {
         case let .showing(activeKey) where activeKey == bundleIdentifier:
@@ -12343,7 +14516,7 @@ final class WorkspaceEngine {
     }
 
     private func isDropDownAppWindow(_ key: WindowKey) -> Bool {
-        quickAppSessions.values.contains { $0.windowKey == key }
+        quickAppSessions.values.contains { $0.windowKeys.contains(key) }
     }
 
     /// Hiding an application is distinct from closing it or failing to enumerate its AX windows:
@@ -12403,38 +14576,37 @@ final class WorkspaceEngine {
 
         // Restore first, then hide. This ordering is intentional: it minimizes the interval in
         // which neither workspace is visible and matches the low-flicker ordering used by AeroSpork.
+        var visibleWindows: [TrackedWindow] = []
+        var hiddenWindows: [TrackedWindow] = []
+        for tracked in windows.values {
+            guard isEligible(tracked), !isDropDownAppWindow(tracked.key) else { continue }
+            let isVisible = Self.shouldWindowBeVisible(
+                workspaceID: tracked.workspaceID,
+                activeWorkspaceIDs: activeWorkspaceIDs,
+                rule: resolvedRule(for: tracked.bundleIdentifier)
+            )
+            if isVisible {
+                visibleWindows.append(tracked)
+            } else {
+                hiddenWindows.append(tracked)
+            }
+        }
+
         let expectedLayoutFrames = applyVisibleWindows(
-            windows.values.filter {
-                isEligible($0) &&
-                !isDropDownAppWindow($0.key) &&
-                Self.shouldWindowBeVisible(
-                    workspaceID: $0.workspaceID,
-                    activeWorkspaceIDs: activeWorkspaceIDs,
-                    rule: resolvedRule(for: $0.bundleIdentifier)
-                )
-            },
+            visibleWindows,
             displays: displays,
             correlationID: correlationID
         )
-        applyPositionChanges(windows.values
-            .filter {
-                isEligible($0) &&
-                !isDropDownAppWindow($0.key) &&
-                !Self.shouldWindowBeVisible(
-                    workspaceID: $0.workspaceID,
-                    activeWorkspaceIDs: activeWorkspaceIDs,
-                    rule: resolvedRule(for: $0.bundleIdentifier)
-                )
-            }
-            .map { PositionChange(window: $0, position: parkingPosition) },
+        applyPositionChanges(
+            hiddenWindows.map { PositionChange(window: $0, position: parkingPosition) },
             correlationID: correlationID
         )
-        let hiddenQuickAppChanges = quickAppSessions.values.compactMap { session -> PositionChange? in
-            guard !session.isPresented,
-                  let target = windows[session.windowKey],
-                  isEligible(target)
-            else { return nil }
-            return PositionChange(window: target, position: parkingPosition)
+        let hiddenQuickAppChanges = quickAppSessions.values.flatMap { session -> [PositionChange] in
+            guard !session.isPresented else { return [] }
+            return session.windowKeys.compactMap { key in
+                guard let target = windows[key], isEligible(target) else { return nil }
+                return PositionChange(window: target, position: parkingPosition)
+            }
         }
         if !hiddenQuickAppChanges.isEmpty {
             applyPositionChanges(hiddenQuickAppChanges, correlationID: correlationID)
@@ -12668,7 +14840,7 @@ final class WorkspaceEngine {
     }
 
     private func workspaceLayout(for workspaceID: UUID) -> WorkspaceLayout {
-        workspaces.first(where: { $0.id == workspaceID })?.layout ?? .none
+        workspaceEngineLookupIndex.workspace(for: workspaceID)?.layout ?? .none
     }
 
     private func isManagedLayoutParticipant(_ tracked: TrackedWindow) -> Bool {
@@ -12692,7 +14864,7 @@ final class WorkspaceEngine {
     private func workspaceLayoutConfiguration(
         for workspaceID: UUID
     ) -> WorkspaceLayoutConfiguration? {
-        workspaces.first(where: { $0.id == workspaceID })?.layoutConfiguration
+        workspaceEngineLookupIndex.workspace(for: workspaceID)?.layoutConfiguration
     }
 
     private func nextLayoutOrder(in workspaceID: UUID) -> Int {
@@ -12725,8 +14897,21 @@ final class WorkspaceEngine {
         in rules: [String: AppRule]? = nil
     ) -> ResolvedAppRule {
         guard let bundleIdentifier else { return .none }
-        let rule = (rules ?? appRulesByBundleIdentifier)[bundleIdentifier.lowercased()]
-        return rule?.resolved(validWorkspaceIDs: Set(workspaces.map(\.id))) ?? .none
+        if let rules {
+            return rules[bundleIdentifier.lowercased()]?.resolved(
+                validWorkspaceIDs: workspaceEngineLookupIndex.validWorkspaceIDs
+            ) ?? .none
+        }
+        return workspaceEngineLookupIndex.resolvedRule(
+            forBundleIdentifier: bundleIdentifier
+        )
+    }
+
+    private func rebuildWorkspaceEngineLookupIndex() {
+        workspaceEngineLookupIndex = WorkspaceEngineLookupIndex(
+            workspaces: workspaces,
+            appRulesByBundleIdentifier: appRulesByBundleIdentifier
+        )
     }
 
     @discardableResult
@@ -13614,6 +15799,7 @@ final class WorkspaceEngine {
                     guard session.isApplicationHiddenByWindowRanger else { return nil }
                     return PersistedDropDownAppSession(
                         windowKey: session.windowKey,
+                        windowKeys: session.windowKeys,
                         bundleIdentifier: session.bundleIdentifier,
                         displayIdentifier: session.displayIdentifier,
                         isApplicationHiddenByWindowRanger: true
@@ -13623,6 +15809,7 @@ final class WorkspaceEngine {
                     guard pair.value.isApplicationHiddenByWindowRanger else { return }
                     result[pair.key] = PersistedDropDownAppSession(
                         windowKey: pair.value.windowKey,
+                        windowKeys: pair.value.windowKeys,
                         bundleIdentifier: pair.value.bundleIdentifier,
                         displayIdentifier: pair.value.displayIdentifier,
                         isApplicationHiddenByWindowRanger: true
@@ -13755,7 +15942,8 @@ final class WorkspaceEngine {
         correlationID: String,
         token: FocusVerificationToken,
         previousFocusKey: WindowKey?,
-        selectedApplication: WorkspaceApplicationTarget? = nil
+        selectedApplication: WorkspaceApplicationTarget? = nil,
+        selectedWindowKey: WindowKey? = nil
     ) {
         guard isFocusActionGenerationCurrent(token.generation) else {
             diagnostics.log(
@@ -13766,7 +15954,25 @@ final class WorkspaceEngine {
             )
             return
         }
-        if let preferredKey = lastFocusedWindow[workspaceID],
+        if let selectedWindowKey,
+           let selectedSession = fullscreenSessions[selectedWindowKey],
+           selectedSession.workspaceID == workspaceID,
+           selectedSession.displayIdentifier == destinationDisplayIdentifier,
+           selectedApplication?.matches(
+            bundleIdentifier: selectedSession.bundleIdentifier,
+            processIdentifier: selectedSession.processIdentifier
+           ) != false {
+            focusFullscreenSessionAfterSwitch(
+                selectedSession,
+                workspaceID: workspaceID,
+                destinationDisplayIdentifier: destinationDisplayIdentifier,
+                correlationID: correlationID,
+                token: token
+            )
+            return
+        }
+        if selectedWindowKey == nil,
+           let preferredKey = lastFocusedWindow[workspaceID],
            let preferredSession = fullscreenSessions[preferredKey],
            preferredSession.workspaceID == workspaceID,
            preferredSession.displayIdentifier == destinationDisplayIdentifier,
@@ -13789,7 +15995,7 @@ final class WorkspaceEngine {
             displays: displays,
             correlationID: correlationID
         )
-        let attemptOrder = selectedApplication.map { selectedApplication in
+        let applicationAttemptOrder = selectedApplication.map { selectedApplication in
             unfilteredAttemptOrder.filter { key in
                 guard let tracked = windows[key] else { return false }
                 return selectedApplication.matches(
@@ -13798,6 +16004,10 @@ final class WorkspaceEngine {
                 )
             }
         } ?? unfilteredAttemptOrder
+        let attemptOrder = WorkspacePreviewFocusCandidatePolicy.prioritizing(
+            selectedWindowKey,
+            in: applicationAttemptOrder
+        )
         guard let target = attemptOrder.first else {
             if let fallbackSession = fullscreenSessions.values
                 .filter({
@@ -15074,6 +17284,9 @@ final class WorkspaceEngine {
                 "automatically-unhide-applications": String(automaticallyUnhideApplications),
                 "workspace-count": String(workspaces.count),
                 "display-count": String(displays.count),
+                "displays-have-separate-spaces": Self.displaysHaveSeparateSpacesDiagnosticValue(
+                    NSScreen.screensHaveSeparateSpaces
+                ),
             ]
         )
         for display in displays {
@@ -15105,6 +17318,10 @@ final class WorkspaceEngine {
                 ]
             )
         }
+    }
+
+    static func displaysHaveSeparateSpacesDiagnosticValue(_ enabled: Bool) -> String {
+        String(enabled)
     }
 
     private func diagnosticActiveWorkspaceMap() -> String {
@@ -15144,7 +17361,7 @@ final class WorkspaceEngine {
         )
     }
 
-    private func emitState() {
+    private func emitState(force: Bool = true) {
         let windowCountByWorkspace = Dictionary(grouping: windows.values, by: \.workspaceID)
             .mapValues(\.count)
         let layoutByWorkspace = Dictionary(
@@ -15172,6 +17389,7 @@ final class WorkspaceEngine {
                 ? activeWorkspaceIDByDisplay : [:],
             focusedWindowHighlightWorkspaceContexts: highlightContexts
         )
+        guard stateEmissionGate.shouldSchedule(state, force: force) else { return }
         DispatchQueue.main.async { [weak self] in self?.onStateChanged?(state) }
     }
 

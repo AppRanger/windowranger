@@ -26,6 +26,11 @@ enum WindowManagerCommand: Hashable, Sendable {
         profileID: UUID,
         expectedMembership: CurrentApplicationConfigurationMembership
     )
+    case removeCurrentApplication(
+        String,
+        profileID: UUID,
+        expectedMembership: CurrentApplicationConfigurationMembership
+    )
     case addCurrentApplicationToQuickAppShelf(
         String,
         displayName: String,
@@ -78,6 +83,10 @@ enum WindowManagerCommand: Hashable, Sendable {
         case let .addCurrentApplication(bundleIdentifier, _, workspaceID, profileID, expectedMembership):
             ["action": "add-current-application", "bundle": bundleIdentifier,
              "workspace": workspaceID.uuidString, "profile": profileID.uuidString,
+             "expected-membership": String(describing: expectedMembership)]
+        case let .removeCurrentApplication(bundleIdentifier, profileID, expectedMembership):
+            ["action": "remove-current-application", "bundle": bundleIdentifier,
+             "profile": profileID.uuidString,
              "expected-membership": String(describing: expectedMembership)]
         case let .addCurrentApplicationToQuickAppShelf(bundleIdentifier, _, profileID, expectedMembership):
             ["action": "add-current-application-to-quick-app-shelf", "bundle": bundleIdentifier,
@@ -138,7 +147,7 @@ enum WindowManagerCommand: Hashable, Sendable {
     }
 }
 
-enum WindowManagerCommandSource: String, Sendable {
+enum WindowManagerCommandSource: String, Equatable, Sendable {
     case hotkey
     case commandPalette = "command-palette"
     case radialMenu = "radial-menu"
@@ -154,8 +163,13 @@ enum WindowManagerCommandDispatchResult: Equatable, Sendable {
 /// operation switch here means a visual command cannot quietly diverge from its keyboard twin.
 final class WindowManagerCommandDispatcher {
     typealias Executor = (WindowManagerCommand, String) -> Void
+    typealias SourceAwareExecutor = (
+        WindowManagerCommand,
+        String,
+        WindowManagerCommandSource
+    ) -> Void
 
-    private let executor: Executor
+    private let executor: SourceAwareExecutor
     private let diagnostics: DiagnosticLogger
     private let lock = NSLock()
     private var activeCorrelations = Set<String>()
@@ -168,12 +182,16 @@ final class WindowManagerCommandDispatcher {
         addCurrentApplication: @escaping (String, String, UUID, UUID, CurrentApplicationConfigurationMembership, String) -> Void = {
             _, _, _, _, _, _ in
         },
+        removeCurrentApplication: @escaping (String, UUID, CurrentApplicationConfigurationMembership, String) -> Void = {
+            _, _, _, _ in
+        },
         addCurrentApplicationToQuickAppShelf: @escaping (String, String, UUID, CurrentApplicationConfigurationMembership, String) -> Void = {
             _, _, _, _, _ in
         },
         setPauseMode: @escaping (Bool, String) -> Void = { _, _ in }
     ) {
-        self.init(diagnostics: diagnostics) { [weak engine] command, correlationID in
+        self.init(diagnostics: diagnostics, sourceAwareExecutor: {
+            [weak engine] command, correlationID, source in
             switch command {
             case let .switchWorkspace(id):
                 engine?.switchToWorkspace(id, correlationID: correlationID)
@@ -195,7 +213,7 @@ final class WindowManagerCommandDispatcher {
                 )
             case .toggleFloating: engine?.toggleFocusedWindowFloating()
             case .toggleDropDownApp:
-                engine?.toggleDropDownApp(correlationID: correlationID)
+                engine?.toggleDropDownApp(source: source, correlationID: correlationID)
             case let .selectQuickApp(bundleIdentifier):
                 engine?.selectQuickApp(bundleIdentifier: bundleIdentifier, correlationID: correlationID)
             case let .cycleQuickApp(offset):
@@ -203,6 +221,10 @@ final class WindowManagerCommandDispatcher {
             case let .addCurrentApplication(bundleIdentifier, displayName, workspaceID, profileID, expectedMembership):
                 addCurrentApplication(
                     bundleIdentifier, displayName, workspaceID, profileID, expectedMembership, correlationID
+                )
+            case let .removeCurrentApplication(bundleIdentifier, profileID, expectedMembership):
+                removeCurrentApplication(
+                    bundleIdentifier, profileID, expectedMembership, correlationID
                 )
             case let .addCurrentApplicationToQuickAppShelf(bundleIdentifier, displayName, profileID, expectedMembership):
                 addCurrentApplicationToQuickAppShelf(
@@ -262,12 +284,22 @@ final class WindowManagerCommandDispatcher {
             case let .setPauseMode(isPaused):
                 setPauseMode(isPaused, correlationID)
             }
-        }
+        })
     }
 
     init(diagnostics: DiagnosticLogger = .disabled, executor: @escaping Executor) {
         self.diagnostics = diagnostics
-        self.executor = executor
+        self.executor = { command, correlationID, _ in
+            executor(command, correlationID)
+        }
+    }
+
+    init(
+        diagnostics: DiagnosticLogger = .disabled,
+        sourceAwareExecutor: @escaping SourceAwareExecutor
+    ) {
+        self.diagnostics = diagnostics
+        self.executor = sourceAwareExecutor
     }
 
     @discardableResult
@@ -301,7 +333,7 @@ final class WindowManagerCommandDispatcher {
             correlation: correlationID,
             fields: command.diagnosticFields.merging(["source": source.rawValue]) { _, new in new }
         )
-        executor(command, correlationID)
+        executor(command, correlationID, source)
         return .dispatched
     }
 }

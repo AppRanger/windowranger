@@ -373,6 +373,59 @@ final class DropDownAppTests: XCTestCase {
             bundleIdentifier: "com.example.Stale", displayName: "Stale",
             expectedActiveProfileID: activeProfileID, expectedMembership: .none
         ))
+        XCTAssertFalse(store.removeCurrentApplicationRule(
+            bundleIdentifier: "com.example.Editor",
+            expectedActiveProfileID: activeProfileID,
+            expectedMembership: .appRule
+        ))
+        XCTAssertEqual(
+            store.profiles.first(where: { $0.id == activeProfileID })?.appRules.map(\.bundleIdentifier),
+            ["com.example.Editor"]
+        )
+    }
+
+    @MainActor
+    func testCurrentApplicationRemovalRequiresExactActiveAppRuleMembership() throws {
+        let suite = "DropDownAppTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SettingsStore(defaults: defaults, ubiquitousStore: nil)
+        let profileID = store.activeProfileID
+        let editor = InstalledApplication(
+            bundleIdentifier: "com.example.Editor",
+            displayName: "Editor",
+            bundleURL: nil,
+            isRunning: true
+        )
+
+        XCTAssertFalse(store.removeCurrentApplicationRule(
+            bundleIdentifier: editor.bundleIdentifier,
+            expectedActiveProfileID: profileID,
+            expectedMembership: .appRule
+        ))
+
+        store.addAppRule(for: editor, defaultWorkspaceID: store.workspaces[0].id)
+        XCTAssertFalse(store.removeCurrentApplicationRule(
+            bundleIdentifier: editor.bundleIdentifier,
+            expectedActiveProfileID: profileID,
+            expectedMembership: .none
+        ))
+        XCTAssertEqual(store.appRules.map(\.bundleIdentifier), [editor.bundleIdentifier])
+
+        XCTAssertTrue(store.removeCurrentApplicationRule(
+            bundleIdentifier: editor.bundleIdentifier,
+            expectedActiveProfileID: profileID,
+            expectedMembership: .appRule
+        ))
+        XCTAssertTrue(store.appRules.isEmpty)
+
+        store.setDropDownApp(editor)
+        XCTAssertFalse(store.removeCurrentApplicationRule(
+            bundleIdentifier: editor.bundleIdentifier,
+            expectedActiveProfileID: profileID,
+            expectedMembership: .appRule
+        ))
+        XCTAssertEqual(store.quickApps.map(\.bundleIdentifier), [editor.bundleIdentifier])
     }
 
     @MainActor
@@ -476,16 +529,23 @@ final class DropDownAppTests: XCTestCase {
     func testQuickAppFollowsOneNewSameProcessNativeTabWindow() throws {
         let previous = WindowKey(processIdentifier: 42, windowIdentifier: 100)
         let replacement = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+        let retainedGroupMember = WindowKey(processIdentifier: 42, windowIdentifier: 99)
 
         let result = DropDownAppWindowHandoffPolicy.replacementWindowKey(
             sessionWindowKey: previous,
             sessionBundleIdentifier: "com.mitchellh.ghostty",
             removedWindowKeys: [previous],
             newlyTrackedWindowKeys: [replacement],
-            availableWindows: [DropDownAppWindowHandoffCandidate(
-                key: replacement,
-                bundleIdentifier: "com.mitchellh.ghostty"
-            )]
+            availableWindows: [
+                DropDownAppWindowHandoffCandidate(
+                    key: retainedGroupMember,
+                    bundleIdentifier: "com.mitchellh.ghostty"
+                ),
+                DropDownAppWindowHandoffCandidate(
+                    key: replacement,
+                    bundleIdentifier: "com.mitchellh.ghostty"
+                ),
+            ]
         )
 
         XCTAssertEqual(result, replacement)
@@ -662,32 +722,52 @@ final class DropDownAppTests: XCTestCase {
         )
     }
 
-    func testStartupDoesNotClaimAmbiguousOrUnrelatedQuickAppWindows() {
+    func testStartupClaimsEverySameProcessWindowAndRejectsCrossProcessGroups() {
         let first = WindowKey(processIdentifier: 42, windowIdentifier: 100)
         let second = WindowKey(processIdentifier: 42, windowIdentifier: 101)
 
-        XCTAssertNil(DropDownAppStartupPolicy.selection(
+        let ambiguousCandidates = [
+            DropDownAppStartupCandidate(
+                key: first,
+                bundleIdentifier: "com.mitchellh.ghostty",
+                isMeaningfullyVisible: true,
+                wasHiddenByWindowRanger: false
+            ),
+            DropDownAppStartupCandidate(
+                key: second,
+                bundleIdentifier: "com.mitchellh.ghostty",
+                isMeaningfullyVisible: true,
+                wasHiddenByWindowRanger: false
+            ),
+        ]
+
+        XCTAssertEqual(DropDownAppStartupPolicy.selections(
             bundleIdentifier: "com.mitchellh.ghostty",
-            candidates: [
-                DropDownAppStartupCandidate(
-                    key: first,
-                    bundleIdentifier: "com.mitchellh.ghostty",
-                    isMeaningfullyVisible: true,
-                    wasHiddenByWindowRanger: false
-                ),
-                DropDownAppStartupCandidate(
-                    key: second,
-                    bundleIdentifier: "com.mitchellh.ghostty",
-                    isMeaningfullyVisible: true,
-                    wasHiddenByWindowRanger: false
-                ),
-            ]
-        ))
-        XCTAssertNil(DropDownAppStartupPolicy.selection(
+            candidates: ambiguousCandidates
+        )?.map(\.windowKey), [first, second])
+        XCTAssertEqual(
+            DropDownAppStartupPolicy.matchingCandidateCount(
+                bundleIdentifier: "COM.MITCHELLH.GHOSTTY",
+                candidates: ambiguousCandidates
+            ),
+            2
+        )
+        XCTAssertNil(DropDownAppStartupPolicy.selections(
             bundleIdentifier: "com.mitchellh.ghostty",
             candidates: [DropDownAppStartupCandidate(
                 key: first,
                 bundleIdentifier: "com.example.Other",
+                isMeaningfullyVisible: true,
+                wasHiddenByWindowRanger: false
+            )]
+        ))
+
+        let otherProcess = WindowKey(processIdentifier: 43, windowIdentifier: 102)
+        XCTAssertNil(DropDownAppStartupPolicy.selections(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            candidates: ambiguousCandidates + [DropDownAppStartupCandidate(
+                key: otherProcess,
+                bundleIdentifier: "com.mitchellh.ghostty",
                 isMeaningfullyVisible: true,
                 wasHiddenByWindowRanger: false
             )]

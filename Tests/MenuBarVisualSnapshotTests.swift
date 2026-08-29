@@ -48,6 +48,68 @@ final class MenuBarVisualSnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testOffscreenReusableWorkspacePreviewFallback() throws {
+        let workspaceID = UUID(uuidString: "30000000-0000-0000-0000-000000000010")!
+        let descriptor = WorkspacePreviewDescriptor(
+            workspaceID: workspaceID,
+            name: "Writing",
+            canvasFrame: CGRect(x: 0, y: 0, width: 1_920, height: 1_080),
+            items: [
+                previewItem(workspaceID: workspaceID, pid: 10, windowID: 100, name: "Notes", frame: CGRect(x: 40, y: 50, width: 1_150, height: 720)),
+                previewItem(workspaceID: workspaceID, pid: 20, windowID: 200, name: "Reference", frame: CGRect(x: 1_220, y: 50, width: 660, height: 480)),
+                previewItem(workspaceID: workspaceID, pid: 30, windowID: 300, name: "Messages", frame: CGRect(x: 1_220, y: 560, width: 660, height: 470)),
+            ]
+        )
+        let view = WorkspacePreviewView(
+            descriptor: descriptor,
+            interactionMode: .workspaceAndItems,
+            onWorkspaceSelected: {},
+            onItemSelected: { _ in }
+        )
+        .frame(width: 360, height: 190)
+        .padding(10)
+        .background(Color(nsColor: .windowBackgroundColor))
+        let data = try renderRetinaPNG(view)
+        XCTAssertGreaterThan(data.count, 1_000)
+
+        let portraitWorkspaceID = UUID(uuidString: "30000000-0000-0000-0000-000000000011")!
+        let portraitDescriptor = WorkspacePreviewDescriptor(
+            workspaceID: portraitWorkspaceID,
+            name: "Portrait",
+            canvasFrame: CGRect(x: -1_080, y: 0, width: 1_080, height: 1_920),
+            items: [
+                previewItem(workspaceID: portraitWorkspaceID, pid: 40, windowID: 400, name: "Top", frame: CGRect(x: -1_040, y: 80, width: 1_000, height: 760)),
+                previewItem(workspaceID: portraitWorkspaceID, pid: 50, windowID: 500, name: "Bottom", frame: CGRect(x: -900, y: 920, width: 820, height: 900)),
+            ]
+        )
+        let portraitView = WorkspacePreviewView(
+            descriptor: portraitDescriptor,
+            interactionMode: .workspaceAndItems,
+            onWorkspaceSelected: {},
+            onItemSelected: { _ in }
+        )
+        .frame(width: 360, height: 190)
+        .padding(10)
+        .background(Color(nsColor: .windowBackgroundColor))
+        let portraitData = try renderRetinaPNG(portraitView)
+        XCTAssertGreaterThan(portraitData.count, 1_000)
+
+        if let outputPath = ProcessInfo.processInfo.environment["WINDOWRANGER_MENU_SNAPSHOT_DIR"],
+           !outputPath.isEmpty {
+            let outputDirectory = URL(fileURLWithPath: outputPath, isDirectory: true)
+            try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+            try data.write(
+                to: outputDirectory.appendingPathComponent("windowranger-workspace-preview-fallback.png"),
+                options: .atomic
+            )
+            try portraitData.write(
+                to: outputDirectory.appendingPathComponent("windowranger-workspace-preview-portrait-fallback.png"),
+                options: .atomic
+            )
+        }
+    }
+
+    @MainActor
     private func representativeSnapshots() -> [MenuBarPresentationSnapshot] {
         let workspaces = [
             workspace("30000000-0000-0000-0000-000000000001", "Focus", "M"),
@@ -111,6 +173,26 @@ final class MenuBarVisualSnapshotTests: XCTestCase {
 
     private func workspace(_ id: String, _ name: String, _ key: String) -> WorkspaceDefinition {
         WorkspaceDefinition(id: UUID(uuidString: id)!, name: name, key: key)
+    }
+
+    private func previewItem(
+        workspaceID: UUID,
+        pid: pid_t,
+        windowID: CGWindowID,
+        name: String,
+        frame: CGRect
+    ) -> WorkspacePreviewItemDescriptor {
+        WorkspacePreviewItemDescriptor(
+            key: WindowKey(processIdentifier: pid, windowIdentifier: windowID),
+            applicationTarget: WorkspaceApplicationTarget(
+                workspaceID: workspaceID,
+                bundleIdentifier: "dev.appranger.fixture.\(pid)",
+                processIdentifier: pid
+            ),
+            name: name,
+            applicationURL: nil,
+            frame: frame
+        )
     }
 
     private func compactKeyIconReviewSnapshot(
@@ -208,14 +290,38 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
                 name: "Studio Display"
             ),
         ]
-        let focus = workspace("60000000-0000-0000-0000-000000000001", "Focus", "f", .tiled)
+        var focus = workspace("60000000-0000-0000-0000-000000000001", "Focus", "f", .tiled)
+        focus.layoutConfiguration = WorkspaceLayoutConfiguration(
+            orientation: .automatic,
+            accordionPadding: 250,
+            gaps: WorkspaceLayoutGaps(
+                innerHorizontal: 140,
+                innerVertical: 55,
+                outerTop: 70,
+                outerRight: 280,
+                outerBottom: 220,
+                outerLeft: 110
+            )
+        )
         var writing = workspace("60000000-0000-0000-0000-000000000002", "Writing", "w", .accordion)
         writing.layoutConfiguration = WorkspaceLayoutConfiguration(
             orientation: .automatic,
             accordionPadding: 16,
             gaps: .aeroSpaceUserDefaults
         )
-        let chat = workspace("60000000-0000-0000-0000-000000000003", "Chat", "c", .tiled)
+        var chat = workspace("60000000-0000-0000-0000-000000000003", "Chat", "c", .tiled)
+        chat.layoutConfiguration = WorkspaceLayoutConfiguration(
+            orientation: .automatic,
+            accordionPadding: 250,
+            gaps: WorkspaceLayoutGaps(
+                innerHorizontal: 0,
+                innerVertical: 0,
+                outerTop: 0,
+                outerRight: 0,
+                outerBottom: 0,
+                outerLeft: 0
+            )
+        )
         let review = workspace("60000000-0000-0000-0000-000000000004", "Review", "r", .none)
         let workspaces = [focus, writing, chat, review]
 
@@ -323,12 +429,306 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             options: .atomic
         )
 
+        navigation.selectWorkspace(focus.id)
+        let tiledDarkView = SettingsView(
+            store: store,
+            engine: engine,
+            navigation: navigation,
+            windowCoordinator: coordinator,
+            diagnostics: .disabled,
+            updateController: updateController,
+            shortcutRecordingStateChanged: { _ in }
+        )
+        .frame(width: Self.snapshotSize.width, height: Self.snapshotSize.height)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, .dark)
+        .environment(\.controlActiveState, .key)
+        let tiledDarkData = try renderRetinaPNG(
+            tiledDarkView,
+            size: Self.snapshotSize,
+            appearance: .darkAqua
+        )
+        XCTAssertGreaterThan(tiledDarkData.count, 25_000)
+        try tiledDarkData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-workspaces-tiled-dark.png"
+            ),
+            options: .atomic
+        )
+        navigation.selectWorkspace(writing.id)
+
+        if ProcessInfo.processInfo.environment["WINDOWRANGER_SETTINGS_SNAPSHOT_SCOPE"] == "workspaces" {
+            let compactSize = SettingsWindowMetrics.minimumSize
+            let compactView = SettingsView(
+                store: store,
+                engine: engine,
+                navigation: navigation,
+                windowCoordinator: coordinator,
+                diagnostics: .disabled,
+                updateController: updateController,
+                shortcutRecordingStateChanged: { _ in }
+            )
+            .frame(width: compactSize.width, height: compactSize.height)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, .light)
+            .environment(\.controlActiveState, .key)
+            let compactData = try renderRetinaPNG(compactView, size: compactSize)
+            XCTAssertGreaterThan(compactData.count, 15_000)
+            try compactData.write(
+                to: outputDirectory.appendingPathComponent(
+                    "windowranger-settings-workspaces-compact.png"
+                ),
+                options: .atomic
+            )
+
+            let compactDarkView = SettingsView(
+                store: store,
+                engine: engine,
+                navigation: navigation,
+                windowCoordinator: coordinator,
+                diagnostics: .disabled,
+                updateController: updateController,
+                shortcutRecordingStateChanged: { _ in }
+            )
+            .frame(width: compactSize.width, height: compactSize.height)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, .dark)
+            .environment(\.controlActiveState, .key)
+            let compactDarkData = try renderRetinaPNG(
+                compactDarkView,
+                size: compactSize,
+                appearance: .darkAqua
+            )
+            XCTAssertGreaterThan(compactDarkData.count, 15_000)
+            try compactDarkData.write(
+                to: outputDirectory.appendingPathComponent(
+                    "windowranger-settings-workspaces-compact-dark.png"
+                ),
+                options: .atomic
+            )
+
+            let longWorkspace = workspace(
+                "60000000-0000-0000-0000-000000000009",
+                "Long-form Research and Reference",
+                "l",
+                .none
+            )
+            let additionalWorkspaces = [
+                workspace("60000000-0000-0000-0000-000000000005", "Planning", "p", .tiled),
+                workspace("60000000-0000-0000-0000-000000000006", "Meetings", "m", .accordion),
+                workspace("60000000-0000-0000-0000-000000000007", "Build", "b", .tiled),
+                workspace("60000000-0000-0000-0000-000000000008", "Archive", "a", .none),
+                longWorkspace,
+            ]
+            store.workspaces = workspaces + additionalWorkspaces
+            additionalWorkspaces.forEach { store.assignWorkspace($0.id, toRole: roleID) }
+            navigation.selectWorkspace(longWorkspace.id)
+
+            let manyWorkspacesView = SettingsView(
+                store: store,
+                engine: engine,
+                navigation: navigation,
+                windowCoordinator: coordinator,
+                diagnostics: .disabled,
+                updateController: updateController,
+                shortcutRecordingStateChanged: { _ in }
+            )
+            .frame(width: Self.snapshotSize.width, height: Self.snapshotSize.height)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, .dark)
+            .environment(\.controlActiveState, .key)
+            let manyWorkspacesData = try renderRetinaPNG(
+                manyWorkspacesView,
+                size: Self.snapshotSize,
+                appearance: .darkAqua
+            )
+            XCTAssertGreaterThan(manyWorkspacesData.count, 25_000)
+            try manyWorkspacesData.write(
+                to: outputDirectory.appendingPathComponent(
+                    "windowranger-settings-workspaces-many-dark.png"
+                ),
+                options: .atomic
+            )
+
+            let compactManyWorkspacesView = SettingsView(
+                store: store,
+                engine: engine,
+                navigation: navigation,
+                windowCoordinator: coordinator,
+                diagnostics: .disabled,
+                updateController: updateController,
+                shortcutRecordingStateChanged: { _ in }
+            )
+            .frame(width: compactSize.width, height: compactSize.height)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, .dark)
+            .environment(\.controlActiveState, .key)
+            let compactManyWorkspacesData = try renderRetinaPNG(
+                compactManyWorkspacesView,
+                size: compactSize,
+                appearance: .darkAqua
+            )
+            XCTAssertGreaterThan(compactManyWorkspacesData.count, 15_000)
+            try compactManyWorkspacesData.write(
+                to: outputDirectory.appendingPathComponent(
+                    "windowranger-settings-workspaces-many-compact-dark.png"
+                ),
+                options: .atomic
+            )
+            return
+        }
+
+        navigation.selectWorkspace(focus.id)
+
+        let tiledGeometryWideSize = CGSize(width: 2_200, height: Self.snapshotSize.height)
+        let tiledGeometryWideView = SettingsView(
+            store: store,
+            engine: engine,
+            navigation: navigation,
+            windowCoordinator: coordinator,
+            diagnostics: .disabled,
+            updateController: updateController,
+            shortcutRecordingStateChanged: { _ in }
+        )
+        .frame(width: tiledGeometryWideSize.width, height: tiledGeometryWideSize.height)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, .light)
+        .environment(\.controlActiveState, .key)
+        let tiledGeometryWideData = try renderRetinaPNG(
+            tiledGeometryWideView,
+            size: tiledGeometryWideSize
+        )
+        XCTAssertGreaterThan(tiledGeometryWideData.count, 25_000)
+        try tiledGeometryWideData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry-wide.png"
+            ),
+            options: .atomic
+        )
+
+        let tiledGeometryData = try renderRetinaPNG(view, size: Self.snapshotSize)
+        XCTAssertGreaterThan(tiledGeometryData.count, 25_000)
+        try tiledGeometryData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry.png"
+            ),
+            options: .atomic
+        )
+        let tiledGeometryDarkData = try renderRetinaPNG(
+            darkView,
+            size: Self.snapshotSize,
+            appearance: .darkAqua
+        )
+        XCTAssertGreaterThan(tiledGeometryDarkData.count, 25_000)
+        try tiledGeometryDarkData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry-dark.png"
+            ),
+            options: .atomic
+        )
+
+        let tiledGeometryCompactSize = CGSize(
+            width: SettingsWindowMetrics.minimumSize.width,
+            height: Self.snapshotSize.height
+        )
+        let tiledGeometryCompactView = SettingsView(
+            store: store,
+            engine: engine,
+            navigation: navigation,
+            windowCoordinator: coordinator,
+            diagnostics: .disabled,
+            updateController: updateController,
+            shortcutRecordingStateChanged: { _ in }
+        )
+        .frame(
+            width: tiledGeometryCompactSize.width,
+            height: tiledGeometryCompactSize.height
+        )
+        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(\.colorScheme, .light)
+        .environment(\.controlActiveState, .key)
+        let tiledGeometryCompactData = try renderRetinaPNG(
+            tiledGeometryCompactView,
+            size: tiledGeometryCompactSize
+        )
+        XCTAssertGreaterThan(tiledGeometryCompactData.count, 15_000)
+        try tiledGeometryCompactData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry-compact.png"
+            ),
+            options: .atomic
+        )
+
+        navigation.selectWorkspace(chat.id)
+        let tiledGeometryZeroData = try renderRetinaPNG(view, size: Self.snapshotSize)
+        XCTAssertGreaterThan(tiledGeometryZeroData.count, 25_000)
+        try tiledGeometryZeroData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry-zero.png"
+            ),
+            options: .atomic
+        )
+
+        store.setSettingsLayoutConfiguration(
+            WorkspaceLayoutConfiguration(
+                orientation: .automatic,
+                accordionPadding: 250,
+                gaps: WorkspaceLayoutGaps(
+                    innerHorizontal: 5,
+                    innerVertical: 5,
+                    outerTop: 5,
+                    outerRight: 5,
+                    outerBottom: 5,
+                    outerLeft: 5
+                )
+            ),
+            for: chat.id
+        )
+        let tiledGeometryFivePointData = try renderRetinaPNG(view, size: Self.snapshotSize)
+        XCTAssertGreaterThan(tiledGeometryFivePointData.count, 25_000)
+        try tiledGeometryFivePointData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry-five-point.png"
+            ),
+            options: .atomic
+        )
+        let tiledGeometryFivePointDarkData = try renderRetinaPNG(
+            darkView,
+            size: Self.snapshotSize,
+            appearance: .darkAqua
+        )
+        XCTAssertGreaterThan(tiledGeometryFivePointDarkData.count, 25_000)
+        try tiledGeometryFivePointDarkData.write(
+            to: outputDirectory.appendingPathComponent(
+                "windowranger-settings-tiled-geometry-five-point-dark.png"
+            ),
+            options: .atomic
+        )
+
+        navigation.selectWorkspace(writing.id)
+
         let currentProfileID = store.activeProfileID
         store.renameProfile(currentProfileID, to: "Current Setup")
         store.setSettingsProfileIconStyle(.desktop)
-        _ = store.createProfile(named: "Travel", source: .scratch)
+        let travelProfileID = try XCTUnwrap(
+            store.createProfile(named: "Travel", source: .scratch)
+        )
         store.setSettingsProfileIconStyle(.travel)
+        let gameProfileID = try XCTUnwrap(
+            store.createProfile(named: "Game Room", source: .scratch)
+        )
+        store.setSettingsProfileIconStyle(.home)
+        let studioProfileID = try XCTUnwrap(
+            store.createProfile(named: "Studio With External Displays", source: .scratch)
+        )
+        store.setSettingsProfileIconStyle(.work)
         store.selectProfile(currentProfileID)
+        store.setDefaultProfile(currentProfileID)
+        store.setGameModeProfile(gameProfileID)
+        store.setDockedProfile(studioProfileID)
+        store.setUndockedProfile(travelProfileID)
+        _ = store.assignCurrentDisplaySetup(to: studioProfileID)
+        store.selectProfileForEditing(travelProfileID)
         store.setFocusedWindowHighlightCornerRadiusOverride(
             14,
             for: "com.apple.Terminal",
@@ -359,7 +759,6 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             .updates,
             .sync,
             .behavior,
-            .profileSwitching,
             .menuBar,
             .focusBorder,
             .displays,
@@ -480,7 +879,6 @@ final class WorkspaceSettingsVisualSnapshotTests: XCTestCase {
             SettingsCategory.general,
             .sync,
             .behavior,
-            .profileSwitching,
             .menuBar,
             .focusBorder,
             .displays,

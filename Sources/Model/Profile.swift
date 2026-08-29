@@ -337,6 +337,14 @@ enum QuickAppShelfGroupPolicy {
             available[(start + offset + available.count) % available.count]
         }
     }
+
+    static func raiseOrder<Key: Equatable>(
+        visibleWindowKeys: [Key],
+        selectedWindowKey: Key
+    ) -> [Key] {
+        visibleWindowKeys.filter { $0 != selectedWindowKey }
+            + visibleWindowKeys.filter { $0 == selectedWindowKey }
+    }
 }
 
 struct WindowManagerProfile: Codable, Equatable, Identifiable, Sendable {

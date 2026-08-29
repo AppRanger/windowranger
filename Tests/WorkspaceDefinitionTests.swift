@@ -26,6 +26,164 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertEqual(decoded, WorkspaceDefinition.defaults)
     }
 
+    func testWorkspaceEngineLookupIndexPreservesFirstWorkspaceAndRevalidatesRules() {
+        let retainedID = UUID(uuidString: "A0000000-0000-0000-0000-000000000001")!
+        let removedID = UUID(uuidString: "A0000000-0000-0000-0000-000000000002")!
+        let retained = WorkspaceDefinition(
+            id: retainedID,
+            name: "Retained",
+            key: "r",
+            layout: .tiled
+        )
+        let duplicate = WorkspaceDefinition(
+            id: retainedID,
+            name: "Duplicate",
+            key: "d",
+            layout: .accordion
+        )
+        let removed = WorkspaceDefinition(id: removedID, name: "Removed", key: "x")
+        let validRule = AppRule(
+            bundleIdentifier: "com.example.Editor",
+            displayName: "Editor",
+            actions: [.assignWorkspace(retainedID)]
+        )
+        let staleRule = AppRule(
+            bundleIdentifier: "com.example.Stale",
+            displayName: "Stale",
+            actions: [.assignWorkspace(removedID)]
+        )
+        let rules = [validRule.id: validRule, staleRule.id: staleRule]
+
+        let initial = WorkspaceEngineLookupIndex(
+            workspaces: [retained, duplicate, removed],
+            appRulesByBundleIdentifier: rules
+        )
+
+        XCTAssertEqual(initial.validWorkspaceIDs, [retainedID, removedID])
+        XCTAssertEqual(initial.workspace(for: retainedID), retained)
+        XCTAssertEqual(
+            initial.resolvedRule(forBundleIdentifier: "COM.EXAMPLE.EDITOR").assignedWorkspaceID,
+            retainedID
+        )
+        XCTAssertEqual(
+            initial.resolvedRule(forBundleIdentifier: "com.example.stale").assignedWorkspaceID,
+            removedID
+        )
+
+        let afterRemoval = WorkspaceEngineLookupIndex(
+            workspaces: [retained],
+            appRulesByBundleIdentifier: rules
+        )
+
+        XCTAssertEqual(afterRemoval.validWorkspaceIDs, [retainedID])
+        XCTAssertNil(afterRemoval.workspace(for: removedID))
+        XCTAssertNil(
+            afterRemoval.resolvedRule(forBundleIdentifier: "com.example.stale").assignedWorkspaceID
+        )
+    }
+
+    func testPeriodicStateEmissionSkipsOnlyAnIdenticalPreviouslyScheduledState() {
+        let workspaceID = UUID(uuidString: "A0000000-0000-0000-0000-000000000001")!
+        let otherWorkspaceID = UUID(uuidString: "A0000000-0000-0000-0000-000000000002")!
+        let profileID = UUID(uuidString: "B0000000-0000-0000-0000-000000000001")!
+        let state = WorkspaceEngineState(
+            currentWorkspaceID: workspaceID,
+            activeWorkspaceIDs: [workspaceID],
+            previousWorkspaceID: nil,
+            managedWindowCount: 2,
+            accessibilityGranted: true,
+            profileID: profileID
+        )
+        let changedStates = [
+            WorkspaceEngineState(
+                currentWorkspaceID: otherWorkspaceID,
+                activeWorkspaceIDs: [otherWorkspaceID],
+                previousWorkspaceID: workspaceID,
+                managedWindowCount: 2,
+                accessibilityGranted: true,
+                profileID: profileID
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 3,
+                accessibilityGranted: true,
+                profileID: profileID
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 2,
+                accessibilityGranted: false,
+                profileID: profileID
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 2,
+                accessibilityGranted: true,
+                profileID: UUID(uuidString: "B0000000-0000-0000-0000-000000000002")!,
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 2,
+                accessibilityGranted: true,
+                profileID: profileID,
+                activeWorkspaceIDByDisplay: ["display": workspaceID]
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 2,
+                accessibilityGranted: true,
+                profileID: profileID,
+                focusedWindowHighlightWorkspaceContexts: [
+                    WindowKey(processIdentifier: 42, windowIdentifier: 7):
+                        FocusedWindowHighlightWorkspaceContext(layout: .tiled, windowCount: 2),
+                ]
+            ),
+        ]
+
+        for changedState in changedStates {
+            var gate = WorkspaceEngineStateEmissionGate()
+            XCTAssertTrue(gate.shouldSchedule(state, force: false))
+            XCTAssertFalse(gate.shouldSchedule(state, force: false))
+            XCTAssertTrue(gate.shouldSchedule(changedState, force: false))
+            XCTAssertTrue(gate.shouldSchedule(state, force: false))
+        }
+    }
+
+    func testExplicitStateEmissionRemainsAForcedBroadInvalidation() {
+        let workspaceID = UUID(uuidString: "A0000000-0000-0000-0000-000000000001")!
+        let state = WorkspaceEngineState(
+            currentWorkspaceID: workspaceID,
+            activeWorkspaceIDs: [workspaceID],
+            previousWorkspaceID: nil,
+            managedWindowCount: 0,
+            accessibilityGranted: true
+        )
+
+        var gate = WorkspaceEngineStateEmissionGate()
+        XCTAssertTrue(gate.shouldSchedule(state, force: false))
+        XCTAssertTrue(gate.shouldSchedule(state, force: true))
+        XCTAssertFalse(gate.shouldSchedule(state, force: false))
+
+        let changedState = WorkspaceEngineState(
+            currentWorkspaceID: workspaceID,
+            activeWorkspaceIDs: [workspaceID],
+            previousWorkspaceID: nil,
+            managedWindowCount: 1,
+            accessibilityGranted: true
+        )
+        XCTAssertTrue(gate.shouldSchedule(changedState, force: false))
+    }
+
     func testLegacyWorkspaceDefinitionMigratesToNoneLayout() throws {
         let id = WorkspaceDefinition.defaults[0].id
         let json = """
@@ -110,6 +268,51 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertEqual(axis, .horizontal)
         XCTAssertEqual(ratio, 0.4)
         XCTAssertTrue(history.isEmpty)
+    }
+
+    func testSuccessfulEnumerationReleasesClosedDiagnosticFocusWithoutCachingStaleObservation() {
+        let previous = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let closed = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+        let replacement = WindowKey(processIdentifier: 73, windowIdentifier: 200)
+
+        let failedEnumerationRemoval = WindowEnumerationLifecycle.removedTrackedWindowKeys(
+            trackedWindowKeys: [previous],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [],
+            enumeratedWindowKeys: []
+        )
+        XCTAssertTrue(failedEnumerationRemoval.isEmpty)
+        XCTAssertEqual(WindowEnumerationLifecycle.diagnosticFocusKeyAfterEnumeration(
+            previousKey: previous,
+            observedKey: nil,
+            ownProcessIdentifier: 999,
+            removedWindowKeys: failedEnumerationRemoval
+        ), previous)
+
+        XCTAssertNil(WindowEnumerationLifecycle.diagnosticFocusKeyAfterEnumeration(
+            previousKey: closed,
+            observedKey: closed,
+            ownProcessIdentifier: 999,
+            removedWindowKeys: [closed]
+        ))
+        XCTAssertEqual(WindowEnumerationLifecycle.diagnosticFocusKeyAfterEnumeration(
+            previousKey: previous,
+            observedKey: closed,
+            ownProcessIdentifier: 999,
+            removedWindowKeys: [closed]
+        ), previous)
+        XCTAssertEqual(WindowEnumerationLifecycle.diagnosticFocusKeyAfterEnumeration(
+            previousKey: previous,
+            observedKey: replacement,
+            ownProcessIdentifier: 999,
+            removedWindowKeys: [closed]
+        ), replacement)
+        XCTAssertEqual(WindowEnumerationLifecycle.diagnosticFocusKeyAfterEnumeration(
+            previousKey: previous,
+            observedKey: WindowKey(processIdentifier: 999, windowIdentifier: 300),
+            ownProcessIdentifier: 999,
+            removedWindowKeys: []
+        ), previous)
     }
 
     func testFailedWindowEnumerationRetainsNativeTabsForRecovery() {

@@ -729,6 +729,7 @@ final class MenuBarApplicationShelfContentView: NSView {
     private let scrollView = NSScrollView()
     private let stack = NSStackView()
     private var hoverTrackingArea: NSTrackingArea?
+    private var previewHost: NSHostingView<AnyView>?
     private var contentSize = CGSize(width: 240, height: 80)
 
     override var intrinsicContentSize: NSSize { contentSize }
@@ -783,6 +784,10 @@ final class MenuBarApplicationShelfContentView: NSView {
         imageProvider: (WorkspaceApplicationSummary) -> NSImage?,
         onSelect: @escaping (WorkspaceApplicationSummary) -> Void
     ) {
+        previewHost?.removeFromSuperview()
+        previewHost = nil
+        header.isHidden = false
+        scrollView.isHidden = false
         header.stringValue = workspaceName
         stack.arrangedSubviews.forEach {
             stack.removeArrangedSubview($0)
@@ -821,6 +826,37 @@ final class MenuBarApplicationShelfContentView: NSView {
         layoutSubtreeIfNeeded()
     }
 
+    func configurePreview(
+        descriptor: WorkspacePreviewDescriptor,
+        repository: WorkspacePreviewRepository,
+        onWorkspaceSelected: @escaping () -> Void,
+        onItemSelected: @escaping (WorkspacePreviewItemDescriptor) -> Void
+    ) {
+        header.isHidden = true
+        scrollView.isHidden = true
+        previewHost?.removeFromSuperview()
+        let root = MenuBarWorkspacePreviewRoot(
+            repository: repository,
+            fallbackDescriptor: descriptor,
+            onWorkspaceSelected: onWorkspaceSelected,
+            onItemSelected: onItemSelected
+        )
+        let host = NSHostingView(rootView: AnyView(root))
+        host.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(host)
+        NSLayoutConstraint.activate([
+            host.leadingAnchor.constraint(equalTo: leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: trailingAnchor),
+            host.topAnchor.constraint(equalTo: topAnchor),
+            host.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        previewHost = host
+        contentSize = CGSize(width: 360, height: 236)
+        frame.size = contentSize
+        invalidateIntrinsicContentSize()
+        layoutSubtreeIfNeeded()
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
@@ -840,6 +876,35 @@ final class MenuBarApplicationShelfContentView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         onHoverChanged?(false)
+    }
+}
+
+private struct MenuBarWorkspacePreviewRoot: View {
+    @Bindable var repository: WorkspacePreviewRepository
+    let fallbackDescriptor: WorkspacePreviewDescriptor
+    let onWorkspaceSelected: () -> Void
+    let onItemSelected: (WorkspacePreviewItemDescriptor) -> Void
+
+    var body: some View {
+        let entry = repository.entries[fallbackDescriptor.workspaceID]
+        VStack(alignment: .leading, spacing: 7) {
+            Text(fallbackDescriptor.name)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            WorkspacePreviewView(
+                descriptor: entry?.descriptor ?? fallbackDescriptor,
+                background: entry?.background,
+                images: entry?.images ?? [:],
+                interactionMode: .workspaceAndItems,
+                onWorkspaceSelected: onWorkspaceSelected,
+                onItemSelected: onItemSelected
+            )
+            .frame(height: 190)
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .padding(10)
+        .frame(width: 360, height: 236, alignment: .topLeading)
     }
 }
 
@@ -904,6 +969,33 @@ private final class MenuBarApplicationShelfController {
         panel.orderFrontRegardless()
     }
 
+    func presentPreview(
+        descriptor: WorkspacePreviewDescriptor,
+        repository: WorkspacePreviewRepository,
+        anchorFrame: CGRect,
+        onWorkspaceSelected: @escaping () -> Void,
+        onItemSelected: @escaping (WorkspacePreviewItemDescriptor) -> Void
+    ) {
+        contentView.configurePreview(
+            descriptor: descriptor,
+            repository: repository,
+            onWorkspaceSelected: onWorkspaceSelected,
+            onItemSelected: onItemSelected
+        )
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(anchorFrame.center) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else { return }
+        let frame = MenuBarApplicationShelfGeometry.frame(
+            anchor: anchorFrame,
+            contentSize: contentView.intrinsicContentSize,
+            visibleFrame: screen.visibleFrame
+        )
+        workspaceID = descriptor.workspaceID
+        panel.setFrame(frame, display: true)
+        panel.orderFrontRegardless()
+    }
+
     func dismiss() {
         panel.orderOut(nil)
         workspaceID = nil
@@ -928,7 +1020,7 @@ private extension CGRect {
 @MainActor
 private final class MenuBarDisplayGroupHoverTracker: NSResponder {
     private weak var button: NSStatusBarButton?
-    private weak var contentView: MenuBarDisplayGroupContentView?
+    private var renderedContent: MenuBarDisplayGroupRenderedContent?
     private var trackingAreas: [NSTrackingArea] = []
     private var pointerIsOverWorkspace = false
     private var currentTarget: MenuBarHitTarget?
@@ -944,14 +1036,14 @@ private final class MenuBarDisplayGroupHoverTracker: NSResponder {
 
     func configure(
         button: NSStatusBarButton,
-        contentView: MenuBarDisplayGroupContentView
+        renderedContent: MenuBarDisplayGroupRenderedContent
     ) {
         removeTrackingAreas()
         self.button = button
-        self.contentView = contentView
+        self.renderedContent = renderedContent
+        button.image = renderedContent.image(for: currentTarget)
         button.layoutSubtreeIfNeeded()
-        contentView.layoutSubtreeIfNeeded()
-        for region in contentView.workspaceTrackingRegions(in: button) where !region.frame.isEmpty {
+        for region in renderedContent.trackingRegions(in: button) where !region.frame.isEmpty {
             let area = NSTrackingArea(
                 rect: region.frame,
                 options: [.mouseEnteredAndExited, .activeAlways],
@@ -982,20 +1074,24 @@ private final class MenuBarDisplayGroupHoverTracker: NSResponder {
 
     func invalidate() {
         removeTrackingAreas()
-        contentView?.clearHover()
         pointerIsOverWorkspace = false
         currentTarget = nil
         button = nil
-        contentView = nil
+        renderedContent = nil
     }
 
     private func refreshHover() {
-        guard let contentView else { return }
-        let targets = contentView.screenSpaceTargets()
-        let target = contentView.updateHover(at: NSEvent.mouseLocation)
+        guard let button, let renderedContent else { return }
+        let targets = renderedContent.screenSpaceTargets(in: button)
+        let resolved = MenuBarScreenSpaceTargetResolver.target(
+            at: NSEvent.mouseLocation,
+            among: targets
+        )
+        let target: MenuBarHitTarget? = if case .workspace = resolved { resolved } else { nil }
         pointerIsOverWorkspace = target != nil
         guard target != currentTarget else { return }
         currentTarget = target
+        button.image = renderedContent.image(for: target)
         let frame = target.flatMap { target in
             targets.first(where: { $0.hitTarget == target })?.frame
         }
@@ -1015,7 +1111,7 @@ private final class MenuBarDisplayGroupHoverTracker: NSResponder {
 @MainActor
 private struct ManagedDisplayGroupStatusItem {
     let statusItem: NSStatusItem
-    var contentView: MenuBarDisplayGroupContentView?
+    var renderedContent: MenuBarDisplayGroupRenderedContent?
     var hoverTracker: MenuBarDisplayGroupHoverTracker?
 }
 
@@ -1045,6 +1141,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private let engine: WorkspaceEngine
     private let stateModel: MenuBarStateModel
     private let settingsStore: SettingsStore
+    private let workspacePreviewRepository: WorkspacePreviewRepository
     private let settingsCommandRequestRouter: SettingsCommandRequestRouter
     private let updateController: UpdateController?
     private let diagnostics: DiagnosticLogger
@@ -1056,7 +1153,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private var displayIconConfiguration: MenuBarDisplayIconConfiguration
     private var highlightColor: MenuBarHighlightColor
     private var displayGroupStatusItems: [ManagedDisplayGroupStatusItem] = []
-    private var displayGroupContentByButton: [ObjectIdentifier: MenuBarDisplayGroupContentView] = [:]
+    private var displayGroupContentByButton: [ObjectIdentifier: MenuBarDisplayGroupRenderedContent] = [:]
+    private var systemColorsObserver: NSObjectProtocol?
     private var hostView: MenuBarStatusHostView?
     private var contentView: MenuBarStatusContentView?
     private var lastSnapshot: MenuBarPresentationSnapshot?
@@ -1071,6 +1169,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private var pendingShelfTarget: MenuBarHitTarget?
     private var pendingShelfAnchorFrame: CGRect?
     private var pendingShelfApplications: [WorkspaceApplicationSummary]?
+    private var pendingShelfPreviewDescriptor: WorkspacePreviewDescriptor?
+    private var pendingShelfUsesPreview = false
     private var shelfDwellElapsed = false
     private var shelfDwellWorkItem: DispatchWorkItem?
     private var shelfDismissWorkItem: DispatchWorkItem?
@@ -1089,6 +1189,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         engine: WorkspaceEngine,
         stateModel: MenuBarStateModel,
         settingsStore: SettingsStore,
+        workspacePreviewRepository: WorkspacePreviewRepository,
         settingsCommandRequestRouter: SettingsCommandRequestRouter,
         updateController: UpdateController? = nil,
         diagnostics: DiagnosticLogger,
@@ -1103,6 +1204,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         self.engine = engine
         self.stateModel = stateModel
         self.settingsStore = settingsStore
+        self.workspacePreviewRepository = workspacePreviewRepository
         self.settingsCommandRequestRouter = settingsCommandRequestRouter
         self.updateController = updateController
         self.diagnostics = diagnostics
@@ -1120,6 +1222,13 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         // An assigned NSStatusItem menu owns every click. The custom host keeps workspace buttons
         // interactive and presents this same menu explicitly for the primary area and right-click.
         statusItem.menu = nil
+        systemColorsObserver = NotificationCenter.default.addObserver(
+            forName: NSColor.systemColorsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rebuild(force: true) }
+        }
         rebuildMenu()
         rebuild(force: true)
     }
@@ -1307,7 +1416,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             item.autosaveName = "\(ApplicationIdentity.bundleIdentifier).full-display-group-\(slot)"
             displayGroupStatusItems.append(ManagedDisplayGroupStatusItem(
                 statusItem: item,
-                contentView: nil,
+                renderedContent: nil,
                 hoverTracker: nil
             ))
         }
@@ -1322,36 +1431,21 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         guard let button = managed.statusItem.button else { return }
         button.title = ""
         button.attributedTitle = NSAttributedString(string: "")
-        button.image = nil
-        button.imagePosition = .noImage
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleNone
         button.contentTintColor = .labelColor
         button.target = self
         button.action = #selector(displayGroupStatusButtonActivated(_:))
         _ = button.sendAction(on: MenuBarStatusItemControlEventPolicy.actionEvents)
-        let content: MenuBarDisplayGroupContentView
-        if let existing = managed.contentView {
-            existing.configure(
-                plan: plan,
-                workspaceLabelMode: snapshot.workspaceLabelMode,
-                highlightColor: highlightColor,
-                displayIconConfiguration: displayIconConfiguration
-            )
-            content = existing
-        } else {
-            content = MenuBarDisplayGroupContentView(
-                plan: plan,
-                workspaceLabelMode: snapshot.workspaceLabelMode,
-                highlightColor: highlightColor,
-                displayIconConfiguration: displayIconConfiguration
-            )
-            button.addSubview(content)
-            NSLayoutConstraint.activate([
-                content.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-                content.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-                content.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            ])
-        }
-        managed.statusItem.length = max(24, content.intrinsicContentSize.width)
+        let renderedContent = MenuBarDisplayGroupRenderedContent(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: highlightColor,
+            displayIconConfiguration: displayIconConfiguration,
+            appearance: button.effectiveAppearance
+        )
+        button.image = renderedContent.image(for: nil)
+        managed.statusItem.length = max(24, renderedContent.size.width)
         button.layoutSubtreeIfNeeded()
         let hoverTracker: MenuBarDisplayGroupHoverTracker?
         if plan.mode == .full {
@@ -1359,7 +1453,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
                 [weak self] target, frame in
                 self?.workspaceHoverChanged(target, anchorFrame: frame)
             }
-            tracker.configure(button: button, contentView: content)
+            tracker.configure(button: button, renderedContent: renderedContent)
             hoverTracker = tracker
         } else {
             managed.hoverTracker?.invalidate()
@@ -1380,9 +1474,9 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             )
             button.setAccessibilityHelp("Opens the WindowRanger menu.")
         }
-        displayGroupStatusItems[index].contentView = content
+        displayGroupStatusItems[index].renderedContent = renderedContent
         displayGroupStatusItems[index].hoverTracker = hoverTracker
-        displayGroupContentByButton[ObjectIdentifier(button)] = content
+        displayGroupContentByButton[ObjectIdentifier(button)] = renderedContent
     }
 
     private func removeDisplayGroupStatusItems() {
@@ -1435,16 +1529,36 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         pendingShelfTarget = target
         pendingShelfAnchorFrame = anchorFrame
         pendingShelfApplications = nil
+        pendingShelfPreviewDescriptor = nil
+        pendingShelfUsesPreview = settingsStore.workspacePreviewThumbnailsEnabled
         shelfDwellElapsed = false
         installApplicationShelfClickAwayMonitors()
 
-        engine.workspaceApplications(for: workspaceID) { [weak self] applications in
-            guard let self,
-                  self.shelfGeneration == generation,
-                  self.pendingShelfTarget == target
-            else { return }
-            self.pendingShelfApplications = applications
-            self.presentApplicationShelfIfReady(generation: generation)
+        let workspaceName = stateModel.workspaceItems.first(where: { $0.id == workspaceID })?.name
+            ?? "Workspace"
+        if pendingShelfUsesPreview {
+            engine.workspacePreviewDescriptor(
+                for: workspaceID,
+                workspaceName: workspaceName
+            ) { [weak self] descriptor in
+                guard let self,
+                      self.shelfGeneration == generation,
+                      self.pendingShelfTarget == target,
+                      self.pendingShelfUsesPreview
+                else { return }
+                self.pendingShelfPreviewDescriptor = descriptor
+                self.presentApplicationShelfIfReady(generation: generation)
+            }
+        } else {
+            engine.workspaceApplications(for: workspaceID) { [weak self] applications in
+                guard let self,
+                      self.shelfGeneration == generation,
+                      self.pendingShelfTarget == target,
+                      !self.pendingShelfUsesPreview
+                else { return }
+                self.pendingShelfApplications = applications
+                self.presentApplicationShelfIfReady(generation: generation)
+            }
         }
 
         let work = DispatchWorkItem { [weak self] in
@@ -1465,10 +1579,34 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private func presentApplicationShelfIfReady(generation: UInt64) {
         guard shelfGeneration == generation,
               shelfDwellElapsed,
-              let applications = pendingShelfApplications,
               let anchorFrame = pendingShelfAnchorFrame,
               case let .workspace(workspaceID, _) = pendingShelfTarget
         else { return }
+        if pendingShelfUsesPreview {
+            guard let descriptor = pendingShelfPreviewDescriptor else { return }
+            workspacePreviewRepository.refreshAuthorization()
+            workspacePreviewRepository.update(
+                descriptor: descriptor,
+                captureEnabled: true
+            )
+            applicationShelfController.presentPreview(
+                descriptor: descriptor,
+                repository: workspacePreviewRepository,
+                anchorFrame: anchorFrame,
+                onWorkspaceSelected: { [weak self] in
+                    guard let self else { return }
+                    self.dismissApplicationShelf()
+                    self.engine.switchToWorkspace(workspaceID)
+                },
+                onItemSelected: { [weak self] item in
+                    guard let self else { return }
+                    self.dismissApplicationShelf()
+                    self.engine.activateWorkspacePreviewItem(item)
+                }
+            )
+            return
+        }
+        guard let applications = pendingShelfApplications else { return }
         let workspaceName = stateModel.workspaceItems.first(where: { $0.id == workspaceID })?.name
             ?? "Workspace"
         applicationShelfController.present(
@@ -1537,6 +1675,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         pendingShelfTarget = nil
         pendingShelfAnchorFrame = nil
         pendingShelfApplications = nil
+        pendingShelfPreviewDescriptor = nil
+        pendingShelfUsesPreview = false
         shelfDwellElapsed = false
     }
 
@@ -1588,7 +1728,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         let pointerTarget = content.flatMap { content in
             MenuBarScreenSpaceTargetResolver.target(
                 at: NSEvent.mouseLocation,
-                among: content.screenSpaceTargets()
+                among: content.screenSpaceTargets(in: sender)
             )
         }
         switch MenuBarStatusItemActivationPolicy.action(
@@ -1624,6 +1764,10 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         contentView?.removeFromSuperview()
         contentView = nil
         removeDisplayGroupStatusItems()
+        if let systemColorsObserver {
+            NotificationCenter.default.removeObserver(systemColorsObserver)
+            self.systemColorsObserver = nil
+        }
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 

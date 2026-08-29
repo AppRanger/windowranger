@@ -227,6 +227,10 @@ final class OnboardingFlowTests: XCTestCase {
         XCTAssertEqual(OnboardingWindowConfiguration.contentSize.height, 660)
         XCTAssertFalse(OnboardingWindowConfiguration.isResizable)
         XCTAssertFalse(OnboardingWindowConfiguration.isReleasedWhenClosed)
+        XCTAssertEqual(OnboardingWindowConfiguration.level, .floating)
+        XCTAssertTrue(OnboardingWindowConfiguration.collectionBehavior.contains(.canJoinAllSpaces))
+        XCTAssertTrue(OnboardingWindowConfiguration.collectionBehavior.contains(.fullScreenAuxiliary))
+        XCTAssertFalse(OnboardingWindowConfiguration.collectionBehavior.contains(.moveToActiveSpace))
     }
 
     /// Opt-in production-view fixture. This exercises every real onboarding stage without

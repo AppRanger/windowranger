@@ -191,6 +191,26 @@ final class UtilitySettingsTests: XCTestCase {
         )
     }
 
+    func testAccessibilityPermissionMonitorPollsUntilExternalGrant() async {
+        var results = [false, false, true]
+        var sleepCount = 0
+        let monitor = AccessibilityPermissionMonitor {
+            results.isEmpty ? true : results.removeFirst()
+        }
+
+        await monitor.refreshUntilGranted { interval in
+            XCTAssertEqual(
+                interval,
+                AccessibilityPermissionMonitor.missingPermissionRefreshIntervalNanoseconds
+            )
+            sleepCount += 1
+        }
+
+        XCTAssertTrue(monitor.isGranted)
+        XCTAssertEqual(sleepCount, 1)
+        XCTAssertTrue(results.isEmpty)
+    }
+
     func testLaunchAtLoginFailureRestoresObservedServiceState() {
         let service = FakeLaunchAtLoginService(status: .notRegistered)
         service.error = TestError()
@@ -271,7 +291,9 @@ final class UtilitySettingsTests: XCTestCase {
             connectedDisplaysProvider: { [] }
         )
         XCTAssertFalse(store!.focusedWindowHighlightEnabled)
-        XCTAssertEqual(store!.focusedWindowHighlightColor, .default)
+        XCTAssertEqual(MenuBarHighlightColor.default.hex, "#FFFFFF")
+        XCTAssertEqual(MenuBarHighlightColor.focusBorderDefault.hex, "#3399FF")
+        XCTAssertEqual(store!.focusedWindowHighlightColor, .focusBorderDefault)
         XCTAssertFalse(store!.focusedWindowHighlightTiledOnly)
         XCTAssertFalse(store!.focusedWindowHighlightMultipleWindowsOnly)
         XCTAssertTrue(store!.focusedWindowHighlightCornerRadiusOverrides.isEmpty)
@@ -331,6 +353,28 @@ final class UtilitySettingsTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
     }
 
+    func testFocusedWindowHighlightColorPreservesValidWhiteAndRepairsMalformedValues() {
+        let suite = "UtilitySettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("#FFFFFF", forKey: "focusedWindowHighlightColor.v1")
+
+        var store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertEqual(store.focusedWindowHighlightColor, .default)
+
+        defaults.set("not-a-colour", forKey: "focusedWindowHighlightColor.v1")
+        store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertEqual(store.focusedWindowHighlightColor, .focusBorderDefault)
+    }
+
     func testWorkspaceSwipeIsOffByDefaultAndPersistsOnlyOnThisMac() {
         let suite = "UtilitySettingsTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -358,6 +402,33 @@ final class UtilitySettingsTests: XCTestCase {
         )
         XCTAssertTrue(restored.workspaceSwipeEnabled)
         XCTAssertEqual(restored.workspaceSwipeFingerCount, .four)
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    func testWorkspacePreviewThumbnailsAreOffByDefaultAndPersistOnlyOnThisMac() {
+        let suite = "UtilitySettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+        let cloud = RecordingCloudStore()
+
+        var store: SettingsStore? = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertFalse(store!.workspacePreviewThumbnailsEnabled)
+        store!.workspacePreviewThumbnailsEnabled = true
+        XCTAssertTrue(defaults.bool(forKey: "workspacePreviewThumbnailsEnabled.v1"))
+        XCTAssertFalse(cloud.keys.contains("workspacePreviewThumbnailsEnabled.v1"))
+        store = nil
+
+        let restored = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertTrue(restored.workspacePreviewThumbnailsEnabled)
         defaults.removePersistentDomain(forName: suite)
     }
 
@@ -727,6 +798,10 @@ final class UtilitySettingsTests: XCTestCase {
         XCTAssertEqual(
             SettingsCatalog.search("four finger trackpad", includeDebug: false).first?.id,
             "workspace-swipe"
+        )
+        XCTAssertEqual(
+            SettingsCatalog.search("screen capture thumbnail", includeDebug: false).first?.id,
+            "workspace-window-previews"
         )
     }
 }

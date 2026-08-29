@@ -38,7 +38,6 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         NSApp.setActivationPolicy(.regular)
         guard let window else { return }
         moveToActiveScreen(window)
-        window.collectionBehavior.insert(.moveToActiveSpace)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.makeMain()
@@ -104,6 +103,8 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         window.setContentSize(OnboardingWindowConfiguration.contentSize)
         window.contentMinSize = OnboardingWindowConfiguration.contentSize
         window.contentMaxSize = OnboardingWindowConfiguration.contentSize
+        window.level = OnboardingWindowConfiguration.level
+        window.collectionBehavior = OnboardingWindowConfiguration.collectionBehavior
         window.animationBehavior = .documentWindow
         self.window = window
     }

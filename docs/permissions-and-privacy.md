@@ -15,7 +15,36 @@ avoids logging window titles and document names. Ignored/transient windows are r
 central admission boundary and receive no workspace, layout, persistence, focus or recovery action.
 
 Accessibility permission is controlled by macOS. WindowRanger does not reset TCC or silently alter
-the system permission list.
+the system permission list. While General Settings or the setup wizard is visible and access is
+missing, a bounded-frequency read-only trust check updates the status after an external System
+Settings change. This check never repeats the permission prompt.
+
+## Optional workspace window previews
+
+**Show window previews** is off by default and stored only on this Mac. Enabling it is the only
+WindowRanger action that requests macOS Screen Recording access. Opening Settings, hovering a
+workspace, granting Accessibility, restoring a profile, or running tests does not request that
+permission. If access is denied or later revoked, previews remain available using managed-window
+geometry, application icons, and privacy-safe placeholders.
+
+When enabled and authorized, WindowRanger uses ScreenCaptureKit for bounded one-shot captures of
+eligible managed windows at thumbnail resolution. It does not start a continuous screen stream,
+capture audio or the pointer, or move, unpark, unminimize, raise, activate, or focus a window to make
+it capturable. A protected, unavailable, stale, or parked window that cannot be captured remains a
+placeholder rather than causing a window-management action.
+
+The same opt-in may add the current wallpaper for the workspace's home display when macOS exposes a
+readable desktop-image file through AppKit. WindowRanger decodes it directly to the final preview
+size; it does not capture the desktop or keep a full-resolution wallpaper copy. Dynamic, protected,
+or otherwise unavailable wallpaper remains the normal neutral preview background.
+
+Preview pixels live only in a bounded in-memory cache shared by the menu-bar and Settings preview
+surfaces. They are never written to profile or session persistence, iCloud, exports, diagnostics,
+support reports, or logs. In-flight capture and cached pixels are discarded when the option is
+disabled, permission is unavailable, the screen locks or sleeps, the login session resigns, display
+topology or active profile changes, tracked preview identity or geometry changes, or WindowRanger
+quits. Permission is rechecked when WindowRanger becomes active, before a menu preview is presented,
+and after a capture batch completes.
 
 ## Optional trackpad workspace gesture
 

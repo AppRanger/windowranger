@@ -120,21 +120,29 @@ struct ShortcutGuideAction: Identifiable, Equatable, Sendable {
 }
 
 struct ShortcutGuideContent: Equatable, Sendable {
+    enum PresentationContext: Equatable, Sendable {
+        case workspace
+        case quickAppShelf
+    }
+
     let family: ShortcutFamily
     let modifierLabel: String
     let primaryActions: [ShortcutGuideAction]
     let secondaryActions: [ShortcutGuideAction]
+    let presentationContext: PresentationContext
 
     init(
         family: ShortcutFamily,
         primaryActions: [ShortcutGuideAction],
         secondaryActions: [ShortcutGuideAction],
-        modifierLabel: String? = nil
+        modifierLabel: String? = nil,
+        presentationContext: PresentationContext = .workspace
     ) {
         self.family = family
         self.primaryActions = primaryActions
         self.secondaryActions = secondaryActions
         self.modifierLabel = modifierLabel ?? Self.label(for: family.defaultModifiers)
+        self.presentationContext = presentationContext
     }
 
     static func label(for modifiers: UInt32) -> String {
@@ -174,10 +182,12 @@ enum ShortcutGuideActionGroupKind: String, Equatable, Sendable {
     case switchWorkspace
     case supporting
     case cycleWindows
+    case cycleShelfWindows
     case arrangeWindow
     case chooseLayout
     case moveWorkspace
     case focusWindow
+    case focusShelfWindow
     case reorderWindow
     case other
 
@@ -186,10 +196,12 @@ enum ShortcutGuideActionGroupKind: String, Equatable, Sendable {
         case .switchWorkspace: "Switch Workspace"
         case .supporting: nil
         case .cycleWindows: "Cycle Windows in Order"
+        case .cycleShelfWindows: "Cycle Shelf Windows"
         case .arrangeWindow: "Arrange Window"
         case .chooseLayout: "Choose Layout"
         case .moveWorkspace: "Move Workspace"
         case .focusWindow: "Focus Window"
+        case .focusShelfWindow: "Focus Shelf Window"
         case .reorderWindow: "Reorder Window"
         case .other: "More"
         }
@@ -207,13 +219,14 @@ struct ShortcutGuideActionGroup: Identifiable, Equatable, Sendable {
 enum ShortcutGuideActionGroupBuilder {
     static func build(
         family: ShortcutFamily,
-        actions: [ShortcutGuideAction]
+        actions: [ShortcutGuideAction],
+        presentationContext: ShortcutGuideContent.PresentationContext = .workspace
     ) -> [ShortcutGuideActionGroup] {
         let regularActions = ShortcutGuidePresentationGroups(actions: actions).regularSecondaryActions
         let order: [ShortcutGuideActionGroupKind] = switch family {
         case .navigate: [
-            .switchWorkspace, .supporting, .cycleWindows,
-            .focusWindow, .reorderWindow, .other,
+            .switchWorkspace, .supporting, .cycleWindows, .cycleShelfWindows,
+            .focusWindow, .focusShelfWindow, .reorderWindow, .other,
         ]
         case .arrange: [
             .arrangeWindow, .chooseLayout, .moveWorkspace,
@@ -221,7 +234,11 @@ enum ShortcutGuideActionGroupBuilder {
         ]
         }
         let grouped = Dictionary(grouping: regularActions) { action in
-            groupKind(for: action, family: family)
+            groupKind(
+                for: action,
+                family: family,
+                presentationContext: presentationContext
+            )
         }
         return order.compactMap { kind in
             guard let actions = grouped[kind], !actions.isEmpty else { return nil }
@@ -231,11 +248,12 @@ enum ShortcutGuideActionGroupBuilder {
 
     private static func groupKind(
         for action: ShortcutGuideAction,
-        family: ShortcutFamily
+        family: ShortcutFamily,
+        presentationContext: ShortcutGuideContent.PresentationContext
     ) -> ShortcutGuideActionGroupKind {
         guard case let .global(value) = action.kind else { return .other }
         if [.focusLeft, .focusDown, .focusUp, .focusRight].contains(value) {
-            return .focusWindow
+            return presentationContext == .quickAppShelf ? .focusShelfWindow : .focusWindow
         }
         if [.moveLeft, .moveDown, .moveUp, .moveRight].contains(value) {
             return .reorderWindow
@@ -245,7 +263,8 @@ enum ShortcutGuideActionGroupBuilder {
             return switch value {
             case .previousWorkspace, .nextWorkspace, .backAndForthWorkspace: .switchWorkspace
             case .commandWheel, .toggleDropDownApp: .supporting
-            case .previousWindow, .nextWindow: .cycleWindows
+            case .previousWindow, .nextWindow:
+                presentationContext == .quickAppShelf ? .cycleShelfWindows : .cycleWindows
             default: .other
             }
         case .arrange:
@@ -255,6 +274,75 @@ enum ShortcutGuideActionGroupBuilder {
             case .moveWorkspaceToNextDisplay: .moveWorkspace
             default: .other
             }
+        }
+    }
+}
+
+struct ShortcutGuideShelfRuntimeContext: Equatable, Sendable {
+    let direction: DropDownAppDirection
+    let displayIdentifier: String?
+}
+
+/// While the Shelf owns focus, the normal guide contains commands that either cannot act on a
+/// Shelf window or would imply the wrong target. This policy derives a smaller truthful view from
+/// the already conflict-checked content; it never creates a second shortcut registry.
+enum ShortcutGuideShelfPresentationPolicy {
+    static func contextualContent(
+        from content: ShortcutGuideContent,
+        direction: DropDownAppDirection
+    ) -> ShortcutGuideContent? {
+        guard content.family == .navigate else { return nil }
+        let secondaryActions = content.secondaryActions.compactMap { action -> ShortcutGuideAction? in
+            guard case let .global(value) = action.kind else { return nil }
+            let allowed = switch value {
+            case .previousWorkspace, .nextWorkspace, .backAndForthWorkspace,
+                 .commandWheel, .toggleDropDownApp, .previousWindow, .nextWindow:
+                true
+            case .focusLeft, .focusRight:
+                direction == .top || direction == .bottom
+            case .focusUp, .focusDown:
+                direction == .left || direction == .right
+            default:
+                false
+            }
+            guard allowed else { return nil }
+            let title = switch value {
+            case .toggleDropDownApp: "Hide Shelf"
+            case .previousWindow: "Previous Shelf Window"
+            case .nextWindow: "Next Shelf Window"
+            default: action.title
+            }
+            return ShortcutGuideAction(
+                id: action.id,
+                kind: action.kind,
+                title: title,
+                keyLabel: action.keyLabel,
+                isDirectional: action.isDirectional
+            )
+        }
+        let contextual = ShortcutGuideContent(
+            family: content.family,
+            primaryActions: content.primaryActions,
+            secondaryActions: secondaryActions,
+            modifierLabel: content.modifierLabel,
+            presentationContext: .quickAppShelf
+        )
+        return contextual.hasActions ? contextual : nil
+    }
+
+    static func compactSize(for configuredSize: ShortcutGuideSize) -> ShortcutGuideSize {
+        switch configuredSize {
+        case .small, .medium: .small
+        case .large: .medium
+        }
+    }
+
+    static func position(opposite direction: DropDownAppDirection) -> ShortcutGuidePosition {
+        switch direction {
+        case .top: .bottomCenter
+        case .bottom: .topCenter
+        case .left: .centerTrailing
+        case .right: .centerLeading
         }
     }
 }
@@ -705,7 +793,8 @@ struct ShortcutGuideView: View {
     private var actionGroups: [ShortcutGuideActionGroup] {
         ShortcutGuideActionGroupBuilder.build(
             family: content.family,
-            actions: content.secondaryActions
+            actions: content.secondaryActions,
+            presentationContext: content.presentationContext
         )
     }
 
@@ -796,7 +885,7 @@ struct ShortcutGuideView: View {
                         .foregroundStyle(.blue)
                     Text("·")
                         .foregroundStyle(.tertiary)
-                    Text(content.family.title)
+                    Text(headerTitle)
                         .font(.system(size: headerFontSize, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -886,8 +975,17 @@ struct ShortcutGuideView: View {
         }
     }
 
+    private var headerTitle: String {
+        content.presentationContext == .quickAppShelf
+            ? "Quick App Shelf"
+            : content.family.title
+    }
+
     private var directionalGroupTitle: String {
-        switch content.family {
+        if content.presentationContext == .quickAppShelf {
+            return "Focus Shelf Window"
+        }
+        return switch content.family {
         case .navigate: "Focus by direction"
         case .arrange: "Reorder by direction"
         }

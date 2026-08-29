@@ -6,6 +6,112 @@ final class CommandPaletteTests: XCTestCase {
     private let writingID = UUID(uuidString: "81000000-0000-0000-0000-000000000002")!
     private let profileID = UUID(uuidString: "81000000-0000-0000-0000-000000000003")!
 
+    func testPalettePositionDefaultsToTopAndUsesBritishDisplayTitle() {
+        XCTAssertEqual(CommandPalettePosition.defaultValue, .top)
+        XCTAssertEqual(CommandPalettePosition.allCases, [.top, .center, .bottom])
+        XCTAssertEqual(CommandPalettePosition.center.title, "Centre")
+    }
+
+    @MainActor
+    func testPaletteGeometryKeepsHistoricalTopPlacementAndFitsNegativeCoordinateDisplay() {
+        let visibleFrame = CGRect(x: -1_920, y: 24, width: 1_920, height: 1_056)
+        let frame = CommandPaletteGeometry.frame(
+            visibleFrame: visibleFrame,
+            preferredSize: CommandPaletteController.panelSize,
+            basePaletteSize: CommandPaletteController.panelSize,
+            position: .top
+        )
+
+        XCTAssertEqual(frame.origin.x, -1_270, accuracy: 0.001)
+        XCTAssertEqual(frame.origin.y, 470, accuracy: 0.001)
+        XCTAssertEqual(frame.size, CommandPaletteController.panelSize)
+        XCTAssertTrue(visibleFrame.contains(frame))
+    }
+
+    @MainActor
+    func testPaletteGeometryPositionsAndHaloFramesStayWithinUsableAreaWithoutDrift() {
+        let visibleFrame = CGRect(x: 2_560, y: -900, width: 1_440, height: 900)
+        for position in CommandPalettePosition.allCases {
+            let base = CommandPaletteGeometry.frame(
+                visibleFrame: visibleFrame,
+                preferredSize: CommandPaletteController.panelSize,
+                basePaletteSize: CommandPaletteController.panelSize,
+                position: position
+            )
+            let expanded = CommandPaletteGeometry.frame(
+                visibleFrame: visibleFrame,
+                preferredSize: CommandPaletteController.expandedPanelSize,
+                basePaletteSize: CommandPaletteController.panelSize,
+                position: position
+            )
+            let collapsed = CommandPaletteGeometry.frame(
+                visibleFrame: visibleFrame,
+                preferredSize: CommandPaletteController.panelSize,
+                basePaletteSize: CommandPaletteController.panelSize,
+                position: position
+            )
+
+            XCTAssertTrue(visibleFrame.contains(base), "\(position)")
+            XCTAssertTrue(visibleFrame.contains(expanded), "\(position)")
+            XCTAssertEqual(collapsed, base, "\(position)")
+        }
+    }
+
+    @MainActor
+    func testPaletteGeometryClampsUndersizedUsableArea() {
+        let visibleFrame = CGRect(x: -300, y: 40, width: 500, height: 320)
+        let frame = CommandPaletteGeometry.frame(
+            visibleFrame: visibleFrame,
+            preferredSize: CommandPaletteController.expandedPanelSize,
+            basePaletteSize: CommandPaletteController.panelSize,
+            position: .bottom
+        )
+
+        XCTAssertEqual(frame, visibleFrame)
+        XCTAssertTrue(visibleFrame.contains(frame))
+    }
+
+    @MainActor
+    func testPaletteHaloKeepsBasePaletteStationaryWhenTheDisplayHasRoom() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
+        let base = CommandPaletteGeometry.frame(
+            visibleFrame: visibleFrame,
+            preferredSize: CommandPaletteController.panelSize,
+            basePaletteSize: CommandPaletteController.panelSize,
+            position: .center
+        )
+        let expanded = CommandPaletteGeometry.frame(
+            visibleFrame: visibleFrame,
+            preferredSize: CommandPaletteController.expandedPanelSize,
+            basePaletteSize: CommandPaletteController.panelSize,
+            position: .center
+        )
+
+        XCTAssertEqual(expanded.origin.x, base.origin.x, accuracy: 0.001)
+        XCTAssertTrue(visibleFrame.contains(expanded))
+    }
+
+    @MainActor
+    func testPaletteHaloShiftsOnlyEnoughToContainRightOverflow() {
+        let visibleFrame = CGRect(x: -1_200, y: 0, width: 900, height: 900)
+        let base = CommandPaletteGeometry.frame(
+            visibleFrame: visibleFrame,
+            preferredSize: CommandPaletteController.panelSize,
+            basePaletteSize: CommandPaletteController.panelSize,
+            position: .bottom
+        )
+        let expanded = CommandPaletteGeometry.frame(
+            visibleFrame: visibleFrame,
+            preferredSize: CommandPaletteController.expandedPanelSize,
+            basePaletteSize: CommandPaletteController.panelSize,
+            position: .bottom
+        )
+
+        XCTAssertEqual(expanded.maxX, visibleFrame.maxX, accuracy: 0.001)
+        XCTAssertEqual(expanded.origin.x, base.origin.x - 60, accuracy: 0.001)
+        XCTAssertTrue(visibleFrame.contains(expanded))
+    }
+
     func testPaletteCombinesContextualCommandsAndRegisteredShortcuts() {
         let entries = CommandPaletteIndex.entries(
             context: context(),
@@ -76,6 +182,29 @@ final class CommandPaletteTests: XCTestCase {
         )
         XCTAssertEqual(requested?.0, true)
         XCTAssertEqual(requested?.1, "pause-test")
+    }
+
+    func testDispatcherPreservesCommandSourceForQuickAppRecoveryBoundary() {
+        var received: [(WindowManagerCommand, WindowManagerCommandSource)] = []
+        let dispatcher = WindowManagerCommandDispatcher(
+            sourceAwareExecutor: { command, _, source in
+                received.append((command, source))
+            }
+        )
+
+        dispatcher.dispatch(
+            .toggleDropDownApp,
+            source: .commandPalette,
+            correlationID: "palette-quick-app"
+        )
+        dispatcher.dispatch(
+            .toggleDropDownApp,
+            source: .hotkey,
+            correlationID: "hotkey-quick-app"
+        )
+
+        XCTAssertEqual(received.map(\.0), [.toggleDropDownApp, .toggleDropDownApp])
+        XCTAssertEqual(received.map(\.1), [.commandPalette, .hotkey])
     }
 
     func testPaletteDoesNotInventAChordForAnUnassignedCommand() {
@@ -333,7 +462,14 @@ final class CommandPaletteTests: XCTestCase {
         )
     }
 
-    func testPlacementDefersFocusRestorationUntilAfterDispatch() {
+    func testCommandsValidateBeforeDismissalAndOnlyPlacementDefersFocusRestoration() {
+        XCTAssertTrue(CommandPaletteSelectionRevalidation.validatesBeforeDismissal(
+            .command(.setLayout(.none))
+        ))
+        XCTAssertTrue(CommandPaletteSelectionRevalidation.validatesBeforeDismissal(
+            .command(.placeFreeformWindow(.left, validationToken: "token"))
+        ))
+        XCTAssertFalse(CommandPaletteSelectionRevalidation.validatesBeforeDismissal(.settings))
         XCTAssertTrue(CommandPaletteSelectionRevalidation.defersFocusRestoration(
             for: .command(.placeFreeformWindow(.left, validationToken: "token"))
         ))
@@ -344,6 +480,47 @@ final class CommandPaletteTests: XCTestCase {
             for: .command(.setLayout(.none))
         ))
         XCTAssertFalse(CommandPaletteSelectionRevalidation.defersFocusRestoration(for: .settings))
+    }
+
+    func testAsyncValidationCannotCompleteAgainstAReplacementPalette() {
+        XCTAssertTrue(CommandPaletteSelectionRevalidation.isValidationRequestCurrent(
+            presentationGeneration: 7,
+            requestGeneration: 7,
+            isPresented: true
+        ))
+        XCTAssertFalse(CommandPaletteSelectionRevalidation.isValidationRequestCurrent(
+            presentationGeneration: 7,
+            requestGeneration: 8,
+            isPresented: true
+        ))
+        XCTAssertFalse(CommandPaletteSelectionRevalidation.isValidationRequestCurrent(
+            presentationGeneration: 7,
+            requestGeneration: 7,
+            isPresented: false
+        ))
+    }
+
+    func testOrdinaryCommandRevalidationAcceptsOnlyTheCapturedContext() {
+        let original = context(validationToken: "captured")
+        let requested = CommandPaletteDestination.command(.switchWorkspace(writingID))
+
+        XCTAssertEqual(
+            CommandPaletteSelectionRevalidation.destination(
+                requested,
+                original: original,
+                current: original,
+                hotKeyConfiguration: HotKeyConfiguration(),
+                allowsInlineLayoutRefresh: false
+            ),
+            requested
+        )
+        XCTAssertNil(CommandPaletteSelectionRevalidation.destination(
+            requested,
+            original: original,
+            current: context(validationToken: "changed", windowIdentifier: 999),
+            hotKeyConfiguration: HotKeyConfiguration(),
+            allowsInlineLayoutRefresh: false
+        ))
     }
 
     func testInlineLayoutRefreshRejectsAChangedWindowOrLayout() {
@@ -478,6 +655,22 @@ final class CommandPaletteTests: XCTestCase {
         value.applicationRuleBundleIdentifiers = ["com.example.editor"]
         var entries = CommandPaletteIndex.entries(context: value, query: "", hotKeyConfiguration: .init())
         XCTAssertFalse(entries.contains { $0.destination == .command(applicationCommand) })
+        let removalCommand = WindowManagerCommand.removeCurrentApplication(
+            "com.example.Editor", profileID: profileID, expectedMembership: .appRule
+        )
+        XCTAssertEqual(entries.first { $0.destination == .command(removalCommand) }?.title,
+                       "Remove Editor from Applications")
+        XCTAssertEqual(entries.first { $0.destination == .command(removalCommand) }?.detail,
+                       "Already in Applications · Remove application rule")
+        XCTAssertTrue(CommandPaletteIndex.entries(
+            context: value, query: "remove current application", hotKeyConfiguration: .init()
+        ).contains { $0.destination == .command(removalCommand) })
+        XCTAssertTrue(CommandPaletteIndex.entries(
+            context: value, query: "add editor", hotKeyConfiguration: .init()
+        ).contains { $0.destination == .command(removalCommand) })
+        XCTAssertTrue(CommandPaletteIndex.entries(
+            context: value, query: "add", hotKeyConfiguration: .init()
+        ).contains { $0.destination == .command(removalCommand) })
         let ruleToShelfCommand = WindowManagerCommand.addCurrentApplicationToQuickAppShelf(
             "com.example.Editor", displayName: "Editor", profileID: profileID,
             expectedMembership: .appRule
@@ -494,6 +687,7 @@ final class CommandPaletteTests: XCTestCase {
         )
         XCTAssertEqual(entries.first { $0.destination == .command(shelfToRuleCommand) }?.title,
                        "Move Editor to Applications")
+        XCTAssertFalse(entries.contains { $0.destination == .command(removalCommand) })
         XCTAssertFalse(entries.contains { $0.destination == .command(shelfCommand) })
 
         value.quickApps = (1...QuickAppShelfPolicy.maximumCount).map {
@@ -519,10 +713,12 @@ final class CommandPaletteTests: XCTestCase {
 
     func testDispatcherRoutesCurrentApplicationConfigurationCommands() {
         var applicationRequest: (String, String, UUID, UUID, String)?
+        var removalRequest: (String, UUID, CurrentApplicationConfigurationMembership, String)?
         var shelfRequest: (String, String, UUID, String)?
         let dispatcher = WindowManagerCommandDispatcher(
             engine: WorkspaceEngine(workspaces: WorkspaceDefinition.defaults),
             addCurrentApplication: { applicationRequest = ($0, $1, $2, $3, $5) },
+            removeCurrentApplication: { removalRequest = ($0, $1, $2, $3) },
             addCurrentApplicationToQuickAppShelf: { shelfRequest = ($0, $1, $2, $4) }
         )
         dispatcher.dispatch(.addCurrentApplication(
@@ -532,6 +728,9 @@ final class CommandPaletteTests: XCTestCase {
         dispatcher.dispatch(.addCurrentApplicationToQuickAppShelf(
             "com.example.Editor", displayName: "Editor", profileID: profileID, expectedMembership: .none
         ), source: .commandPalette, correlationID: "shelf-test")
+        dispatcher.dispatch(.removeCurrentApplication(
+            "com.example.Editor", profileID: profileID, expectedMembership: .appRule
+        ), source: .commandPalette, correlationID: "removal-test")
         XCTAssertEqual(applicationRequest?.0, "com.example.Editor")
         XCTAssertEqual(applicationRequest?.2, focusID)
         XCTAssertEqual(applicationRequest?.3, profileID)
@@ -539,6 +738,10 @@ final class CommandPaletteTests: XCTestCase {
         XCTAssertEqual(shelfRequest?.0, "com.example.Editor")
         XCTAssertEqual(shelfRequest?.2, profileID)
         XCTAssertEqual(shelfRequest?.3, "shelf-test")
+        XCTAssertEqual(removalRequest?.0, "com.example.Editor")
+        XCTAssertEqual(removalRequest?.1, profileID)
+        XCTAssertEqual(removalRequest?.2, .appRule)
+        XCTAssertEqual(removalRequest?.3, "removal-test")
     }
 
     private func context(

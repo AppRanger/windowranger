@@ -20,9 +20,9 @@ surfaces, and keyboard-first features remain discoverable and mouse-friendly.
 | --- | --- | --- |
 | Searchable command surface and live shortcut guide | Shared command dispatch, contextual catalogue, configurable shortcuts, menus, Placement Halo/Wheel, and command feedback | [`WR-060`](../TODO.md#wr-060--searchable-command-surface) — Done |
 | Quick App Shelf | Up to four ordered profile-aware Quick Apps with coordinated Accordion/Carousel exact-window presentation and recovery | [`WR-061`](../TODO.md#wr-061--quick-app-shelf) and [`WR-064`](../TODO.md#wr-064--multi-window-quick-app-shelf-presentation) — Live validation |
-| Workspace personalities | Persistent Freeform, Tiled, and Accordion behavior per workspace | [`WR-010`](../TODO.md#wr-010--reusable-layout-presets) — resolve as an extension of layouts/presets, not a parallel model |
-| Window groups | Workspace membership and app summaries, but no explicit activity group | [`WR-008`](../TODO.md#wr-008--named-whole-desk-arrangements) — begin as temporary groups within arrangement research |
-| Restore preview and history | Preview/Undo for selected layout commands, but no whole-desk restore transaction | [`WR-008`](../TODO.md#wr-008--named-whole-desk-arrangements) — required safety boundary for arrangements |
+| Workspace personalities | Profiles plus persistent Freeform, Tiled, and Accordion behavior per workspace | [`WR-010`](../TODO.md#wr-010--tiled-layout-templates-and-builder) — topology templates extend Tiled only; broader modes remain Profiles |
+| Window groups | Workspace membership and app summaries, but no explicit activity group | [`WR-008`](../TODO.md#wr-008--named-whole-desk-arrangements) — named arrangements resolved against; any future group must be distinctly session-only |
+| Restore configured apps | Profile rules and explicit activation, but activation currently waits for apps/windows to appear | [`WR-088`](../TODO.md#wr-088--optionally-restore-and-launch-configured-apps-when-applying-a-profile) — refine two optional activation behaviors |
 | Contextual status HUD | Shared nonactivating command-feedback overlay | Implemented by `WR-035`; extend only when a new state needs explanation |
 | Scrolling layout | No current equivalent | Deferred experiment; no queue item |
 | Follow-me window | Quick App display placement, but no cross-Space sticky promise | Deferred experiment; no queue item |
@@ -82,25 +82,25 @@ Possible interaction:
 A workspace already remembers behavior through Freeform, Tiled, and Accordion. Any personality
 work should extend that established model rather than introduce a competing workspace mode.
 
-Candidate behaviors to evaluate through `WR-010` include:
+Profiles already express broader Writing, Coding, or Presentation environments. `WR-010` should stay
+inside Tiled geometry: candidate built-ins include 2x2, equal columns, and one large left slot with
+two stacked right slots. Templates contain normalized slots and ratios, not application identity;
+current eligible windows fill them in deterministic layout order. Built-ins and the custom builder
+write topology into the workspace rather than creating another named library. Freeform remains the
+native recorded-position behavior.
 
-- **Focus:** emphasize one primary window while keeping supporting windows reachable;
-- **Presentation:** place selected windows on the presentation display and private tools elsewhere;
-- **Transient:** deliberately omit selected runtime restoration across logout or wake.
+## 4. Profile restoration and session-only groups
 
-Grid and Columns should first be evaluated as named Tiled presets. Freeform remains the native
-recorded-position behavior.
+Named arrangements were resolved against because Profiles already own reusable workspaces,
+Application Rules, layouts, and activation. `WR-088` instead considers two independent, default-off
+profile options: reconcile already-running configured apps when a profile is explicitly applied, and
+launch configured apps that are missing. Automatic profile triggers should not launch apps in the
+first increment.
 
-## 4. Groups, arrangements, and reversible restore
-
-A temporary group represents the windows involved in one current activity, such as Xcode,
-Simulator, and documentation. A named arrangement is the later reusable recipe. Treating those as
-stages of `WR-008` avoids creating two overlapping identity and persistence systems.
-
-Potential group actions include focus next, move to another display/workspace, hide/show, and apply
-a layout. Before applying a reusable arrangement, WindowRanger should preview matched and unmatched
-windows, display changes, application launches, and the resulting layout. Applying it should create
-one bounded Undo record when the prior state is still valid in the same WindowServer session.
+A future temporary group could still represent windows involved in one current activity, such as
+Xcode, Simulator, and documentation, but it must prove a distinct session-only interaction rather
+than becoming another reusable Profile. Profile restoration should use existing App Rules and normal
+window admission, preserve inactive-workspace parking, and never focus every app while reconciling.
 
 ## 5. Deferred experiments
 
@@ -116,8 +116,8 @@ These remain research notes until a concrete product decision promotes one into 
 
 1. Live-validate the corrected `WR-061` and multi-window `WR-064` Quick App Shelf across real
    profiles and lifecycle paths.
-2. Decide the layout/personality boundary in `WR-010`.
-3. Decide temporary groups, named arrangements, restore preview, and Undo together in `WR-008`.
+2. Decide the manual profile restoration/launch boundary in `WR-088`.
+3. Decide Tiled template ownership, exact-count behavior, and builder scope in `WR-010`.
 4. Revisit deferred experiments only after those foundations are settled.
 
 ## Original research sources
