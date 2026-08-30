@@ -42,12 +42,22 @@ test_settings=$(/usr/bin/xcodebuild \
     -target WindowRangerTests \
     -configuration Debug \
     -showBuildSettings)
+cli_settings=$(/usr/bin/xcodebuild \
+    -project "$project_file" \
+    -target WindowRangerCLI \
+    -configuration Release \
+    -showBuildSettings)
 test_host=$(print -r -- "$test_settings" | /usr/bin/awk -F ' = ' '/^[[:space:]]*TEST_HOST =/ && length($2) > 0 { print $2; exit }')
 bundle_loader=$(print -r -- "$test_settings" | /usr/bin/awk -F ' = ' '/^[[:space:]]*BUNDLE_LOADER =/ && length($2) > 0 { print $2; exit }')
+cli_skip_install=$(print -r -- "$cli_settings" | /usr/bin/awk -F ' = ' '/^[[:space:]]*SKIP_INSTALL =/ { print $2; exit }')
 
 # Xcode may omit an explicitly empty setting from -showBuildSettings. Either omission or an
 # empty value is valid; only a resolved host/loader would turn these into hosted tests.
 [[ -z "$test_host" ]] || { print -u2 "TEST_HOST must be absent or empty"; exit 1; }
 [[ -z "$bundle_loader" ]] || { print -u2 "BUNDLE_LOADER must be absent or empty"; exit 1; }
+[[ "$cli_skip_install" == "YES" ]] || {
+    print -u2 "WindowRangerCLI must be embedded-only (SKIP_INSTALL = YES)"
+    exit 1
+}
 
-print "Test isolation verified: non-hosted tests do not build or macro-expand WindowRanger.app."
+print "Test and archive isolation verified: tests are non-hosted and the CLI is embedded-only."

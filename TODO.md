@@ -3970,9 +3970,13 @@ second copy of that checklist.
   AppRanger tap is the immediate route once separately approved.
 - **1.0.0 candidate preparation:** The first Stable release notes are drafted at
   `docs/releases/v1.0.0.md`. The CLI and release-tooling changes were integrated into `develop` by
-  PR #77, and build 12 is now allocated as the first Stable candidate. No Stable branch promotion,
-  signed artifact, notarization, tag, draft release, appcast change, or Homebrew publication has
-  occurred.
+  PR #77, build 12 is allocated as the first Stable candidate, and exact release source was promoted
+  to `main` through PR #79 after its protected release checks passed. The first credentialed build
+  passed all 857 non-hosted tests, static analysis, and archive creation, but Developer ID export
+  exposed that the new CLI target was also being installed as a standalone archive product. That
+  made Xcode classify the result as a generic multi-product archive. The CLI is being corrected to
+  remain embedded-only, with a deterministic `SKIP_INSTALL` release guard. No signed artifact,
+  notarization, tag, draft release, appcast change, or Homebrew publication has occurred.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
