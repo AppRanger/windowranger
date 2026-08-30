@@ -7,7 +7,45 @@ enum WakeReconciliationSource: String, CaseIterable, Equatable, Sendable {
     case systemWake = "system-wake"
     case screensWake = "screens-wake"
     case sessionBecameActive = "session-became-active"
+    case screenUnlocked = "screen-unlocked"
     case displayConfigurationChanged = "display-configuration-changed"
+}
+
+enum ScreenSessionSuspensionSource: String, Equatable, Sendable {
+    case screensSleep = "screens-did-sleep"
+    case sessionResignedActive = "session-resigned-active"
+    case screenLocked = "screen-locked"
+}
+
+enum ScreenLockLifecycleNotifications {
+    static let locked = Notification.Name("com.apple.screenIsLocked")
+    static let unlocked = Notification.Name("com.apple.screenIsUnlocked")
+}
+
+struct ScreenSessionLifecycleState: Equatable, Sendable {
+    private(set) var suspensionSources = Set<ScreenSessionSuspensionSource>()
+
+    var isSuspended: Bool { !suspensionSources.isEmpty }
+
+    mutating func suspend(_ source: ScreenSessionSuspensionSource) {
+        suspensionSources.insert(source)
+    }
+
+    /// Display wake can precede login-window dismissal. Resume only after every independently
+    /// observed suspension source has received its matching wake/activation signal.
+    mutating func receive(_ source: WakeReconciliationSource) -> Bool {
+        switch source {
+        case .systemWake, .screensWake:
+            suspensionSources.remove(.screensSleep)
+        case .sessionBecameActive:
+            suspensionSources.remove(.sessionResignedActive)
+        case .screenUnlocked:
+            suspensionSources.remove(.screenLocked)
+        case .displayConfigurationChanged:
+            break
+        }
+        return !isSuspended
+    }
 }
 
 struct WakeReconciliationRequest: Equatable, Sendable {
@@ -119,6 +157,26 @@ enum WakeReconciliationPolicy {
         if !attempt.windowServerSessionAvailable { reasons.append("window-server-session-unavailable") }
         if attempt.receivedAdditionalLifecycleSignal { reasons.append("new-lifecycle-signal") }
         return .retry(afterMilliseconds: delay, reason: reasons.joined(separator: ","))
+    }
+}
+
+enum WakeLayoutVerificationPolicy {
+    static let verificationDelaysMilliseconds = [120, 300, 650]
+
+    static func mismatchedWindowKeys<Key: Hashable>(
+        expectedFrames: [Key: WindowFrame],
+        observedFrames: [Key: WindowFrame],
+        tolerance: CGFloat = 1
+    ) -> Set<Key> {
+        Set(expectedFrames.compactMap { key, expected in
+            guard let observed = observedFrames[key],
+                  abs(observed.position.x - expected.position.x) < tolerance,
+                  abs(observed.position.y - expected.position.y) < tolerance,
+                  abs(observed.size.width - expected.size.width) < tolerance,
+                  abs(observed.size.height - expected.size.height) < tolerance
+            else { return key }
+            return nil
+        })
     }
 }
 

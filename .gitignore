@@ -3,6 +3,7 @@
 .swiftpm/
 build/
 DerivedData/
+dist/
 *.xcodeproj/
 xcuserdata/
 *.xcuserstate
@@ -10,3 +11,5 @@ xcuserdata/
 *.app
 *.dSYM/
 *.log
+__pycache__/
+*.py[cod]

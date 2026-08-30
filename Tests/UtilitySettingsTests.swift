@@ -2,6 +2,19 @@ import XCTest
 
 @MainActor
 final class UtilitySettingsTests: XCTestCase {
+    private final class RecordingCloudStore: UbiquitousKeyValueStoring {
+        private var values: [String: Any] = [:]
+        var notificationObject: AnyObject { self }
+        var keys: Set<String> { Set(values.keys) }
+
+        func object(forKey aKey: String) -> Any? { values[aKey] }
+        func string(forKey aKey: String) -> String? { values[aKey] as? String }
+        func data(forKey aKey: String) -> Data? { values[aKey] as? Data }
+        func set(_ anObject: Any?, forKey aKey: String) { values[aKey] = anObject }
+        func removeObject(forKey aKey: String) { values.removeValue(forKey: aKey) }
+        func synchronize() -> Bool { true }
+    }
+
     private final class FakeLaunchAtLoginService: LaunchAtLoginServicing {
         var status: LaunchAtLoginStatus
         var enabledResultStatus: LaunchAtLoginStatus = .enabled
@@ -28,6 +41,116 @@ final class UtilitySettingsTests: XCTestCase {
         var errorDescription: String? { "Could not update login item" }
     }
 
+    func testApplicationPickerGroupsOpenAppsFirstAndFiltersBothGroups() {
+        let applications = [
+            InstalledApplication(
+                bundleIdentifier: "com.example.Zebra",
+                displayName: "Zebra",
+                bundleURL: nil,
+                isRunning: false
+            ),
+            InstalledApplication(
+                bundleIdentifier: "com.example.Mail",
+                displayName: "Mail",
+                bundleURL: nil,
+                isRunning: true
+            ),
+            InstalledApplication(
+                bundleIdentifier: "com.example.Editor",
+                displayName: "Editor",
+                bundleURL: nil,
+                isRunning: true
+            ),
+            InstalledApplication(
+                bundleIdentifier: "com.example.Archive",
+                displayName: "Archive",
+                bundleURL: nil,
+                isRunning: false
+            ),
+        ]
+
+        let groups = InstalledApplicationPickerPolicy.groups(
+            applications: applications,
+            search: ""
+        )
+        XCTAssertEqual(groups.openApplications.map(\.displayName), ["Editor", "Mail"])
+        XCTAssertEqual(groups.otherApplications.map(\.displayName), ["Archive", "Zebra"])
+
+        let filtered = InstalledApplicationPickerPolicy.groups(
+            applications: applications,
+            search: "example.mail"
+        )
+        XCTAssertEqual(filtered.openApplications.map(\.displayName), ["Mail"])
+        XCTAssertTrue(filtered.otherApplications.isEmpty)
+    }
+
+    func testAppRuleWorkspaceDefaultRequiresOneUnambiguousRunningAssignment() {
+        let workspaceA = UUID()
+        let workspaceB = UUID()
+
+        XCTAssertEqual(
+            AppRuleDefaultWorkspacePolicy.resolve(
+                applicationIsRunning: true,
+                liveWorkspaceIDs: [workspaceA, workspaceA]
+            ),
+            workspaceA
+        )
+        XCTAssertNil(AppRuleDefaultWorkspacePolicy.resolve(
+            applicationIsRunning: true,
+            liveWorkspaceIDs: []
+        ))
+        XCTAssertNil(AppRuleDefaultWorkspacePolicy.resolve(
+            applicationIsRunning: true,
+            liveWorkspaceIDs: [workspaceA, workspaceB]
+        ))
+        XCTAssertNil(AppRuleDefaultWorkspacePolicy.resolve(
+            applicationIsRunning: false,
+            liveWorkspaceIDs: [workspaceA]
+        ))
+    }
+
+    func testAddingRunningAppRuleUsesOnlyAValidSuggestedWorkspace() {
+        let suite = "UtilitySettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        let workspaceID = store.workspaces[0].id
+        let running = InstalledApplication(
+            bundleIdentifier: "com.example.Running",
+            displayName: "Running",
+            bundleURL: nil,
+            isRunning: true
+        )
+        let closed = InstalledApplication(
+            bundleIdentifier: "com.example.Closed",
+            displayName: "Closed",
+            bundleURL: nil,
+            isRunning: false
+        )
+        let invalid = InstalledApplication(
+            bundleIdentifier: "com.example.Invalid",
+            displayName: "Invalid",
+            bundleURL: nil,
+            isRunning: true
+        )
+
+        store.addAppRule(for: running, defaultWorkspaceID: workspaceID)
+        store.addAppRule(for: closed, defaultWorkspaceID: workspaceID)
+        store.addAppRule(for: invalid, defaultWorkspaceID: UUID())
+
+        XCTAssertEqual(
+            store.appRules.first(where: { $0.id == running.id })?.assignedWorkspaceID,
+            workspaceID
+        )
+        XCTAssertNil(store.appRules.first(where: { $0.id == closed.id })?.assignedWorkspaceID)
+        XCTAssertNil(store.appRules.first(where: { $0.id == invalid.id })?.assignedWorkspaceID)
+        defaults.removePersistentDomain(forName: suite)
+    }
+
     func testLaunchAtLoginControllerOnlyMutatesServiceAfterExplicitToggle() {
         let service = FakeLaunchAtLoginService(status: .notRegistered)
         let controller = LaunchAtLoginController(service: service)
@@ -41,6 +164,51 @@ final class UtilitySettingsTests: XCTestCase {
 
         controller.setEnabled(true)
         XCTAssertEqual(service.requestedValues, [true])
+    }
+
+    func testAccessibilityPermissionMonitorObservesAnExternalGrantAndRevocation() {
+        var isTrusted = false
+        var trustCheckCount = 0
+        let monitor = AccessibilityPermissionMonitor {
+            trustCheckCount += 1
+            return isTrusted
+        }
+
+        XCTAssertFalse(monitor.isGranted)
+        XCTAssertEqual(trustCheckCount, 1)
+
+        isTrusted = true
+        XCTAssertTrue(monitor.refresh())
+        XCTAssertTrue(monitor.isGranted)
+
+        isTrusted = false
+        XCTAssertFalse(monitor.refresh())
+        XCTAssertFalse(monitor.isGranted)
+        XCTAssertEqual(trustCheckCount, 3)
+        XCTAssertGreaterThan(
+            AccessibilityPermissionMonitor.missingPermissionRefreshIntervalNanoseconds,
+            0
+        )
+    }
+
+    func testAccessibilityPermissionMonitorPollsUntilExternalGrant() async {
+        var results = [false, false, true]
+        var sleepCount = 0
+        let monitor = AccessibilityPermissionMonitor {
+            results.isEmpty ? true : results.removeFirst()
+        }
+
+        await monitor.refreshUntilGranted { interval in
+            XCTAssertEqual(
+                interval,
+                AccessibilityPermissionMonitor.missingPermissionRefreshIntervalNanoseconds
+            )
+            sleepCount += 1
+        }
+
+        XCTAssertTrue(monitor.isGranted)
+        XCTAssertEqual(sleepCount, 1)
+        XCTAssertTrue(results.isEmpty)
     }
 
     func testLaunchAtLoginFailureRestoresObservedServiceState() {
@@ -110,6 +278,467 @@ final class UtilitySettingsTests: XCTestCase {
         defaults.removePersistentDomain(forName: suite)
     }
 
+    func testFocusedWindowHighlightIsOffByDefaultAndPersistsLocally() {
+        let suite = "UtilitySettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+        let cloud = RecordingCloudStore()
+
+        var store: SettingsStore? = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertFalse(store!.focusedWindowHighlightEnabled)
+        XCTAssertEqual(MenuBarHighlightColor.default.hex, "#FFFFFF")
+        XCTAssertEqual(MenuBarHighlightColor.focusBorderDefault.hex, "#3399FF")
+        XCTAssertEqual(store!.focusedWindowHighlightColor, .focusBorderDefault)
+        XCTAssertFalse(store!.focusedWindowHighlightTiledOnly)
+        XCTAssertFalse(store!.focusedWindowHighlightMultipleWindowsOnly)
+        XCTAssertTrue(store!.focusedWindowHighlightCornerRadiusOverrides.isEmpty)
+        store!.focusedWindowHighlightEnabled = true
+        let customColor = try! XCTUnwrap(MenuBarHighlightColor(hex: "#4080BF"))
+        store!.focusedWindowHighlightColor = customColor
+        store!.focusedWindowHighlightTiledOnly = true
+        store!.focusedWindowHighlightMultipleWindowsOnly = true
+        store!.setFocusedWindowHighlightCornerRadiusOverride(
+            18,
+            for: "com.example.Editor",
+            undoManager: nil
+        )
+        XCTAssertFalse(cloud.keys.contains("focusedWindowHighlightEnabled.v1"))
+        XCTAssertFalse(cloud.keys.contains("focusedWindowHighlightColor.v1"))
+        XCTAssertFalse(cloud.keys.contains("focusedWindowHighlightTiledOnly.v1"))
+        XCTAssertFalse(cloud.keys.contains("focusedWindowHighlightMultipleWindowsOnly.v1"))
+        XCTAssertFalse(cloud.keys.contains("focusedWindowHighlightCornerRadiusOverrides.v1"))
+        store = nil
+
+        let restored = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertTrue(restored.focusedWindowHighlightEnabled)
+        XCTAssertEqual(restored.focusedWindowHighlightColor, customColor)
+        XCTAssertTrue(restored.focusedWindowHighlightTiledOnly)
+        XCTAssertTrue(restored.focusedWindowHighlightMultipleWindowsOnly)
+        XCTAssertEqual(
+            restored.focusedWindowHighlightCornerRadiusOverride(for: "COM.EXAMPLE.EDITOR"),
+            18
+        )
+        restored.addAppRule(for: InstalledApplication(
+            bundleIdentifier: "com.example.Editor",
+            displayName: "Editor",
+            bundleURL: nil,
+            isRunning: false
+        ))
+        restored.removeAppRule(bundleIdentifier: "com.example.Editor")
+        XCTAssertEqual(
+            restored.focusedWindowHighlightCornerRadiusOverride(for: "com.example.Editor"),
+            18
+        )
+
+        restored.addAppRule(for: InstalledApplication(
+            bundleIdentifier: "com.example.Editor",
+            displayName: "Editor",
+            bundleURL: nil,
+            isRunning: false
+        ))
+        restored.convertAppRuleToQuickApp(bundleIdentifier: "com.example.Editor")
+        XCTAssertEqual(
+            restored.focusedWindowHighlightCornerRadiusOverride(for: "com.example.Editor"),
+            18
+        )
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    func testFocusedWindowHighlightColorPreservesValidWhiteAndRepairsMalformedValues() {
+        let suite = "UtilitySettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("#FFFFFF", forKey: "focusedWindowHighlightColor.v1")
+
+        var store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertEqual(store.focusedWindowHighlightColor, .default)
+
+        defaults.set("not-a-colour", forKey: "focusedWindowHighlightColor.v1")
+        store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertEqual(store.focusedWindowHighlightColor, .focusBorderDefault)
+    }
+
+    func testWorkspaceSwipeIsOffByDefaultAndPersistsOnlyOnThisMac() {
+        let suite = "UtilitySettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+        let cloud = RecordingCloudStore()
+
+        var store: SettingsStore? = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertFalse(store!.workspaceSwipeEnabled)
+        XCTAssertEqual(store!.workspaceSwipeFingerCount, .three)
+        store!.workspaceSwipeEnabled = true
+        store!.workspaceSwipeFingerCount = .four
+        XCTAssertFalse(cloud.keys.contains("workspaceSwipeEnabled.v1"))
+        XCTAssertFalse(cloud.keys.contains("workspaceSwipeFingerCount.v1"))
+        store = nil
+
+        let restored = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertTrue(restored.workspaceSwipeEnabled)
+        XCTAssertEqual(restored.workspaceSwipeFingerCount, .four)
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    func testWorkspacePreviewThumbnailsAreOffByDefaultAndPersistOnlyOnThisMac() {
+        let suite = "UtilitySettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+        let cloud = RecordingCloudStore()
+
+        var store: SettingsStore? = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertFalse(store!.workspacePreviewThumbnailsEnabled)
+        store!.workspacePreviewThumbnailsEnabled = true
+        XCTAssertTrue(defaults.bool(forKey: "workspacePreviewThumbnailsEnabled.v1"))
+        XCTAssertFalse(cloud.keys.contains("workspacePreviewThumbnailsEnabled.v1"))
+        store = nil
+
+        let restored = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] }
+        )
+        XCTAssertTrue(restored.workspacePreviewThumbnailsEnabled)
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    func testFocusedWindowHighlightResolvesOSDefaultAndPerAppCornerRadius() {
+        let version14 = OperatingSystemVersion(majorVersion: 14, minorVersion: 7, patchVersion: 0)
+        let version15 = OperatingSystemVersion(majorVersion: 15, minorVersion: 6, patchVersion: 0)
+        let version26 = OperatingSystemVersion(majorVersion: 26, minorVersion: 0, patchVersion: 0)
+        let version27 = OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 0)
+        let futureVersion = OperatingSystemVersion(
+            majorVersion: 99,
+            minorVersion: 0,
+            patchVersion: 0
+        )
+
+        for version in [version14, version15, version26] {
+            XCTAssertEqual(
+                FocusedWindowHighlightPolicy.automaticCornerRadius(for: version),
+                10
+            )
+        }
+        XCTAssertEqual(
+            FocusedWindowHighlightPolicy.automaticCornerRadius(for: version27),
+            16
+        )
+        XCTAssertEqual(
+            FocusedWindowHighlightPolicy.automaticCornerRadius(for: futureVersion),
+            16
+        )
+        XCTAssertEqual(
+            FocusedWindowHighlightPolicy.resolvedCornerRadius(
+                bundleIdentifier: "COM.EXAMPLE.EDITOR",
+                overrides: ["com.example.editor": 18],
+                operatingSystemVersion: version14
+            ),
+            18
+        )
+        XCTAssertEqual(FocusedWindowHighlightPolicy.normalizedCornerRadius(-5), 0)
+        XCTAssertEqual(FocusedWindowHighlightPolicy.normalizedCornerRadius(50), 40)
+        XCTAssertEqual(
+            FocusedWindowHighlightPolicy.normalizedCornerRadius(.infinity),
+            10
+        )
+    }
+
+    func testFocusedWindowHighlightReservesFourPointsForManagedLayouts() {
+        let bounds = CGRect(x: -1_920, y: 24, width: 1_920, height: 1_056)
+
+        XCTAssertEqual(
+            FocusedWindowHighlightPolicy.reservingScreenEdgeClearance(
+                in: bounds,
+                enabled: false
+            ),
+            bounds
+        )
+        XCTAssertEqual(
+            FocusedWindowHighlightPolicy.reservingScreenEdgeClearance(
+                in: bounds,
+                enabled: true
+            ),
+            CGRect(x: -1_916, y: 28, width: 1_912, height: 1_048)
+        )
+        XCTAssertEqual(
+            FocusedWindowHighlightPolicy.reservingScreenEdgeClearance(
+                in: CGRect(x: 0, y: 0, width: 6, height: 6),
+                enabled: true
+            ),
+            CGRect(x: 0, y: 0, width: 6, height: 6)
+        )
+    }
+
+    func testFocusedWindowHighlightPolicyRejectsIneligibleTargets() {
+        let eligible = FocusedWindowHighlightTarget(
+            key: WindowKey(processIdentifier: 123, windowIdentifier: 456),
+            frame: WindowFrame(
+                position: CGPoint(x: 100, y: 200),
+                size: CGSize(width: 800, height: 600)
+            ),
+            fullscreenObservation: .falseValue
+        )
+
+        XCTAssertTrue(FocusedWindowHighlightPolicy.shouldPresent(
+            target: eligible,
+            enabled: true,
+            suppressed: false,
+            ownProcessIdentifier: 999
+        ))
+        XCTAssertFalse(FocusedWindowHighlightPolicy.shouldPresent(
+            target: eligible,
+            enabled: false,
+            suppressed: false,
+            ownProcessIdentifier: 999
+        ))
+        XCTAssertFalse(FocusedWindowHighlightPolicy.shouldPresent(
+            target: eligible,
+            enabled: true,
+            suppressed: true,
+            ownProcessIdentifier: 999
+        ))
+        XCTAssertFalse(FocusedWindowHighlightPolicy.shouldPresent(
+            target: eligible,
+            enabled: true,
+            suppressed: false,
+            ownProcessIdentifier: 123
+        ))
+        XCTAssertFalse(FocusedWindowHighlightPolicy.shouldPresent(
+            target: eligible,
+            enabled: true,
+            suppressed: false,
+            ownProcessIdentifier: 999,
+            isDeclaredGame: true
+        ))
+
+        let fullscreen = FocusedWindowHighlightTarget(
+            key: eligible.key,
+            frame: eligible.frame,
+            fullscreenObservation: .trueValue
+        )
+        XCTAssertFalse(FocusedWindowHighlightPolicy.shouldPresent(
+            target: fullscreen,
+            enabled: true,
+            suppressed: false,
+            ownProcessIdentifier: 999
+        ))
+
+        let unknownFullscreenState = FocusedWindowHighlightTarget(
+            key: eligible.key,
+            frame: eligible.frame,
+            fullscreenObservation: .unavailable
+        )
+        XCTAssertFalse(FocusedWindowHighlightPolicy.shouldPresent(
+            target: unknownFullscreenState,
+            enabled: true,
+            suppressed: false,
+            ownProcessIdentifier: 999
+        ))
+    }
+
+    func testFocusedWindowHighlightPolicyAppliesWorkspaceFiltersIndependently() {
+        let target = FocusedWindowHighlightTarget(
+            key: WindowKey(processIdentifier: 123, windowIdentifier: 456),
+            frame: WindowFrame(
+                position: CGPoint(x: 100, y: 200),
+                size: CGSize(width: 800, height: 600)
+            ),
+            fullscreenObservation: .falseValue
+        )
+        let tiledSingle = FocusedWindowHighlightWorkspaceContext(
+            layout: .tiled,
+            windowCount: 1
+        )
+        let freeformMultiple = FocusedWindowHighlightWorkspaceContext(
+            layout: .none,
+            windowCount: 2
+        )
+        let tiledMultiple = FocusedWindowHighlightWorkspaceContext(
+            layout: .tiled,
+            windowCount: 2
+        )
+
+        XCTAssertTrue(FocusedWindowHighlightPolicy.shouldPresent(
+            target: target,
+            enabled: true,
+            suppressed: false,
+            ownProcessIdentifier: 999,
+            filters: FocusedWindowHighlightFilters(
+                tiledWorkspacesOnly: true,
+                multipleWindowsOnly: false
+            ),
+            workspaceContext: tiledSingle
+        ))
+        XCTAssertFalse(FocusedWindowHighlightPolicy.shouldPresent(
+            target: target,
+            enabled: true,
+            suppressed: false,
+            ownProcessIdentifier: 999,
+            filters: FocusedWindowHighlightFilters(
+                tiledWorkspacesOnly: false,
+                multipleWindowsOnly: true
+            ),
+            workspaceContext: tiledSingle
+        ))
+        XCTAssertTrue(FocusedWindowHighlightPolicy.shouldPresent(
+            target: target,
+            enabled: true,
+            suppressed: false,
+            ownProcessIdentifier: 999,
+            filters: FocusedWindowHighlightFilters(
+                tiledWorkspacesOnly: false,
+                multipleWindowsOnly: true
+            ),
+            workspaceContext: freeformMultiple
+        ))
+        XCTAssertFalse(FocusedWindowHighlightPolicy.shouldPresent(
+            target: target,
+            enabled: true,
+            suppressed: false,
+            ownProcessIdentifier: 999,
+            filters: FocusedWindowHighlightFilters(
+                tiledWorkspacesOnly: true,
+                multipleWindowsOnly: true
+            ),
+            workspaceContext: freeformMultiple
+        ))
+        XCTAssertTrue(FocusedWindowHighlightPolicy.shouldPresent(
+            target: target,
+            enabled: true,
+            suppressed: false,
+            ownProcessIdentifier: 999,
+            filters: FocusedWindowHighlightFilters(
+                tiledWorkspacesOnly: true,
+                multipleWindowsOnly: true
+            ),
+            workspaceContext: tiledMultiple
+        ))
+        XCTAssertFalse(FocusedWindowHighlightPolicy.shouldPresent(
+            target: target,
+            enabled: true,
+            suppressed: false,
+            ownProcessIdentifier: 999,
+            filters: FocusedWindowHighlightFilters(
+                tiledWorkspacesOnly: true,
+                multipleWindowsOnly: false
+            ),
+            workspaceContext: nil
+        ))
+    }
+
+    func testFocusedWindowHighlightConvertsAccessibilityFrameAndOutsetsBorder() {
+        let frame = FocusedWindowHighlightPolicy.appKitFrame(
+            for: WindowFrame(
+                position: CGPoint(x: 100, y: 200),
+                size: CGSize(width: 800, height: 600)
+            ),
+            mainScreenTop: 1_080
+        )
+
+        XCTAssertEqual(frame, CGRect(x: 98, y: 278, width: 804, height: 604))
+    }
+
+    func testFocusedWindowHighlightPrefersExactVerifiedTargetUntilAccessibilityCatchesUp() {
+        let accessibilityTarget = FocusedWindowHighlightTarget(
+            key: WindowKey(processIdentifier: 11, windowIdentifier: 1),
+            frame: WindowFrame(position: .zero, size: CGSize(width: 800, height: 600)),
+            fullscreenObservation: .falseValue
+        )
+        let verifiedTarget = FocusedWindowHighlightTarget(
+            key: WindowKey(processIdentifier: 22, windowIdentifier: 2),
+            frame: WindowFrame(position: CGPoint(x: 10, y: 10), size: CGSize(width: 900, height: 700)),
+            fullscreenObservation: .falseValue,
+            observationSource: .verifiedFocusTransaction
+        )
+
+        XCTAssertEqual(FocusedWindowHighlightPolicy.preferredTarget(
+            accessibilityTarget: accessibilityTarget,
+            verifiedTarget: verifiedTarget,
+            verifiedApplicationIsActive: true,
+            verifiedWindowServerMatches: true
+        ), verifiedTarget)
+        XCTAssertEqual(FocusedWindowHighlightPolicy.preferredTarget(
+            accessibilityTarget: nil,
+            verifiedTarget: verifiedTarget,
+            verifiedApplicationIsActive: true,
+            verifiedWindowServerMatches: true
+        ), verifiedTarget)
+        XCTAssertEqual(FocusedWindowHighlightPolicy.preferredTarget(
+            accessibilityTarget: accessibilityTarget,
+            verifiedTarget: verifiedTarget,
+            verifiedApplicationIsActive: false,
+            verifiedWindowServerMatches: true
+        ), accessibilityTarget)
+        XCTAssertEqual(FocusedWindowHighlightPolicy.preferredTarget(
+            accessibilityTarget: accessibilityTarget,
+            verifiedTarget: verifiedTarget,
+            verifiedApplicationIsActive: true,
+            verifiedWindowServerMatches: false
+        ), accessibilityTarget)
+        XCTAssertEqual(FocusedWindowHighlightPolicy.preferredTarget(
+            accessibilityTarget: verifiedTarget,
+            verifiedTarget: verifiedTarget,
+            verifiedApplicationIsActive: true,
+            verifiedWindowServerMatches: true
+        ), verifiedTarget)
+    }
+
+    func testFocusedWindowHighlightVerifiedTargetLeaseIsStrictlyBounded() {
+        let expiry = Date(timeIntervalSinceReferenceDate: 103)
+
+        XCTAssertTrue(FocusedWindowHighlightPolicy.verifiedTargetLeaseIsCurrent(
+            expiresAt: expiry,
+            now: Date(timeIntervalSinceReferenceDate: 102.999)
+        ))
+        XCTAssertFalse(FocusedWindowHighlightPolicy.verifiedTargetLeaseIsCurrent(
+            expiresAt: expiry,
+            now: expiry
+        ))
+        XCTAssertEqual(FocusedWindowHighlightPolicy.verifiedTargetLeaseDuration, 3)
+    }
+
+    func testFocusedWindowHighlightPanelCannotActivateOrInterceptInput() {
+        XCTAssertEqual(
+            FocusedWindowHighlightPanelPolicy.nonActivating,
+            FocusedWindowHighlightPanelPolicy(
+                canBecomeKey: false,
+                canBecomeMain: false,
+                ignoresMouseEvents: true,
+                participatesInWindowCycle: false
+            )
+        )
+    }
+
     func testAutomaticUnhidePolicyIsOptInAndThrottlesRepeatedAttempts() {
         let now = Date(timeIntervalSince1970: 1_000)
 
@@ -157,6 +786,22 @@ final class UtilitySettingsTests: XCTestCase {
         XCTAssertEqual(
             SettingsCatalog.search("secondary dialog", includeDebug: false).first?.id,
             "app-float-secondary"
+        )
+        XCTAssertEqual(
+            SettingsCatalog.search("focus ring border", includeDebug: false).first?.id,
+            "focused-window-highlight"
+        )
+        XCTAssertEqual(
+            SettingsCatalog.search("corner radius", includeDebug: false).first?.id,
+            "focused-window-highlight"
+        )
+        XCTAssertEqual(
+            SettingsCatalog.search("four finger trackpad", includeDebug: false).first?.id,
+            "workspace-swipe"
+        )
+        XCTAssertEqual(
+            SettingsCatalog.search("screen capture thumbnail", includeDebug: false).first?.id,
+            "workspace-window-previews"
         )
     }
 }

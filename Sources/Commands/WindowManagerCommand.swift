@@ -1,5 +1,11 @@
 import Foundation
 
+enum CurrentApplicationConfigurationMembership: Hashable, Sendable {
+    case none
+    case appRule
+    case quickAppShelf
+}
+
 enum WindowManagerCommand: Hashable, Sendable {
     case switchWorkspace(UUID)
     case moveFocusedWindow(UUID)
@@ -10,6 +16,27 @@ enum WindowManagerCommand: Hashable, Sendable {
     case setLayout(WorkspaceLayout)
     case selectLayoutFromShortcut(WorkspaceLayout)
     case toggleFloating
+    case toggleDropDownApp
+    case selectQuickApp(String)
+    case cycleQuickApp(Int)
+    case addCurrentApplication(
+        String,
+        displayName: String,
+        workspaceID: UUID,
+        profileID: UUID,
+        expectedMembership: CurrentApplicationConfigurationMembership
+    )
+    case removeCurrentApplication(
+        String,
+        profileID: UUID,
+        expectedMembership: CurrentApplicationConfigurationMembership
+    )
+    case addCurrentApplicationToQuickAppShelf(
+        String,
+        displayName: String,
+        profileID: UUID,
+        expectedMembership: CurrentApplicationConfigurationMembership
+    )
     case previousWorkspace
     case resetCurrentWorkspace
     case resetAllWindows
@@ -22,8 +49,10 @@ enum WindowManagerCommand: Hashable, Sendable {
     case moveCurrentWorkspaceToNextDisplay
     case moveCurrentWorkspaceToDisplay(String)
     case placeTiledWindow(VisualPlacement, validationToken: String)
+    case placeFreeformWindow(VisualPlacement, validationToken: String)
     case selectProfile(UUID)
     case resumeAutomaticProfileSelection
+    case setPauseMode(Bool)
 
     var diagnosticFields: [String: String] {
         switch self {
@@ -45,6 +74,23 @@ enum WindowManagerCommand: Hashable, Sendable {
             ["action": "select-layout-shortcut", "layout": layout.rawValue]
         case .toggleFloating:
             ["action": "toggle-floating"]
+        case .toggleDropDownApp:
+            ["action": "toggle-drop-down-app"]
+        case let .selectQuickApp(bundleIdentifier):
+            ["action": "select-quick-app", "bundle": bundleIdentifier]
+        case let .cycleQuickApp(offset):
+            ["action": "cycle-quick-app", "offset": String(offset)]
+        case let .addCurrentApplication(bundleIdentifier, _, workspaceID, profileID, expectedMembership):
+            ["action": "add-current-application", "bundle": bundleIdentifier,
+             "workspace": workspaceID.uuidString, "profile": profileID.uuidString,
+             "expected-membership": String(describing: expectedMembership)]
+        case let .removeCurrentApplication(bundleIdentifier, profileID, expectedMembership):
+            ["action": "remove-current-application", "bundle": bundleIdentifier,
+             "profile": profileID.uuidString,
+             "expected-membership": String(describing: expectedMembership)]
+        case let .addCurrentApplicationToQuickAppShelf(bundleIdentifier, _, profileID, expectedMembership):
+            ["action": "add-current-application-to-quick-app-shelf", "bundle": bundleIdentifier,
+             "profile": profileID.uuidString, "expected-membership": String(describing: expectedMembership)]
         case .previousWorkspace:
             ["action": "previous-workspace"]
         case .resetCurrentWorkspace:
@@ -85,17 +131,28 @@ enum WindowManagerCommand: Hashable, Sendable {
                 "placement": placement.rawValue,
                 "validation-token": String(validationToken.prefix(16)),
             ]
+        case let .placeFreeformWindow(placement, validationToken):
+            [
+                "action": "place-freeform-window",
+                "placement": placement.rawValue,
+                "validation-token": String(validationToken.prefix(16)),
+            ]
         case let .selectProfile(id):
             ["action": "select-profile", "profile": id.uuidString]
         case .resumeAutomaticProfileSelection:
             ["action": "resume-automatic-profile-selection"]
+        case let .setPauseMode(isPaused):
+            ["action": isPaused ? "pause-window-ranger" : "resume-window-ranger"]
         }
     }
 }
 
-enum WindowManagerCommandSource: String, Sendable {
+enum WindowManagerCommandSource: String, Equatable, Sendable {
     case hotkey
+    case cli
+    case commandPalette = "command-palette"
     case radialMenu = "radial-menu"
+    case workspaceSwipe = "workspace-swipe"
 }
 
 enum WindowManagerCommandDispatchResult: Equatable, Sendable {
@@ -107,8 +164,13 @@ enum WindowManagerCommandDispatchResult: Equatable, Sendable {
 /// operation switch here means a visual command cannot quietly diverge from its keyboard twin.
 final class WindowManagerCommandDispatcher {
     typealias Executor = (WindowManagerCommand, String) -> Void
+    typealias SourceAwareExecutor = (
+        WindowManagerCommand,
+        String,
+        WindowManagerCommandSource
+    ) -> Void
 
-    private let executor: Executor
+    private let executor: SourceAwareExecutor
     private let diagnostics: DiagnosticLogger
     private let lock = NSLock()
     private var activeCorrelations = Set<String>()
@@ -117,9 +179,20 @@ final class WindowManagerCommandDispatcher {
         engine: WorkspaceEngine,
         diagnostics: DiagnosticLogger = .disabled,
         selectProfile: @escaping (UUID, String) -> Void = { _, _ in },
-        resumeAutomaticProfileSelection: @escaping (String) -> Void = { _ in }
+        resumeAutomaticProfileSelection: @escaping (String) -> Void = { _ in },
+        addCurrentApplication: @escaping (String, String, UUID, UUID, CurrentApplicationConfigurationMembership, String) -> Void = {
+            _, _, _, _, _, _ in
+        },
+        removeCurrentApplication: @escaping (String, UUID, CurrentApplicationConfigurationMembership, String) -> Void = {
+            _, _, _, _ in
+        },
+        addCurrentApplicationToQuickAppShelf: @escaping (String, String, UUID, CurrentApplicationConfigurationMembership, String) -> Void = {
+            _, _, _, _, _ in
+        },
+        setPauseMode: @escaping (Bool, String, WindowManagerCommandSource) -> Void = { _, _, _ in }
     ) {
-        self.init(diagnostics: diagnostics) { [weak engine] command, correlationID in
+        self.init(diagnostics: diagnostics, sourceAwareExecutor: {
+            [weak engine] command, correlationID, source in
             switch command {
             case let .switchWorkspace(id):
                 engine?.switchToWorkspace(id, correlationID: correlationID)
@@ -140,6 +213,24 @@ final class WindowManagerCommandDispatcher {
                     correlationID: correlationID
                 )
             case .toggleFloating: engine?.toggleFocusedWindowFloating()
+            case .toggleDropDownApp:
+                engine?.toggleDropDownApp(source: source, correlationID: correlationID)
+            case let .selectQuickApp(bundleIdentifier):
+                engine?.selectQuickApp(bundleIdentifier: bundleIdentifier, correlationID: correlationID)
+            case let .cycleQuickApp(offset):
+                engine?.cycleQuickApp(offset: offset, correlationID: correlationID)
+            case let .addCurrentApplication(bundleIdentifier, displayName, workspaceID, profileID, expectedMembership):
+                addCurrentApplication(
+                    bundleIdentifier, displayName, workspaceID, profileID, expectedMembership, correlationID
+                )
+            case let .removeCurrentApplication(bundleIdentifier, profileID, expectedMembership):
+                removeCurrentApplication(
+                    bundleIdentifier, profileID, expectedMembership, correlationID
+                )
+            case let .addCurrentApplicationToQuickAppShelf(bundleIdentifier, displayName, profileID, expectedMembership):
+                addCurrentApplicationToQuickAppShelf(
+                    bundleIdentifier, displayName, profileID, expectedMembership, correlationID
+                )
             case .previousWorkspace:
                 engine?.switchToPreviousWorkspace(correlationID: correlationID)
             case .resetCurrentWorkspace: engine?.resetCurrentWorkspace(correlationID: correlationID)
@@ -181,17 +272,35 @@ final class WindowManagerCommandDispatcher {
                     validationToken: validationToken,
                     correlationID: correlationID
                 )
+            case let .placeFreeformWindow(placement, validationToken):
+                engine?.placeFocusedFreeformWindow(
+                    at: placement,
+                    validationToken: validationToken,
+                    correlationID: correlationID
+                )
             case let .selectProfile(id):
                 selectProfile(id, correlationID)
             case .resumeAutomaticProfileSelection:
                 resumeAutomaticProfileSelection(correlationID)
+            case let .setPauseMode(isPaused):
+                setPauseMode(isPaused, correlationID, source)
             }
-        }
+        })
     }
 
     init(diagnostics: DiagnosticLogger = .disabled, executor: @escaping Executor) {
         self.diagnostics = diagnostics
-        self.executor = executor
+        self.executor = { command, correlationID, _ in
+            executor(command, correlationID)
+        }
+    }
+
+    init(
+        diagnostics: DiagnosticLogger = .disabled,
+        sourceAwareExecutor: @escaping SourceAwareExecutor
+    ) {
+        self.diagnostics = diagnostics
+        self.executor = sourceAwareExecutor
     }
 
     @discardableResult
@@ -225,7 +334,7 @@ final class WindowManagerCommandDispatcher {
             correlation: correlationID,
             fields: command.diagnosticFields.merging(["source": source.rawValue]) { _, new in new }
         )
-        executor(command, correlationID)
+        executor(command, correlationID, source)
         return .dispatched
     }
 }

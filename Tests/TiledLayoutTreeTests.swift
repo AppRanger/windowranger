@@ -1105,6 +1105,32 @@ final class TiledLayoutTreeTests: XCTestCase {
         )).swapTarget)
     }
 
+    func testConcealedDragContinuesResolvingTargetsFromCommittedFrames() throws {
+        let tree = try XCTUnwrap(TiledLayoutEngine.flatTree(
+            windowKeys: [a, b, c],
+            orientation: .horizontal
+        ))
+        let expectedFrames = try TiledLayoutEngine.frames(
+            for: tree,
+            in: CGRect(x: 0, y: 0, width: 1_200, height: 800),
+            configuration: configuration()
+        )
+
+        XCTAssertEqual(
+            TiledLayoutEngine.swapTarget(
+                at: CGPoint(x: 600, y: 200),
+                focusedWindow: a,
+                expectedFrames: expectedFrames
+            ),
+            b
+        )
+        XCTAssertNil(TiledLayoutEngine.swapTarget(
+            at: CGPoint(x: 100, y: 200),
+            focusedWindow: a,
+            expectedFrames: expectedFrames
+        ))
+    }
+
     func testObservedDragRejectsResizeAndPositionJitter() throws {
         let tree = TiledNode.split(
             axis: .horizontal,

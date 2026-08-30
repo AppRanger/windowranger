@@ -193,10 +193,10 @@ final class DisplayWorkspaceTests: XCTestCase {
         ))
     }
 
-    func testMoveWorkspaceDisplayShortcutMatchesUserAeroSpaceConfig() {
+    func testMoveWorkspaceDisplayShortcutUsesApprovedArrangeDDefault() {
         XCTAssertEqual(
-            HotKeyManager.moveWorkspaceDisplayChord,
-            HotKeyChord(keyCode: 48, modifiers: UInt32(optionKey | shiftKey))
+            HotKeyConfiguration().chord(for: .moveWorkspaceToNextDisplay),
+            HotKeyChord(keyCode: 2, modifiers: UInt32(optionKey | cmdKey))
         )
     }
 
@@ -252,8 +252,8 @@ final class ProfileTests: XCTestCase {
             )
         )
         let second = WorkspaceDefinition(name: "Mail", key: "m", layout: .tiled)
-        let primary = ProfileDisplayRole(name: "Desk")
-        let portrait = ProfileDisplayRole(name: "Portrait")
+        let primary = ProfileDisplayRole(name: "Desk", menuBarIconStyle: .horizontalMonitor)
+        let portrait = ProfileDisplayRole(name: "Portrait", menuBarIconStyle: .verticalMonitor)
         let pausedRule = AppRule(
             bundleIdentifier: "com.example.Mail",
             displayName: "Mail",
@@ -275,6 +275,10 @@ final class ProfileTests: XCTestCase {
         XCTAssertTrue(Set(clone.workspaces.map(\.id)).isDisjoint(with: source.workspaces.map(\.id)))
         XCTAssertTrue(Set(clone.displayRoles.map(\.id)).isDisjoint(with: source.displayRoles.map(\.id)))
         XCTAssertEqual(clone.displayMode, .independent)
+        XCTAssertEqual(
+            clone.displayRoles.map(\.menuBarIconStyle),
+            [.horizontalMonitor, .verticalMonitor]
+        )
         XCTAssertEqual(clone.workspaces.map(\.layout), [.accordion, .tiled])
         XCTAssertEqual(clone.workspaces[0].layoutConfiguration, first.layoutConfiguration)
         XCTAssertEqual(clone.appRules[0].assignedWorkspaceID, clone.workspaces[1].id)
@@ -470,6 +474,73 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(ProfileDockState.resolve(isPortableMac: false, displays: displays), .notApplicable)
     }
 
+    func testGameModeProfileTakesPriorityOverDisplayRulesButNotManualPin() {
+        let first = profile(name: "First")
+        let game = profile(name: "Game")
+        let exact = profile(name: "Exact")
+        let displays = [profileDisplay("main", isMain: true, serial: "1")]
+        let exactTrigger = ExactProfileTrigger(
+            name: "Desk",
+            profileID: exact.id,
+            displayPins: [WorkspaceDisplayPin(
+                lastKnownIdentifier: displays[0].identifier,
+                fingerprint: displays[0].fingerprint
+            )]
+        )
+        var local = ProfileLocalState(
+            activeProfileID: first.id,
+            manualPinnedProfileID: first.id,
+            defaultProfileID: first.id,
+            gameModeProfileID: game.id,
+            exactTriggers: [exactTrigger]
+        )
+
+        XCTAssertEqual(
+            ProfileTriggerResolver.resolve(
+                profiles: [first, game, exact],
+                localState: local,
+                displays: displays,
+                isPortableMac: false,
+                isGameModeActive: true
+            ),
+            ProfileSelection(profileID: first.id, reason: .manualPin)
+        )
+
+        local.manualPinnedProfileID = nil
+        XCTAssertEqual(
+            ProfileTriggerResolver.resolve(
+                profiles: [first, game, exact],
+                localState: local,
+                displays: displays,
+                isPortableMac: false,
+                isGameModeActive: true
+            ),
+            ProfileSelection(profileID: game.id, reason: .gameMode)
+        )
+        XCTAssertEqual(
+            ProfileTriggerResolver.resolve(
+                profiles: [first, game, exact],
+                localState: local,
+                displays: displays,
+                isPortableMac: false,
+                isGameModeActive: false
+            ),
+            ProfileSelection(profileID: exact.id, reason: .exactTopology(exactTrigger.id))
+        )
+
+        local.gameModeProfileID = UUID()
+        XCTAssertEqual(
+            ProfileTriggerResolver.resolve(
+                profiles: [first, game, exact],
+                localState: local,
+                displays: displays,
+                isPortableMac: false,
+                isGameModeActive: true
+            ),
+            ProfileSelection(profileID: exact.id, reason: .exactTopology(exactTrigger.id))
+        )
+    }
+
     func testExactTopologyAndRoleBindingsNeverGuessAmbiguousIdenticalMonitors() {
         let workspace = WorkspaceDefinition(name: "Work", key: "w")
         let role = ProfileDisplayRole(name: "Desk")
@@ -564,6 +635,9 @@ final class ProfileTests: XCTestCase {
         )
         let automaticID = store.activeProfileID
         let manualID = try XCTUnwrap(store.duplicateProfile(automaticID))
+        XCTAssertEqual(store.activeProfileID, automaticID)
+        XCTAssertEqual(store.settingsProfileID, manualID)
+        store.activateSettingsProfile()
         store.setDockedProfile(automaticID)
 
         displays = [profileDisplay("external-new", isMain: true, serial: "2")]
@@ -577,6 +651,143 @@ final class ProfileTests: XCTestCase {
         XCTAssertNil(store.manualPinnedProfileID)
         XCTAssertEqual(store.activeProfileID, automaticID)
         XCTAssertEqual(store.activeProfileSelectionReason, .docked)
+    }
+
+    func testProfileSwitchingRulesCanActivateWithoutChangingSettingsEditTarget() throws {
+        let (defaults, suite) = isolatedDefaults("ProfileSwitchingPreservesEditTarget")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        var displays = [
+            profileDisplay("built-in", isMain: true, isBuiltIn: true, serial: "1"),
+        ]
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { displays },
+            isPortableMacProvider: { true }
+        )
+        let editingProfileID = store.activeProfileID
+        let automaticProfileID = try XCTUnwrap(
+            store.createProfile(named: "Automatic", source: .scratch)
+        )
+        store.selectProfileForEditing(editingProfileID)
+
+        store.setDefaultProfile(automaticProfileID)
+
+        XCTAssertEqual(store.activeProfileID, automaticProfileID)
+        XCTAssertEqual(store.settingsProfileID, editingProfileID)
+        XCTAssertEqual(store.activeProfileSelectionReason, .localDefault)
+
+        store.setUndockedProfile(editingProfileID)
+        XCTAssertEqual(store.activeProfileID, editingProfileID)
+        XCTAssertEqual(store.settingsProfileID, editingProfileID)
+        XCTAssertEqual(store.activeProfileSelectionReason, .undocked)
+
+        store.setDockedProfile(automaticProfileID)
+        XCTAssertEqual(store.settingsProfileID, editingProfileID)
+        displays.append(profileDisplay("external", serial: "2"))
+        store.refreshConnectedDisplays()
+        store.selectProfileForEditing(editingProfileID)
+        store.setDockedProfile(editingProfileID)
+        XCTAssertEqual(store.activeProfileID, editingProfileID)
+        XCTAssertEqual(store.settingsProfileID, editingProfileID)
+        XCTAssertEqual(store.activeProfileSelectionReason, .docked)
+
+        let exactTriggerID = try XCTUnwrap(
+            store.addExactTriggerForCurrentDisplays(profileID: automaticProfileID)
+        )
+        XCTAssertEqual(store.activeProfileID, automaticProfileID)
+        XCTAssertEqual(store.settingsProfileID, editingProfileID)
+        XCTAssertEqual(store.activeProfileSelectionReason, .exactTopology(exactTriggerID))
+
+        store.activateSettingsProfile()
+        XCTAssertEqual(store.activeProfileID, editingProfileID)
+        XCTAssertEqual(store.settingsProfileID, editingProfileID)
+        store.resumeAutomaticProfileSelection()
+        XCTAssertEqual(store.activeProfileID, automaticProfileID)
+        XCTAssertEqual(store.settingsProfileID, editingProfileID)
+        XCTAssertEqual(store.activeProfileSelectionReason, .exactTopology(exactTriggerID))
+    }
+
+    func testAssignCurrentDisplaySetupMovesExistingExclusiveMappingWithoutDuplicatingIt() throws {
+        let (defaults, suite) = isolatedDefaults("AssignCurrentDisplaySetup")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let displays = [
+            profileDisplay("main", isMain: true, isBuiltIn: true, serial: "1"),
+            profileDisplay("external", serial: "2"),
+        ]
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { displays },
+            isPortableMacProvider: { true }
+        )
+        let originalProfileID = store.activeProfileID
+        let selectedProfileID = try XCTUnwrap(
+            store.createProfile(named: "Docked", source: .scratch)
+        )
+
+        let triggerID = try XCTUnwrap(
+            store.assignCurrentDisplaySetup(to: originalProfileID)
+        )
+        XCTAssertEqual(store.exactProfileTriggers.count, 1)
+        XCTAssertEqual(store.exactProfileTriggers.first?.profileID, originalProfileID)
+        XCTAssertEqual(store.settingsProfileID, selectedProfileID)
+
+        XCTAssertEqual(
+            store.assignCurrentDisplaySetup(to: selectedProfileID),
+            triggerID
+        )
+        XCTAssertEqual(store.exactProfileTriggers.count, 1)
+        XCTAssertEqual(store.exactProfileTriggers.first?.id, triggerID)
+        XCTAssertEqual(store.exactProfileTriggers.first?.profileID, selectedProfileID)
+        XCTAssertEqual(store.activeProfileID, selectedProfileID)
+        XCTAssertEqual(store.settingsProfileID, selectedProfileID)
+        XCTAssertEqual(store.activeProfileSelectionReason, .exactTopology(triggerID))
+
+        XCTAssertEqual(
+            store.assignCurrentDisplaySetup(to: selectedProfileID),
+            triggerID
+        )
+        XCTAssertEqual(store.exactProfileTriggers.count, 1)
+    }
+
+    func testGameModeActivationRestoresAutomaticProfileAndPreservesSettingsTarget() throws {
+        let (defaults, suite) = isolatedDefaults("GameModeProfileSelection")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let displays = [profileDisplay("main", isMain: true, serial: "1")]
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { displays },
+            isPortableMacProvider: { false }
+        )
+        let editingProfileID = store.activeProfileID
+        let gameProfileID = try XCTUnwrap(
+            store.createProfile(named: "Game", source: .scratch)
+        )
+        store.selectProfileForEditing(editingProfileID)
+        store.setGameModeProfile(gameProfileID)
+
+        store.setGameModeActive(true)
+        XCTAssertTrue(store.isGameModeActive)
+        XCTAssertEqual(store.activeProfileID, gameProfileID)
+        XCTAssertEqual(store.activeProfileSelectionReason, .gameMode)
+        XCTAssertEqual(store.settingsProfileID, editingProfileID)
+
+        store.setGameModeActive(false)
+        XCTAssertFalse(store.isGameModeActive)
+        XCTAssertEqual(store.activeProfileID, editingProfileID)
+        XCTAssertEqual(store.activeProfileSelectionReason, .localDefault)
+        XCTAssertEqual(store.settingsProfileID, editingProfileID)
+
+        store.setGameModeActive(true)
+        XCTAssertTrue(store.deleteProfile(gameProfileID))
+        XCTAssertNil(store.gameModeProfileID)
+        XCTAssertEqual(store.activeProfileID, editingProfileID)
+        XCTAssertEqual(store.activeProfileSelectionReason, .localDefault)
     }
 
     func testFreshInstallStartsWithDefaultProfileAndFourNumberedWorkspaces() {
@@ -607,6 +818,7 @@ final class ProfileTests: XCTestCase {
             ubiquitousStore: nil,
             connectedDisplaysProvider: { displays }
         )
+        let activeProfileID = store.activeProfileID
         store.multiDisplayMode = .independent
         _ = store.addWorkspace()
 
@@ -621,8 +833,9 @@ final class ProfileTests: XCTestCase {
         XCTAssertTrue(profile.appRules.isEmpty)
         XCTAssertEqual(Set(profile.workspaceRoleAssignments.keys), Set(profile.workspaces.map(\.id)))
         XCTAssertEqual(store.roleBindings[profile.displayRoles[0].id]?.lastKnownIdentifier, "main")
-        XCTAssertEqual(store.activeProfileID, profileID)
-        XCTAssertEqual(store.manualPinnedProfileID, profileID)
+        XCTAssertEqual(store.settingsProfileID, profileID)
+        XCTAssertEqual(store.activeProfileID, activeProfileID)
+        XCTAssertNil(store.manualPinnedProfileID)
     }
 
     func testNewCopiedProfileUsesChosenNameAndCopiesCurrentConfiguration() throws {
@@ -637,6 +850,9 @@ final class ProfileTests: XCTestCase {
             }
         )
         _ = store.addWorkspace()
+        let sourceRoleID = try XCTUnwrap(store.activeProfile.displayRoles.first?.id)
+        store.setMenuBarDisplayIconStyle(.laptop, forRole: sourceRoleID)
+        store.setSettingsProfileIconStyle(.desktop)
         let source = store.activeProfile
 
         let copiedID = try XCTUnwrap(
@@ -649,6 +865,8 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(copied.workspaces.map(\.key), source.workspaces.map(\.key))
         XCTAssertTrue(Set(copied.workspaces.map(\.id)).isDisjoint(with: source.workspaces.map(\.id)))
         XCTAssertEqual(copied.displayMode, source.displayMode)
+        XCTAssertEqual(copied.displayRoles.map(\.menuBarIconStyle), [.laptop])
+        XCTAssertEqual(copied.iconStyle, .desktop)
     }
 
     func testNewProfileRejectsBlankNameWithoutChangingLibrary() {
@@ -681,6 +899,43 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(store.profiles.first(where: { $0.id == secondID })?.name, "Home 2")
     }
 
+    func testLegacyStoredProfileWithoutIconUsesDefault() throws {
+        let source = profile(name: "Legacy")
+        let encoded = try JSONEncoder().encode(source)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "iconStyle")
+
+        let decoded = try JSONDecoder().decode(
+            WindowManagerProfile.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+
+        XCTAssertEqual(decoded.iconStyle, .profile)
+    }
+
+    func testLegacyLocalProfileStateWithoutGameModeTargetDecodes() throws {
+        let configured = profile(name: "Legacy")
+        let local = ProfileLocalState(
+            activeProfileID: configured.id,
+            defaultProfileID: configured.id
+        )
+        let encoded = try JSONEncoder().encode(local)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "gameModeProfileID")
+
+        let decoded = try JSONDecoder().decode(
+            ProfileLocalState.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+
+        XCTAssertNil(decoded.gameModeProfileID)
+        XCTAssertEqual(decoded.version, ProfileLocalState.currentVersion)
+    }
+
     func testProfileCrudCleansLocalReferencesAndProtectsOnlyRemainingProfile() throws {
         let (defaults, suite) = isolatedDefaults("ProfileCrud")
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -696,6 +951,7 @@ final class ProfileTests: XCTestCase {
         let duplicateID = try XCTUnwrap(store.duplicateProfile(originalID))
         store.renameProfile(duplicateID, to: "Travel")
         store.setDefaultProfile(duplicateID)
+        store.setGameModeProfile(duplicateID)
         store.setDockedProfile(duplicateID)
         _ = store.addExactTriggerForCurrentDisplays(profileID: duplicateID)
 
@@ -703,6 +959,7 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(store.profiles.count, 1)
         XCTAssertEqual(store.activeProfileID, originalID)
         XCTAssertEqual(store.defaultProfileID, originalID)
+        XCTAssertNil(store.gameModeProfileID)
         XCTAssertNil(store.dockedProfileID)
         XCTAssertTrue(store.exactProfileTriggers.isEmpty)
         XCTAssertFalse(store.deleteProfile(originalID))
@@ -723,10 +980,8 @@ final class ProfileTests: XCTestCase {
         let workspaceID = store.workspaces[1].id
         store.menuBarPresentationMode = .medium
         store.focusFollowsMovedWindow = true
-        store.setShortcut(
-            HotKeyChord(keyCode: 0, modifiers: UInt32(cmdKey | optionKey)),
-            for: .nextWindow
-        )
+        XCTAssertNil(store.setShortcutFamilyModifiers(UInt32(controlKey | shiftKey), for: .navigate))
+        XCTAssertNil(store.setShortcutKey(6, for: .nextWindow))
         store.recordActiveWorkspaceState(WorkspaceEngineState(
             currentWorkspaceID: workspaceID,
             activeWorkspaceIDs: [workspaceID],
@@ -741,12 +996,14 @@ final class ProfileTests: XCTestCase {
         XCTAssertEqual(configuration.preferredActiveWorkspaceIDByDisplay["main"], workspaceID)
 
         let secondProfileID = try XCTUnwrap(store.duplicateProfile(firstProfileID))
+        XCTAssertEqual(store.activeProfileID, firstProfileID)
+        store.activateSettingsProfile()
         XCTAssertEqual(store.activeProfileID, secondProfileID)
         XCTAssertEqual(store.menuBarPresentationMode, .medium)
         XCTAssertTrue(store.focusFollowsMovedWindow)
         XCTAssertEqual(
             store.hotKeyConfiguration.chord(for: .nextWindow),
-            HotKeyChord(keyCode: 0, modifiers: UInt32(cmdKey | optionKey))
+            HotKeyChord(keyCode: 6, modifiers: UInt32(controlKey | shiftKey))
         )
 
         let localData = try XCTUnwrap(defaults.data(forKey: "profileLocalState.v1"))
@@ -756,6 +1013,84 @@ final class ProfileTests: XCTestCase {
         XCTAssertTrue(localText.contains("runtimeWorkspaceStates"))
         XCTAssertFalse(libraryText.contains("runtimeWorkspaceStates"))
         XCTAssertFalse(libraryText.contains("manualPinnedProfileID"))
+    }
+
+    @MainActor
+    func testInactiveProfileCanBeEditedWithoutChangingTheLiveDesktop() throws {
+        let (defaults, suite) = isolatedDefaults("InactiveProfileEditing")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: {
+                [self.profileDisplay("main", isMain: true, isBuiltIn: true, serial: "1")]
+            }
+        )
+        let activeProfileID = store.activeProfileID
+        let activeWorkspaces = store.workspaces
+        let activeDisplayMode = store.multiDisplayMode
+        let activeRules = store.appRules
+        let activeQuickApps = store.quickApps
+        let activeProfileIconStyle = store.activeProfile.iconStyle
+        let activationRequest = store.profileActivationRequest
+
+        let editedProfileID = try XCTUnwrap(store.duplicateProfile(activeProfileID))
+        XCTAssertEqual(store.settingsProfileID, editedProfileID)
+        XCTAssertEqual(store.activeProfileID, activeProfileID)
+        XCTAssertNil(store.manualPinnedProfileID)
+
+        let workspaceID = try XCTUnwrap(store.settingsWorkspaces.first?.id)
+        store.setSettingsWorkspaceName("Edited while inactive", for: workspaceID)
+        store.setSettingsMultiDisplayMode(
+            activeDisplayMode == .unified ? .independent : .unified
+        )
+        store.addSettingsAppRule(for: InstalledApplication(
+            bundleIdentifier: "dev.appranger.inactive-rule",
+            displayName: "Inactive Rule",
+            bundleURL: nil,
+            isRunning: false
+        ))
+        store.setSettingsQuickApp(InstalledApplication(
+            bundleIdentifier: "dev.appranger.inactive-shelf",
+            displayName: "Inactive Shelf",
+            bundleURL: nil,
+            isRunning: false
+        ))
+        let roleID = store.addSettingsDisplayRole(name: "Inactive Display")
+        store.setSettingsMenuBarDisplayIconStyle(.laptop, forRole: roleID)
+        store.setSettingsProfileIconStyle(.travel)
+
+        XCTAssertEqual(store.activeProfileID, activeProfileID)
+        XCTAssertNil(store.manualPinnedProfileID)
+        XCTAssertEqual(store.profileActivationRequest, activationRequest)
+        XCTAssertEqual(store.workspaces, activeWorkspaces)
+        XCTAssertEqual(store.multiDisplayMode, activeDisplayMode)
+        XCTAssertEqual(store.appRules, activeRules)
+        XCTAssertEqual(store.quickApps, activeQuickApps)
+        XCTAssertEqual(store.activeProfile.iconStyle, activeProfileIconStyle)
+        XCTAssertEqual(store.settingsProfile.iconStyle, .travel)
+        XCTAssertEqual(store.settingsWorkspaces.first?.name, "Edited while inactive")
+        XCTAssertTrue(store.settingsAppRules.contains {
+            $0.bundleIdentifier == "dev.appranger.inactive-rule"
+        })
+        XCTAssertTrue(store.settingsQuickApps.contains {
+            $0.bundleIdentifier == "dev.appranger.inactive-shelf"
+        })
+        XCTAssertEqual(store.settingsMenuBarDisplayIconStyle(forRole: roleID), .laptop)
+
+        store.activateSettingsProfile()
+
+        XCTAssertEqual(store.activeProfileID, editedProfileID)
+        XCTAssertEqual(store.manualPinnedProfileID, editedProfileID)
+        XCTAssertEqual(store.workspaces, store.settingsWorkspaces)
+        XCTAssertEqual(store.appRules, store.settingsAppRules)
+        XCTAssertEqual(store.quickApps, store.settingsQuickApps)
+        XCTAssertEqual(store.activeProfile.iconStyle, .travel)
+
+        store.setSettingsWorkspaceName("Edited while active", for: workspaceID)
+        XCTAssertEqual(store.workspaces.first(where: { $0.id == workspaceID })?.name, "Edited while active")
+        XCTAssertEqual(store.activeProfile.workspaces.first(where: { $0.id == workspaceID })?.name, "Edited while active")
     }
 
     func testRemoteProfileLibraryReplacementIsAtomicAndRejectsInvalidVersions() throws {
@@ -934,9 +1269,9 @@ final class ProfileTests: XCTestCase {
         XCTAssertTrue(gate.isCurrent(3))
     }
 
-    func testProfilesSettingsAreSearchableByManagementTriggersAndRoles() {
+    func testProfileSettingsAndAutomaticUseShareOneSearchOwner() {
         XCTAssertEqual(
-            SettingsCatalog.search("manual profile pin", includeDebug: false).first?.category,
+            SettingsCatalog.search("create manage profiles", includeDebug: false).first?.category,
             .profiles
         )
         XCTAssertEqual(
@@ -945,7 +1280,7 @@ final class ProfileTests: XCTestCase {
         )
         XCTAssertEqual(
             SettingsCatalog.search("monitor fingerprint role", includeDebug: false).first?.category,
-            .profiles
+            .displays
         )
     }
 

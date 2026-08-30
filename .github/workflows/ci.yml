@@ -1,0 +1,116 @@
+# Unprivileged verification only. Release signing and notarization credentials stay off this job.
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - develop
+      - "release/**"
+      - "hotfix/**"
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    # Standard hosted runners are free once the repository is public. While it remains private,
+    # local verification is the default and only an explicit manual dispatch may consume minutes.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.repository.private == false }}
+    name: Verify source and unsigned build
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen --version
+          xcodebuild -version
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Check release script syntax
+        run: zsh -n scripts/*.sh
+
+      - name: Verify deterministic release workflows
+        run: |
+          ./scripts/verify-release-build-registry.sh
+          ./scripts/verify-sparkle-feed-workflow.sh
+          ./scripts/verify-homebrew-cask-workflow.sh
+
+      - name: Verify non-hosted test isolation
+        run: ./scripts/verify-test-isolation.sh
+
+      - name: Run tests
+        run: |
+          xcodebuild \
+            -project WindowRanger.xcodeproj \
+            -scheme WindowRanger \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+      - name: Run static analysis
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          xcodebuild \
+            -project WindowRanger.xcodeproj \
+            -scheme WindowRanger \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            analyze
+
+      - name: Build unsigned Release configuration
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          xcodebuild \
+            -project WindowRanger.xcodeproj \
+            -scheme WindowRanger \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath .build/ci-derived-data \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Build unsigned DMG smoke packages
+        if: ${{ github.event_name != 'pull_request' }}
+        run: |
+          ./scripts/install-dmg-tools.sh
+          mkdir -p .build/ci-packages
+          ./scripts/build-dmg.sh \
+            --app .build/ci-derived-data/Build/Products/Release/WindowRanger.app \
+            --channel stable \
+            --output .build/ci-packages/WindowRanger-unsigned-stable.dmg
+          ./scripts/build-dmg.sh \
+            --app .build/ci-derived-data/Build/Products/Release/WindowRanger.app \
+            --channel beta \
+            --output .build/ci-packages/WindowRanger-unsigned-beta.dmg
+          ./scripts/verify-dmg.sh --dmg .build/ci-packages/WindowRanger-unsigned-stable.dmg
+          ./scripts/verify-dmg.sh --dmg .build/ci-packages/WindowRanger-unsigned-beta.dmg
+
+      - name: Upload unsigned DMG smoke packages
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-dmg-smoke-${{ github.sha }}
+          path: .build/ci-packages/*.dmg
+          if-no-files-found: error
+          retention-days: 7

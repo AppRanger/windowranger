@@ -225,6 +225,48 @@ struct CommandFeedbackPanelPolicy: Equatable, Sendable {
 }
 
 @MainActor
+enum CommandFeedbackSurfaceFactory {
+    static func make(frame: CGRect) -> NSView {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: frame)
+            glass.style = .regular
+            glass.setAccessibilityElement(false)
+            updatePillShape(glass)
+            return glass
+        }
+
+        let material = NSVisualEffectView(frame: frame)
+        material.material = .hudWindow
+        material.blendingMode = .behindWindow
+        material.state = .active
+        material.wantsLayer = true
+        material.layer?.masksToBounds = true
+        material.setAccessibilityElement(false)
+        updatePillShape(material)
+        return material
+    }
+
+    static func updatePillShape(_ surface: NSView) {
+        let cornerRadius = max(0, surface.bounds.height / 2)
+        if #available(macOS 26.0, *), let glass = surface as? NSGlassEffectView {
+            glass.cornerRadius = cornerRadius
+        } else {
+            surface.layer?.cornerRadius = cornerRadius
+        }
+    }
+
+    static func installContent(_ content: NSView, in surface: NSView) {
+        content.frame = surface.bounds
+        content.autoresizingMask = [.width, .height]
+        if #available(macOS 26.0, *), let glass = surface as? NSGlassEffectView {
+            glass.contentView = content
+        } else {
+            surface.addSubview(content)
+        }
+    }
+}
+
+@MainActor
 protocol CommandFeedbackPresenting: AnyObject {
     func present(_ request: CommandFeedbackRequest)
     func dismiss(reason: String)
@@ -266,6 +308,9 @@ final class CommandFeedbackOverlayController: CommandFeedbackPresenting {
         let panel = ensurePanel()
         label?.stringValue = request.message
         panel.setFrame(placement.panelFrame, display: false)
+        if let surface = panel.contentView {
+            CommandFeedbackSurfaceFactory.updatePillShape(surface)
+        }
         panel.alphaValue = 1
         panel.orderFrontRegardless()
 
@@ -313,6 +358,9 @@ final class CommandFeedbackOverlayController: CommandFeedbackPresenting {
         let previousDisplay = currentDisplayIdentifier
         currentDisplayIdentifier = placement.displayIdentifier
         panel?.setFrame(placement.panelFrame, display: true)
+        if let surface = panel?.contentView {
+            CommandFeedbackSurfaceFactory.updatePillShape(surface)
+        }
         if previousDisplay != placement.displayIdentifier {
             diagnostics.log(
                 category: "command-feedback",
@@ -407,14 +455,12 @@ final class CommandFeedbackOverlayController: CommandFeedbackPresenting {
         panel.isExcludedFromWindowsMenu = true
         panel.setAccessibilityElement(false)
 
-        let background = NSVisualEffectView(frame: CGRect(origin: .zero, size: Self.panelSize))
-        background.material = .hudWindow
-        background.blendingMode = .behindWindow
-        background.state = .active
-        background.wantsLayer = true
-        background.layer?.cornerRadius = 14
-        background.layer?.masksToBounds = true
-        background.setAccessibilityElement(false)
+        let background = CommandFeedbackSurfaceFactory.make(
+            frame: CGRect(origin: .zero, size: Self.panelSize)
+        )
+        let content = NSView(frame: background.bounds)
+        content.setAccessibilityElement(false)
+        CommandFeedbackSurfaceFactory.installContent(content, in: background)
 
         let label = NSTextField(labelWithString: "")
         label.maximumNumberOfLines = 3
@@ -425,13 +471,13 @@ final class CommandFeedbackOverlayController: CommandFeedbackPresenting {
         label.refusesFirstResponder = true
         label.setAccessibilityElement(false)
         label.translatesAutoresizingMaskIntoConstraints = false
-        background.addSubview(label)
+        content.addSubview(label)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 18),
-            label.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -18),
-            label.topAnchor.constraint(greaterThanOrEqualTo: background.topAnchor, constant: 12),
-            label.bottomAnchor.constraint(lessThanOrEqualTo: background.bottomAnchor, constant: -12),
-            label.centerYAnchor.constraint(equalTo: background.centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
+            label.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
+            label.topAnchor.constraint(greaterThanOrEqualTo: content.topAnchor, constant: 12),
+            label.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -12),
+            label.centerYAnchor.constraint(equalTo: content.centerYAnchor),
         ])
         panel.contentView = background
         self.panel = panel
@@ -487,6 +533,588 @@ private final class CommandFeedbackPanel: NSPanel {
     override var canBecomeMain: Bool { CommandFeedbackPanelPolicy.nonActivating.canBecomeMain }
 }
 
+enum VerboseDiagnosticsMenuEntry: Equatable {
+    case separator
+    case header
+    case copyRecent
+    case revealFile(isEnabled: Bool)
+}
+
+enum FocusedWindowSupportMenuPolicy {
+    static func isVisible(modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        modifierFlags.contains(.option)
+    }
+}
+
+enum VerboseDiagnosticsMenuPolicy {
+    static func entries(
+        buildSupportsVerboseDiagnostics: Bool,
+        modifierFlags: NSEvent.ModifierFlags,
+        diagnosticFileAvailable: Bool
+    ) -> [VerboseDiagnosticsMenuEntry] {
+        guard buildSupportsVerboseDiagnostics, modifierFlags.contains(.option) else { return [] }
+        return [
+            .separator,
+            .header,
+            .copyRecent,
+            .revealFile(isEnabled: diagnosticFileAvailable),
+        ]
+    }
+}
+
+struct MenuBarApplicationShelfGeometry {
+    static func frame(
+        anchor: CGRect,
+        contentSize: CGSize,
+        visibleFrame: CGRect,
+        gap: CGFloat = 6,
+        edgeInset: CGFloat = 8
+    ) -> CGRect {
+        let maximumX = max(visibleFrame.minX + edgeInset, visibleFrame.maxX - edgeInset - contentSize.width)
+        let proposedX = anchor.midX - contentSize.width / 2
+        let x = min(max(proposedX, visibleFrame.minX + edgeInset), maximumX)
+        let minimumY = visibleFrame.minY + edgeInset
+        let proposedY = anchor.minY - gap - contentSize.height
+        let maximumY = max(minimumY, visibleFrame.maxY - edgeInset - contentSize.height)
+        let y = min(max(proposedY, minimumY), maximumY)
+        return CGRect(origin: CGPoint(x: x, y: y), size: contentSize)
+    }
+}
+
+enum MenuBarApplicationShelfTiming {
+    static let dwell: TimeInterval = 0.45
+    static let dismissalGrace: TimeInterval = 0.22
+    static let hoverRestorationDelay: TimeInterval = 0.08
+}
+
+enum MenuBarApplicationShelfDismissalPolicy {
+    static func shouldDismissForPointerDown(
+        pointer: CGPoint,
+        presentedFrame: CGRect?,
+        hasPendingPresentation: Bool
+    ) -> Bool {
+        guard presentedFrame != nil || hasPendingPresentation else { return false }
+        if let presentedFrame, presentedFrame.contains(pointer) { return false }
+        return true
+    }
+}
+
+@MainActor
+enum MenuBarApplicationShelfSurfaceFactory {
+    static let cornerRadius: CGFloat = 12
+
+    static func make(frame: CGRect) -> NSView {
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: frame)
+            glass.style = .regular
+            glass.cornerRadius = cornerRadius
+            glass.setAccessibilityElement(false)
+            return glass
+        }
+
+        let material = NSVisualEffectView(frame: frame)
+        material.material = .menu
+        material.blendingMode = .behindWindow
+        material.state = .active
+        material.wantsLayer = true
+        material.layer?.cornerRadius = cornerRadius
+        material.layer?.masksToBounds = true
+        material.setAccessibilityElement(false)
+        return material
+    }
+
+    static func installContent(_ content: NSView, in surface: NSView) {
+        content.frame = surface.bounds
+        content.autoresizingMask = [.width, .height]
+        if #available(macOS 26.0, *), let glass = surface as? NSGlassEffectView {
+            glass.contentView = content
+        } else {
+            surface.addSubview(content)
+        }
+    }
+}
+
+@MainActor
+private final class MenuBarApplicationShelfPanel: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+@MainActor
+private final class MenuBarApplicationShelfRow: NSButton {
+    let application: WorkspaceApplicationSummary
+    private var hoverTrackingArea: NSTrackingArea?
+
+    init(application: WorkspaceApplicationSummary, image: NSImage?) {
+        self.application = application
+        super.init(frame: .zero)
+        target = self
+        action = #selector(selected)
+        isBordered = false
+        bezelStyle = .regularSquare
+        focusRingType = .none
+        alignment = .left
+        imagePosition = .imageLeading
+        imageScaling = .scaleProportionallyDown
+        self.image = image
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        translatesAutoresizingMaskIntoConstraints = false
+
+        let title = NSMutableAttributedString(
+            string: application.name,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                .foregroundColor: NSColor.labelColor,
+            ]
+        )
+        if application.windowCount > 1 {
+            title.append(NSAttributedString(
+                string: "  \(application.windowCount)",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 10, weight: .regular),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                ]
+            ))
+        }
+        attributedTitle = title
+        toolTip = application.windowCount == 1
+            ? application.name
+            : "\(application.name) — \(application.windowCount) windows"
+        setAccessibilityLabel(application.name)
+        setAccessibilityHelp(
+            "Switches to the workspace and focuses \(application.name)."
+        )
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 30),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    var onSelect: ((WorkspaceApplicationSummary) -> Void)?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.10).cgColor
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    @objc private func selected() {
+        onSelect?(application)
+    }
+}
+
+@MainActor
+final class MenuBarApplicationShelfContentView: NSView {
+    private let header = NSTextField(labelWithString: "")
+    private let scrollView = NSScrollView()
+    private let stack = NSStackView()
+    private var hoverTrackingArea: NSTrackingArea?
+    private var previewHost: NSHostingView<AnyView>?
+    private var contentSize = CGSize(width: 240, height: 80)
+
+    override var intrinsicContentSize: NSSize { contentSize }
+    var onHoverChanged: ((Bool) -> Void)?
+    var usesVerticalScroller: Bool { scrollView.hasVerticalScroller }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+
+        header.font = .systemFont(ofSize: 11, weight: .semibold)
+        header.textColor = .secondaryLabelColor
+        header.lineBreakMode = .byTruncatingTail
+        header.translatesAutoresizingMaskIntoConstraints = false
+
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.verticalScrollElasticity = .none
+        scrollView.borderType = .noBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = stack
+
+        addSubview(header)
+        addSubview(scrollView)
+        NSLayoutConstraint.activate([
+            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            header.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+            header.heightAnchor.constraint(equalToConstant: 18),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 3),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            stack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            stack.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func configure(
+        workspaceName: String,
+        applications: [WorkspaceApplicationSummary],
+        imageProvider: (WorkspaceApplicationSummary) -> NSImage?,
+        onSelect: @escaping (WorkspaceApplicationSummary) -> Void
+    ) {
+        previewHost?.removeFromSuperview()
+        previewHost = nil
+        header.isHidden = false
+        scrollView.isHidden = false
+        header.stringValue = workspaceName
+        stack.arrangedSubviews.forEach {
+            stack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        if applications.isEmpty {
+            let empty = NSTextField(labelWithString: "No apps in this workspace")
+            empty.font = .systemFont(ofSize: 11)
+            empty.textColor = .secondaryLabelColor
+            empty.alignment = .center
+            empty.translatesAutoresizingMaskIntoConstraints = false
+            // Both anchors must share a view hierarchy before AppKit can activate the width
+            // constraint. Activating first raises NSGenericException when an empty shelf opens.
+            stack.addArrangedSubview(empty)
+            NSLayoutConstraint.activate([
+                empty.widthAnchor.constraint(equalTo: stack.widthAnchor),
+                empty.heightAnchor.constraint(equalToConstant: 34),
+            ])
+        } else {
+            for application in applications {
+                let row = MenuBarApplicationShelfRow(
+                    application: application,
+                    image: imageProvider(application)
+                )
+                row.onSelect = onSelect
+                stack.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            }
+        }
+        scrollView.hasVerticalScroller = applications.count > 8
+        let rowCount = max(1, applications.count)
+        let bodyHeight = min(CGFloat(rowCount) * 32, 256)
+        contentSize = CGSize(width: 240, height: 36 + bodyHeight)
+        frame.size = contentSize
+        invalidateIntrinsicContentSize()
+        layoutSubtreeIfNeeded()
+    }
+
+    func configurePreview(
+        descriptor: WorkspacePreviewDescriptor,
+        repository: WorkspacePreviewRepository,
+        onWorkspaceSelected: @escaping () -> Void,
+        onItemSelected: @escaping (WorkspacePreviewItemDescriptor) -> Void
+    ) {
+        header.isHidden = true
+        scrollView.isHidden = true
+        previewHost?.removeFromSuperview()
+        let root = MenuBarWorkspacePreviewRoot(
+            repository: repository,
+            fallbackDescriptor: descriptor,
+            onWorkspaceSelected: onWorkspaceSelected,
+            onItemSelected: onItemSelected
+        )
+        let host = NSHostingView(rootView: AnyView(root))
+        host.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(host)
+        NSLayoutConstraint.activate([
+            host.leadingAnchor.constraint(equalTo: leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: trailingAnchor),
+            host.topAnchor.constraint(equalTo: topAnchor),
+            host.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        previewHost = host
+        contentSize = CGSize(width: 360, height: 236)
+        frame.size = contentSize
+        invalidateIntrinsicContentSize()
+        layoutSubtreeIfNeeded()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHoverChanged?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverChanged?(false)
+    }
+}
+
+private struct MenuBarWorkspacePreviewRoot: View {
+    @Bindable var repository: WorkspacePreviewRepository
+    let fallbackDescriptor: WorkspacePreviewDescriptor
+    let onWorkspaceSelected: () -> Void
+    let onItemSelected: (WorkspacePreviewItemDescriptor) -> Void
+
+    var body: some View {
+        let entry = repository.entries[fallbackDescriptor.workspaceID]
+        VStack(alignment: .leading, spacing: 7) {
+            Text(fallbackDescriptor.name)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            WorkspacePreviewView(
+                descriptor: entry?.descriptor ?? fallbackDescriptor,
+                background: entry?.background,
+                images: entry?.images ?? [:],
+                interactionMode: .workspaceAndItems,
+                onWorkspaceSelected: onWorkspaceSelected,
+                onItemSelected: onItemSelected
+            )
+            .frame(height: 190)
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .padding(10)
+        .frame(width: 360, height: 236, alignment: .topLeading)
+    }
+}
+
+@MainActor
+private final class MenuBarApplicationShelfController {
+    private let panel: MenuBarApplicationShelfPanel
+    private let surface: NSView
+    private let contentView: MenuBarApplicationShelfContentView
+    private(set) var workspaceID: UUID?
+
+    var isPresented: Bool { panel.isVisible }
+    var presentedFrame: CGRect? { isPresented ? panel.frame : nil }
+    var onHoverChanged: ((Bool) -> Void)? {
+        didSet { contentView.onHoverChanged = onHoverChanged }
+    }
+
+    init() {
+        panel = MenuBarApplicationShelfPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: true
+        )
+        contentView = MenuBarApplicationShelfContentView(frame: .zero)
+        surface = MenuBarApplicationShelfSurfaceFactory.make(frame: .zero)
+        MenuBarApplicationShelfSurfaceFactory.installContent(contentView, in: surface)
+        panel.contentView = surface
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .popUpMenu
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        panel.animationBehavior = .utilityWindow
+    }
+
+    func present(
+        workspaceID: UUID,
+        workspaceName: String,
+        applications: [WorkspaceApplicationSummary],
+        anchorFrame: CGRect,
+        onSelect: @escaping (WorkspaceApplicationSummary) -> Void
+    ) {
+        contentView.configure(
+            workspaceName: workspaceName,
+            applications: applications,
+            imageProvider: Self.applicationIcon,
+            onSelect: onSelect
+        )
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(anchorFrame.center) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else { return }
+        let frame = MenuBarApplicationShelfGeometry.frame(
+            anchor: anchorFrame,
+            contentSize: contentView.intrinsicContentSize,
+            visibleFrame: screen.visibleFrame
+        )
+        self.workspaceID = workspaceID
+        panel.setFrame(frame, display: true)
+        panel.orderFrontRegardless()
+    }
+
+    func presentPreview(
+        descriptor: WorkspacePreviewDescriptor,
+        repository: WorkspacePreviewRepository,
+        anchorFrame: CGRect,
+        onWorkspaceSelected: @escaping () -> Void,
+        onItemSelected: @escaping (WorkspacePreviewItemDescriptor) -> Void
+    ) {
+        contentView.configurePreview(
+            descriptor: descriptor,
+            repository: repository,
+            onWorkspaceSelected: onWorkspaceSelected,
+            onItemSelected: onItemSelected
+        )
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(anchorFrame.center) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else { return }
+        let frame = MenuBarApplicationShelfGeometry.frame(
+            anchor: anchorFrame,
+            contentSize: contentView.intrinsicContentSize,
+            visibleFrame: screen.visibleFrame
+        )
+        workspaceID = descriptor.workspaceID
+        panel.setFrame(frame, display: true)
+        panel.orderFrontRegardless()
+    }
+
+    func dismiss() {
+        panel.orderOut(nil)
+        workspaceID = nil
+    }
+
+    private static func applicationIcon(_ application: WorkspaceApplicationSummary) -> NSImage? {
+        let source = NSRunningApplication(
+            processIdentifier: application.target.processIdentifier
+        )?.icon ?? application.applicationURL.map {
+            NSWorkspace.shared.icon(forFile: $0.path)
+        }
+        guard let source, let image = source.copy() as? NSImage else { return nil }
+        image.size = NSSize(width: 18, height: 18)
+        return image
+    }
+}
+
+private extension CGRect {
+    var center: CGPoint { CGPoint(x: midX, y: midY) }
+}
+
+@MainActor
+private final class MenuBarDisplayGroupHoverTracker: NSResponder {
+    private weak var button: NSStatusBarButton?
+    private var renderedContent: MenuBarDisplayGroupRenderedContent?
+    private var trackingAreas: [NSTrackingArea] = []
+    private var pointerIsOverWorkspace = false
+    private var currentTarget: MenuBarHitTarget?
+    private let onHoverChanged: (MenuBarHitTarget?, CGRect?) -> Void
+
+    init(onHoverChanged: @escaping (MenuBarHitTarget?, CGRect?) -> Void) {
+        self.onHoverChanged = onHoverChanged
+        super.init()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func configure(
+        button: NSStatusBarButton,
+        renderedContent: MenuBarDisplayGroupRenderedContent
+    ) {
+        removeTrackingAreas()
+        self.button = button
+        self.renderedContent = renderedContent
+        button.image = renderedContent.image(for: currentTarget)
+        button.layoutSubtreeIfNeeded()
+        for region in renderedContent.trackingRegions(in: button) where !region.frame.isEmpty {
+            let area = NSTrackingArea(
+                rect: region.frame,
+                options: [.mouseEnteredAndExited, .activeAlways],
+                owner: self,
+                userInfo: nil
+            )
+            button.addTrackingArea(area)
+            trackingAreas.append(area)
+        }
+        if pointerIsOverWorkspace {
+            refreshHover()
+        }
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        refreshHover()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        refreshHover()
+    }
+
+    @discardableResult
+    func refreshCurrentPointer() -> Bool {
+        refreshHover()
+        return pointerIsOverWorkspace
+    }
+
+    func invalidate() {
+        removeTrackingAreas()
+        pointerIsOverWorkspace = false
+        currentTarget = nil
+        button = nil
+        renderedContent = nil
+    }
+
+    private func refreshHover() {
+        guard let button, let renderedContent else { return }
+        let targets = renderedContent.screenSpaceTargets(in: button)
+        let resolved = MenuBarScreenSpaceTargetResolver.target(
+            at: NSEvent.mouseLocation,
+            among: targets
+        )
+        let target: MenuBarHitTarget? = if case .workspace = resolved { resolved } else { nil }
+        pointerIsOverWorkspace = target != nil
+        guard target != currentTarget else { return }
+        currentTarget = target
+        button.image = renderedContent.image(for: target)
+        let frame = target.flatMap { target in
+            targets.first(where: { $0.hitTarget == target })?.frame
+        }
+        onHoverChanged(target, frame)
+    }
+
+    private func removeTrackingAreas() {
+        guard let button else {
+            trackingAreas.removeAll()
+            return
+        }
+        trackingAreas.forEach { button.removeTrackingArea($0) }
+        trackingAreas.removeAll()
+    }
+}
+
+@MainActor
+private struct ManagedDisplayGroupStatusItem {
+    let statusItem: NSStatusItem
+    var renderedContent: MenuBarDisplayGroupRenderedContent?
+    var hoverTracker: MenuBarDisplayGroupHoverTracker?
+}
+
 @MainActor
 final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     static var verboseDiagnosticsMenuEnabled: Bool {
@@ -497,46 +1125,103 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         #endif
     }
 
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    static func verboseDiagnosticsMenuEntries(
+        modifierFlags: NSEvent.ModifierFlags,
+        diagnosticFileAvailable: Bool
+    ) -> [VerboseDiagnosticsMenuEntry] {
+        VerboseDiagnosticsMenuPolicy.entries(
+            buildSupportsVerboseDiagnostics: verboseDiagnosticsMenuEnabled,
+            modifierFlags: modifierFlags,
+            diagnosticFileAvailable: diagnosticFileAvailable
+        )
+    }
+
     private let appMenu = NSMenu()
     private let engine: WorkspaceEngine
     private let stateModel: MenuBarStateModel
     private let settingsStore: SettingsStore
+    private let workspacePreviewRepository: WorkspacePreviewRepository
     private let settingsCommandRequestRouter: SettingsCommandRequestRouter
+    private let updateController: UpdateController?
     private let diagnostics: DiagnosticLogger
     private let tiledPlacementUndoManager: UndoManager?
+    private let isPauseModeEnabled: () -> Bool
+    private let setPauseMode: (Bool) -> Void
     private var presentationMode: MenuBarPresentationMode
     private var workspaceLabelMode: MenuBarWorkspaceLabelMode
+    private var displayIconConfiguration: MenuBarDisplayIconConfiguration
     private var highlightColor: MenuBarHighlightColor
-    private var contentView: MenuBarStatusContentView?
+    private var displayGroupStatusItems: [ManagedDisplayGroupStatusItem] = []
+    private var displayGroupContentByButton: [ObjectIdentifier: MenuBarDisplayGroupRenderedContent] = [:]
+    private var systemColorsObserver: NSObjectProtocol?
     private var lastSnapshot: MenuBarPresentationSnapshot?
+    private var focusedWindowDiagnosticReport: String?
+    private var supportSectionVisibleForCurrentOpen = false
+    private var isPresentingMenu = false
     private var isInvalidated = false
+    private var menuPresentationRequestGate = MenuBarMenuPresentationRequestGate()
+    private var settingsStatusMenuOpenGate = SettingsStatusMenuOpenGate()
+    private var checkForUpdatesAfterMenuCloses = false
+    private var shelfGeneration: UInt64 = 0
+    private var pendingShelfTarget: MenuBarHitTarget?
+    private var pendingShelfAnchorFrame: CGRect?
+    private var pendingShelfApplications: [WorkspaceApplicationSummary]?
+    private var pendingShelfPreviewDescriptor: WorkspacePreviewDescriptor?
+    private var pendingShelfUsesPreview = false
+    private var shelfDwellElapsed = false
+    private var shelfDwellWorkItem: DispatchWorkItem?
+    private var shelfDismissWorkItem: DispatchWorkItem?
+    private var shelfHoverRestorationWorkItem: DispatchWorkItem?
+    private var shelfGlobalMouseMonitor: Any?
+    private var shelfLocalMouseMonitor: Any?
+    private lazy var applicationShelfController: MenuBarApplicationShelfController = {
+        let controller = MenuBarApplicationShelfController()
+        controller.onHoverChanged = { [weak self] hovered in
+            self?.applicationShelfHoverChanged(hovered)
+        }
+        return controller
+    }()
 
     init(
         engine: WorkspaceEngine,
         stateModel: MenuBarStateModel,
         settingsStore: SettingsStore,
+        workspacePreviewRepository: WorkspacePreviewRepository,
         settingsCommandRequestRouter: SettingsCommandRequestRouter,
+        updateController: UpdateController? = nil,
         diagnostics: DiagnosticLogger,
         tiledPlacementUndoManager: UndoManager? = nil,
         initialMode: MenuBarPresentationMode,
         initialWorkspaceLabelMode: MenuBarWorkspaceLabelMode = .name,
-        initialHighlightColor: MenuBarHighlightColor = .default
+        initialDisplayIconConfiguration: MenuBarDisplayIconConfiguration = .automatic,
+        initialHighlightColor: MenuBarHighlightColor = .default,
+        isPauseModeEnabled: @escaping () -> Bool = { false },
+        setPauseMode: @escaping (Bool) -> Void = { _ in }
     ) {
         self.engine = engine
         self.stateModel = stateModel
         self.settingsStore = settingsStore
+        self.workspacePreviewRepository = workspacePreviewRepository
         self.settingsCommandRequestRouter = settingsCommandRequestRouter
+        self.updateController = updateController
         self.diagnostics = diagnostics
         self.tiledPlacementUndoManager = tiledPlacementUndoManager
+        self.isPauseModeEnabled = isPauseModeEnabled
+        self.setPauseMode = setPauseMode
         presentationMode = initialMode
         workspaceLabelMode = initialWorkspaceLabelMode
+        displayIconConfiguration = initialDisplayIconConfiguration
         highlightColor = initialHighlightColor
         super.init()
-        statusItem.autosaveName = "com.windowranger.WindowRanger.primary-status"
         appMenu.autoenablesItems = false
         appMenu.delegate = self
-        statusItem.menu = appMenu
+        systemColorsObserver = NotificationCenter.default.addObserver(
+            forName: NSColor.systemColorsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rebuild(force: true) }
+        }
         rebuildMenu()
         rebuild(force: true)
     }
@@ -547,6 +1232,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             rebuild()
             return
         }
+        dismissApplicationShelf()
         presentationMode = mode
         rebuild(force: true)
     }
@@ -554,6 +1240,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     func setWorkspaceLabelMode(_ mode: MenuBarWorkspaceLabelMode) {
         guard !isInvalidated, workspaceLabelMode != mode else { return }
         workspaceLabelMode = mode
+        rebuild(force: true)
+    }
+
+    func setDisplayIconConfiguration(_ configuration: MenuBarDisplayIconConfiguration) {
+        guard !isInvalidated, displayIconConfiguration != configuration else { return }
+        displayIconConfiguration = configuration
         rebuild(force: true)
     }
 
@@ -565,7 +1257,6 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
 
     func rebuild(force: Bool = false) {
         guard !isInvalidated else { return }
-        guard let statusButton = statusItem.button else { return }
         let snapshot = stateModel.presentation(
             for: presentationMode,
             workspaceLabelMode: workspaceLabelMode
@@ -573,75 +1264,481 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         guard force || snapshot != lastSnapshot else { return }
         lastSnapshot = snapshot
 
-        statusButton.title = ""
-        statusButton.image = nil
-        statusButton.target = nil
-        statusButton.action = nil
-        statusButton.tag = 0
-
         let availableWidth = MenuBarPressurePolicy.defaultBudget(
             for: NSScreen.main?.visibleFrame.width
         )
-        let workspaceAction: (MenuBarHitTarget) -> Void = { [weak self] target in
-            self?.handle(target)
+        rebuildDisplayGroupStatusItems(snapshot: snapshot, availableWidth: availableWidth)
+    }
+
+    func applicationActivated() {
+        guard !isInvalidated else { return }
+        dismissApplicationShelf()
+    }
+
+    private func rebuildDisplayGroupStatusItems(
+        snapshot: MenuBarPresentationSnapshot,
+        availableWidth: CGFloat
+    ) {
+        if snapshot.mode != .full {
+            dismissApplicationShelf()
         }
-        let content: MenuBarStatusContentView
-        if let existing = contentView {
-            existing.configure(
-                snapshot: snapshot,
-                availableWidth: availableWidth,
-                highlightColor: highlightColor,
-                workspaceAction: workspaceAction
-            )
-            content = existing
-        } else {
-            content = MenuBarStatusContentView(
-                snapshot: snapshot,
-                availableWidth: availableWidth,
-                highlightColor: highlightColor,
-                workspaceAction: workspaceAction
-            )
-            contentView = content
-            statusButton.addSubview(content)
-            NSLayoutConstraint.activate([
-                content.leadingAnchor.constraint(equalTo: statusButton.leadingAnchor),
-                content.trailingAnchor.constraint(equalTo: statusButton.trailingAnchor),
-                content.centerYAnchor.constraint(equalTo: statusButton.centerYAnchor),
-            ])
-        }
-        let width = max(24, content.intrinsicContentSize.width)
-        statusItem.length = width
-        statusButton.toolTip = snapshot.primaryTooltip
-        statusButton.setAccessibilityLabel(snapshot.primaryAccessibilityLabel)
-        statusButton.setAccessibilityHelp(
-            presentationMode == .full
-                ? "Opens the WindowRanger menu. Only the labelled workspace buttons switch workspaces."
-                : "Opens the WindowRanger menu."
+        let plannedGroups = MenuBarDisplayGroupStatusItemPlanner.groups(
+            for: snapshot,
+            availableWidth: availableWidth,
+            displayIconConfiguration: displayIconConfiguration
         )
-        content.layoutSubtreeIfNeeded()
+        resizeDisplayGroupStatusItems(to: plannedGroups.count)
+        // NSStatusBar inserts newly created items at the left edge. Configuring the retained slots
+        // in reverse logical order keeps the display/workspace sequence readable left to right.
+        let configurationOrder = MenuBarDisplayGroupStatusItemPlanner.configurationOrder(
+            for: plannedGroups
+        )
+        displayGroupContentByButton.removeAll(keepingCapacity: true)
+        for index in displayGroupStatusItems.indices {
+            configureDisplayGroupStatusItem(
+                at: index,
+                from: configurationOrder[index],
+                snapshot: snapshot
+            )
+        }
+    }
+
+    private func resizeDisplayGroupStatusItems(to count: Int) {
+        if displayGroupStatusItems.count != count {
+            dismissApplicationShelf()
+        }
+        while displayGroupStatusItems.count > count {
+            let removed = displayGroupStatusItems.removeLast()
+            removed.hoverTracker?.invalidate()
+            removed.statusItem.button?.target = nil
+            removed.statusItem.button?.action = nil
+            NSStatusBar.system.removeStatusItem(removed.statusItem)
+        }
+        while displayGroupStatusItems.count < count {
+            let slot = displayGroupStatusItems.count
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            // Keep one established autosave identity per logical display-group slot across modes.
+            item.autosaveName = "\(ApplicationIdentity.bundleIdentifier).full-display-group-\(slot)"
+            displayGroupStatusItems.append(ManagedDisplayGroupStatusItem(
+                statusItem: item,
+                renderedContent: nil,
+                hoverTracker: nil
+            ))
+        }
+    }
+
+    private func configureDisplayGroupStatusItem(
+        at index: Int,
+        from plan: MenuBarDisplayGroupStatusItem,
+        snapshot: MenuBarPresentationSnapshot
+    ) {
+        let managed = displayGroupStatusItems[index]
+        guard let button = managed.statusItem.button else { return }
+        button.title = ""
+        button.attributedTitle = NSAttributedString(string: "")
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleNone
+        button.contentTintColor = .labelColor
+        button.target = self
+        button.action = #selector(displayGroupStatusButtonActivated(_:))
+        _ = button.sendAction(on: MenuBarStatusItemControlEventPolicy.actionEvents)
+        let renderedContent = MenuBarDisplayGroupRenderedContent(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: highlightColor,
+            displayIconConfiguration: displayIconConfiguration,
+            appearance: button.effectiveAppearance
+        )
+        button.image = renderedContent.image(for: nil)
+        managed.statusItem.length = max(24, renderedContent.size.width)
+        button.layoutSubtreeIfNeeded()
+        let hoverTracker: MenuBarDisplayGroupHoverTracker?
+        if plan.mode == .full {
+            let tracker = managed.hoverTracker ?? MenuBarDisplayGroupHoverTracker {
+                [weak self] target, frame in
+                self?.workspaceHoverChanged(target, anchorFrame: frame)
+            }
+            tracker.configure(button: button, renderedContent: renderedContent)
+            hoverTracker = tracker
+        } else {
+            managed.hoverTracker?.invalidate()
+            hoverTracker = nil
+        }
+        button.toolTip = plan.group.display.accessibilityLabel
+        if plan.mode == .full {
+            let workspaceNames = plan.group.visibleWorkspaces.map(\.name).joined(separator: ", ")
+            button.setAccessibilityLabel(
+                "\(plan.group.display.accessibilityLabel). Workspaces: \(workspaceNames)."
+            )
+            button.setAccessibilityHelp(
+                "A primary pointer click switches the selected workspace. VoiceOver and secondary clicks open the WindowRanger menu."
+            )
+        } else {
+            button.setAccessibilityLabel(
+                "WindowRanger menu. \(plan.group.display.accessibilityLabel)."
+            )
+            button.setAccessibilityHelp("Opens the WindowRanger menu.")
+        }
+        displayGroupStatusItems[index].renderedContent = renderedContent
+        displayGroupStatusItems[index].hoverTracker = hoverTracker
+        displayGroupContentByButton[ObjectIdentifier(button)] = renderedContent
+    }
+
+    private func removeDisplayGroupStatusItems() {
+        for managed in displayGroupStatusItems {
+            managed.hoverTracker?.invalidate()
+            managed.statusItem.button?.target = nil
+            managed.statusItem.button?.action = nil
+            NSStatusBar.system.removeStatusItem(managed.statusItem)
+        }
+        displayGroupStatusItems.removeAll()
+        displayGroupContentByButton.removeAll()
+    }
+
+    private func workspaceHoverChanged(
+        _ target: MenuBarHitTarget?,
+        anchorFrame: CGRect?
+    ) {
+        guard !isPauseModeEnabled() else {
+            cancelPendingShelfPresentation()
+            dismissApplicationShelf()
+            return
+        }
+        guard case let .workspace(workspaceID, _) = target,
+              let target,
+              let anchorFrame
+        else {
+            cancelPendingShelfPresentation()
+            if applicationShelfController.isPresented {
+                scheduleApplicationShelfDismissal()
+            } else {
+                removeApplicationShelfClickAwayMonitors()
+            }
+            return
+        }
+
+        shelfHoverRestorationWorkItem?.cancel()
+        shelfHoverRestorationWorkItem = nil
+        shelfDismissWorkItem?.cancel()
+        shelfDismissWorkItem = nil
+        if applicationShelfController.isPresented,
+           applicationShelfController.workspaceID == workspaceID {
+            return
+        }
+        if pendingShelfTarget == target { return }
+
+        applicationShelfController.dismiss()
+        cancelPendingShelfPresentation()
+        shelfGeneration &+= 1
+        let generation = shelfGeneration
+        pendingShelfTarget = target
+        pendingShelfAnchorFrame = anchorFrame
+        pendingShelfApplications = nil
+        pendingShelfPreviewDescriptor = nil
+        pendingShelfUsesPreview = settingsStore.workspacePreviewThumbnailsEnabled
+        shelfDwellElapsed = false
+        installApplicationShelfClickAwayMonitors()
+
+        let workspaceName = stateModel.workspaceItems.first(where: { $0.id == workspaceID })?.name
+            ?? "Workspace"
+        if pendingShelfUsesPreview {
+            engine.workspacePreviewDescriptor(
+                for: workspaceID,
+                workspaceName: workspaceName
+            ) { [weak self] descriptor in
+                guard let self,
+                      self.shelfGeneration == generation,
+                      self.pendingShelfTarget == target,
+                      self.pendingShelfUsesPreview
+                else { return }
+                self.pendingShelfPreviewDescriptor = descriptor
+                self.presentApplicationShelfIfReady(generation: generation)
+            }
+        } else {
+            engine.workspaceApplications(for: workspaceID) { [weak self] applications in
+                guard let self,
+                      self.shelfGeneration == generation,
+                      self.pendingShelfTarget == target,
+                      !self.pendingShelfUsesPreview
+                else { return }
+                self.pendingShelfApplications = applications
+                self.presentApplicationShelfIfReady(generation: generation)
+            }
+        }
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.shelfGeneration == generation,
+                  self.pendingShelfTarget == target
+            else { return }
+            self.shelfDwellElapsed = true
+            self.presentApplicationShelfIfReady(generation: generation)
+        }
+        shelfDwellWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + MenuBarApplicationShelfTiming.dwell,
+            execute: work
+        )
+    }
+
+    private func presentApplicationShelfIfReady(generation: UInt64) {
+        guard shelfGeneration == generation,
+              shelfDwellElapsed,
+              let anchorFrame = pendingShelfAnchorFrame,
+              case let .workspace(workspaceID, _) = pendingShelfTarget
+        else { return }
+        if pendingShelfUsesPreview {
+            guard let descriptor = pendingShelfPreviewDescriptor else { return }
+            workspacePreviewRepository.refreshAuthorization()
+            workspacePreviewRepository.update(
+                descriptor: descriptor,
+                captureEnabled: true
+            )
+            applicationShelfController.presentPreview(
+                descriptor: descriptor,
+                repository: workspacePreviewRepository,
+                anchorFrame: anchorFrame,
+                onWorkspaceSelected: { [weak self] in
+                    guard let self else { return }
+                    self.dismissApplicationShelf()
+                    self.engine.switchToWorkspace(workspaceID)
+                },
+                onItemSelected: { [weak self] item in
+                    guard let self else { return }
+                    self.dismissApplicationShelf()
+                    self.engine.activateWorkspacePreviewItem(item)
+                }
+            )
+            return
+        }
+        guard let applications = pendingShelfApplications else { return }
+        let workspaceName = stateModel.workspaceItems.first(where: { $0.id == workspaceID })?.name
+            ?? "Workspace"
+        applicationShelfController.present(
+            workspaceID: workspaceID,
+            workspaceName: workspaceName,
+            applications: applications,
+            anchorFrame: anchorFrame
+        ) { [weak self] application in
+            self?.activateWorkspaceApplication(application)
+        }
+    }
+
+    private func activateWorkspaceApplication(_ application: WorkspaceApplicationSummary) {
+        dismissApplicationShelf()
+        engine.activateWorkspaceApplication(application.target)
+    }
+
+    private func applicationShelfHoverChanged(_ hovered: Bool) {
+        if hovered {
+            shelfHoverRestorationWorkItem?.cancel()
+            shelfHoverRestorationWorkItem = nil
+            shelfDismissWorkItem?.cancel()
+            shelfDismissWorkItem = nil
+        } else {
+            scheduleApplicationShelfDismissal()
+            scheduleWorkspaceHoverRestoration()
+        }
+    }
+
+    private func scheduleWorkspaceHoverRestoration() {
+        shelfHoverRestorationWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.applicationShelfController.isPresented else { return }
+            self.shelfHoverRestorationWorkItem = nil
+            let restored = self.displayGroupStatusItems.contains {
+                $0.hoverTracker?.refreshCurrentPointer() == true
+            }
+            if restored {
+                self.shelfDismissWorkItem?.cancel()
+                self.shelfDismissWorkItem = nil
+            }
+        }
+        shelfHoverRestorationWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + MenuBarApplicationShelfTiming.hoverRestorationDelay,
+            execute: work
+        )
+    }
+
+    private func scheduleApplicationShelfDismissal() {
+        shelfDismissWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.dismissApplicationShelf()
+        }
+        shelfDismissWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + MenuBarApplicationShelfTiming.dismissalGrace,
+            execute: work
+        )
+    }
+
+    private func cancelPendingShelfPresentation() {
+        shelfGeneration &+= 1
+        shelfDwellWorkItem?.cancel()
+        shelfDwellWorkItem = nil
+        pendingShelfTarget = nil
+        pendingShelfAnchorFrame = nil
+        pendingShelfApplications = nil
+        pendingShelfPreviewDescriptor = nil
+        pendingShelfUsesPreview = false
+        shelfDwellElapsed = false
+    }
+
+    private func dismissApplicationShelf() {
+        shelfHoverRestorationWorkItem?.cancel()
+        shelfHoverRestorationWorkItem = nil
+        shelfDismissWorkItem?.cancel()
+        shelfDismissWorkItem = nil
+        removeApplicationShelfClickAwayMonitors()
+        cancelPendingShelfPresentation()
+        applicationShelfController.dismiss()
+    }
+
+    private func installApplicationShelfClickAwayMonitors() {
+        guard shelfGlobalMouseMonitor == nil, shelfLocalMouseMonitor == nil else { return }
+        let events: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        shelfGlobalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) {
+            [weak self] _ in
+            Task { @MainActor in
+                self?.handleApplicationShelfPointerDown(at: NSEvent.mouseLocation)
+            }
+        }
+        shelfLocalMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: events) {
+            [weak self] event in
+            self?.handleApplicationShelfPointerDown(at: NSEvent.mouseLocation)
+            return event
+        }
+    }
+
+    private func handleApplicationShelfPointerDown(at pointer: CGPoint) {
+        guard MenuBarApplicationShelfDismissalPolicy.shouldDismissForPointerDown(
+            pointer: pointer,
+            presentedFrame: applicationShelfController.presentedFrame,
+            hasPendingPresentation: pendingShelfTarget != nil
+        ) else { return }
+        dismissApplicationShelf()
+    }
+
+    private func removeApplicationShelfClickAwayMonitors() {
+        if let shelfGlobalMouseMonitor { NSEvent.removeMonitor(shelfGlobalMouseMonitor) }
+        if let shelfLocalMouseMonitor { NSEvent.removeMonitor(shelfLocalMouseMonitor) }
+        shelfGlobalMouseMonitor = nil
+        shelfLocalMouseMonitor = nil
+    }
+
+    @objc private func displayGroupStatusButtonActivated(_ sender: NSStatusBarButton) {
+        let event = NSApp.currentEvent
+        let content = displayGroupContentByButton[ObjectIdentifier(sender)]
+        let pointerTarget = content.flatMap { content in
+            MenuBarScreenSpaceTargetResolver.target(
+                at: NSEvent.mouseLocation,
+                among: content.screenSpaceTargets(in: sender)
+            )
+        }
+        switch MenuBarStatusItemActivationPolicy.action(
+            for: content?.mode ?? presentationMode,
+            eventType: event?.type,
+            modifierFlags: NSEvent.modifierFlags,
+            pointerTarget: pointerTarget
+        ) {
+        case .openMenu:
+            requestMenuPresentation(relativeTo: sender)
+        case let .switchWorkspace(workspaceID, _):
+            dismissApplicationShelf()
+            guard !isPauseModeEnabled() else { return }
+            engine.switchToWorkspace(workspaceID)
+        }
     }
 
     func invalidate() {
         guard !isInvalidated else { return }
         isInvalidated = true
+        menuPresentationRequestGate.cancel()
+        if settingsStatusMenuOpenGate.cancel() {
+            settingsCommandRequestRouter.cancelPendingRequest()
+        }
+        dismissApplicationShelf()
         appMenu.delegate = nil
-        statusItem.menu = nil
-        contentView?.removeFromSuperview()
-        contentView = nil
-        NSStatusBar.system.removeStatusItem(statusItem)
+        removeDisplayGroupStatusItems()
+        if let systemColorsObserver {
+            NotificationCenter.default.removeObserver(systemColorsObserver)
+            self.systemColorsObserver = nil
+        }
     }
 
-    private func handle(_ target: MenuBarHitTarget) {
-        switch MenuBarInteractionRouter.action(for: target) {
-        case .openMenu:
-            statusItem.button?.performClick(nil)
-        case let .switchWorkspace(workspaceID, _):
-            engine.switchToWorkspace(workspaceID)
+    private func requestMenuPresentation(relativeTo requestedAnchor: NSView) {
+        guard !isInvalidated,
+              !isPresentingMenu,
+              menuPresentationRequestGate.request()
+        else { return }
+        diagnostics.log(
+            category: "status-menu",
+            event: "presentation-requested",
+            fields: [
+                "source-event": NSApp.currentEvent.map { String($0.type.rawValue) } ?? "none",
+                "control-event-complete": String(
+                    NSApp.currentEvent?.type == .leftMouseUp
+                        || NSApp.currentEvent?.type == .rightMouseUp
+                        || NSApp.currentEvent == nil
+                ),
+            ]
+        )
+        // Return through the status button action before beginning NSMenu's nested tracking loop.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.menuPresentationRequestGate.consume() else { return }
+            self.presentMenu(relativeTo: requestedAnchor)
+        }
+    }
+
+    private func presentMenu(relativeTo requestedAnchor: NSView) {
+        dismissApplicationShelf()
+        guard !isInvalidated, !isPresentingMenu else { return }
+        isPresentingMenu = true
+        diagnostics.log(category: "status-menu", event: "presentation-started")
+        (requestedAnchor as? NSButton)?.highlight(true)
+        defer {
+            (requestedAnchor as? NSButton)?.highlight(false)
+            isPresentingMenu = false
+        }
+        _ = appMenu.popUp(
+            positioning: nil,
+            at: NSPoint(x: requestedAnchor.bounds.minX, y: requestedAnchor.bounds.minY),
+            in: requestedAnchor
+        )
+        diagnostics.log(category: "status-menu", event: "presentation-returned")
+        if settingsStatusMenuOpenGate.consumeAfterMenuPresentationReturns() {
+            diagnostics.log(
+                category: "settings-window",
+                event: "status-menu-presentation-ended",
+                fields: ["route": "status-menu-native-item"]
+            )
+            DispatchQueue.main.async { [weak self] in
+                self?.performPendingSettingsCommandFromStatusMenu()
+            }
         }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        let modifierFlags = NSEvent.modifierFlags
+        supportSectionVisibleForCurrentOpen = FocusedWindowSupportMenuPolicy.isVisible(
+            modifierFlags: modifierFlags
+        )
+        focusedWindowDiagnosticReport = supportSectionVisibleForCurrentOpen
+            ? engine.focusedWindowDiagnosticReport()
+            : nil
         rebuildMenu()
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        supportSectionVisibleForCurrentOpen = false
+        focusedWindowDiagnosticReport = nil
+        if checkForUpdatesAfterMenuCloses {
+            checkForUpdatesAfterMenuCloses = false
+            DispatchQueue.main.async { [weak self] in
+                self?.updateController?.checkForUpdates()
+            }
+        }
     }
 
     private func rebuildMenu() {
@@ -666,6 +1763,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             profilesMenu.addItem(item)
         }
         switchProfile.submenu = profilesMenu
+        switchProfile.isEnabled = !isPauseModeEnabled()
         appMenu.addItem(switchProfile)
 
         if settingsStore.manualPinnedProfileID != nil {
@@ -674,8 +1772,18 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
                 action: #selector(resumeAutomaticProfileSelection)
             )
             resume.image = symbol("arrow.triangle.2.circlepath")
+            resume.isEnabled = !isPauseModeEnabled()
             appMenu.addItem(resume)
         }
+
+        let paused = isPauseModeEnabled()
+        let pauseMode = actionMenuItem(
+            title: paused ? "Resume WindowRanger" : "Pause WindowRanger",
+            action: #selector(togglePauseMode)
+        )
+        pauseMode.image = symbol(paused ? "play.circle" : "pause.circle")
+        pauseMode.state = paused ? .on : .off
+        appMenu.addItem(pauseMode)
 
         if presentationMode == .full {
             let snapshot = stateModel.presentation(
@@ -687,7 +1795,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
                 availableWidth: MenuBarPressurePolicy.defaultBudget(
                     for: NSScreen.main?.visibleFrame.width
                 ),
-                workspaceLabelMode: workspaceLabelMode
+                workspaceLabelMode: workspaceLabelMode,
+                displayIconConfiguration: displayIconConfiguration
             )
             if let overflowSummary = layout.overflowSummary {
                 appMenu.addItem(disabledMenuItem(title: "Menu bar overflow: \(overflowSummary)"))
@@ -695,6 +1804,15 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         }
 
         appMenu.addItem(.separator())
+        if let updateController {
+            let updates = actionMenuItem(
+                title: "Check for Updates…",
+                action: #selector(checkForUpdatesFromStatusMenu)
+            )
+            updates.image = symbol("arrow.triangle.2.circlepath")
+            updates.isEnabled = updateController.canCheckForUpdates
+            appMenu.addItem(updates)
+        }
         let settings = actionMenuItem(
             title: "Settings…",
             action: #selector(openSettingsFromStatusMenu)
@@ -723,19 +1841,42 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             }
         }
 
+        let supportSectionVisible = supportSectionVisibleForCurrentOpen
+        if supportSectionVisible {
+            appMenu.addItem(.separator())
+            appMenu.addItem(disabledMenuItem(title: "WindowRanger Support"))
+            appMenu.addItem(actionMenuItem(
+                title: "Copy Focused Window Diagnostic Report",
+                action: #selector(copyFocusedWindowDiagnosticReport)
+            ))
+        }
+
         #if DEBUG
-        appMenu.addItem(.separator())
-        appMenu.addItem(disabledMenuItem(title: "WindowRanger Debug"))
-        appMenu.addItem(actionMenuItem(
-            title: "Copy Recent Diagnostics",
-            action: #selector(copyRecentDiagnostics)
-        ))
-        let reveal = actionMenuItem(
-            title: "Reveal Diagnostics File",
-            action: #selector(revealDiagnosticsFile)
-        )
-        reveal.isEnabled = diagnostics.fileURL != nil
-        appMenu.addItem(reveal)
+        for entry in Self.verboseDiagnosticsMenuEntries(
+            modifierFlags: NSEvent.modifierFlags,
+            diagnosticFileAvailable: diagnostics.fileURL != nil
+        ) {
+            switch entry {
+            case .separator:
+                if !supportSectionVisible { appMenu.addItem(.separator()) }
+            case .header:
+                if !supportSectionVisible {
+                    appMenu.addItem(disabledMenuItem(title: "WindowRanger Debug"))
+                }
+            case .copyRecent:
+                appMenu.addItem(actionMenuItem(
+                    title: "Copy Recent Diagnostics",
+                    action: #selector(copyRecentDiagnostics)
+                ))
+            case let .revealFile(isEnabled):
+                let reveal = actionMenuItem(
+                    title: "Reveal Diagnostics File",
+                    action: #selector(revealDiagnosticsFile)
+                )
+                reveal.isEnabled = isEnabled
+                appMenu.addItem(reveal)
+            }
+        }
         #endif
 
         appMenu.addItem(.separator())
@@ -770,18 +1911,31 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
             category: nil,
             preferPointerDisplay: true
         ))
-        appMenu.cancelTracking()
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            guard SettingsMenuCommandDispatcher.performSettingsCommand(in: NSApp.mainMenu) else {
-                self.settingsCommandRequestRouter.cancelPendingRequest()
-                self.diagnostics.log(
-                    category: "settings-window",
-                    event: "main-menu-command-unavailable",
-                    fields: ["route": "status-menu-native-item"]
-                )
-                return
-            }
+        settingsStatusMenuOpenGate.requestAfterMenuPresentation()
+        diagnostics.log(
+            category: "settings-window",
+            event: "status-menu-open-deferred",
+            fields: ["reason": "awaiting-popup-return"]
+        )
+    }
+
+    @objc private func checkForUpdatesFromStatusMenu() {
+        checkForUpdatesAfterMenuCloses = true
+    }
+
+    private func performPendingSettingsCommandFromStatusMenu() {
+        guard !isInvalidated else {
+            settingsCommandRequestRouter.cancelPendingRequest()
+            return
+        }
+        guard SettingsMenuCommandDispatcher.performSettingsCommand(in: NSApp.mainMenu) else {
+            settingsCommandRequestRouter.cancelPendingRequest()
+            diagnostics.log(
+                category: "settings-window",
+                event: "main-menu-command-unavailable",
+                fields: ["route": "status-menu-native-item"]
+            )
+            return
         }
     }
 
@@ -796,6 +1950,13 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         settingsStore.resumeAutomaticProfileSelection()
     }
 
+    @objc private func togglePauseMode() {
+        let next = !isPauseModeEnabled()
+        DispatchQueue.main.async { [weak self] in
+            self?.setPauseMode(next)
+        }
+    }
+
     @objc private func undoTiledPlacement() {
         tiledPlacementUndoManager?.undo()
         rebuildMenu()
@@ -804,6 +1965,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     @objc private func redoTiledPlacement() {
         tiledPlacementUndoManager?.redo()
         rebuildMenu()
+    }
+
+    @objc private func copyFocusedWindowDiagnosticReport() {
+        guard let focusedWindowDiagnosticReport else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(focusedWindowDiagnosticReport, forType: .string)
     }
 
     #if DEBUG
@@ -823,8 +1990,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     }
 
     deinit {
-        if !isInvalidated {
-            NSStatusBar.system.removeStatusItem(statusItem)
+        MainActor.assumeIsolated {
+            if !isInvalidated {
+                for managed in displayGroupStatusItems {
+                    NSStatusBar.system.removeStatusItem(managed.statusItem)
+                }
+            }
         }
     }
 }

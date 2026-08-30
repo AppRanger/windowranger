@@ -133,6 +133,7 @@ final class DiagnosticLogger {
     let buildMode: DiagnosticBuildMode
     let sessionIdentifier: String
     let isVerbose: Bool
+    let capturesSupportHistory: Bool
 
     private let sink: DiagnosticSink
     private let lock = NSLock()
@@ -146,12 +147,14 @@ final class DiagnosticLogger {
         buildMode: DiagnosticBuildMode,
         sink: DiagnosticSink,
         sessionIdentifier: String = UUID().uuidString,
-        isVerbose: Bool = true
+        isVerbose: Bool = true,
+        capturesSupportHistory: Bool = false
     ) {
         self.buildMode = buildMode
         self.sink = sink
         self.sessionIdentifier = sessionIdentifier
         self.isVerbose = isVerbose
+        self.capturesSupportHistory = capturesSupportHistory
         timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     }
 
@@ -183,16 +186,17 @@ final class DiagnosticLogger {
         #if DEBUG
         return make(buildMode: .debug, fileURL: defaultFileURL)
         #else
-        return .disabled
+        return DiagnosticLogger(
+            buildMode: .release,
+            sink: NoOpDiagnosticSink(),
+            isVerbose: false,
+            capturesSupportHistory: true
+        )
         #endif
     }
 
     static var defaultFileURL: URL {
-        let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library")
-        return library
-            .appendingPathComponent("Logs", isDirectory: true)
-            .appendingPathComponent("com.windowranger.WindowRanger", isDirectory: true)
+        ApplicationIdentity.diagnosticDirectoryURL
             .appendingPathComponent("diagnostics.jsonl")
     }
 
@@ -208,7 +212,7 @@ final class DiagnosticLogger {
         correlation: String? = nil,
         fields: [String: String] = [:]
     ) {
-        guard isVerbose else { return }
+        guard isVerbose || capturesSupportHistory else { return }
         lock.lock()
         sequence += 1
         let record = DiagnosticRecord(
@@ -234,8 +238,47 @@ final class DiagnosticLogger {
             correlatedRecordBytes += data.count
             trimCorrelatedRecordsIfNeeded()
         }
-        sink.append(data)
+        if isVerbose { sink.append(data) }
         lock.unlock()
+    }
+
+    func relatedDiagnosticsText(windowToken: String, maxBytes: Int = 20_000) -> String {
+        guard capturesSupportHistory || isVerbose, !windowToken.isEmpty, maxBytes > 0 else { return "" }
+        lock.lock()
+        defer { lock.unlock() }
+
+        var groups: [Data] = []
+        var remaining = maxBytes
+        for correlation in correlationOrder.reversed() {
+            guard let records = correlatedRecords[correlation],
+                  records.contains(where: { Self.record($0, referencesWindowToken: windowToken) })
+            else { continue }
+            let group = boundedActionGroup(records, maxBytes: remaining)
+            guard !group.isEmpty else { continue }
+            groups.append(group)
+            remaining -= group.count
+            if remaining < 1_024 { break }
+        }
+        let data = groups.reversed().reduce(into: Data()) { $0.append($1) }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    static func fieldValue(_ value: String, referencesWindowToken windowToken: String) -> Bool {
+        guard !windowToken.isEmpty else { return false }
+        var searchStart = value.startIndex
+        while searchStart < value.endIndex,
+              let range = value.range(of: windowToken, range: searchStart..<value.endIndex) {
+            let preceding = range.lowerBound == value.startIndex
+                ? nil
+                : value[value.index(before: range.lowerBound)]
+            let following = range.upperBound == value.endIndex ? nil : value[range.upperBound]
+            if preceding.map(isWindowTokenCharacter) != true,
+               following.map(isWindowTokenCharacter) != true {
+                return true
+            }
+            searchStart = range.upperBound
+        }
+        return false
     }
 
     func recentDiagnosticsText(maxBytes: Int = 64_000) -> String {
@@ -263,10 +306,15 @@ final class DiagnosticLogger {
 
     static func completeJSONLinesSuffix(from data: Data, maxBytes: Int) -> Data {
         guard maxBytes > 0, !data.isEmpty else { return Data() }
-        var suffix = Data(data.suffix(maxBytes))
-        if suffix.first != 0x7B, let firstNewline = suffix.firstIndex(of: 0x0A) {
+        let retainedByteCount = min(maxBytes, data.count)
+        let suffixStart = data.index(data.endIndex, offsetBy: -retainedByteCount)
+        let startsAtLineBoundary = suffixStart == data.startIndex ||
+            data[data.index(before: suffixStart)] == 0x0A
+        var suffix = Data(data[suffixStart..<data.endIndex])
+        if (!startsAtLineBoundary || suffix.first != 0x7B),
+           let firstNewline = suffix.firstIndex(of: 0x0A) {
             suffix.removeSubrange(suffix.startIndex...firstNewline)
-        } else if suffix.first != 0x7B {
+        } else if !startsAtLineBoundary || suffix.first != 0x7B {
             return Data()
         }
         // A concurrent writer or a byte cap can leave a trailing partial record. JSON Lines is
@@ -278,10 +326,34 @@ final class DiagnosticLogger {
         return suffix
     }
 
+    /// A final fail-closed pass for user-shareable reports. Structured report producers must
+    /// already omit forbidden fields; this catches injected URLs and full user paths at the last
+    /// serialization boundary without enabling the persistent Debug log.
+    static func sanitizedReport(_ report: String) -> String {
+        report.components(separatedBy: .newlines).map { line in
+            guard looksSensitive(line) else { return String(line.prefix(2_048)) }
+            guard let separator = line.firstIndex(of: ":") else { return "[redacted]" }
+            return String(line[...separator]) + " [redacted]"
+        }.joined(separator: "\n")
+    }
+
     private static func newlineTerminatedText(_ data: Data) -> String {
         guard !data.isEmpty else { return "" }
         let text = String(decoding: data, as: UTF8.self)
         return text.hasSuffix("\n") ? text : text + "\n"
+    }
+
+    private static func record(_ data: Data, referencesWindowToken windowToken: String) -> Bool {
+        guard let record = try? JSONDecoder().decode(DiagnosticRecord.self, from: data) else {
+            return false
+        }
+        return record.fields.values.contains {
+            fieldValue($0, referencesWindowToken: windowToken)
+        }
+    }
+
+    private static func isWindowTokenCharacter(_ character: Character) -> Bool {
+        character.isNumber || character == ":"
     }
 
     private func trimCorrelatedRecordsIfNeeded(maxBytes: Int = 512_000, maxActions: Int = 12) {

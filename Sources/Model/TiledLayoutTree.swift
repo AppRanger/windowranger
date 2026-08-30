@@ -35,14 +35,14 @@ enum VisualPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var systemImage: String {
         switch self {
-        case .topLeft: "arrow.up.left"
-        case .top: "arrow.up"
-        case .topRight: "arrow.up.right"
-        case .left: "arrow.left"
-        case .right: "arrow.right"
-        case .bottomLeft: "arrow.down.left"
-        case .bottom: "arrow.down"
-        case .bottomRight: "arrow.down.right"
+        case .topLeft: "rectangle.inset.topleft.filled"
+        case .top: "rectangle.tophalf.inset.filled"
+        case .topRight: "rectangle.inset.topright.filled"
+        case .left: "rectangle.lefthalf.inset.filled"
+        case .right: "rectangle.righthalf.inset.filled"
+        case .bottomLeft: "rectangle.inset.bottomleft.filled"
+        case .bottom: "rectangle.bottomhalf.inset.filled"
+        case .bottomRight: "rectangle.inset.bottomright.filled"
         }
     }
 
@@ -464,13 +464,36 @@ enum TiledLayoutEngine {
             abs(observedFrame.position.y - expectedFrame.position.y) > positionTolerance
         guard sizeIsStable, positionMoved else { return nil }
 
-        let target = pointerLocation.flatMap { pointer in
-            tree.windowKeys.first { key in
-                guard key != focusedWindow, let frame = expectedFrames[key] else { return false }
-                return CGRect(origin: frame.position, size: frame.size).contains(pointer)
-            }
+        let target = pointerLocation.flatMap {
+            swapTarget(
+                at: $0,
+                focusedWindow: focusedWindow,
+                expectedFrames: expectedFrames
+            )
         }
         return TiledDragObservation(swapTarget: target)
+    }
+
+    /// Resolves the proposed destination for an already-classified title-bar drag. Once the real
+    /// windows are parked, their Accessibility frames no longer describe the gesture, so the
+    /// pointer is tested against the immutable committed tile frames instead.
+    static func swapTarget(
+        at pointerLocation: CGPoint,
+        focusedWindow: WindowKey,
+        expectedFrames: [WindowKey: WindowFrame]
+    ) -> WindowKey? {
+        expectedFrames.keys
+            .filter { $0 != focusedWindow }
+            .sorted { lhs, rhs in
+                if lhs.processIdentifier != rhs.processIdentifier {
+                    return lhs.processIdentifier < rhs.processIdentifier
+                }
+                return lhs.windowIdentifier < rhs.windowIdentifier
+            }
+            .first { key in
+                guard let frame = expectedFrames[key] else { return false }
+                return CGRect(origin: frame.position, size: frame.size).contains(pointerLocation)
+            }
     }
 
     /// Moves a focused leaf across the split that directly contains it by exchanging that leaf

@@ -5,9 +5,20 @@ import Combine
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let diagnostics = DiagnosticLogger.makeAppLogger()
     lazy var settingsStore = SettingsStore(diagnostics: diagnostics)
+    lazy var workspacePreviewRepository = WorkspacePreviewRepository(
+        isEnabled: settingsStore.workspacePreviewThumbnailsEnabled
+    )
     lazy var settingsNavigation = SettingsNavigationModel()
+    lazy var updateController = UpdateController()
     lazy var settingsWindowCoordinator = SettingsWindowCoordinator(diagnostics: diagnostics)
     lazy var settingsCommandRequestRouter = SettingsCommandRequestRouter()
+    private let onboardingProgressStore = OnboardingProgressStore()
+    private lazy var onboardingWindowController = OnboardingWindowController(
+        settingsStore: settingsStore,
+        progressStore: onboardingProgressStore,
+        diagnostics: diagnostics
+    )
+    private lazy var cliLaunchAtLoginController = LaunchAtLoginController()
     lazy var menuBarState = MenuBarStateModel(
         workspaces: settingsStore.workspaces,
         displayMode: settingsStore.multiDisplayMode,
@@ -20,8 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         displayMode: settingsStore.multiDisplayMode,
         workspaceDisplayAssignments: settingsStore.workspaceDisplayHomesForEngine,
         appRules: settingsStore.appRules,
+        dropDownApp: settingsStore.dropDownApp,
+        quickApps: settingsStore.quickApps,
+        quickAppShelfPresentation: settingsStore.quickAppShelfPresentation,
+        selectedQuickAppBundleIdentifier: settingsStore.selectedQuickAppBundleIdentifier,
         focusFollowsMovedWindow: settingsStore.focusFollowsMovedWindow,
         automaticallyUnhideApplications: settingsStore.automaticallyUnhideApplications,
+        focusedWindowHighlightEnabled: settingsStore.focusedWindowHighlightEnabled,
+        preSizeInactiveLayoutsOnStartup: settingsStore.workspacePreviewThumbnailsEnabled &&
+            workspacePreviewRepository.authorization == .authorized,
         diagnostics: diagnostics
     )
     private lazy var commandDispatcher = WindowManagerCommandDispatcher(
@@ -32,59 +50,216 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         },
         resumeAutomaticProfileSelection: { [weak self] _ in
             Task { @MainActor [weak self] in self?.settingsStore.resumeAutomaticProfileSelection() }
+        },
+        addCurrentApplication: { [weak self] bundleIdentifier, displayName, workspaceID, profileID, expectedMembership, _ in
+            Task { @MainActor [weak self] in
+                self?.settingsStore.addCurrentApplicationRule(
+                    bundleIdentifier: bundleIdentifier,
+                    displayName: displayName,
+                    defaultWorkspaceID: workspaceID,
+                    expectedActiveProfileID: profileID,
+                    expectedMembership: expectedMembership
+                )
+            }
+        },
+        removeCurrentApplication: { [weak self] bundleIdentifier, profileID, expectedMembership, _ in
+            Task { @MainActor [weak self] in
+                self?.settingsStore.removeCurrentApplicationRule(
+                    bundleIdentifier: bundleIdentifier,
+                    expectedActiveProfileID: profileID,
+                    expectedMembership: expectedMembership
+                )
+            }
+        },
+        addCurrentApplicationToQuickAppShelf: { [weak self] bundleIdentifier, displayName, profileID, expectedMembership, _ in
+            Task { @MainActor [weak self] in
+                self?.settingsStore.addCurrentApplicationToQuickAppShelf(
+                    bundleIdentifier: bundleIdentifier,
+                    displayName: displayName,
+                    expectedActiveProfileID: profileID,
+                    expectedMembership: expectedMembership
+                )
+            }
+        },
+        setPauseMode: { [weak self] isPaused, correlationID, source in
+            Task { @MainActor [weak self] in
+                self?.setPauseMode(isPaused, source: source.rawValue, correlationID: correlationID)
+            }
         }
     )
-    private lazy var radialMenuController = RadialMenuController(
+    // Kept separate from the request router because live actions require an engine-context
+    // capture before they can be validated. The router supplies this bridge once its expanded
+    // action operation is decoded.
+    private lazy var cliActionBridge = WindowRangerCLIActionBridge(
+        engine: engine,
+        dispatcher: commandDispatcher,
+        contextEnricher: { [weak self] context in
+            self?.enrichedCommandContext(context) ?? context
+        },
+        openSettings: { [weak self] category in
+            guard let self else { return }
+            self.settingsCommandRequestRouter.prepare(.init(
+                category: category,
+                preferPointerDisplay: false
+            ))
+            if !SettingsMenuCommandDispatcher.performSettingsCommand(in: NSApp.mainMenu) {
+                self.settingsCommandRequestRouter.cancelPendingRequest()
+            }
+        },
+        openScreenRecordingSettings: { [weak self] in
+            self?.workspacePreviewRepository.openScreenRecordingSettings()
+        },
+        openLoginItemsSettings: {
+            MainAppLaunchAtLoginService().openSystemSettings()
+        },
+        restartOnboarding: { [weak self] in
+            self?.restartOnboardingFromSettings()
+        },
+        checkForUpdates: { [weak self] in
+            guard let updateController = self?.updateController,
+                  updateController.canCheckForUpdates
+            else { return false }
+            updateController.checkForUpdates()
+            return true
+        },
+        setICloudSyncEnabled: { [weak self] enabled in
+            guard let self else { return false }
+            self.settingsStore.iCloudSyncEnabled = enabled
+            return self.settingsStore.iCloudSyncEnabled == enabled
+        },
+        replaceICloudWithLocal: { [weak self] in
+            self?.settingsStore.replaceICloudSettingsWithLocalCopy() ?? false
+        }
+    )
+    private lazy var cliRequestRouter = WindowRangerCLIRequestRouter(
+        snapshotProvider: { [weak self] in
+            guard let self else {
+                return .init(workspaces: [], accessibilityGranted: false, isPaused: false)
+            }
+            return .init(
+                workspaces: self.settingsStore.workspaces,
+                accessibilityGranted: AXIsProcessTrusted(),
+                isPaused: self.isPauseModeEnabled
+            )
+        },
+        commandDispatcher: { [weak self] command, correlationID in
+            self?.commandDispatcher.dispatch(
+                command,
+                source: .cli,
+                correlationID: correlationID
+            ) ?? .rejectedReentrant
+        },
+        actionExecutor: { [weak self] action, arguments, requestID, deadline, completion in
+            guard let self else {
+                completion(.unavailable)
+                return
+            }
+            self.cliActionBridge.perform(
+                action: action,
+                arguments: arguments,
+                requestID: requestID,
+                deadlineUptimeNanoseconds: deadline,
+                completion: completion
+            )
+        },
+        configurationProvider: { [weak self] in
+            self?.cliConfigurationSnapshot() ?? .failure(.unavailable)
+        },
+        configurationValidator: { [weak self] document in
+            self?.validateCLIConfiguration(document) ?? .failure(.unavailable)
+        },
+        configurationApplier: { [weak self] document, revision in
+            self?.applyCLIConfiguration(document, expectedRevision: revision)
+                ?? .failure(.unavailable)
+        }
+    )
+    private lazy var cliServer: CLIIPCServer? = {
+        let helperURL = Bundle.main.bundleURL
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Helpers", isDirectory: true)
+            .appendingPathComponent("windowranger", isDirectory: false)
+        guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {
+            diagnostics.log(category: "cli", event: "bundled-helper-unavailable")
+            return nil
+        }
+        let peerPolicy = CLIIPCPeerPolicy(
+            codeIdentifier: "windowranger",
+            executableURL: helperURL
+        )
+        return CLIIPCServer(peerPolicy: peerPolicy, asyncHandler: { [weak self] request, completion in
+            DispatchQueue.main.async {
+                guard let self else {
+                    completion(Data())
+                    return
+                }
+                self.cliRequestRouter.handle(request, completion: completion)
+            }
+        })
+    }()
+    private lazy var commandPaletteController = CommandPaletteController(
         engine: engine,
         dispatcher: commandDispatcher,
         diagnostics: diagnostics,
-        definitionProvider: { [weak self] in
-            self?.settingsStore.radialWheelDefinition ?? .builtInDefault
-        },
         contextEnricher: { [weak self] context in
-            guard let self else { return context }
-            var enriched = context
-            enriched.profiles = self.settingsStore.profiles.map {
-                RadialProfileOption(id: $0.id, name: $0.name)
+            self?.enrichedCommandContext(context) ?? context
+        },
+        hotKeyConfigurationProvider: { [weak self] in
+            self?.settingsStore.hotKeyConfiguration ?? HotKeyConfiguration()
+        },
+        positionProvider: { [weak self] in
+            self?.settingsStore.commandPalettePosition ?? .defaultValue
+        },
+        isPauseModeEnabledProvider: { [weak self] in
+            self?.isPauseModeEnabled ?? false
+        },
+        openSettings: { [weak self] in
+            guard let self else { return }
+            self.settingsCommandRequestRouter.prepare(.applicationMenuDefault)
+            if !SettingsMenuCommandDispatcher.performSettingsCommand(in: NSApp.mainMenu) {
+                self.settingsCommandRequestRouter.cancelPendingRequest()
             }
-            enriched.activeProfileID = self.settingsStore.activeProfileID
-            enriched.isProfileManuallyPinned = self.settingsStore.manualPinnedProfileID != nil
-            enriched.externalValidationToken = [
-                "active=\(self.settingsStore.activeProfileID.uuidString)",
-                "pinned=\(self.settingsStore.manualPinnedProfileID?.uuidString ?? "none")",
-                self.settingsStore.profiles.map { "\($0.id.uuidString)=\($0.name)" }.joined(separator: ","),
-            ].joined(separator: "|")
-            return enriched
         }
     )
-    private lazy var radialMenuTriggerController = RadialMenuTriggerController(
-        menuController: radialMenuController,
-        diagnostics: diagnostics
-    )
-    private lazy var globeFnHoldActivationController: GlobeFnHoldActivationController = {
-        let controller = GlobeFnHoldActivationController(
-            radialTrigger: radialMenuTriggerController,
+    private lazy var workspaceSwipeController: WorkspaceSwipeController = {
+        let controller = WorkspaceSwipeController(
+            dispatcher: commandDispatcher,
             diagnostics: diagnostics
         )
         controller.runtimeIssueChanged = { [weak self] issue in
-            self?.settingsStore.setGlobeFnRuntimeIssue(issue)
+            self?.settingsStore.setWorkspaceSwipeRuntimeIssue(issue)
         }
         return controller
     }()
     private lazy var commandFeedbackPresenter: CommandFeedbackPresenting =
         CommandFeedbackOverlayController(diagnostics: diagnostics)
+    private lazy var shortcutGuideController = ShortcutGuidePanelController()
+    private lazy var shortcutGuideModifierMonitor = ShortcutGuideModifierMonitor()
+    private lazy var focusedWindowHighlightPresenter: FocusedWindowHighlightPresenting =
+        FocusedWindowHighlightController(diagnostics: diagnostics)
+    private lazy var tiledResizePreviewPresenter: TiledResizePreviewPresenting =
+        TiledResizePreviewController(diagnostics: diagnostics)
+    private lazy var tiledResizePointerMonitor = TiledResizePointerMonitor(
+        onDragged: { [weak self] in self?.engine.tiledResizePointerDragged() },
+        onReleased: { [weak self] in self?.engine.tiledResizePointerReleased() }
+    )
     private lazy var hotKeyManager: HotKeyManager = {
         let manager = HotKeyManager(
             dispatcher: commandDispatcher,
             diagnostics: diagnostics,
             radialMenuTrigger: { [weak self] event in
                 guard let self else { return }
-                self.globeFnHoldActivationController.ordinaryShortcutWillBegin()
-                self.radialMenuTriggerController.handle(
-                    event,
-                    style: self.settingsStore.radialMenuActivationStyle,
-                    holdDelay: self.settingsStore.radialMenuHoldDelay
-                )
+                switch event {
+                case .pressed:
+                    self.shortcutGuideController.dismiss()
+                    self.commandPaletteController.toggle()
+                case .released:
+                    break
+                case .escape:
+                    self.commandPaletteController.dismiss(
+                        reason: "escape",
+                        restorePreviousApplication: true
+                    )
+                }
             }
         )
         manager.directionalMoveGestureRuntimeIssueChanged = { [weak self] issue in
@@ -96,13 +271,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
     private var preparedForTermination = false
     private var isShortcutRecording = false
+    private var isPauseModeEnabled = false
+    private var pendingPausedProfileActivationRequest: ProfileActivationRequest?
     private var fullscreenGameSession: FullscreenGameSessionSnapshot?
+    private var isForegroundDeclaredGameApplication = false
+    private var shortcutGuideObservationGeneration = ShortcutGuideObservationGeneration()
+    private var activeShortcutGuideModifierFamily: ShortcutFamily?
+    private var presentedShortcutGuideShelfContext: ShortcutGuideShelfRuntimeContext?
     private var pendingMenuBarPresentationUpdate: DispatchWorkItem?
     private var pendingMenuBarWorkspaceLabelUpdate: DispatchWorkItem?
+    private var pendingMenuBarDisplayIconUpdate: DispatchWorkItem?
     private var pendingMenuBarHighlightUpdate: DispatchWorkItem?
+    private var screenLockNotificationsRegistered = false
     private let tiledPlacementUndoManager = UndoManager()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ApplicationIdentityMigration.perform()
         NSApp.setActivationPolicy(.accessory)
         guard settingsStore.workspaces.first != nil else { return }
 
@@ -117,8 +301,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             self.workspaceStatusBarController?.rebuild()
             self.settingsWindowCoordinator.workspaceStateDidChange(state)
-            self.radialMenuController.contextDidPossiblyChange()
+            self.commandPaletteController.contextDidPossiblyChange()
             self.settingsStore.recordActiveWorkspaceState(state)
+            self.focusedWindowHighlightPresenter.updateWorkspaceContexts(
+                state.focusedWindowHighlightWorkspaceContexts
+            )
+            self.refreshShortcutGuideForShelfTransitionIfNeeded()
+        }
+        engine.onWorkspacePreviewStateChanged = { [weak self] workspaceIDs in
+            self?.workspacePreviewRepository.invalidate(workspaceIDs: workspaceIDs)
+        }
+        engine.onQuickAppSelectionChanged = { [weak self] bundleIdentifier in
+            Task { @MainActor [weak self] in
+                self?.settingsStore.recordSelectedQuickApp(bundleIdentifier: bundleIdentifier)
+            }
         }
         engine.onWorkspaceLayoutChanged = { [weak self] workspaceID, layout in
             self?.settingsStore.setLayout(layout, for: workspaceID)
@@ -129,8 +325,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         engine.onTiledPlacementCommitted = { [weak self] transaction in
             self?.registerTiledPlacementHistory(transaction, direction: .undo)
         }
+        engine.onFreeformPlacementCommitted = { [weak self] transaction in
+            self?.registerFreeformPlacementHistory(transaction, direction: .undo)
+        }
         engine.onCommandFeedback = { [weak self] request in
             guard let self else { return }
+            guard !self.isPauseModeEnabled else {
+                self.diagnostics.log(
+                    category: "pause-mode",
+                    event: "command-feedback-suppressed",
+                    correlation: request.correlationID
+                )
+                return
+            }
             if let gameSession = self.fullscreenGameSession,
                request.preferredDisplayIdentifier == nil ||
                 request.preferredDisplayIdentifier == gameSession.displayIdentifier {
@@ -144,25 +351,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             self.commandFeedbackPresenter.present(request)
         }
+        engine.onVerifiedFocusTarget = { [weak self] target in
+            self?.focusedWindowHighlightPresenter.updateVerifiedFocusTarget(target)
+        }
+        engine.onTiledResizePreviewChanged = { [weak self] event in
+            guard let self else { return }
+            switch event {
+            case let .present(presentation):
+                self.focusedWindowHighlightPresenter.setSuppressed(
+                    true,
+                    reason: "tiled-resize-preview"
+                )
+                self.tiledResizePreviewPresenter.present(presentation)
+            case let .dismiss(token, reason):
+                if self.tiledResizePreviewPresenter.dismiss(token: token, reason: reason) {
+                    self.focusedWindowHighlightPresenter.setSuppressed(
+                        self.fullscreenGameSession != nil || self.isPauseModeEnabled,
+                        reason: "tiled-resize-preview-ended"
+                    )
+                }
+            }
+        }
         engine.onFullscreenGameSessionChanged = { [weak self] session in
             guard let self, self.fullscreenGameSession != session else { return }
             self.fullscreenGameSession = session
-            if session != nil {
+            self.settingsStore.setGameModeActive(session?.isGameModeEligible == true)
+            self.focusedWindowHighlightPresenter.setSuppressed(
+                session != nil || self.isPauseModeEnabled,
+                reason: session == nil ? "fullscreen-game-ended" : "fullscreen-game-session"
+            )
+            self.workspaceSwipeController.setSuppressed(
+                session != nil,
+                reason: "fullscreen-game-session"
+            )
+            if session != nil, !self.isPauseModeEnabled {
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "fullscreen-game-session")
-                self.globeFnHoldActivationController.cancel(reason: "fullscreen-game-session")
-                self.radialMenuTriggerController.cancel(reason: "fullscreen-game-session")
+                self.commandPaletteController.dismiss(reason: "fullscreen-game-session")
                 self.commandFeedbackPresenter.dismiss(reason: "fullscreen-game-session")
             }
-            self.registerHotKeys()
-            self.updateGlobeFnHoldActivation()
+            self.registerHotKeys(source: "fullscreen-game-session")
+            self.updateShortcutGuideActivation()
         }
         engine.onWorkspaceDisplayAssignmentsChanged = { [weak self] assignments in
             self?.settingsStore.assignWorkspaces(assignments)
         }
-        registerHotKeys()
-        updateGlobeFnHoldActivation()
-        engine.start()
+        if let frontmostApplication = NSWorkspace.shared.frontmostApplication {
+            updateForegroundDeclaredGameInputProtection(for: frontmostApplication)
+        }
+        registerHotKeys(source: "application-startup")
+        updateWorkspaceSwipeActivation()
+        updateShortcutGuideActivation()
         updateMenuBarPresentation()
+        focusedWindowHighlightPresenter.update(
+            enabled: settingsStore.focusedWindowHighlightEnabled,
+            color: settingsStore.focusedWindowHighlightColor.nsColor,
+            filters: FocusedWindowHighlightFilters(
+                tiledWorkspacesOnly: settingsStore.focusedWindowHighlightTiledOnly,
+                multipleWindowsOnly: settingsStore.focusedWindowHighlightMultipleWindowsOnly
+            )
+        )
+        focusedWindowHighlightPresenter.updateCornerRadiusOverrides(
+            settingsStore.focusedWindowHighlightCornerRadiusOverrides
+        )
 
         settingsStore.$workspaces
             .dropFirst()
@@ -172,7 +422,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.clearTiledPlacementHistory()
                 self.engine.updateWorkspaces(workspaces)
-                self.registerHotKeys()
+                self.registerHotKeys(source: "workspace-settings-changed", workspaces: workspaces)
                 self.menuBarState.updateConfiguration(
                     workspaces: workspaces,
                     displayMode: self.settingsStore.multiDisplayMode,
@@ -188,23 +438,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             }
             .sink { [weak self] application in
-                self?.hotKeyManager.cancelDirectionalMoveGesture(reason: "application-activated")
-                self?.globeFnHoldActivationController.cancel(reason: "application-activated")
-                self?.radialMenuTriggerController.cancel(reason: "application-activated")
-                self?.engine.applicationActivated(processIdentifier: application.processIdentifier)
+                guard let self else { return }
+                self.updateForegroundDeclaredGameInputProtection(for: application)
+                self.hotKeyManager.cancelDirectionalMoveGesture(reason: "application-activated")
+                self.workspaceSwipeController.cancel(reason: "application-activated")
+                self.workspaceStatusBarController?.applicationActivated()
+                self.engine.applicationActivated(processIdentifier: application.processIdentifier)
             }
             .store(in: &cancellables)
 
         let workspaceNotifications = NSWorkspace.shared.notificationCenter
+        registerScreenLockNotifications()
         workspaceNotifications.publisher(for: NSWorkspace.willSleepNotification)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.clearTiledPlacementHistory()
                 self.hotKeyManager.cancelDirectionalMoveGesture(reason: "system-will-sleep")
-                self.globeFnHoldActivationController.cancel(reason: "system-will-sleep")
-                self.radialMenuTriggerController.cancel(reason: "system-will-sleep")
+                self.workspaceSwipeController.setSuppressed(true, reason: "system-sleep")
+                self.commandPaletteController.dismiss(reason: "system-will-sleep")
                 self.commandFeedbackPresenter.dismiss(reason: "system-will-sleep")
+                self.stopShortcutGuideObservation()
+                self.focusedWindowHighlightPresenter.setSuppressed(
+                    true,
+                    reason: "system-will-sleep"
+                )
+                self.workspacePreviewRepository.purge()
                 self.engine.prepareForSystemSleep()
             }
             .store(in: &cancellables)
@@ -213,6 +472,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.reconcileAfterWake(source: .systemWake)
+            }
+            .store(in: &cancellables)
+
+        workspaceNotifications.publisher(for: NSWorkspace.screensDidSleepNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.hotKeyManager.cancelDirectionalMoveGesture(reason: "screens-did-sleep")
+                self.workspaceSwipeController.setSuppressed(true, reason: "screen-sleep")
+                self.commandPaletteController.dismiss(reason: "screens-did-sleep")
+                self.commandFeedbackPresenter.dismiss(reason: "screens-did-sleep")
+                self.stopShortcutGuideObservation()
+                self.focusedWindowHighlightPresenter.setSuppressed(
+                    true,
+                    reason: "screens-did-sleep"
+                )
+                self.workspacePreviewRepository.purge()
+                self.engine.prepareForScreenSleep(source: .screensSleep)
             }
             .store(in: &cancellables)
 
@@ -234,8 +511,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.hotKeyManager.cancelDirectionalMoveGesture(reason: "session-resigned-active")
-                self?.globeFnHoldActivationController.cancel(reason: "session-resigned-active")
-                self?.radialMenuTriggerController.cancel(reason: "session-resigned-active")
+                self?.workspaceSwipeController.setSuppressed(true, reason: "session-inactive")
+                self?.commandPaletteController.dismiss(reason: "session-resigned-active")
+                self?.stopShortcutGuideObservation()
+                self?.focusedWindowHighlightPresenter.setSuppressed(
+                    true,
+                    reason: "session-resigned-active"
+                )
+                self?.workspacePreviewRepository.purge()
+                self?.engine.prepareForScreenSleep(source: .sessionResignedActive)
             }
             .store(in: &cancellables)
 
@@ -243,8 +527,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.hotKeyManager.cancelDirectionalMoveGesture(reason: "display-configuration-changed")
+                self?.workspaceSwipeController.cancel(reason: "display-configuration-changed")
                 self?.commandFeedbackPresenter.screenParametersDidChange()
+                self?.focusedWindowHighlightPresenter.screenParametersDidChange()
+                if let self,
+                   self.tiledResizePreviewPresenter.screenParametersDidChange() {
+                    self.focusedWindowHighlightPresenter.setSuppressed(
+                        self.fullscreenGameSession != nil || self.isPauseModeEnabled,
+                        reason: "tiled-resize-preview-display-change"
+                    )
+                }
+                self?.engine.cancelTiledResizePreview(reason: "display-configuration-changed")
                 self?.settingsWindowCoordinator.screenParametersDidChange()
+                self?.commandPaletteController.dismiss(reason: "display-configuration-changed")
+                self?.stopShortcutGuideObservation()
+                self?.workspacePreviewRepository.purge()
                 self?.reconcileAfterWake(source: .displayConfigurationChanged)
             }
             .store(in: &cancellables)
@@ -303,53 +600,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .sink { [weak self] enabled in
             guard let self else { return }
             if !enabled {
-                self.globeFnHoldActivationController.cancel(reason: "wheel-disabled")
-                self.radialMenuTriggerController.cancel(reason: "wheel-disabled")
+                self.commandPaletteController.dismiss(reason: "palette-disabled")
             }
-            self.registerHotKeys()
-            self.updateGlobeFnHoldActivation(radialMenuEnabled: enabled)
+            self.registerHotKeys(source: "command-palette-setting-changed")
         }
         .store(in: &cancellables)
 
-        settingsStore.$radialMenuGlobeFnHoldEnabled
+        settingsStore.$shortcutGuideEnabled
             .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.updateShortcutGuideActivation()
+            }
+            .store(in: &cancellables)
+
+        settingsStore.$workspacePreviewThumbnailsEnabled
             .removeDuplicates()
             .sink { [weak self] enabled in
-                // @Published delivers in willSet. Use the emitted value rather than rereading the
-                // store synchronously, otherwise switching this option on observes the old false
-                // value and never installs the event monitor.
-                self?.updateGlobeFnHoldActivation(globeFnEnabled: enabled)
-            }
-            .store(in: &cancellables)
-
-        settingsStore.$radialMenuHoldDelay
-            .dropFirst()
-            .removeDuplicates()
-            .sink { [weak self] delay in
                 guard let self else { return }
-                self.globeFnHoldActivationController.cancel(reason: "hold-delay-changed")
-                self.radialMenuTriggerController.cancel(reason: "hold-delay-changed")
-                self.updateGlobeFnHoldActivation(holdDelay: delay)
+                self.workspacePreviewRepository.isEnabled = enabled
+                if enabled {
+                    self.workspacePreviewRepository.refreshAuthorization()
+                } else {
+                    self.workspacePreviewRepository.purgeImages()
+                }
+                self.workspaceStatusBarController?.rebuild()
             }
             .store(in: &cancellables)
 
-        settingsStore.$radialWheelDefinition
-            .dropFirst()
-            .removeDuplicates()
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.globeFnHoldActivationController.cancel(reason: "wheel-definition-changed")
-                self?.radialMenuTriggerController.cancel(reason: "wheel-definition-changed")
+                self?.workspacePreviewRepository.refreshAuthorization()
             }
             .store(in: &cancellables)
 
-        settingsStore.$radialMenuActivationStyle
+        Publishers.CombineLatest(
+            settingsStore.$shortcutGuideSize.removeDuplicates(),
+            settingsStore.$shortcutGuidePosition.removeDuplicates()
+        )
+        .dropFirst()
+        .sink { [weak self] _ in
+            self?.shortcutGuideController.dismiss()
+        }
+        .store(in: &cancellables)
+
+        Publishers.CombineLatest(
+            settingsStore.$quickApps,
+            settingsStore.$quickAppShelfPresentation
+            )
             .dropFirst()
-            .removeDuplicates()
-            .sink { [weak self] _ in
-                self?.globeFnHoldActivationController.cancel(reason: "wheel-activation-style-changed")
-                self?.radialMenuTriggerController.cancel(reason: "wheel-activation-style-changed")
+            .filter { [weak self] _ in self?.settingsStore.isApplyingProfileActivation == false }
+            .removeDuplicates { previous, next in
+                previous.0 == next.0 && previous.1 == next.1
+            }
+            .debounce(for: .milliseconds(100), scheduler: RunLoop.main)
+            .sink { [weak self] configurations, presentation in
+                self?.engine.updateQuickAppConfigurations(
+                    configurations,
+                    presentation: presentation
+                )
             }
             .store(in: &cancellables)
+
+        Publishers.CombineLatest(
+            settingsStore.$workspaceSwipeEnabled.removeDuplicates(),
+            settingsStore.$workspaceSwipeFingerCount.removeDuplicates()
+        )
+        .dropFirst()
+        .sink { [weak self] enabled, fingerCount in
+            self?.updateWorkspaceSwipeActivation(
+                enabled: enabled,
+                fingerCount: fingerCount
+            )
+        }
+        .store(in: &cancellables)
 
         settingsStore.$focusFollowsMovedWindow
             .dropFirst()
@@ -364,6 +689,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .removeDuplicates()
             .sink { [weak self] enabled in
                 self?.engine.updateAutomaticallyUnhideApplications(enabled)
+            }
+            .store(in: &cancellables)
+
+        Publishers.CombineLatest4(
+            settingsStore.$focusedWindowHighlightEnabled.removeDuplicates(),
+            settingsStore.$focusedWindowHighlightColor.removeDuplicates(),
+            settingsStore.$focusedWindowHighlightTiledOnly.removeDuplicates(),
+            settingsStore.$focusedWindowHighlightMultipleWindowsOnly.removeDuplicates()
+        )
+        .dropFirst()
+        .sink { [weak self] enabled, color, tiledOnly, multipleWindowsOnly in
+            self?.engine.updateFocusedWindowHighlight(enabled: enabled)
+            self?.focusedWindowHighlightPresenter.update(
+                enabled: enabled,
+                color: color.nsColor,
+                filters: FocusedWindowHighlightFilters(
+                    tiledWorkspacesOnly: tiledOnly,
+                    multipleWindowsOnly: multipleWindowsOnly
+                )
+            )
+        }
+        .store(in: &cancellables)
+
+        settingsStore.$focusedWindowHighlightCornerRadiusOverrides
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] overrides in
+                self?.focusedWindowHighlightPresenter.updateCornerRadiusOverrides(overrides)
             }
             .store(in: &cancellables)
 
@@ -383,6 +736,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        let menuBarDisplayIconChanges: [AnyPublisher<Void, Never>] = [
+            settingsStore.$profiles
+                .removeDuplicates()
+                .dropFirst()
+                .map { _ in () }
+                .eraseToAnyPublisher(),
+            settingsStore.$activeProfileID
+                .removeDuplicates()
+                .dropFirst()
+                .map { _ in () }
+                .eraseToAnyPublisher(),
+            settingsStore.$localProfileState
+                .map(\.roleBindings)
+                .removeDuplicates()
+                .dropFirst()
+                .map { _ in () }
+                .eraseToAnyPublisher(),
+            settingsStore.$connectedDisplays
+                .removeDuplicates()
+                .dropFirst()
+                .map { _ in () }
+                .eraseToAnyPublisher(),
+        ]
+        Publishers.MergeMany(menuBarDisplayIconChanges)
+            .sink { [weak self] _ in
+                self?.scheduleMenuBarDisplayIconUpdate()
+            }
+            .store(in: &cancellables)
+
         settingsStore.$menuBarHighlightColor
             .dropFirst()
             .removeDuplicates()
@@ -397,9 +779,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .debounce(for: .milliseconds(100), scheduler: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
-                self.globeFnHoldActivationController.cancel(reason: "shortcut-configuration-changed")
-                self.radialMenuTriggerController.cancel(reason: "shortcut-configuration-changed")
-                self.registerHotKeys()
+                self.commandPaletteController.dismiss(reason: "shortcut-configuration-changed")
+                self.registerHotKeys(source: "shortcut-configuration-changed")
+                // The guide's passive flag monitor resolves exact modifier families.
+                self.stopShortcutGuideObservation()
+                self.updateShortcutGuideActivation()
             }
             .store(in: &cancellables)
 
@@ -407,23 +791,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .dropFirst()
             .compactMap { $0 }
             .sink { [weak self] request in
-                guard let self else { return }
-                self.clearTiledPlacementHistory()
-                self.hotKeyManager.cancelDirectionalMoveGesture(reason: "profile-transition")
-                self.globeFnHoldActivationController.cancel(reason: "profile-transition")
-                self.radialMenuTriggerController.cancel(reason: "profile-transition")
-                self.commandFeedbackPresenter.dismiss(reason: "profile-transition")
-                self.engine.transitionToProfile(request)
-                self.registerHotKeys()
-                self.menuBarState.updateConfiguration(
-                    workspaces: self.settingsStore.workspaces,
-                    displayMode: self.settingsStore.multiDisplayMode,
-                    connectedDisplays: self.settingsStore.connectedDisplays,
-                    workspaceDisplayAssignments: self.settingsStore.workspaceDisplayAssignments
-                )
-                self.workspaceStatusBarController?.rebuild()
+                self?.handleProfileActivationRequest(request)
             }
             .store(in: &cancellables)
+
+        // Install every Settings/profile subscriber before discovery can publish a foreground
+        // full-screen game session. Otherwise an immediate startup session could advance the
+        // active profile while the engine misses its generated transition request.
+        tiledResizePointerMonitor.start()
+        engine.start()
+        do {
+            try cliServer?.start()
+            if cliServer != nil {
+                diagnostics.log(category: "cli", event: "server-started")
+            }
+        } catch {
+            diagnostics.log(
+                category: "cli",
+                event: "server-start-failed",
+                fields: ["error": String(describing: type(of: error))]
+            )
+        }
+        onboardingWindowController.presentIfNeeded()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -442,28 +831,422 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingMenuBarPresentationUpdate = nil
         pendingMenuBarWorkspaceLabelUpdate?.cancel()
         pendingMenuBarWorkspaceLabelUpdate = nil
+        pendingMenuBarDisplayIconUpdate?.cancel()
+        pendingMenuBarDisplayIconUpdate = nil
         pendingMenuBarHighlightUpdate?.cancel()
         pendingMenuBarHighlightUpdate = nil
+        cliServer?.stop()
+        unregisterScreenLockNotifications()
         tiledPlacementUndoManager.removeAllActions()
         hotKeyManager.cancelDirectionalMoveGesture(reason: "application-terminating")
-        globeFnHoldActivationController.shutdown()
-        radialMenuTriggerController.cancel(reason: "application-terminating")
+        workspaceSwipeController.shutdown()
+        commandPaletteController.shutdown()
         commandFeedbackPresenter.shutdown()
+        tiledResizePointerMonitor.shutdown()
+        tiledResizePreviewPresenter.shutdown()
+        stopShortcutGuideObservation()
+        focusedWindowHighlightPresenter.shutdown()
+        onboardingWindowController.shutdown()
         settingsWindowCoordinator.shutdown()
         workspaceStatusBarController?.invalidate()
         workspaceStatusBarController = nil
+        workspacePreviewRepository.purge()
         engine.stopAndRestoreAllWindows()
     }
 
-    private func registerHotKeys() {
-        guard !isShortcutRecording else { return }
+    private func registerHotKeys(
+        source: String,
+        workspaces: [WorkspaceDefinition]? = nil
+    ) {
+        guard !isShortcutRecording else {
+            diagnostics.log(
+                category: "hotkey",
+                event: "registration-deferred",
+                fields: ["source": source, "reason": "shortcut-recording"]
+            )
+            return
+        }
+        let registrationWorkspaces = workspaces ?? settingsStore.workspaces
+        let scope: HotKeyRegistrationScope = if isPauseModeEnabled {
+            .commandPaletteOnly
+        } else if fullscreenGameSession != nil {
+            .workspaceNavigationOnly
+        } else {
+            .all
+        }
         let report = hotKeyManager.register(
-            workspaces: settingsStore.workspaces,
+            workspaces: registrationWorkspaces,
             hotKeyConfiguration: settingsStore.hotKeyConfiguration,
-            radialMenuEnabled: settingsStore.radialMenuEnabled,
-            scope: fullscreenGameSession == nil ? .all : .workspaceNavigationOnly
+            radialMenuEnabled: isPauseModeEnabled || settingsStore.radialMenuEnabled,
+            scope: scope,
+            forceCommandPaletteEscapeHatch: isPauseModeEnabled,
+            diagnosticSource: source
         )
         settingsStore.setHotKeyRuntimeIssues(report.runtimeIssues)
+    }
+
+    private func registerScreenLockNotifications() {
+        guard !screenLockNotificationsRegistered else { return }
+        screenLockNotificationsRegistered = true
+        let center = DistributedNotificationCenter.default()
+        center.addObserver(
+            self,
+            selector: #selector(screenDidLock(_:)),
+            name: ScreenLockLifecycleNotifications.locked,
+            object: nil,
+            suspensionBehavior: .deliverImmediately
+        )
+        center.addObserver(
+            self,
+            selector: #selector(screenDidUnlock(_:)),
+            name: ScreenLockLifecycleNotifications.unlocked,
+            object: nil,
+            suspensionBehavior: .deliverImmediately
+        )
+    }
+
+    private func unregisterScreenLockNotifications() {
+        guard screenLockNotificationsRegistered else { return }
+        screenLockNotificationsRegistered = false
+        DistributedNotificationCenter.default().removeObserver(
+            self,
+            name: ScreenLockLifecycleNotifications.locked,
+            object: nil
+        )
+        DistributedNotificationCenter.default().removeObserver(
+            self,
+            name: ScreenLockLifecycleNotifications.unlocked,
+            object: nil
+        )
+    }
+
+    @objc private func screenDidLock(_ notification: Notification) {
+        hotKeyManager.cancelDirectionalMoveGesture(reason: "screen-locked")
+        workspaceSwipeController.setSuppressed(true, reason: "session-inactive")
+        commandPaletteController.dismiss(reason: "screen-locked")
+        commandFeedbackPresenter.dismiss(reason: "screen-locked")
+        stopShortcutGuideObservation()
+        focusedWindowHighlightPresenter.setSuppressed(true, reason: "screen-locked")
+        workspacePreviewRepository.purge()
+        engine.prepareForScreenSleep(source: .screenLocked)
+    }
+
+    @objc private func screenDidUnlock(_ notification: Notification) {
+        reconcileAfterWake(source: .screenUnlocked)
+    }
+
+    private func updateShortcutGuideActivation() {
+        guard settingsStore.shortcutGuideEnabled else {
+            stopShortcutGuideObservation()
+            settingsStore.setShortcutGuideRuntimeIssue(nil)
+            diagnostics.log(
+                category: "shortcut-guide",
+                event: "observation-stopped",
+                fields: ["reason": "disabled"]
+            )
+            return
+        }
+        guard !preparedForTermination,
+              !isShortcutRecording,
+              !isPauseModeEnabled,
+              fullscreenGameSession == nil,
+              !isForegroundDeclaredGameApplication else {
+            stopShortcutGuideObservation()
+            diagnostics.log(
+                category: "shortcut-guide",
+                event: "observation-stopped",
+                fields: [
+                    "reason": preparedForTermination ? "termination"
+                        : isShortcutRecording ? "shortcut-recording"
+                        : isPauseModeEnabled ? "pause-mode"
+                        : fullscreenGameSession != nil ? "fullscreen-game"
+                        : "declared-game",
+                ]
+            )
+            return
+        }
+        guard !shortcutGuideModifierMonitor.isRunning else {
+            settingsStore.setShortcutGuideRuntimeIssue(nil)
+            diagnostics.log(
+                category: "shortcut-guide",
+                event: "observation-retained"
+            )
+            return
+        }
+
+        let generation = shortcutGuideObservationGeneration.advance()
+        let started = shortcutGuideModifierMonitor.start(configuration: settingsStore.hotKeyConfiguration) { [weak self] family in
+            Task { @MainActor [weak self] in
+                guard let self,
+                      self.shortcutGuideObservationGeneration.accepts(generation) else { return }
+                self.shortcutGuideModifierFamilyDidChange(family)
+            }
+        }
+        let issue = started
+            ? nil
+            : "WindowRanger could not observe modifier changes. Check Accessibility permission, then turn the Shortcut Guide off and on again."
+        settingsStore.setShortcutGuideRuntimeIssue(issue)
+        diagnostics.log(
+            category: "shortcut-guide",
+            event: started ? "modifier-monitor-started" : "modifier-monitor-unavailable"
+        )
+    }
+
+    private func stopShortcutGuideObservation() {
+        _ = shortcutGuideObservationGeneration.advance()
+        activeShortcutGuideModifierFamily = nil
+        presentedShortcutGuideShelfContext = nil
+        shortcutGuideModifierMonitor.stop()
+        shortcutGuideController.stop()
+    }
+
+    private func refreshShortcutGuideForShelfTransitionIfNeeded() {
+        guard let family = activeShortcutGuideModifierFamily else { return }
+        let shelfContext = engine.currentShortcutGuideShelfContext()
+        guard shelfContext != presentedShortcutGuideShelfContext else { return }
+        shortcutGuideModifierFamilyDidChange(family)
+    }
+
+    private func shortcutGuideModifierFamilyDidChange(
+        _ family: ShortcutFamily?
+    ) {
+        activeShortcutGuideModifierFamily = family
+        if family == nil {
+            presentedShortcutGuideShelfContext = nil
+        }
+        diagnostics.log(
+            category: "shortcut-guide",
+            event: "modifier-family-changed",
+            fields: ["family": family?.rawValue ?? "none"]
+        )
+        guard settingsStore.shortcutGuideEnabled,
+              !isShortcutRecording,
+              !isPauseModeEnabled,
+              fullscreenGameSession == nil,
+              !isForegroundDeclaredGameApplication,
+              let family else {
+            shortcutGuideController.dismiss()
+            return
+        }
+        let conflicts = ShortcutConflictModel.evaluate(
+            configuration: settingsStore.hotKeyConfiguration,
+            workspaces: settingsStore.workspaces,
+            includeCommandWheel: settingsStore.radialMenuEnabled
+        )
+        guard let baseContent = ShortcutGuideContentBuilder.build(
+            family: family,
+            workspaces: settingsStore.workspaces,
+            configuration: settingsStore.hotKeyConfiguration,
+            runtimeIssues: settingsStore.hotKeyRuntimeIssues,
+            conflictReport: conflicts
+        ) else {
+            shortcutGuideController.dismiss()
+            diagnostics.log(
+                category: "shortcut-guide",
+                event: "content-unavailable",
+                fields: ["family": family.rawValue]
+            )
+            return
+        }
+        let shelfContext = engine.currentShortcutGuideShelfContext()
+        presentedShortcutGuideShelfContext = shelfContext
+        let content: ShortcutGuideContent
+        if let shelfContext {
+            guard let contextualContent = ShortcutGuideShelfPresentationPolicy.contextualContent(
+                from: baseContent,
+                direction: shelfContext.direction
+            ) else {
+                shortcutGuideController.dismiss()
+                diagnostics.log(
+                    category: "shortcut-guide",
+                    event: "shelf-content-unavailable",
+                    fields: ["family": family.rawValue]
+                )
+                return
+            }
+            content = contextualContent
+        } else {
+            content = baseContent
+        }
+        let displayIdentifier = shelfContext?.displayIdentifier
+            ?? engine.currentInteractionDisplayIdentifier()
+        let size = shelfContext.map { _ in
+            ShortcutGuideShelfPresentationPolicy.compactSize(
+                for: settingsStore.shortcutGuideSize
+            )
+        } ?? settingsStore.shortcutGuideSize
+        let position = shelfContext.map {
+            ShortcutGuideShelfPresentationPolicy.position(opposite: $0.direction)
+        } ?? settingsStore.shortcutGuidePosition
+        shortcutGuideController.present(
+            content,
+            size: size,
+            position: position,
+            preferredDisplayIdentifier: displayIdentifier
+        )
+        diagnostics.log(
+            category: "shortcut-guide",
+            event: "presentation-requested",
+            fields: [
+                "family": family.rawValue,
+                "context": shelfContext == nil ? "workspace" : "quick-app-shelf",
+                "primary-actions": String(content.primaryActions.count),
+                "secondary-actions": String(content.secondaryActions.count),
+                "display": String(displayIdentifier.prefix(12)),
+                "panel-visible": String(shortcutGuideController.isVisible),
+            ]
+        )
+    }
+
+    private func enrichedCommandContext(
+        _ context: RadialCommandContext
+    ) -> RadialCommandContext {
+        var enriched = context
+        enriched.profiles = settingsStore.profiles.map {
+            RadialProfileOption(id: $0.id, name: $0.name)
+        }
+        enriched.activeProfileID = settingsStore.activeProfileID
+        enriched.isProfileManuallyPinned = settingsStore.manualPinnedProfileID != nil
+        if let processIdentifier = context.focusedWindow?.processIdentifier,
+           let application = NSRunningApplication(processIdentifier: processIdentifier),
+           application.activationPolicy == .regular,
+           let bundleIdentifier = application.bundleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !bundleIdentifier.isEmpty,
+           bundleIdentifier.caseInsensitiveCompare(Bundle.main.bundleIdentifier ?? "") != .orderedSame {
+            let displayName = application.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            enriched.currentApplication = RadialApplicationOption(
+                bundleIdentifier: bundleIdentifier,
+                displayName: displayName.flatMap { $0.isEmpty ? nil : $0 } ?? bundleIdentifier
+            )
+        } else {
+            enriched.currentApplication = nil
+        }
+        enriched.applicationRuleBundleIdentifiers = Set(settingsStore.appRules.map { $0.bundleIdentifier.lowercased() })
+        enriched.externalValidationToken = [
+            "active=\(settingsStore.activeProfileID.uuidString)",
+            "pinned=\(settingsStore.manualPinnedProfileID?.uuidString ?? "none")",
+            "paused=\(isPauseModeEnabled)",
+            "current-app=\(enriched.currentApplication?.bundleIdentifier.lowercased() ?? "none")",
+            "app-rules=\(enriched.applicationRuleBundleIdentifiers.sorted().joined(separator: ","))",
+            "quick-apps=\(settingsStore.quickApps.map { $0.bundleIdentifier.lowercased() }.joined(separator: ","))",
+            settingsStore.profiles.map { "\($0.id.uuidString)=\($0.name)" }.joined(separator: ","),
+        ].joined(separator: "|")
+        enriched.quickApps = settingsStore.quickApps
+        return enriched
+    }
+
+    private func cliConfigurationSnapshot()
+        -> Result<WindowRangerCLIConfigurationSnapshot, WindowRangerCLIErrorCode> {
+        cliLaunchAtLoginController.refresh()
+        let applicationConfiguration = WindowRangerCLIApplicationConfiguration(
+            settings: settingsStore.cliConfigurationSnapshot(),
+            launchAtLoginEnabled: cliLaunchAtLoginController.isEnabled,
+            updates: WindowRangerCLIUpdateConfiguration(
+                betaUpdatesEnabled: updateController.betaUpdatesEnabled,
+                automaticChecksEnabled: updateController.automaticChecksEnabled,
+                automaticDownloadsEnabled: updateController.automaticDownloadsEnabled
+            ),
+            onboarding: onboardingProgressStore.configurationSnapshot
+        )
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let data = try encoder.encode(applicationConfiguration)
+            let document = try JSONDecoder().decode(WindowRangerCLIJSONValue.self, from: data)
+            return .success(.init(revision: Self.cliRevision(for: data), document: document))
+        } catch {
+            diagnostics.log(
+                category: "cli",
+                event: "configuration-encode-failed",
+                fields: ["error": String(describing: type(of: error))]
+            )
+            return .failure(.internalError)
+        }
+    }
+
+    private func validateCLIConfiguration(
+        _ document: WindowRangerCLIJSONValue
+    ) -> Result<WindowRangerCLIJSONValue, WindowRangerCLIErrorCode> {
+        switch decodedCLIConfiguration(document) {
+        case .failure:
+            return .failure(.invalidRequest)
+        case let .success(configuration):
+            switch configuration.validated() {
+            case .failure:
+                return .failure(.invalidRequest)
+            case let .success(normalized):
+                do {
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.sortedKeys]
+                    let data = try encoder.encode(normalized)
+                    return .success(try JSONDecoder().decode(WindowRangerCLIJSONValue.self, from: data))
+                } catch {
+                    return .failure(.internalError)
+                }
+            }
+        }
+    }
+
+    private func applyCLIConfiguration(
+        _ document: WindowRangerCLIJSONValue,
+        expectedRevision: String
+    ) -> Result<WindowRangerCLIConfigurationSnapshot, WindowRangerCLIErrorCode> {
+        guard case let .success(current) = cliConfigurationSnapshot() else {
+            return .failure(.internalError)
+        }
+        guard current.revision == expectedRevision else { return .failure(.staleState) }
+        guard case let .success(decoded) = decodedCLIConfiguration(document),
+              case let .success(configuration) = decoded.validated()
+        else { return .failure(.invalidRequest) }
+        if let preflightError = configuration.applicationPreflightError(
+            currentlyICloudSyncEnabled: settingsStore.iCloudSyncEnabled
+        ) {
+            // Turning sync on may immediately replace this Mac's library with an accepted remote
+            // copy. Keep that explicit asynchronous choice separate from atomic config replacement.
+            return .failure(preflightError)
+        }
+
+        // Registration is the only fallible external setting. Do it after complete validation and
+        // before the otherwise deterministic in-process replacement so a failure cannot leave a
+        // half-applied WindowRanger configuration.
+        cliLaunchAtLoginController.setEnabled(configuration.launchAtLoginEnabled)
+        cliLaunchAtLoginController.refresh()
+        guard cliLaunchAtLoginController.isEnabled == configuration.launchAtLoginEnabled else {
+            return .failure(.unavailable)
+        }
+
+        switch settingsStore.applyCLIConfiguration(configuration.settings) {
+        case .failure:
+            return .failure(.invalidRequest)
+        case .success:
+            break
+        }
+        updateController.betaUpdatesEnabled = configuration.updates.betaUpdatesEnabled
+        updateController.automaticChecksEnabled = configuration.updates.automaticChecksEnabled
+        updateController.automaticDownloadsEnabled = configuration.updates.automaticDownloadsEnabled
+        guard onboardingProgressStore.apply(configuration: configuration.onboarding) else {
+            return .failure(.invalidRequest)
+        }
+        return cliConfigurationSnapshot()
+    }
+
+    private func decodedCLIConfiguration(
+        _ document: WindowRangerCLIJSONValue
+    ) -> Result<WindowRangerCLIApplicationConfiguration, Error> {
+        do {
+            return .success(try WindowRangerCLIApplicationConfiguration.decodeStrict(from: document))
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    private static func cliRevision(for data: Data) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in data {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return String(format: "fnv1a64-%016llx", hash)
     }
 
     func shortcutRecordingStateDidChange(_ isRecording: Bool) {
@@ -471,21 +1254,141 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isShortcutRecording = isRecording
         if isRecording {
             hotKeyManager.cancelDirectionalMoveGesture(reason: "shortcut-recording-began")
-            globeFnHoldActivationController.cancel(reason: "shortcut-recording-began")
-            radialMenuTriggerController.cancel(reason: "shortcut-recording-began")
+            workspaceSwipeController.setSuppressed(true, reason: "shortcut-recording")
+            commandPaletteController.dismiss(reason: "shortcut-recording-began")
+            stopShortcutGuideObservation()
             hotKeyManager.suspendRegistration()
             settingsStore.setHotKeyRuntimeIssues([])
         } else {
-            registerHotKeys()
+            registerHotKeys(source: "shortcut-recording-ended")
+            workspaceSwipeController.setSuppressed(false, reason: "shortcut-recording")
+            updateShortcutGuideActivation()
         }
-        updateGlobeFnHoldActivation()
+    }
+
+    private func setPauseMode(
+        _ isPaused: Bool,
+        source: String,
+        correlationID: String? = nil
+    ) {
+        guard isPauseModeEnabled != isPaused else { return }
+        isPauseModeEnabled = isPaused
+        if isPaused {
+            engine.setWindowManagementPaused(true)
+            hotKeyManager.cancelDirectionalMoveGesture(reason: "pause-mode")
+            workspaceSwipeController.setSuppressed(true, reason: "pause-mode")
+            commandFeedbackPresenter.dismiss(reason: "pause-mode")
+            stopShortcutGuideObservation()
+            focusedWindowHighlightPresenter.setSuppressed(true, reason: "pause-mode")
+        } else if let pendingRequest = pendingPausedProfileActivationRequest {
+            pendingPausedProfileActivationRequest = nil
+            // Keep the engine write gate closed while the newest profile transition updates its
+            // logical configuration, then let Resume reconcile that destination once. Reversing
+            // this order would briefly snap the stale profile before applying the pending one.
+            handleProfileActivationRequest(pendingRequest)
+            engine.setWindowManagementPaused(false)
+        } else {
+            engine.setWindowManagementPaused(false)
+            workspaceSwipeController.setSuppressed(false, reason: "pause-mode")
+        }
+
+        if !isPaused {
+            workspaceSwipeController.setSuppressed(false, reason: "pause-mode")
+            focusedWindowHighlightPresenter.setSuppressed(
+                fullscreenGameSession != nil,
+                reason: "pause-mode-ended"
+            )
+            updateWorkspaceSwipeActivation()
+        }
+        registerHotKeys(source: "pause-mode-changed")
+        updateShortcutGuideActivation()
+        commandPaletteController.contextDidPossiblyChange()
+        workspaceStatusBarController?.rebuild()
+        diagnostics.log(
+            category: "pause-mode",
+            event: isPaused ? "enabled" : "disabled",
+            correlation: correlationID,
+            fields: [
+                "source": source,
+                "pending-profile": String(pendingPausedProfileActivationRequest != nil),
+            ]
+        )
+    }
+
+    private func handleProfileActivationRequest(_ request: ProfileActivationRequest) {
+        if isPauseModeEnabled {
+            pendingPausedProfileActivationRequest = request
+            diagnostics.log(
+                category: "pause-mode",
+                event: "profile-transition-deferred",
+                fields: [
+                    "profile": String(request.configuration.profileID.uuidString.prefix(8)),
+                    "generation": String(request.generation),
+                ]
+            )
+            menuBarState.updateConfiguration(
+                workspaces: settingsStore.workspaces,
+                displayMode: settingsStore.multiDisplayMode,
+                connectedDisplays: settingsStore.connectedDisplays,
+                workspaceDisplayAssignments: settingsStore.workspaceDisplayAssignments
+            )
+            workspaceStatusBarController?.rebuild()
+            return
+        }
+        clearTiledPlacementHistory()
+        workspacePreviewRepository.purge()
+        hotKeyManager.cancelDirectionalMoveGesture(reason: "profile-transition")
+        workspaceSwipeController.cancel(reason: "profile-transition")
+        commandPaletteController.dismiss(reason: "profile-transition")
+        commandFeedbackPresenter.dismiss(reason: "profile-transition")
+        shortcutGuideController.dismiss()
+        engine.transitionToProfile(request)
+        registerHotKeys(
+            source: "profile-activation",
+            workspaces: request.configuration.workspaces
+        )
+        menuBarState.updateConfiguration(
+            workspaces: settingsStore.workspaces,
+            displayMode: settingsStore.multiDisplayMode,
+            connectedDisplays: settingsStore.connectedDisplays,
+            workspaceDisplayAssignments: settingsStore.workspaceDisplayAssignments
+        )
+        workspaceStatusBarController?.rebuild()
+    }
+
+    func restartOnboardingFromSettings() {
+        OnboardingRestartHandoff.perform(
+            dismissSettings: settingsWindowCoordinator.dismissForExternalPresentation,
+            schedulePresentation: { action in
+                DispatchQueue.main.async {
+                    action()
+                }
+            },
+            presentOnboarding: { [weak self] in
+                self?.onboardingWindowController.presentFromBeginning()
+            }
+        )
     }
 
     private func reconcileAfterWake(source: WakeReconciliationSource) {
         hotKeyManager.cancelDirectionalMoveGesture(reason: source.rawValue)
-        globeFnHoldActivationController.resumeAfterLifecycle(reason: source.rawValue)
-        radialMenuTriggerController.cancel(reason: source.rawValue)
+        switch source {
+        case .systemWake, .screensWake:
+            workspaceSwipeController.setSuppressed(false, reason: "system-sleep")
+            workspaceSwipeController.setSuppressed(false, reason: "screen-sleep")
+        case .sessionBecameActive, .screenUnlocked:
+            workspaceSwipeController.setSuppressed(false, reason: "system-sleep")
+            workspaceSwipeController.setSuppressed(false, reason: "session-inactive")
+        case .displayConfigurationChanged:
+            workspaceSwipeController.cancel(reason: source.rawValue)
+        }
+        commandPaletteController.dismiss(reason: source.rawValue)
         commandFeedbackPresenter.dismiss(reason: source.rawValue)
+        updateShortcutGuideActivation()
+        focusedWindowHighlightPresenter.setSuppressed(
+            fullscreenGameSession != nil || isPauseModeEnabled,
+            reason: source.rawValue
+        )
         // Monitor pins/fingerprints must resolve before the engine reconciles workspace homes.
         settingsStore.refreshConnectedDisplays()
         engine.requestWakeReconciliation(
@@ -494,21 +1397,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func updateGlobeFnHoldActivation(
-        radialMenuEnabled: Bool? = nil,
-        globeFnEnabled: Bool? = nil,
-        holdDelay: TimeInterval? = nil
+    private func updateWorkspaceSwipeActivation(
+        enabled: Bool? = nil,
+        fingerCount: WorkspaceSwipeFingerCount? = nil
     ) {
-        let runtimeSettings = GlobeFnRuntimeSettings(
-            radialMenuEnabled: radialMenuEnabled ?? settingsStore.radialMenuEnabled,
-            globeFnEnabled: globeFnEnabled ?? settingsStore.radialMenuGlobeFnHoldEnabled,
-            isShortcutRecording: isShortcutRecording,
-            holdDelay: holdDelay ?? settingsStore.radialMenuHoldDelay
+        workspaceSwipeController.update(
+            enabled: enabled ?? settingsStore.workspaceSwipeEnabled,
+            fingerCount: fingerCount ?? settingsStore.workspaceSwipeFingerCount
         )
-        globeFnHoldActivationController.update(
-            enabled: runtimeSettings.isEnabled && fullscreenGameSession == nil,
-            holdDelay: runtimeSettings.holdDelay
+        workspaceSwipeController.setSuppressed(
+            fullscreenGameSession != nil,
+            reason: "fullscreen-game-session"
         )
+        workspaceSwipeController.setSuppressed(
+            isForegroundDeclaredGameApplication,
+            reason: "foreground-declared-game"
+        )
+        workspaceSwipeController.setSuppressed(
+            isShortcutRecording,
+            reason: "shortcut-recording"
+        )
+        workspaceSwipeController.setSuppressed(
+            isPauseModeEnabled,
+            reason: "pause-mode"
+        )
+    }
+
+    private func updateForegroundDeclaredGameInputProtection(
+        for application: NSRunningApplication
+    ) {
+        let bundle = application.bundleURL.flatMap { Bundle(url: $0) }
+        let isDeclaredGame = FullscreenGameMetadataPolicy.isDeclaredGame(bundle: bundle)
+        guard isForegroundDeclaredGameApplication != isDeclaredGame else { return }
+        isForegroundDeclaredGameApplication = isDeclaredGame
+
+        let reason = isDeclaredGame ? "foreground-declared-game" : "foreground-declared-game-ended"
+        diagnostics.log(
+            category: "input-protection",
+            event: isDeclaredGame ? "foreground-game-started" : "foreground-game-ended",
+            fields: [
+                "bundle": application.bundleIdentifier ?? "unknown",
+                "active-input-filter": "false",
+            ]
+        )
+        if isDeclaredGame {
+            commandPaletteController.dismiss(reason: reason)
+            commandFeedbackPresenter.dismiss(reason: reason)
+        }
+        updateWorkspaceSwipeActivation()
+        updateShortcutGuideActivation()
     }
 
     private func scheduleMenuBarPresentationUpdate(_ mode: MenuBarPresentationMode) {
@@ -547,6 +1484,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async(execute: work)
     }
 
+    private func scheduleMenuBarDisplayIconUpdate() {
+        pendingMenuBarDisplayIconUpdate?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingMenuBarDisplayIconUpdate = nil
+            // @Published sends from willSet. Resolve only after this deferred work runs so all
+            // contributing profile, binding, and display properties contain their committed values.
+            self.workspaceStatusBarController?.setDisplayIconConfiguration(
+                self.settingsStore.menuBarDisplayIconConfiguration
+            )
+        }
+        pendingMenuBarDisplayIconUpdate = work
+        DispatchQueue.main.async(execute: work)
+    }
+
     private func updateMenuBarPresentation() {
         menuBarState.updateConfiguration(
             workspaces: settingsStore.workspaces,
@@ -559,12 +1511,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 engine: engine,
                 stateModel: menuBarState,
                 settingsStore: settingsStore,
+                workspacePreviewRepository: workspacePreviewRepository,
                 settingsCommandRequestRouter: settingsCommandRequestRouter,
+                updateController: updateController,
                 diagnostics: diagnostics,
                 tiledPlacementUndoManager: tiledPlacementUndoManager,
                 initialMode: settingsStore.menuBarPresentationMode,
                 initialWorkspaceLabelMode: settingsStore.menuBarWorkspaceLabelMode,
-                initialHighlightColor: settingsStore.menuBarHighlightColor
+                initialDisplayIconConfiguration: settingsStore.menuBarDisplayIconConfiguration,
+                initialHighlightColor: settingsStore.menuBarHighlightColor,
+                isPauseModeEnabled: { [weak self] in
+                    self?.isPauseModeEnabled ?? false
+                },
+                setPauseMode: { [weak self] isPaused in
+                    self?.setPauseMode(isPaused, source: "menu-bar")
+                }
             )
         } else {
             workspaceStatusBarController?.setPresentationMode(
@@ -572,6 +1533,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             workspaceStatusBarController?.setWorkspaceLabelMode(
                 settingsStore.menuBarWorkspaceLabelMode
+            )
+            workspaceStatusBarController?.setDisplayIconConfiguration(
+                settingsStore.menuBarDisplayIconConfiguration
             )
             workspaceStatusBarController?.setHighlightColor(
                 settingsStore.menuBarHighlightColor
@@ -592,6 +1556,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             target.registerTiledPlacementHistory(
+                transaction,
+                direction: direction == .undo ? .redo : .undo
+            )
+        }
+        tiledPlacementUndoManager.setActionName(transaction.actionName)
+        workspaceStatusBarController?.rebuild()
+    }
+
+    private func registerFreeformPlacementHistory(
+        _ transaction: FreeformPlacementUndoTransaction,
+        direction: FreeformPlacementHistoryDirection
+    ) {
+        tiledPlacementUndoManager.registerUndo(withTarget: self) { target in
+            guard target.engine.applyFreeformPlacementHistory(
+                transaction,
+                direction: direction
+            ) else {
+                target.workspaceStatusBarController?.rebuild()
+                return
+            }
+            target.registerFreeformPlacementHistory(
                 transaction,
                 direction: direction == .undo ? .redo : .undo
             )

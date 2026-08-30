@@ -1,6 +1,25 @@
 # Contextual Radial Menu
 
-**Status:** Implemented and automated-test/visual-QA verified; live interaction tuning pending
+**Status:** The renderer, captured-context validation, placement previews, and Globe/Fn input path
+remain implemented. WR-060 supersedes the broad configurable Command Wheel with a searchable
+Command Palette and uses this renderer only as a position-focused Placement Wheel. The hybrid is
+implemented, automated-test verified, and accepted in the signed installed app.
+
+## Current product scope
+
+- The Placement Wheel resolves only truthful `Place Window` actions: Freeform halves and quarters
+  or Tiled compass placements. It has one level with no family-selection ring.
+- The Command Palette owns layout and Accordion resize commands alongside workspace, profile,
+  recovery, focus, move, Quick App, and application commands.
+- The palette's icon-only control expands those positions as a Placement Halo without dismissing
+  the key palette. The optional Globe/Fn hold opens the same actions directly in the nonactivating
+  Placement Wheel at the pointer.
+- Saved broad-wheel definitions and activation styles remain decodable for migration safety but are
+  no longer authoritative or editable in Settings.
+
+The remaining sections document the reusable renderer/provider and historical migration contract.
+Where they describe the nine-family production wheel or its editor, treat that as the preserved
+pre-WR-060 design rather than current user-facing behavior.
 
 ## Goals
 
@@ -29,11 +48,24 @@ Only the radial component is a target. The implementation uses native AppKit/Swi
 
 Reference mapping:
 
-- A stable, generous centre is the neutral/cancel zone and describes the current selection.
+- A stable, generous centre is the neutral zone and describes the current selection. Escape and
+  centre activation retain cancellation behavior without a persistent cancel label.
 - The inner ring is the persistent top-level catalogue, with equal translucent wedges and a clear selected wedge.
 - A group discloses a complete outer ring around the same centre. The outer hierarchy is visually quieter than the selected inner wedge.
-- Icons remain compact and monochrome. Labels appear in the centre, selection feedback, tooltips, and accessibility rather than permanently crowding every wedge.
-- A disclosure mark distinguishes groups from direct-only commands without creating a separate hit target.
+- Icons remain compact and monochrome. Both rings use fixed optical icon centres; generated outer
+  actions are icon-only while hover, keyboard selection, accessibility, and help expose their full
+  label. The action-first grammar uses a framed-window transfer symbol for Move to Space, a framed
+  window target for Place, a workspace-grid navigation target for Go to Space, plain directional
+  arrows for Previous/Next,
+  layered workspace/profile symbols, scoped restore symbols, and a split-pane layout symbol.
+  Placement children show the occupied half or corner inside one window frame instead of generic
+  direction arrows. Workspace and profile destinations use stable ordinals rather than repeated
+  placeholders.
+  The current top-level compositions are a provisional visual checkpoint. WR-049 tracks a complete
+  catalogue review that prefers unchanged native SF Symbols where suitable and reserves custom
+  symbols for actions without a clear native match; this does not change command semantics.
+- A disclosure chevron distinguishes groups from direct-only commands without creating a separate
+  hit target. It follows the wedge angle and points radially toward the generated outer ring.
 - Reduced Motion removes bloom/scale movement; increased contrast strengthens separators and selection outlines.
 
 ## Terminology
@@ -91,12 +123,25 @@ An action contains an opaque shared `WindowManagerCommand`, safe diagnostic ID, 
 - Centre, inner, transition, and outer radii are shared pure tokens. Ring hysteresis prevents small movement around a boundary from repeatedly changing rings.
 - Angular hysteresis keeps the prior wedge until the pointer crosses a bounded margin into its neighbour.
 - A group may open only after the pointer dwells on its inner wedge for the configured short disclosure interval, except Hold to Show may open immediately once the pointer deliberately crosses outward from that group.
+- Once open, a group stays latched while the pointer crosses the centre or another inner wedge on
+  the way to any outer child. Reaching the outer ring cancels a crossed-wedge switch. Another inner
+  item replaces the group only after a deliberate longer dwell, so travel does not masquerade as a
+  navigation decision.
 - The centre stays fixed when the outer ring appears. The complete two-ring panel is clamped to the interaction display's visible frame.
 - Practical item counts retain a minimum icon arc. If a future catalogue exceeds the tested legible maximum, resolution omits lowest-priority contextual items with a diagnostic rather than rendering unreadable wedges.
 
 ## Interaction state machine
 
 Common states are `idle`, `inner(item?)`, `groupPending(item, generation)`, `groupOpen(item, child?)`, `committing`, and `cancelled`.
+
+Opening uses pointer intent before menu context is captured. WindowServer front-to-back order
+selects only the actual frontmost eligible tracked window beneath the pointer; the engine requests
+exact focus and captures the runtime context after the bounded focus observation. Desktop,
+WindowRanger/transient surfaces, untracked or ineligible windows, and failed exact focus preserve
+the established focused-window fallback rather than targeting through another surface. The exact
+application activation requested by this pointer-focus transaction does not cancel its own pending
+Globe/Fn or shortcut gesture; a different process, expired deadline, or superseded focus generation
+still cancels normally.
 
 Common cancellation events are Escape, centre selection, outside click, short hold tap, trigger cancellation, lost captured target, display/workspace/profile change, sleep/wake, app deactivation, and a superseding activation generation.
 
@@ -108,7 +153,8 @@ Common cancellation events are Escape, centre selection, outside click, short ho
 4. Clicking an inner item with both a primary action and children commits the primary action; hover/dwell remains the route into its children.
 5. Clicking a submenu-only inner item opens/keeps its submenu and never fires an accidental command.
 6. Clicking an outer wedge commits that child.
-7. Moving back inward closes the outer selection and permits choosing another inner item.
+7. Moving inward clears only the outer selection. The open group remains available across the
+   centre; dwelling deliberately on another inner item switches or closes the group.
 8. Keyboard traversal cycles inner items, enters a group, cycles children, returns inward, activates a valid action, or cancels with Escape.
 
 ### Hold to Show
@@ -125,10 +171,11 @@ Common cancellation events are Escape, centre selection, outside click, short ho
 ### Optional Globe/Fn hold
 
 The hardware gesture is an additional device-local trigger; it does not replace the saved global
-shortcut or change that shortcut's Press-to-Toggle/Hold-to-Show setting. When enabled, a public
+shortcut or change that shortcut's Press-to-Toggle/Hold-to-Show setting. When enabled, a passive
 Quartz session event tap observes `maskSecondaryFn`, keyboard, mouse-button, and system-defined
-events. It does not request permission and is installed only when the app already has its normal
-Accessibility trust.
+events without participating in their delivery. A separate active tap receives only key down/up on
+a dedicated user-interactive run loop. Neither requests permission, and they are installed only
+when the app already has its normal Accessibility trust.
 
 - Fn alone starts a candidate. Crossing the shared hold delay opens the existing Hold-to-Show
   session exactly once; Fn release uses the normal release-commit/no-selection-cancel path.
@@ -136,11 +183,18 @@ Accessibility trust.
   configured Globe quick-tap action. WindowRanger never invokes or replays the emoji picker.
 - Any key, function/media event, mouse button, or other modifier before or during the candidate
   cancels it. The entire Fn chord remains untouched.
-- Only the native Globe action event associated with an accepted long hold is filtered, preventing
-  the same release from also invoking the Mac's quick-tap action. Event-tap failure fails open.
+- The active callback fast-passes every ordinary key without consulting MainActor state. Only the
+  native Globe action event associated with an accepted long hold is filtered, preventing the same
+  release from also invoking the Mac's quick-tap action.
+- Event-tap failure and timeout fail open. A timeout stops the monitor instead of automatically
+  re-enabling an unresponsive filter; toggling the setting is the explicit retry boundary.
+- A foreground application declared as a game through public bundle metadata suspends both optional
+  Globe/Fn and workspace-swipe monitors, including for borderless windows. This is intentionally
+  separate from native-fullscreen geometry protection, and the ordinary saved wheel shortcut remains
+  available.
 - Escape, the ordinary wheel shortcut, app/session/lifecycle changes, monitor interruption, and
-  configuration changes supersede the gesture. A bounded ten-second safety timeout covers a
-  missing Fn-up after a keyboard disconnect.
+  configuration changes supersede the gesture. Once accepted, a deliberate hold has no fixed
+  duration and remains active until Fn release or one of those explicit cancellation signals.
 - Public event data does not provide a dependable built-in-versus-external keyboard identity, so
   compatible external Fn/Globe keys intentionally use the same conservative admission rules.
 
@@ -155,7 +209,7 @@ imported wholesale.
 
 ### Direct plus submenu precedence
 
-Hover/dwell or outward motion is disclosure. Click/release on the inner wedge is the optional primary action. The outer wedge is always the selected child. A submenu-only item cannot commit from the inner ring. The centre label/hint says either “Release to …”, “Click to …”, or “Move outward for …” so the precedence is not hidden.
+Hover/dwell or outward motion is disclosure. Click/release on the inner wedge is the optional primary action. The outer wedge is always the selected child. A submenu-only item cannot commit from the inner ring. Once disclosed, the group remains latched through pointer travel; a longer dwell is required to adopt another inner item. The centre label/hint says either “Release to …”, “Click to …”, or “Move outward for …” so the precedence is not hidden.
 
 ## Dynamic filtering
 
@@ -182,10 +236,13 @@ The built-in order is the following nine types.
 
 ### 2. Resize / Place
 
-- Tiled, participating window: submenu-only and labelled **Place**. Children follow the eight compass placement contract in [Radial Tiled Placement](radial-tiled-placement.md). Hover previews the exact proposed tree frames; preview performs zero AX writes and commit adopts one validated tree through one normal layout transaction.
+- Tiled, participating window: submenu-only and labelled **Place Window**. Children follow the eight compass placement contract in [Radial Tiled Placement](radial-tiled-placement.md). Hover previews the exact proposed tree frames; preview performs zero AX writes and commit adopts one validated tree through one normal layout transaction.
 - Tiled, explicitly/automatically floating window: a valid existing “Return to Layout” action may appear as a direct-only primary action; no placement preview is generated before return.
 - Accordion, participating window: submenu-only **Resize** with truthful Smaller and Larger padding actions where bounded change is possible.
-- Freeform: omitted until truthful freeform resize commands exist.
+- Freeform, eligible focused window: submenu-only **Place Window** with the same eight compass positions.
+  Edge choices are usable-display halves and corner choices are quarters. Hover previews the exact
+  focused-window frame with zero Accessibility writes; commit validates the captured frame/display,
+  changes no other window or layout state, and supports exact-frame Undo/Redo.
 - App-rule excluded, ignored, minimized, full-screen, deferred, stale, or ineligible windows are omitted and never pulled into layout.
 
 The tiled tree, preview, migration, persistence, and atomic commit semantics are subordinate to and defined by [Radial Tiled Placement](radial-tiled-placement.md). This document does not duplicate or weaken that contract.
@@ -194,6 +251,8 @@ The tiled tree, preview, migration, persistence, and atomic commit semantics are
 
 - Submenu-only.
 - Children are valid workspaces in stable user order and correct display scope.
+- Each child uses the workspace's configured alphanumeric key as its badge; unsupported multi-key
+  bindings use the generic workspace symbol rather than inventing a list number.
 - The active workspace is omitted from commands and shown as current state in the centre/accessibility description, avoiding a dead no-op child.
 
 ### 4. Next Space
@@ -218,12 +277,17 @@ The tiled tree, preview, migration, persistence, and atomic commit semantics are
 ### 8. Reset All Windows
 
 - Direct-only and labelled/accessibly described as affecting every managed window.
-- Uses the existing broad “Bring All Managed Windows Back On Screen” recovery path. That established path has no confirmation, so the wheel does not invent a divergent confirmation policy; its explicit label and feedback make scope unmistakable.
+- Uses the existing broad “Bring All Managed Windows Back On Screen” recovery path.
+- In Hold-to-Show, highlighting the item and releasing the trigger dismisses without running it.
+  The centre and accessibility hint require an explicit click or Return. Press-to-Toggle retains
+  ordinary direct-command activation.
 
 ### 9. Layout Type
 
 - Primary action cycles the current workspace layout using existing command semantics.
-- Outer children represent Freeform, Tiled, and Accordion. The current child is labelled **Reapply Current …** and re-applies the current layout, so it is visibly marked current without being a misleading no-op; other children select their layout.
+- Outer children represent Freeform, Tiled, and Accordion. The current child keeps its normal layout
+  name, adds a separate current badge, and explains in centre detail that selecting it reapplies the
+  layout; other children select their layout.
 - Layout changes never silently move a floating, excluded, ignored, minimized, full-screen, or ineligible window into geometry.
 
 ## Workspace, profile, and display semantics
@@ -243,14 +307,20 @@ Preview asks the engine for a pure `TiledPlacementProposal` containing the old/p
 
 ## Settings editor and migration
 
-Command Wheel Settings remains ordered as:
+The preserved pre-WR-060 Command Wheel Settings design was ordered as:
 
 1. enabled state, global shortcut, activation style, optional device-local Globe/Fn hold, and hold delay;
-2. code-native live preview and interaction help;
+2. a compact rendering of the production wheel with representative contextual children, plus
+   interaction help;
 3. ordered top-level catalogue editor; and
 4. Repair and Reset to Defaults.
 
-The editor can add a missing known top-level type, remove/hide a type, and drag/reorder selected types. It does not rename catalogue labels/icons or edit child lists. Mutations use native Undo. Search indexes the nine types, generated-child concepts, shortcut, activation, Repair, and Reset.
+The editor can add a missing known top-level type, remove/hide a type, and drag/reorder selected
+types. Add is disabled once every known family is already present. It does not rename catalogue
+labels/icons or edit child lists. Mutations use native Undo. The preview uses the production wheel
+renderer and saved family order, so its geometry, materials, symbols, centre, and disclosure
+direction cannot drift into a Settings-only design. Search indexes the nine types, generated-child
+concepts, shortcut, activation, Repair, and Reset.
 
 One private-install migration recognizes the previous version-1 direct/group definition:
 
@@ -269,7 +339,8 @@ The new definition is the sole authoritative saved format after a successful wri
 - Keyboard order follows saved inner order and generated child order.
 - Reduced Motion removes scale/bloom and uses immediate opacity/state changes.
 - Increased Contrast strengthens separators, outlines, and selected state without relying on colour alone.
-- Long workspace/profile names are visually bounded while accessibility/help exposes the full text.
+- Long workspace/profile names are visually bounded on the outer ring while accessibility/help
+  exposes the full text. Numeric workspace symbols do not repeat the same number as a second label.
 
 ## Focus and nonactivation
 
@@ -306,13 +377,18 @@ Diagnostics never include window titles, document names, URLs, typed content, fu
 - Catalogue add/remove/reorder, stable IDs, native Undo plan, no manual child persistence.
 - Inner equal 360-degree geometry for 1, 2, 3, 9, and practical larger counts; dynamic outer full-circle geometry; semantic compass positions; dead zone; angular/ring hysteresis; full-panel clamping.
 - Contextual omission and gap closure for no window, keep-on-all, app-rule exclusion, floating/automatic dialog, ignored, minimized/full-screen/deferred, Unified, and Independent Displays.
-- Direct-only, submenu-only, and primary-plus-submenu click/release precedence; dwell; outward disclosure; inward return; keyboard traversal; Escape/centre/outside cancellation.
+- Direct-only, submenu-only, and primary-plus-submenu click/release precedence; initial and
+  group-switch dwell; outward disclosure; latched travel through the centre and other inner wedges;
+  inward return; keyboard traversal; Escape/centre/outside cancellation.
 - Press and Hold threshold, short tap, valid release, no-selection release, Option alternate, stale generation, rapid re-entry, and reentrancy.
-- Globe/Fn default-off/local persistence, unchanged quick tap, exact/below/above threshold, one open per hold, release commit, no-selection and Escape cancellation, every chord class/modifier ordering, duplicate flags, monitor failure/retry/timeout, lifecycle/configuration cancellation, missing key-up safety, ordinary-shortcut supersession, and reuse of the nonactivating interaction-display context.
+- Globe/Fn default-off/local persistence, unchanged quick tap, exact/below/above threshold, one open per hold, indefinite accepted hold, release commit, no-selection and Escape cancellation, every chord class/modifier ordering, duplicate flags, passive ordinary-input observation, synthetic-Globe-only active filtering, timeout fail-open/manual retry, borderless declared-game suspension, lifecycle/configuration cancellation, ordinary-shortcut supersession, and reuse of the nonactivating interaction-display context.
 - Stable workspace/profile ordering, active/current state, Resume Automatic, send-only and Move & Follow, profile transition routing.
-- Freeform omission, Accordion resize, Tiled eight-way proposal, flat-to-tree conversion, edge/corner transformations, preview/commit frame identity, zero AX writes during preview, atomic commit, reset recovery, session invalidation, and display partition isolation.
+- Freeform eight-way fixed-frame proposals, Accordion resize, Tiled eight-way structural proposals,
+  flat-to-tree conversion, edge/corner transformations, preview/commit frame identity, zero AX writes
+  during preview, atomic commit, reset recovery, session invalidation, and display partition isolation.
 - Accessibility labels/hints, Reduce Motion, increased contrast tokens, nonactivation/focus retention, and privacy-safe diagnostics.
-- Offscreen production renders for the selected two-ring Place state, dynamic Move to Space counts, and Profiles counts.
+- Offscreen production renders for neutral, Place, Move to Space, Go to Space, Layout Type, and
+  Profiles states.
 
 ## Visual QA
 

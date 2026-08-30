@@ -35,6 +35,96 @@ final class MenuBarPresentationTests: XCTestCase {
         XCTAssertFalse(MenuBarHighlightColor(red: 0, green: 0, blue: 0).usesDarkForeground)
     }
 
+    func testDisplayIconStylesResolveWithoutChangingHardwareIdentity() {
+        XCTAssertEqual(
+            MenuBarDisplayIconStyle.automatic.systemImage(for: .builtIn),
+            "laptopcomputer"
+        )
+        XCTAssertEqual(
+            MenuBarDisplayIconStyle.automatic.systemImage(for: .combined),
+            "display.2"
+        )
+        XCTAssertEqual(
+            MenuBarDisplayIconStyle.automatic.systemImage(
+                for: .builtIn,
+                automaticSystemImage: "display"
+            ),
+            "display"
+        )
+        XCTAssertEqual(
+            MenuBarDisplayIconStyle.horizontalMonitor.systemImage(for: .builtIn),
+            "display"
+        )
+        XCTAssertEqual(
+            MenuBarDisplayIconStyle.verticalMonitor.systemImage(for: .external),
+            "rectangle.portrait"
+        )
+        XCTAssertEqual(
+            MenuBarDisplayIconStyle.laptop.systemImage(for: .combined),
+            "laptopcomputer"
+        )
+        XCTAssertNil(MenuBarDisplayIconStyle.none.systemImage(for: .external))
+    }
+
+    func testProfileDisplayIconFollowsConservativePhysicalDisplayIdentity() {
+        let fingerprint = DisplayFingerprint(
+            displayUUID: "stable-panel-uuid",
+            vendorID: 10,
+            modelID: 20,
+            serialNumber: "panel-123",
+            displayName: "Portrait Display",
+            widthPoints: 1_080,
+            heightPoints: 1_920
+        )
+        let reconnected = DisplaySnapshot(
+            identifier: "new-runtime-identifier",
+            bounds: CGRect(x: 1_512, y: 0, width: 1_080, height: 1_920),
+            isMain: false,
+            name: "Portrait Display",
+            fingerprint: fingerprint
+        )
+        let role = ProfileDisplayRole(
+            name: "Portrait",
+            menuBarIconStyle: .verticalMonitor
+        )
+        let profile = WindowManagerProfile(
+            name: "Desk",
+            workspaces: [workspace1],
+            displayMode: .independent,
+            displayRoles: [role],
+            workspaceRoleAssignments: [workspace1.id: role.id],
+            appRules: []
+        )
+        let configuration = MenuBarProfileDisplayIconResolver.configuration(
+            profile: profile,
+            roleBindings: [
+                role.id: WorkspaceDisplayPin(
+                    lastKnownIdentifier: "old-runtime-identifier",
+                    fingerprint: fingerprint
+                ),
+            ],
+            displays: [reconnected]
+        )
+
+        XCTAssertEqual(
+            configuration.stylesByDisplayIdentifier[reconnected.identifier],
+            .verticalMonitor
+        )
+    }
+
+    func testDisplayIconConfigurationResolvesEachDisplayIndependently() {
+        let snapshot = independentSnapshot(displays: [externalDisplay, mainDisplay])
+        let configuration = MenuBarDisplayIconConfiguration(
+            stylesByDisplayIdentifier: [
+                mainDisplay.identifier: .laptop,
+                externalDisplay.identifier: .verticalMonitor,
+            ]
+        )
+
+        XCTAssertEqual(configuration.systemImage(for: snapshot.displays[0]), "laptopcomputer")
+        XCTAssertEqual(configuration.systemImage(for: snapshot.displays[1]), "rectangle.portrait")
+    }
+
     @MainActor
     func testSettingsMigrationRewritesLegacyValueToCanonicalRawValue() {
         let cases: [(String, MenuBarPresentationMode)] = [
@@ -66,6 +156,19 @@ final class MenuBarPresentationTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(true, forKey: "iCloudSyncEnabled")
         let cloud = FakeUbiquitousKeyValueStore()
+        let remoteWorkspace = WorkspaceDefinition(name: "Remote", key: "1")
+        let remoteRole = ProfileDisplayRole(name: "Main")
+        cloud.set(
+            try! JSONEncoder().encode(ProfileLibrary(profiles: [WindowManagerProfile(
+                name: "Remote",
+                workspaces: [remoteWorkspace],
+                displayMode: .unified,
+                displayRoles: [remoteRole],
+                workspaceRoleAssignments: [remoteWorkspace.id: remoteRole.id],
+                appRules: []
+            )])),
+            forKey: "profileLibrary.v1"
+        )
         cloud.set("workspace-label", forKey: "menuBarPresentationMode.v1")
         cloud.set("key", forKey: "menuBarWorkspaceLabelMode.v1")
         cloud.set("#FF7A00", forKey: "menuBarHighlightColor.v1")
@@ -79,7 +182,7 @@ final class MenuBarPresentationTests: XCTestCase {
         XCTAssertEqual(store.menuBarPresentationMode, .medium)
         XCTAssertEqual(store.menuBarWorkspaceLabelMode, .key)
         XCTAssertEqual(store.menuBarHighlightColor.hex, "#FF7A00")
-        XCTAssertEqual(cloud.string(forKey: "menuBarPresentationMode.v1"), "medium")
+        XCTAssertEqual(cloud.string(forKey: "menuBarPresentationMode.v1"), "workspace-label")
         XCTAssertEqual(cloud.string(forKey: "menuBarWorkspaceLabelMode.v1"), "key")
         XCTAssertEqual(cloud.string(forKey: "menuBarHighlightColor.v1"), "#FF7A00")
         store.menuBarPresentationMode = .full
@@ -143,7 +246,118 @@ final class MenuBarPresentationTests: XCTestCase {
     }
 
     @MainActor
-    func testWorkspaceKeyLabelsRenderWithoutReplacingFullAccessibilityNames() {
+    func testMenuBarDisplayIconsBelongToProfilesAndPersistThroughICloud() throws {
+        let suite = "MenuBarDisplayIconTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+
+        let cloud = FakeUbiquitousKeyValueStore()
+        let writer = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [self.mainDisplay, self.externalDisplay] }
+        )
+        XCTAssertTrue(writer.replaceICloudSettingsWithLocalCopy())
+        let mainRoleID = try XCTUnwrap(writer.roleBindings.first(where: {
+            $0.value.lastKnownIdentifier == self.mainDisplay.identifier
+        })?.key)
+        let externalRoleID = try XCTUnwrap(writer.roleBindings.first(where: {
+            $0.value.lastKnownIdentifier == self.externalDisplay.identifier
+        })?.key)
+        XCTAssertEqual(writer.menuBarDisplayIconStyle(forRole: mainRoleID), .automatic)
+        XCTAssertEqual(writer.menuBarDisplayIconStyle(forRole: externalRoleID), .automatic)
+        writer.setMenuBarDisplayIconStyle(.laptop, forRole: mainRoleID)
+        writer.setMenuBarDisplayIconStyle(.verticalMonitor, forRole: externalRoleID)
+
+        let sourceProfileID = writer.activeProfileID
+        let travelProfileID = try XCTUnwrap(
+            writer.createProfile(named: "Travel", source: .scratch)
+        )
+        XCTAssertEqual(writer.activeProfileID, sourceProfileID)
+        writer.activateSettingsProfile()
+        let travelRoleID = try XCTUnwrap(writer.activeProfile.displayRoles.first?.id)
+        XCTAssertEqual(writer.menuBarDisplayIconStyle(forRole: travelRoleID), .automatic)
+        writer.setMenuBarDisplayIconStyle(.none, forRole: travelRoleID)
+        XCTAssertEqual(
+            writer.menuBarDisplayIconConfiguration
+                .stylesByDisplayIdentifier[mainDisplay.identifier],
+            MenuBarDisplayIconStyle.none
+        )
+        writer.selectProfile(sourceProfileID)
+        XCTAssertEqual(writer.menuBarDisplayIconStyle(forRole: mainRoleID), .laptop)
+        XCTAssertEqual(writer.menuBarDisplayIconStyle(forRole: externalRoleID), .verticalMonitor)
+        XCTAssertEqual(
+            writer.menuBarDisplayIconConfiguration.stylesByDisplayIdentifier,
+            [
+                mainDisplay.identifier: .laptop,
+                externalDisplay.identifier: .verticalMonitor,
+            ]
+        )
+
+        let cloudData = try XCTUnwrap(cloud.data(forKey: "profileLibrary.v1"))
+        let cloudLibrary = try JSONDecoder().decode(ProfileLibrary.self, from: cloudData)
+        XCTAssertEqual(
+            cloudLibrary.profiles.first(where: { $0.id == sourceProfileID })?
+                .displayRoles.first(where: { $0.id == mainRoleID })?.menuBarIconStyle,
+            .laptop
+        )
+        XCTAssertEqual(
+            cloudLibrary.profiles.first(where: { $0.id == travelProfileID })?
+                .displayRoles.first?.menuBarIconStyle,
+            MenuBarDisplayIconStyle.none
+        )
+        let reader = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: nil,
+            connectedDisplaysProvider: { [self.mainDisplay, self.externalDisplay] }
+        )
+        XCTAssertEqual(reader.menuBarDisplayIconStyle(forRole: mainRoleID), .laptop)
+        XCTAssertEqual(reader.menuBarDisplayIconStyle(forRole: externalRoleID), .verticalMonitor)
+        XCTAssertEqual(
+            reader.profiles.first(where: { $0.id == travelProfileID })?
+                .displayRoles.first?.menuBarIconStyle,
+            MenuBarDisplayIconStyle.none
+        )
+    }
+
+    func testDuplicateProfileDisplayRoleIconsFallBackToAutomatic() {
+        let firstRole = ProfileDisplayRole(name: "First", menuBarIconStyle: .laptop)
+        let secondRole = ProfileDisplayRole(name: "Second", menuBarIconStyle: .none)
+        let profile = WindowManagerProfile(
+            name: "Ambiguous",
+            workspaces: [workspace1],
+            displayMode: .independent,
+            displayRoles: [firstRole, secondRole],
+            workspaceRoleAssignments: [workspace1.id: firstRole.id],
+            appRules: []
+        )
+        let pin = WorkspaceDisplayPin(
+            lastKnownIdentifier: mainDisplay.identifier,
+            fingerprint: mainDisplay.fingerprint
+        )
+
+        let configuration = MenuBarProfileDisplayIconResolver.configuration(
+            profile: profile,
+            roleBindings: [firstRole.id: pin, secondRole.id: pin],
+            displays: [mainDisplay]
+        )
+
+        XCTAssertEqual(configuration.stylesByDisplayIdentifier, [:])
+    }
+
+    func testLegacyDisplayRoleDecodesWithAutomaticIconStyle() throws {
+        let id = UUID()
+        let data = Data("{\"id\":\"\(id.uuidString)\",\"name\":\"Desk\"}".utf8)
+
+        let role = try JSONDecoder().decode(ProfileDisplayRole.self, from: data)
+
+        XCTAssertEqual(role, ProfileDisplayRole(id: id, name: "Desk"))
+        XCTAssertEqual(role.menuBarIconStyle, .automatic)
+    }
+
+    @MainActor
+    func testWorkspaceKeyLabelsRenderInUniversalDisplayGroupContent() throws {
         let snapshot = MenuBarPresentationResolver.resolve(
             mode: .full,
             workspaceLabelMode: .key,
@@ -153,20 +367,24 @@ final class MenuBarPresentationTests: XCTestCase {
             connectedDisplays: [mainDisplay],
             workspaceDisplayAssignments: [:]
         )
-        let content = MenuBarStatusContentView(
-            snapshot: snapshot,
-            availableWidth: 620,
-            workspaceAction: nil
+        let plan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+            for: snapshot,
+            availableWidth: 620
+        ).first)
+        let content = MenuBarDisplayGroupContentView(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: .default
         )
 
         layout(content)
-        XCTAssertEqual(Set(workspaceButtons(in: content).map(\.title)), Set(["1", "W", "9"]))
+        XCTAssertEqual(Set(textFields(in: content).map(\.stringValue)), Set(["1", "W", "9"]))
+        XCTAssertEqual(content.workspaceTrackingRegions(in: content).count, 3)
         XCTAssertEqual(
             snapshot.displays[0].activeWorkspaceLabel(mode: .key),
             "W"
         )
-        XCTAssertTrue(snapshot.primaryTooltip.contains(workspace2.name))
-        XCTAssertTrue(snapshot.primaryAccessibilityLabel.contains(workspace2.name))
+        XCTAssertTrue(snapshot.displays[0].accessibilityLabel.contains(workspace2.name))
         XCTAssertEqual(MenuBarWorkspaceLabelFormatter.key(""), "—")
     }
 
@@ -304,34 +522,37 @@ final class MenuBarPresentationTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.displays[0].activeWorkspaceCompactName, "Ve…")
-        XCTAssertTrue(snapshot.primaryTooltip.contains(long.name))
-        XCTAssertTrue(snapshot.primaryAccessibilityLabel.contains(long.name))
-        XCTAssertFalse(snapshot.primaryAccessibilityLabel.contains(mainDisplay.identifier))
+        XCTAssertTrue(snapshot.displays[0].accessibilityLabel.contains(long.name))
+        XCTAssertFalse(snapshot.displays[0].accessibilityLabel.contains(mainDisplay.identifier))
     }
 
     func testExtremePressureKeepsEveryDisplayActiveWorkspaceAndHidesInactiveItems() {
-        let displays = (0..<4).map { index in
-            DisplaySnapshot(
+        var displays: [DisplaySnapshot] = []
+        for index in 0..<4 {
+            displays.append(DisplaySnapshot(
                 identifier: "display-\(index)",
-                bounds: CGRect(x: index * 1_200, y: 0, width: 1_200, height: 800),
+                bounds: CGRect(x: CGFloat(index * 1_200), y: 0, width: 1_200, height: 800),
                 isMain: index == 0,
                 isBuiltIn: index == 0,
                 name: "Display \(index + 1)"
-            )
+            ))
         }
-        let workspaces = (0..<20).map { index in
-            WorkspaceDefinition(
+        var workspaces: [WorkspaceDefinition] = []
+        for index in 0..<20 {
+            workspaces.append(WorkspaceDefinition(
                 id: UUID(uuidString: String(format: "20000000-0000-0000-0000-%012d", index + 1))!,
                 name: "Workspace \(index + 1)",
                 key: "w\(index + 1)"
-            )
+            ))
         }
-        let assignments = Dictionary(uniqueKeysWithValues: workspaces.enumerated().map {
-            ($0.element.id, displays[$0.offset % displays.count].identifier)
-        })
-        let activeByDisplay = Dictionary(uniqueKeysWithValues: displays.enumerated().map {
-            ($0.element.identifier, workspaces[$0.offset].id)
-        })
+        var assignments: [UUID: String] = [:]
+        for (index, workspace) in workspaces.enumerated() {
+            assignments[workspace.id] = displays[index % displays.count].identifier
+        }
+        var activeByDisplay: [String: UUID] = [:]
+        for (index, display) in displays.enumerated() {
+            activeByDisplay[display.identifier] = workspaces[index].id
+        }
         let snapshot = MenuBarPresentationResolver.resolve(
             mode: .full,
             displayMode: .independent,
@@ -350,9 +571,661 @@ final class MenuBarPresentationTests: XCTestCase {
         XCTAssertGreaterThan(layout.hiddenWorkspaceCount, 0)
         XCTAssertEqual(layout.labelStyle, .compact)
         for group in layout.groups {
-            XCTAssertTrue(group.visibleWorkspaces.contains(where: \.isActive))
+            XCTAssertTrue(group.visibleWorkspaces.contains { workspace in workspace.isActive })
         }
         XCTAssertNotNil(layout.overflowSummary)
+    }
+
+    func testDisplayGroupStatusItemActivationSeparatesPointerAndMenuActions() {
+        XCTAssertFalse(MenuBarStatusItemActivationPolicy.opensMenu(
+            eventType: .leftMouseUp,
+            modifierFlags: []
+        ))
+        XCTAssertTrue(MenuBarStatusItemActivationPolicy.opensMenu(
+            eventType: .rightMouseDown,
+            modifierFlags: []
+        ))
+        XCTAssertTrue(MenuBarStatusItemActivationPolicy.opensMenu(
+            eventType: .rightMouseUp,
+            modifierFlags: []
+        ))
+        XCTAssertTrue(MenuBarStatusItemActivationPolicy.opensMenu(
+            eventType: .leftMouseUp,
+            modifierFlags: .control
+        ))
+        XCTAssertTrue(MenuBarStatusItemActivationPolicy.opensMenu(
+            eventType: nil,
+            modifierFlags: []
+        ))
+
+        let workspaceTarget = MenuBarHitTarget.workspace(
+            workspaceID: workspace2.id,
+            displayIdentifier: mainDisplay.identifier
+        )
+        XCTAssertEqual(MenuBarStatusItemActivationPolicy.action(
+            for: .compact,
+            eventType: .leftMouseDown,
+            modifierFlags: [],
+            pointerTarget: workspaceTarget
+        ), .openMenu)
+        XCTAssertEqual(MenuBarStatusItemActivationPolicy.action(
+            for: .medium,
+            eventType: .leftMouseDown,
+            modifierFlags: [],
+            pointerTarget: workspaceTarget
+        ), .openMenu)
+        XCTAssertEqual(MenuBarStatusItemActivationPolicy.action(
+            for: .full,
+            eventType: .leftMouseDown,
+            modifierFlags: [],
+            pointerTarget: workspaceTarget
+        ), .switchWorkspace(
+            workspaceID: workspace2.id,
+            displayIdentifier: mainDisplay.identifier
+        ))
+        XCTAssertEqual(MenuBarStatusItemActivationPolicy.action(
+            for: .full,
+            eventType: .rightMouseDown,
+            modifierFlags: [],
+            pointerTarget: workspaceTarget
+        ), .openMenu)
+        XCTAssertEqual(MenuBarStatusItemActivationPolicy.action(
+            for: .full,
+            eventType: .leftMouseDown,
+            modifierFlags: [],
+            pointerTarget: nil
+        ), .openMenu)
+    }
+
+    func testDetachedStatusMenuWaitsForControlMouseUpEvents() {
+        let events = MenuBarStatusItemControlEventPolicy.actionEvents
+
+        XCTAssertTrue(events.contains(.leftMouseUp))
+        XCTAssertTrue(events.contains(.rightMouseUp))
+        XCTAssertFalse(events.contains(.leftMouseDown))
+        XCTAssertFalse(events.contains(.rightMouseDown))
+    }
+
+    func testStatusMenuPresentationRequestIsDeferredAndCoalesced() {
+        var gate = MenuBarMenuPresentationRequestGate()
+
+        XCTAssertTrue(gate.request())
+        XCTAssertFalse(gate.request())
+        XCTAssertTrue(gate.isPending)
+        XCTAssertTrue(gate.consume())
+        XCTAssertFalse(gate.isPending)
+        XCTAssertFalse(gate.consume())
+        XCTAssertTrue(gate.request())
+        XCTAssertTrue(gate.cancel())
+        XCTAssertFalse(gate.consume())
+        XCTAssertFalse(gate.cancel())
+    }
+
+    func testDisplayGroupStatusItemPlanKeepsOneMovableItemPerDisplay() {
+        let snapshot = independentSnapshot(displays: [mainDisplay, externalDisplay])
+            .replacingMode(.full)
+        let groups = MenuBarDisplayGroupStatusItemPlanner.groups(
+            for: snapshot,
+            availableWidth: 620
+        )
+
+        XCTAssertEqual(groups.map(\.group.display.id), [
+            mainDisplay.identifier,
+            externalDisplay.identifier,
+        ])
+        XCTAssertEqual(groups[0].group.visibleWorkspaces.map(\.id), [workspace1.id, workspace2.id])
+        XCTAssertEqual(groups[1].group.visibleWorkspaces.map(\.id), [workspace3.id])
+        XCTAssertTrue(groups.allSatisfy { $0.overflowCount == 0 })
+        XCTAssertEqual(
+            MenuBarDisplayGroupStatusItemPlanner.configurationOrder(for: groups)
+                .map(\.group.display.id),
+            groups.reversed().map(\.group.display.id)
+        )
+    }
+
+    func testInformationalModesPlanOneMenuOnlyItemPerLogicalDisplay() {
+        let medium = independentSnapshot(displays: [mainDisplay, externalDisplay])
+
+        for mode in [MenuBarPresentationMode.compact, .medium] {
+            let groups = MenuBarDisplayGroupStatusItemPlanner.groups(
+                for: medium.replacingMode(mode),
+                availableWidth: 620
+            )
+
+            XCTAssertEqual(groups.map(\.mode), [mode, mode])
+            XCTAssertEqual(groups.map(\.group.display.id), [
+                mainDisplay.identifier,
+                externalDisplay.identifier,
+            ])
+            XCTAssertEqual(groups[0].group.visibleWorkspaces.map(\.id), [workspace1.id])
+            XCTAssertEqual(groups[1].group.visibleWorkspaces.map(\.id), [workspace3.id])
+            XCTAssertTrue(groups.allSatisfy { group in
+                group.group.hiddenWorkspaces.isEmpty
+                    && group.overflowCount == 0
+                    && group.overflowSummary == nil
+            })
+        }
+    }
+
+    func testDisplayGroupStatusItemPlanCarriesPressureOverflowInLastGroup() {
+        let workspaces = (0..<20).map { index in
+            WorkspaceDefinition(
+                id: UUID(uuidString: String(format: "30000000-0000-0000-0000-%012d", index + 1))!,
+                name: "Workspace \(index + 1)",
+                key: "w\(index + 1)"
+            )
+        }
+        let snapshot = MenuBarPresentationResolver.resolve(
+            mode: .full,
+            displayMode: .unified,
+            state: engineState(current: workspaces[0].id, active: [workspaces[0].id]),
+            workspaces: workspaces,
+            connectedDisplays: [mainDisplay],
+            workspaceDisplayAssignments: [:]
+        )
+        let groups = MenuBarDisplayGroupStatusItemPlanner.groups(for: snapshot, availableWidth: 220)
+        let overflowGroup = groups.last
+
+        XCTAssertGreaterThan(overflowGroup?.overflowCount ?? 0, 0)
+        XCTAssertTrue(overflowGroup?.overflowSummary?.contains("more workspace") == true)
+    }
+
+    func testScreenSpaceTargetResolverUsesGlobalSegmentFramesWithoutGuessingGaps() {
+        let targets = [
+            MenuBarScreenSpaceTarget(
+                frame: CGRect(x: 100, y: 900, width: 30, height: 22),
+                hitTarget: .workspace(
+                    workspaceID: workspace1.id,
+                    displayIdentifier: mainDisplay.identifier
+                )
+            ),
+            MenuBarScreenSpaceTarget(
+                frame: CGRect(x: 132, y: 900, width: 30, height: 22),
+                hitTarget: .workspace(
+                    workspaceID: workspace2.id,
+                    displayIdentifier: mainDisplay.identifier
+                )
+            ),
+        ]
+
+        XCTAssertEqual(
+            MenuBarScreenSpaceTargetResolver.target(
+                at: CGPoint(x: 145, y: -500),
+                among: targets
+            ),
+            .workspace(workspaceID: workspace2.id, displayIdentifier: mainDisplay.identifier)
+        )
+        XCTAssertNil(MenuBarScreenSpaceTargetResolver.target(
+            at: CGPoint(x: 131, y: 910),
+            among: targets
+        ))
+    }
+
+    func testWorkspaceHoverStateTracksOnlyWorkspaceSegmentsAndClearsAtGapsAndExit() {
+        let firstTarget = MenuBarHitTarget.workspace(
+            workspaceID: workspace1.id,
+            displayIdentifier: mainDisplay.identifier
+        )
+        let secondTarget = MenuBarHitTarget.workspace(
+            workspaceID: workspace2.id,
+            displayIdentifier: mainDisplay.identifier
+        )
+        let targets = [
+            MenuBarScreenSpaceTarget(
+                frame: CGRect(x: 100, y: 900, width: 30, height: 22),
+                hitTarget: firstTarget
+            ),
+            MenuBarScreenSpaceTarget(
+                frame: CGRect(x: 132, y: 900, width: 30, height: 22),
+                hitTarget: secondTarget
+            ),
+        ]
+        var state = MenuBarWorkspaceHoverState()
+
+        XCTAssertTrue(state.update(pointer: CGPoint(x: 115, y: -500), among: targets))
+        XCTAssertEqual(state.target, firstTarget)
+        XCTAssertFalse(state.update(pointer: CGPoint(x: 115, y: 1_500), among: targets))
+        XCTAssertTrue(state.update(pointer: CGPoint(x: 145, y: -500), among: targets))
+        XCTAssertEqual(state.target, secondTarget)
+        XCTAssertTrue(state.update(pointer: CGPoint(x: 131, y: 910), among: targets))
+        XCTAssertNil(state.target)
+        XCTAssertFalse(state.update(pointer: nil, among: targets))
+
+        XCTAssertFalse(state.update(
+            pointer: CGPoint(x: 5, y: 5),
+            among: [MenuBarScreenSpaceTarget(
+                frame: CGRect(x: 0, y: 0, width: 10, height: 10),
+                hitTarget: .displayIndicator(mainDisplay.identifier)
+            )]
+        ))
+        XCTAssertNil(state.target)
+    }
+
+    func testApplicationShelfGeometryAnchorsBelowWorkspaceAndClampsToVisibleScreen() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1_000, height: 700)
+        let centered = MenuBarApplicationShelfGeometry.frame(
+            anchor: CGRect(x: 480, y: 700, width: 30, height: 22),
+            contentSize: CGSize(width: 240, height: 180),
+            visibleFrame: visibleFrame
+        )
+        XCTAssertEqual(centered.midX, 495, accuracy: 0.001)
+        XCTAssertEqual(centered.maxY, 692, accuracy: 0.001)
+
+        let rightEdge = MenuBarApplicationShelfGeometry.frame(
+            anchor: CGRect(x: 990, y: 700, width: 20, height: 22),
+            contentSize: CGSize(width: 240, height: 180),
+            visibleFrame: visibleFrame
+        )
+        XCTAssertEqual(rightEdge.maxX, visibleFrame.maxX - 8, accuracy: 0.001)
+        XCTAssertGreaterThanOrEqual(rightEdge.minY, visibleFrame.minY + 8)
+    }
+
+    func testApplicationShelfRestoresHoverBeforeItsDismissalGraceExpires() {
+        XCTAssertGreaterThan(MenuBarApplicationShelfTiming.dwell, 0)
+        XCTAssertGreaterThan(MenuBarApplicationShelfTiming.hoverRestorationDelay, 0)
+        XCTAssertLessThan(
+            MenuBarApplicationShelfTiming.hoverRestorationDelay,
+            MenuBarApplicationShelfTiming.dismissalGrace
+        )
+    }
+
+    func testApplicationShelfDismissesOnlyForPointerDownOutsideAnOpenShelf() {
+        let frame = CGRect(x: 100, y: 500, width: 240, height: 180)
+
+        XCTAssertFalse(MenuBarApplicationShelfDismissalPolicy.shouldDismissForPointerDown(
+            pointer: CGPoint(x: 180, y: 550),
+            presentedFrame: frame,
+            hasPendingPresentation: true
+        ))
+        XCTAssertTrue(MenuBarApplicationShelfDismissalPolicy.shouldDismissForPointerDown(
+            pointer: CGPoint(x: 50, y: 550),
+            presentedFrame: frame,
+            hasPendingPresentation: true
+        ))
+        XCTAssertFalse(MenuBarApplicationShelfDismissalPolicy.shouldDismissForPointerDown(
+            pointer: CGPoint(x: 50, y: 550),
+            presentedFrame: nil,
+            hasPendingPresentation: false
+        ))
+    }
+
+    func testPointerDownCancelsAPendingApplicationShelfBeforeItOpens() {
+        XCTAssertTrue(MenuBarApplicationShelfDismissalPolicy.shouldDismissForPointerDown(
+            pointer: CGPoint(x: 50, y: 550),
+            presentedFrame: nil,
+            hasPendingPresentation: true
+        ))
+    }
+
+    @MainActor
+    func testApplicationShelfUsesNativeGlassAndInstallsContent() throws {
+        let frame = CGRect(x: 0, y: 0, width: 240, height: 100)
+        let surface = MenuBarApplicationShelfSurfaceFactory.make(frame: frame)
+        let content = NSView(frame: frame)
+        MenuBarApplicationShelfSurfaceFactory.installContent(content, in: surface)
+
+        if #available(macOS 26.0, *) {
+            let glass = try XCTUnwrap(surface as? NSGlassEffectView)
+            XCTAssertEqual(glass.style, .regular)
+            XCTAssertEqual(glass.cornerRadius, MenuBarApplicationShelfSurfaceFactory.cornerRadius)
+            XCTAssertTrue(glass.contentView === content)
+        } else {
+            let material = try XCTUnwrap(surface as? NSVisualEffectView)
+            XCTAssertEqual(material.material, .menu)
+            XCTAssertTrue(content.superview === material)
+        }
+    }
+
+    @MainActor
+    func testApplicationShelfConfiguresEmptyAndPopulatedStatesAfterJoiningViewHierarchy() {
+        let content = MenuBarApplicationShelfContentView(frame: .zero)
+        content.configure(
+            workspaceName: "Empty",
+            applications: [],
+            imageProvider: { _ in nil },
+            onSelect: { _ in }
+        )
+        layout(content)
+        XCTAssertFalse(content.usesVerticalScroller)
+        XCTAssertTrue(textFields(in: content).contains {
+            $0.stringValue == "No apps in this workspace"
+        })
+
+        let application = WorkspaceApplicationSummary(
+            id: "chrome",
+            target: WorkspaceApplicationTarget(
+                workspaceID: workspace1.id,
+                bundleIdentifier: "com.google.Chrome",
+                processIdentifier: 123
+            ),
+            name: "Chrome",
+            windowCount: 2,
+            applicationURL: nil
+        )
+        content.configure(
+            workspaceName: "Writing",
+            applications: [application],
+            imageProvider: { _ in nil },
+            onSelect: { _ in }
+        )
+        layout(content)
+        XCTAssertFalse(content.usesVerticalScroller)
+        XCTAssertTrue(workspaceButtons(in: content).contains {
+            $0.title.contains("Chrome") && $0.title.contains("2")
+        })
+
+        content.configure(
+            workspaceName: "Empty again",
+            applications: [],
+            imageProvider: { _ in nil },
+            onSelect: { _ in }
+        )
+        layout(content)
+        XCTAssertFalse(content.usesVerticalScroller)
+        XCTAssertTrue(textFields(in: content).contains {
+            $0.stringValue == "No apps in this workspace"
+        })
+
+        let overflow = (0..<9).map { index in
+            WorkspaceApplicationSummary(
+                id: "app-\(index)",
+                target: WorkspaceApplicationTarget(
+                    workspaceID: workspace1.id,
+                    bundleIdentifier: "com.example.app\(index)",
+                    processIdentifier: pid_t(200 + index)
+                ),
+                name: "App \(index)",
+                windowCount: 1,
+                applicationURL: nil
+            )
+        }
+        content.configure(
+            workspaceName: "Overflow",
+            applications: overflow,
+            imageProvider: { _ in nil },
+            onSelect: { _ in }
+        )
+        layout(content)
+        XCTAssertTrue(content.usesVerticalScroller)
+    }
+
+    @MainActor
+    func testDisplayGroupContentNeverClaimsTheParentStatusButtonsPointerHit() throws {
+        let snapshot = independentSnapshot(displays: [mainDisplay]).replacingMode(.full)
+        let plan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+            for: snapshot,
+            availableWidth: 620
+        ).first)
+        let content = MenuBarDisplayGroupContentView(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: .default
+        )
+        layout(content)
+
+        XCTAssertGreaterThan(content.intrinsicContentSize.width, 24)
+        let trackingRegions = content.workspaceTrackingRegions(in: content)
+        XCTAssertEqual(trackingRegions.count, plan.group.visibleWorkspaces.count)
+        XCTAssertEqual(
+            trackingRegions.map(\.hitTarget),
+            plan.group.visibleWorkspaces.map {
+                .workspace(workspaceID: $0.id, displayIdentifier: plan.group.display.id)
+            }
+        )
+        XCTAssertTrue(trackingRegions.allSatisfy { !$0.frame.isEmpty })
+        XCTAssertNil(content.hitTest(NSPoint(
+            x: content.bounds.midX,
+            y: content.bounds.midY
+        )))
+    }
+
+    @MainActor
+    func testRenderedDisplayGroupPreservesSizeTargetsAndRetinaBitmapsWithoutALiveSubview() throws {
+        let snapshot = independentSnapshot(displays: [mainDisplay]).replacingMode(.full)
+        let plan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+            for: snapshot,
+            availableWidth: 620
+        ).first)
+        let appearance = try XCTUnwrap(NSAppearance(named: .aqua))
+        let rendered = MenuBarDisplayGroupRenderedContent(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: .default,
+            appearance: appearance,
+            scale: 2
+        )
+        let reference = MenuBarDisplayGroupContentView(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: .default
+        )
+        layout(reference)
+
+        XCTAssertEqual(rendered.mode, .full)
+        XCTAssertEqual(rendered.size, reference.bounds.size)
+        XCTAssertEqual(
+            rendered.workspaceRegions,
+            reference.workspaceTrackingRegions(in: reference)
+        )
+
+        let normalImage = rendered.image(for: nil)
+        let hoveredImage = rendered.image(for: rendered.workspaceRegions.first?.hitTarget)
+        XCTAssertEqual(normalImage.size, rendered.size)
+        XCTAssertEqual(hoveredImage.size, rendered.size)
+        XCTAssertFalse(normalImage === hoveredImage)
+        let bitmap = try XCTUnwrap(normalImage.representations.first as? NSBitmapImageRep)
+        XCTAssertEqual(bitmap.pixelsWide, Int(ceil(rendered.size.width * 2)))
+        XCTAssertEqual(bitmap.pixelsHigh, Int(ceil(rendered.size.height * 2)))
+
+        let statusButtonBounds = CGRect(
+            origin: .zero,
+            size: CGSize(width: rendered.size.width + 10, height: rendered.size.height + 6)
+        )
+        let standInButton = NSView(frame: statusButtonBounds)
+        let translatedRegions = rendered.trackingRegions(in: standInButton)
+        XCTAssertEqual(translatedRegions.map(\.hitTarget), rendered.workspaceRegions.map(\.hitTarget))
+        XCTAssertEqual(
+            translatedRegions.first?.frame,
+            rendered.workspaceRegions.first?.frame.offsetBy(dx: 5, dy: 3)
+        )
+        XCTAssertTrue(standInButton.subviews.isEmpty)
+    }
+
+    @MainActor
+    func testInformationalDisplayGroupContentStaysMenuOnly() throws {
+        let medium = independentSnapshot(displays: [mainDisplay])
+
+        for mode in [MenuBarPresentationMode.compact, .medium] {
+            let plan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+                for: medium.replacingMode(mode),
+                availableWidth: 620
+            ).first)
+            let content = MenuBarDisplayGroupContentView(
+                plan: plan,
+                workspaceLabelMode: medium.workspaceLabelMode,
+                highlightColor: .default
+            )
+            layout(content)
+
+            XCTAssertEqual(content.mode, mode)
+            XCTAssertGreaterThanOrEqual(content.intrinsicContentSize.width, 16)
+            XCTAssertTrue(content.workspaceTrackingRegions(in: content).isEmpty)
+            XCTAssertTrue(content.screenSpaceTargets().isEmpty)
+            XCTAssertNil(content.hitTest(NSPoint(
+                x: content.bounds.midX,
+                y: content.bounds.midY
+            )))
+
+            let rendered = MenuBarDisplayGroupRenderedContent(
+                plan: plan,
+                workspaceLabelMode: medium.workspaceLabelMode,
+                highlightColor: .default,
+                appearance: try XCTUnwrap(NSAppearance(named: .aqua))
+            )
+            XCTAssertEqual(rendered.mode, mode)
+            XCTAssertTrue(rendered.workspaceRegions.isEmpty)
+            XCTAssertEqual(rendered.image(for: .primary).size, rendered.size)
+        }
+    }
+
+    @MainActor
+    func testCompactDisplayGroupGivesACompactedNameMoreWidthThanAKey() throws {
+        let snapshot = MenuBarPresentationResolver.resolve(
+            mode: .compact,
+            workspaceLabelMode: .name,
+            displayMode: .independent,
+            state: engineState(
+                current: workspace2.id,
+                active: [workspace2.id],
+                activeByDisplay: [mainDisplay.identifier: workspace2.id]
+            ),
+            workspaces: [workspace1, workspace2],
+            connectedDisplays: [mainDisplay],
+            workspaceDisplayAssignments: [
+                workspace1.id: mainDisplay.identifier,
+                workspace2.id: mainDisplay.identifier,
+            ]
+        )
+        let plan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+            for: snapshot,
+            availableWidth: 620
+        ).first)
+        let keyContent = MenuBarDisplayGroupContentView(
+            plan: plan,
+            workspaceLabelMode: .key,
+            highlightColor: .default
+        )
+        let nameContent = MenuBarDisplayGroupContentView(
+            plan: plan,
+            workspaceLabelMode: .name,
+            highlightColor: .default
+        )
+        layout(keyContent)
+        layout(nameContent)
+
+        let keyPresentation = MenuBarCompactDisplayPresentation.resolve(
+            display: plan.group.display,
+            workspaceLabelMode: .key,
+            displayIconConfiguration: .automatic
+        )
+        let namePresentation = MenuBarCompactDisplayPresentation.resolve(
+            display: plan.group.display,
+            workspaceLabelMode: .name,
+            displayIconConfiguration: .automatic
+        )
+        let hiddenIconPresentation = MenuBarCompactDisplayPresentation.resolve(
+            display: plan.group.display,
+            workspaceLabelMode: .key,
+            displayIconConfiguration: MenuBarDisplayIconConfiguration(
+                stylesByDisplayIdentifier: [mainDisplay.identifier: .none]
+            )
+        )
+
+        XCTAssertEqual(keyPresentation.layout, .keyInsideIcon)
+        XCTAssertEqual(keyPresentation.label, "W")
+        XCTAssertEqual(keyPresentation.systemImage, "display")
+        XCTAssertEqual(namePresentation.layout, .inlineLabel)
+        XCTAssertEqual(namePresentation.label, "Writ…")
+        XCTAssertEqual(namePresentation.systemImage, "display")
+        XCTAssertEqual(hiddenIconPresentation.layout, .inlineLabel)
+        XCTAssertEqual(hiddenIconPresentation.label, "W")
+        XCTAssertNil(hiddenIconPresentation.systemImage)
+        XCTAssertGreaterThan(
+            nameContent.intrinsicContentSize.width,
+            keyContent.intrinsicContentSize.width
+        )
+        XCTAssertTrue(nameContent.workspaceTrackingRegions(in: nameContent).isEmpty)
+        XCTAssertNil(nameContent.hitTest(NSPoint(
+            x: nameContent.bounds.midX,
+            y: nameContent.bounds.midY
+        )))
+    }
+
+    func testCompactKeyOverlaysUseTheSafeAreaForEachSupportedDisplaySymbol() {
+        let horizontal = MenuBarCompactKeyOverlayMetrics.resolve(
+            systemImage: "display",
+            labelCharacterCount: 1
+        )
+        let vertical = MenuBarCompactKeyOverlayMetrics.resolve(
+            systemImage: "rectangle.portrait",
+            labelCharacterCount: 1
+        )
+        let laptop = MenuBarCompactKeyOverlayMetrics.resolve(
+            systemImage: "laptopcomputer",
+            labelCharacterCount: 1
+        )
+        let combined = MenuBarCompactKeyOverlayMetrics.resolve(
+            systemImage: "display.2",
+            labelCharacterCount: 1
+        )
+
+        XCTAssertLessThan(vertical.labelWidth, horizontal.labelWidth)
+        XCTAssertLessThan(laptop.labelWidth, horizontal.labelWidth)
+        XCTAssertLessThan(laptop.labelPointSize, horizontal.labelPointSize)
+        XCTAssertGreaterThan(combined.labelOffsetX, 0)
+        XCTAssertGreaterThan(combined.labelOffsetY, horizontal.labelOffsetY)
+        XCTAssertGreaterThan(combined.componentWidth, horizontal.componentWidth)
+
+        let multiCharacterLaptop = MenuBarCompactKeyOverlayMetrics.resolve(
+            systemImage: "laptopcomputer",
+            labelCharacterCount: 2
+        )
+        XCTAssertLessThan(multiCharacterLaptop.labelPointSize, laptop.labelPointSize)
+        XCTAssertEqual(multiCharacterLaptop.labelWidth, laptop.labelWidth)
+    }
+
+    @MainActor
+    func testHiddenDisplayIconReclaimsUniversalDisplayGroupWidth() throws {
+        let hiddenConfiguration = MenuBarDisplayIconConfiguration(
+            stylesByDisplayIdentifier: [mainDisplay.identifier: .none]
+        )
+        for mode in MenuBarPresentationMode.allCases {
+            let snapshot = independentSnapshot(displays: [mainDisplay]).replacingMode(mode)
+            let automaticPlan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+                for: snapshot,
+                availableWidth: 620,
+                displayIconConfiguration: .automatic
+            ).first)
+            let hiddenPlan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+                for: snapshot,
+                availableWidth: 620,
+                displayIconConfiguration: hiddenConfiguration
+            ).first)
+            let automatic = MenuBarDisplayGroupContentView(
+                plan: automaticPlan,
+                workspaceLabelMode: snapshot.workspaceLabelMode,
+                highlightColor: .default,
+                displayIconConfiguration: .automatic
+            )
+            let hidden = MenuBarDisplayGroupContentView(
+                plan: hiddenPlan,
+                workspaceLabelMode: snapshot.workspaceLabelMode,
+                highlightColor: .default,
+                displayIconConfiguration: hiddenConfiguration
+            )
+            layout(automatic)
+            layout(hidden)
+
+            let reclaimedWidth = automatic.intrinsicContentSize.width
+                - hidden.intrinsicContentSize.width
+            XCTAssertGreaterThan(
+                reclaimedWidth,
+                0,
+                "\(mode.title) should reclaim the hidden icon width"
+            )
+            if mode == .full {
+                XCTAssertEqual(
+                    reclaimedWidth,
+                    MenuBarVisualTokens.displayIconWidth
+                        + MenuBarVisualTokens.displayWorkspaceGap,
+                    accuracy: 1
+                )
+            }
+            XCTAssertEqual(
+                hidden.workspaceTrackingRegions(in: hidden).map(\.hitTarget),
+                automatic.workspaceTrackingRegions(in: automatic).map(\.hitTarget)
+            )
+        }
     }
 
     func testInformationalTargetsNeverRouteToWorkspaceSwitch() {
@@ -371,53 +1244,6 @@ final class MenuBarPresentationTests: XCTestCase {
                 displayIdentifier: externalDisplay.identifier
             )
         )
-    }
-
-    @MainActor
-    func testStableStatusContentTransitionsRemoveAndRestoreOnlyExplicitWorkspaceButtons() {
-        let medium = independentSnapshot(displays: [mainDisplay, externalDisplay])
-        let full = medium.replacingMode(.full)
-        let compact = medium.replacingMode(.compact)
-        var actions: [MenuBarHitTarget] = []
-        let content = MenuBarStatusContentView(
-            snapshot: full,
-            availableWidth: 620,
-            workspaceAction: { actions.append($0) }
-        )
-        let originalIdentity = ObjectIdentifier(content)
-
-        layout(content)
-        let fullButtons = workspaceButtons(in: content)
-        XCTAssertEqual(Set(fullButtons.map(\.title)), Set(["1", "Writing", "9"]))
-        XCTAssertNil(content.hitTest(NSPoint(x: 2, y: content.bounds.midY)))
-        for button in fullButtons {
-            let point = content.convert(
-                NSPoint(x: button.bounds.midX, y: button.bounds.midY),
-                from: button
-            )
-            XCTAssertTrue(content.hitTest(point) === button)
-        }
-
-        content.configure(snapshot: medium, availableWidth: 620, workspaceAction: { actions.append($0) })
-        layout(content)
-        XCTAssertEqual(ObjectIdentifier(content), originalIdentity)
-        XCTAssertTrue(workspaceButtons(in: content).isEmpty)
-        XCTAssertNil(content.hitTest(NSPoint(x: content.bounds.midX, y: content.bounds.midY)))
-
-        content.configure(snapshot: full, availableWidth: 620, workspaceAction: { actions.append($0) })
-        layout(content)
-        let restoredButtons = workspaceButtons(in: content)
-        XCTAssertEqual(restoredButtons.count, 3)
-        restoredButtons.first(where: { $0.title == "Writing" })?.performClick(nil)
-        XCTAssertEqual(actions, [
-            .workspace(workspaceID: workspace2.id, displayIdentifier: mainDisplay.identifier),
-        ])
-
-        content.configure(snapshot: compact, availableWidth: 620, workspaceAction: { actions.append($0) })
-        layout(content)
-        XCTAssertEqual(ObjectIdentifier(content), originalIdentity)
-        XCTAssertTrue(workspaceButtons(in: content).isEmpty)
-        XCTAssertNil(content.hitTest(NSPoint(x: content.bounds.midX, y: content.bounds.midY)))
     }
 
     @MainActor
@@ -531,6 +1357,25 @@ final class MenuBarPresentationTests: XCTestCase {
             return nested
         }
     }
+
+    @MainActor
+    private func textFields(in view: NSView) -> [NSTextField] {
+        view.subviews.flatMap { child -> [NSTextField] in
+            let nested = textFields(in: child)
+            if let textField = child as? NSTextField { return [textField] + nested }
+            return nested
+        }
+    }
+
+    @MainActor
+    private func imageViews(in view: NSView) -> [NSImageView] {
+        view.subviews.flatMap { child -> [NSImageView] in
+            let nested = imageViews(in: child)
+            if let imageView = child as? NSImageView { return [imageView] + nested }
+            return nested
+        }
+    }
+
 }
 
 private final class FakeUbiquitousKeyValueStore: UbiquitousKeyValueStoring {

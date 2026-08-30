@@ -1,6 +1,6 @@
 name: WindowRanger
 options:
-  bundleIdPrefix: com.windowranger
+  bundleIdPrefix: dev.appranger
   deploymentTarget:
     macOS: "14.0"
   generateEmptyDirectories: true
@@ -10,6 +10,14 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
+    WINDOWRANGER_GIT_COMMIT: unknown
+    WINDOWRANGER_UPDATE_CHANNEL: dev
+    WINDOWRANGER_SPARKLE_FEED_URL: https://windowranger.com/appcast.xml
+    WINDOWRANGER_SPARKLE_PUBLIC_ED_KEY: ""
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.8.1
 targets:
   WindowRanger:
     type: application
@@ -18,19 +26,52 @@ targets:
       - path: Sources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.windowranger.WindowRanger
+        PRODUCT_BUNDLE_IDENTIFIER: dev.appranger.WindowRanger
         PRODUCT_NAME: WindowRanger
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 44NAD22AK6
+        ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_FILE: Sources/App/Info.plist
         CODE_SIGN_ENTITLEMENTS: Sources/App/WindowRanger.entitlements
         ENABLE_APP_SANDBOX: NO
         GENERATE_INFOPLIST_FILE: NO
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
     dependencies:
+      - target: WindowRangerCLI
+        link: false
+        codeSign: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
+      - package: Sparkle
       - sdk: ApplicationServices.framework
       - sdk: Carbon.framework
+      - sdk: ScreenCaptureKit.framework
       - sdk: ServiceManagement.framework
+      - sdk: Security.framework
+  WindowRangerCLI:
+    type: tool
+    platform: macOS
+    sources:
+      - path: CommandLine/WindowRangerCLI
+      - path: Sources/CLI
+        excludes:
+          - CLIPathManager.swift
+          - WindowRangerCLIActionBridge.swift
+          - WindowRangerCLIRequestRouter.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.appranger.WindowRanger.CLI
+        PRODUCT_NAME: windowranger
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 44NAD22AK6
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_APP_SANDBOX: NO
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - sdk: AppKit.framework
+      - sdk: Security.framework
   WindowRangerTests:
     type: bundle.unit-test
     platform: macOS
@@ -40,12 +81,15 @@ targets:
         excludes:
           - App
     dependencies:
+      - package: Sparkle
       - sdk: ApplicationServices.framework
       - sdk: Carbon.framework
+      - sdk: ScreenCaptureKit.framework
       - sdk: ServiceManagement.framework
+      - sdk: Security.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.windowranger.WindowRangerTests
+        PRODUCT_BUNDLE_IDENTIFIER: dev.appranger.WindowRangerTests
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: ""
         # These are deliberately empty: unit tests must run in xctest, never in the production
@@ -62,6 +106,16 @@ schemes:
         WindowRangerTests: [test]
     run:
       config: Debug
+      preActions:
+        - name: Stop Daily WindowRanger
+          settingsTarget: WindowRanger
+          script: |
+            "$SRCROOT/scripts/start-development.sh" --scheme-action
+      postActions:
+        - name: Resume Daily WindowRanger
+          settingsTarget: WindowRanger
+          script: |
+            "$SRCROOT/scripts/resume-daily.sh" --scheme-action
     test:
       config: Debug
       macroExpansion: WindowRangerTests

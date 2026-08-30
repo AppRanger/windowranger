@@ -168,6 +168,524 @@ final class WakeReconciliationTests: XCTestCase {
         XCTAssertFalse(state.complete(generation: stale.generation))
     }
 
+    func testScreenSleepSuspendsLifecycleUntilASelectedWakeSignal() {
+        var state = WakeReconciliationState()
+
+        _ = state.prepareForSleep()
+        XCTAssertTrue(state.isSleeping)
+        XCTAssertFalse(state.isPending)
+
+        let wake = state.request(.screensWake)
+        XCTAssertFalse(state.isSleeping)
+        XCTAssertTrue(wake.shouldSchedule)
+        XCTAssertTrue(state.isPending)
+    }
+
+    func testDisplayWakeWaitsForSessionActivationBeforeRecovery() {
+        var state = ScreenSessionLifecycleState()
+        state.suspend(.screensSleep)
+        state.suspend(.sessionResignedActive)
+
+        XCTAssertFalse(state.receive(.screensWake))
+        XCTAssertEqual(state.suspensionSources, [.sessionResignedActive])
+        XCTAssertTrue(state.receive(.sessionBecameActive))
+        XCTAssertFalse(state.isSuspended)
+    }
+
+    func testSessionActivationWaitsForDisplayWakeWhenBothWereSuspended() {
+        var state = ScreenSessionLifecycleState()
+        state.suspend(.screensSleep)
+        state.suspend(.sessionResignedActive)
+
+        XCTAssertFalse(state.receive(.sessionBecameActive))
+        XCTAssertEqual(state.suspensionSources, [.screensSleep])
+        XCTAssertTrue(state.receive(.screensWake))
+    }
+
+    func testScreenLockWaitsForDistributedUnlockBeforeRecovery() {
+        var state = ScreenSessionLifecycleState()
+        state.suspend(.screenLocked)
+
+        XCTAssertFalse(state.receive(.sessionBecameActive))
+        XCTAssertEqual(state.suspensionSources, [.screenLocked])
+        XCTAssertTrue(state.receive(.screenUnlocked))
+        XCTAssertFalse(state.isSuspended)
+    }
+
+    func testScreenLockNotificationsUseTheMacOSDistributedNames() {
+        XCTAssertEqual(
+            ScreenLockLifecycleNotifications.locked.rawValue,
+            "com.apple.screenIsLocked"
+        )
+        XCTAssertEqual(
+            ScreenLockLifecycleNotifications.unlocked.rawValue,
+            "com.apple.screenIsUnlocked"
+        )
+    }
+
+    func testLockedGlobalEmptySnapshotCannotEvictTrackedWindows() {
+        var state = ScreenSessionLifecycleState()
+        state.suspend(.screenLocked)
+
+        XCTAssertTrue(WindowEnumerationLifecycle.shouldDeferGlobalEmptySnapshot(
+            trackedWindowCount: 14,
+            requiredProcessIdentifiers: [10, 11, 12],
+            successfullyEnumeratedProcessIdentifiers: [10, 11, 12],
+            enumeratedWindowCount: 0,
+            isLifecycleTransitionActive: state.isSuspended,
+            consecutiveGlobalEmptySnapshots: 4
+        ))
+    }
+
+    func testFirstGlobalEmptySnapshotDefersRatherThanEvictingEveryTrackedWindow() {
+        XCTAssertTrue(WindowEnumerationLifecycle.shouldDeferGlobalEmptySnapshot(
+            trackedWindowCount: 13,
+            requiredProcessIdentifiers: [10, 11, 12],
+            successfullyEnumeratedProcessIdentifiers: [10, 11, 12],
+            enumeratedWindowCount: 0,
+            isLifecycleTransitionActive: false,
+            consecutiveGlobalEmptySnapshots: 0
+        ))
+    }
+
+    func testGlobalEmptySnapshotRemainsDeferredThroughoutWakeReconciliation() {
+        XCTAssertTrue(WindowEnumerationLifecycle.shouldDeferGlobalEmptySnapshot(
+            trackedWindowCount: 13,
+            requiredProcessIdentifiers: [10, 11, 12],
+            successfullyEnumeratedProcessIdentifiers: [10, 11, 12],
+            enumeratedWindowCount: 0,
+            isLifecycleTransitionActive: true,
+            consecutiveGlobalEmptySnapshots: 3
+        ))
+    }
+
+    func testConfirmedGlobalEmptySnapshotIsAuthoritativeWhileFullyActive() {
+        XCTAssertFalse(WindowEnumerationLifecycle.shouldDeferGlobalEmptySnapshot(
+            trackedWindowCount: 2,
+            requiredProcessIdentifiers: [10, 11],
+            successfullyEnumeratedProcessIdentifiers: [10, 11],
+            enumeratedWindowCount: 0,
+            isLifecycleTransitionActive: false,
+            consecutiveGlobalEmptySnapshots: 1
+        ))
+
+        let first = WindowKey(processIdentifier: 10, windowIdentifier: 100)
+        let second = WindowKey(processIdentifier: 11, windowIdentifier: 101)
+        XCTAssertEqual(WindowEnumerationLifecycle.removedTrackedWindowKeys(
+            trackedWindowKeys: [first, second],
+            runningProcessIdentifiers: [10, 11],
+            successfullyEnumeratedProcessIdentifiers: [10, 11],
+            enumeratedWindowKeys: []
+        ), [first, second])
+    }
+
+    func testPartialOrFailedEnumerationDoesNotTriggerGlobalEmptyDeferral() {
+        XCTAssertFalse(WindowEnumerationLifecycle.shouldDeferGlobalEmptySnapshot(
+            trackedWindowCount: 2,
+            requiredProcessIdentifiers: [10, 11],
+            successfullyEnumeratedProcessIdentifiers: [10],
+            enumeratedWindowCount: 0,
+            isLifecycleTransitionActive: false,
+            consecutiveGlobalEmptySnapshots: 0
+        ))
+        XCTAssertFalse(WindowEnumerationLifecycle.shouldDeferGlobalEmptySnapshot(
+            trackedWindowCount: 2,
+            requiredProcessIdentifiers: [10, 11],
+            successfullyEnumeratedProcessIdentifiers: [10, 11],
+            enumeratedWindowCount: 1,
+            isLifecycleTransitionActive: true,
+            consecutiveGlobalEmptySnapshots: 0
+        ))
+    }
+
+    func testCoordinatedPartialCollapseWaitsForDelayedScreenLockSignal() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let required: Set<pid_t> = [10, 11, 12, 13, 14, 15]
+        var state = CoordinatedWindowEnumerationCollapseState()
+
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [14, 15],
+            isLifecycleTransitionActive: false,
+            at: start
+        ), [10, 11, 12, 13])
+
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [],
+            isLifecycleTransitionActive: false,
+            at: start.addingTimeInterval(0.125)
+        ), required)
+
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [],
+            isLifecycleTransitionActive: true,
+            at: start.addingTimeInterval(0.16)
+        ), required)
+    }
+
+    func testCoordinatedCollapseGraceExpiresWhileFullyActive() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let required: Set<pid_t> = [10, 11, 12, 13]
+        var state = CoordinatedWindowEnumerationCollapseState()
+
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [12, 13],
+            isLifecycleTransitionActive: false,
+            at: start
+        ), [10, 11])
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [12, 13],
+            isLifecycleTransitionActive: false,
+            at: start.addingTimeInterval(
+                CoordinatedWindowEnumerationCollapseState.graceDuration + 0.001
+            )
+        ), [])
+    }
+
+    func testCoordinatedCollapseRemainsDeferredThroughoutFullscreenSession() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let required: Set<pid_t> = [10, 11, 12, 13]
+        var state = CoordinatedWindowEnumerationCollapseState()
+
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [12, 13],
+            isLifecycleTransitionActive: false,
+            hasCurrentFullscreenObservation: true,
+            at: start
+        ), [10, 11])
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [12, 13],
+            isLifecycleTransitionActive: false,
+            hasCurrentFullscreenObservation: true,
+            at: start.addingTimeInterval(60)
+        ), [10, 11])
+
+        // Ending fullscreen starts the ordinary bounded grace instead of immediately accepting the
+        // first still-collapsed snapshot returned during the Space transition.
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [12, 13],
+            isLifecycleTransitionActive: false,
+            hasCurrentFullscreenObservation: false,
+            at: start.addingTimeInterval(60.1)
+        ), [10, 11])
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: required,
+            successfullyEnumeratedProcessIdentifiers: required,
+            enumeratedWindowProcessIdentifiers: [12, 13],
+            isLifecycleTransitionActive: false,
+            hasCurrentFullscreenObservation: false,
+            at: start.addingTimeInterval(
+                60.1 + CoordinatedWindowEnumerationCollapseState.graceDuration + 0.001
+            )
+        ), [])
+    }
+
+    func testOnlyCurrentlyEnumeratedFullscreenSessionEnablesCollapseProtection() {
+        let fullscreen = WindowKey(processIdentifier: 10, windowIdentifier: 100)
+        let unrelated = WindowKey(processIdentifier: 11, windowIdentifier: 101)
+
+        XCTAssertTrue(WindowEnumerationLifecycle.hasCurrentFullscreenObservation(
+            sessionWindowKeys: [fullscreen],
+            enumeratedWindowKeys: [fullscreen, unrelated]
+        ))
+        XCTAssertFalse(WindowEnumerationLifecycle.hasCurrentFullscreenObservation(
+            sessionWindowKeys: [fullscreen],
+            enumeratedWindowKeys: [unrelated]
+        ))
+        XCTAssertFalse(WindowEnumerationLifecycle.hasCurrentFullscreenObservation(
+            sessionWindowKeys: [],
+            enumeratedWindowKeys: [unrelated]
+        ))
+    }
+
+    func testSingleApplicationAbsenceRemainsImmediatelyAuthoritative() {
+        var state = CoordinatedWindowEnumerationCollapseState()
+
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: [10, 11, 12, 13],
+            successfullyEnumeratedProcessIdentifiers: [10, 11, 12, 13],
+            enumeratedWindowProcessIdentifiers: [11, 12, 13],
+            isLifecycleTransitionActive: false
+        ), [])
+        XCTAssertEqual(state.processIdentifiersToDefer(
+            requiredProcessIdentifiers: [10],
+            successfullyEnumeratedProcessIdentifiers: [10],
+            enumeratedWindowProcessIdentifiers: [],
+            isLifecycleTransitionActive: false,
+            hasCurrentFullscreenObservation: true
+        ), [])
+    }
+
+    func testOneReturningApplicationDoesNotReleaseOtherPreSleepWindows() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let first = WindowKey(processIdentifier: 10, windowIdentifier: 100)
+        let second = WindowKey(processIdentifier: 11, windowIdentifier: 101)
+        let quickApp = WindowKey(processIdentifier: 12, windowIdentifier: 102)
+        var state = PostSleepWindowRecoveryState()
+        state.prepareForSleep(protecting: [first, second, quickApp])
+        state.beginWake(at: start)
+
+        let empty = state.observe(
+            runningProcessIdentifiers: [10, 11, 12],
+            successfullyEnumeratedProcessIdentifiers: [10, 11, 12],
+            enumeratedWindowKeys: [],
+            at: start.addingTimeInterval(1)
+        )
+        XCTAssertEqual(empty.protectedWindowKeys, [first, second, quickApp])
+        XCTAssertEqual(empty.authoritativeSuccessfullyEnumeratedProcessIdentifiers, [])
+
+        let partial = state.observe(
+            runningProcessIdentifiers: [10, 11, 12],
+            successfullyEnumeratedProcessIdentifiers: [10, 11, 12],
+            enumeratedWindowKeys: [first],
+            at: start.addingTimeInterval(3)
+        )
+        XCTAssertEqual(partial.newlyRecoveredWindowKeys, [first])
+        XCTAssertEqual(partial.protectedWindowKeys, [second, quickApp])
+        XCTAssertEqual(
+            partial.authoritativeSuccessfullyEnumeratedProcessIdentifiers,
+            [10]
+        )
+        XCTAssertEqual(WindowEnumerationLifecycle.removedTrackedWindowKeys(
+            trackedWindowKeys: [first, second, quickApp],
+            runningProcessIdentifiers: [10, 11, 12],
+            successfullyEnumeratedProcessIdentifiers:
+                partial.authoritativeSuccessfullyEnumeratedProcessIdentifiers,
+            enumeratedWindowKeys: [first]
+        ), [])
+
+        let recovered = state.observe(
+            runningProcessIdentifiers: [10, 11, 12],
+            successfullyEnumeratedProcessIdentifiers: [10, 11, 12],
+            enumeratedWindowKeys: [first, second, quickApp],
+            at: start.addingTimeInterval(10)
+        )
+        XCTAssertEqual(recovered.newlyRecoveredWindowKeys, [second, quickApp])
+        XCTAssertFalse(state.isActive)
+        XCTAssertEqual(
+            recovered.authoritativeSuccessfullyEnumeratedProcessIdentifiers,
+            [10, 11, 12]
+        )
+    }
+
+    func testPartialPostSleepReturnDefersOriginalTiledPartition() {
+        let left = WindowKey(processIdentifier: 10, windowIdentifier: 100)
+        let topRight = WindowKey(processIdentifier: 11, windowIdentifier: 101)
+        let bottomRight = WindowKey(processIdentifier: 12, windowIdentifier: 102)
+        let tree = tiledRecoveryTree(left: left, topRight: topRight, bottomRight: bottomRight)
+        let fingerprint = TiledLayoutEngine.fingerprint(tree)
+
+        XCTAssertEqual(
+            PostSleepTiledLayoutRecoveryPolicy.protectedParticipantKeys(
+                in: tree,
+                protectedWindowKeys: [topRight, bottomRight]
+            ),
+            [topRight, bottomRight]
+        )
+        XCTAssertTrue(PostSleepTiledLayoutRecoveryPolicy.shouldDeferPartition(
+            tree: tree,
+            protectedWindowKeys: [topRight, bottomRight]
+        ))
+        XCTAssertEqual(TiledLayoutEngine.fingerprint(tree), fingerprint)
+    }
+
+    func testCompletePostSleepReturnReusesExactTiledTree() throws {
+        let left = WindowKey(processIdentifier: 10, windowIdentifier: 100)
+        let topRight = WindowKey(processIdentifier: 11, windowIdentifier: 101)
+        let bottomRight = WindowKey(processIdentifier: 12, windowIdentifier: 102)
+        let tree = tiledRecoveryTree(left: left, topRight: topRight, bottomRight: bottomRight)
+
+        XCTAssertFalse(PostSleepTiledLayoutRecoveryPolicy.shouldDeferPartition(
+            tree: tree,
+            protectedWindowKeys: []
+        ))
+        XCTAssertEqual(
+            try XCTUnwrap(TiledLayoutEngine.reconciled(
+                tree,
+                windowKeys: [left, topRight, bottomRight],
+                weights: nil,
+                orientation: .horizontal
+            )),
+            tree
+        )
+    }
+
+    func testProtectedWindowInAnotherTiledPartitionDoesNotBlockThisPartition() {
+        let left = WindowKey(processIdentifier: 10, windowIdentifier: 100)
+        let topRight = WindowKey(processIdentifier: 11, windowIdentifier: 101)
+        let bottomRight = WindowKey(processIdentifier: 12, windowIdentifier: 102)
+        let unrelated = WindowKey(processIdentifier: 13, windowIdentifier: 103)
+        let tree = tiledRecoveryTree(left: left, topRight: topRight, bottomRight: bottomRight)
+
+        XCTAssertFalse(PostSleepTiledLayoutRecoveryPolicy.shouldDeferPartition(
+            tree: tree,
+            protectedWindowKeys: [unrelated]
+        ))
+    }
+
+    func testAuthoritativeRemovalPrunesThenReleasesTiledPartition() throws {
+        let workspaceID = UUID()
+        let left = WindowKey(processIdentifier: 10, windowIdentifier: 100)
+        let closed = WindowKey(processIdentifier: 11, windowIdentifier: 101)
+        let bottomRight = WindowKey(processIdentifier: 12, windowIdentifier: 102)
+        let partition = TiledLayoutPartitionKey(
+            workspaceID: workspaceID,
+            displayIdentifier: "external"
+        )
+        let tree = tiledRecoveryTree(left: left, topRight: closed, bottomRight: bottomRight)
+        let pruned = try XCTUnwrap(WindowEnumerationLifecycle.pruning(
+            [partition: tree],
+            removedWindowKeys: [closed]
+        )[partition])
+
+        XCTAssertFalse(PostSleepTiledLayoutRecoveryPolicy.shouldDeferPartition(
+            tree: pruned,
+            protectedWindowKeys: []
+        ))
+        XCTAssertEqual(
+            try XCTUnwrap(TiledLayoutEngine.reconciled(
+                pruned,
+                windowKeys: [left, bottomRight],
+                weights: nil,
+                orientation: .horizontal
+            )),
+            pruned
+        )
+    }
+
+    func testPersistentlyMissingWindowNeedsTwoStableSnapshotsAfterWakeGrace() {
+        let start = Date(timeIntervalSince1970: 2_000)
+        let missing = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        var state = PostSleepWindowRecoveryState()
+        state.prepareForSleep(protecting: [missing])
+        state.beginWake(at: start)
+
+        let firstConfirmation = state.observe(
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [],
+            at: start.addingTimeInterval(
+                PostSleepWindowRecoveryState.missingWindowGraceInterval
+            )
+        )
+        XCTAssertEqual(firstConfirmation.protectedWindowKeys, [missing])
+        XCTAssertEqual(firstConfirmation.confirmedMissingWindowKeys, [])
+        XCTAssertEqual(firstConfirmation.authoritativeSuccessfullyEnumeratedProcessIdentifiers, [])
+
+        let secondConfirmation = state.observe(
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [],
+            at: start.addingTimeInterval(
+                PostSleepWindowRecoveryState.missingWindowGraceInterval + 1
+            )
+        )
+        XCTAssertEqual(secondConfirmation.confirmedMissingWindowKeys, [missing])
+        XCTAssertEqual(
+            secondConfirmation.authoritativeSuccessfullyEnumeratedProcessIdentifiers,
+            [42]
+        )
+        XCTAssertFalse(state.isActive)
+        XCTAssertEqual(WindowEnumerationLifecycle.removedTrackedWindowKeys(
+            trackedWindowKeys: [missing],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers:
+                secondConfirmation.authoritativeSuccessfullyEnumeratedProcessIdentifiers,
+            enumeratedWindowKeys: []
+        ), [missing])
+    }
+
+    func testDifferentWindowFromSameProcessDoesNotReleaseProtectedKeyDuringGrace() {
+        let start = Date(timeIntervalSince1970: 2_500)
+        let protected = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let transient = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+        var state = PostSleepWindowRecoveryState()
+        state.prepareForSleep(protecting: [protected])
+        state.beginWake(at: start)
+
+        let update = state.observe(
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [transient],
+            at: start.addingTimeInterval(3)
+        )
+
+        XCTAssertEqual(update.protectedWindowKeys, [protected])
+        XCTAssertEqual(update.newlyRecoveredWindowKeys, [])
+        XCTAssertEqual(update.authoritativeSuccessfullyEnumeratedProcessIdentifiers, [])
+        XCTAssertTrue(state.isActive)
+    }
+
+    func testFailedEnumerationResetsMissingWindowConfirmation() {
+        let start = Date(timeIntervalSince1970: 3_000)
+        let missing = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        var state = PostSleepWindowRecoveryState()
+        state.prepareForSleep(protecting: [missing])
+        state.beginWake(at: start)
+        let grace = PostSleepWindowRecoveryState.missingWindowGraceInterval
+
+        _ = state.observe(
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [],
+            at: start.addingTimeInterval(grace)
+        )
+        _ = state.observe(
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [],
+            enumeratedWindowKeys: [],
+            at: start.addingTimeInterval(grace + 1)
+        )
+        let restartedConfirmation = state.observe(
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [],
+            at: start.addingTimeInterval(grace + 2)
+        )
+
+        XCTAssertEqual(restartedConfirmation.protectedWindowKeys, [missing])
+        XCTAssertEqual(restartedConfirmation.confirmedMissingWindowKeys, [])
+        XCTAssertTrue(state.isActive)
+    }
+
+    func testTerminatedApplicationReleasesItsProtectedWindowsImmediately() {
+        let missing = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        var state = PostSleepWindowRecoveryState()
+        state.prepareForSleep(protecting: [missing])
+        state.beginWake(at: Date(timeIntervalSince1970: 4_000))
+
+        let update = state.observe(
+            runningProcessIdentifiers: [],
+            successfullyEnumeratedProcessIdentifiers: [],
+            enumeratedWindowKeys: [],
+            at: Date(timeIntervalSince1970: 4_001)
+        )
+
+        XCTAssertEqual(update.terminatedWindowKeys, [missing])
+        XCTAssertFalse(state.isActive)
+        XCTAssertEqual(WindowEnumerationLifecycle.removedTrackedWindowKeys(
+            trackedWindowKeys: [missing],
+            runningProcessIdentifiers: [],
+            successfullyEnumeratedProcessIdentifiers: [],
+            enumeratedWindowKeys: []
+        ), [missing])
+    }
+
     func testDelayedAXEnumerationRetriesThenCompletes() {
         XCTAssertEqual(
             decision(requiredProcesses: [42], enumeratedProcesses: []),
@@ -209,6 +727,36 @@ final class WakeReconciliationTests: XCTestCase {
         XCTAssertEqual(
             decision(receivedAdditionalSignal: true),
             .retry(afterMilliseconds: 180, reason: "new-lifecycle-signal")
+        )
+    }
+
+    func testWakeLayoutVerificationDetectsMissingAndMismatchedFrames() {
+        let expected = WindowFrame(
+            position: CGPoint(x: 10, y: 20),
+            size: CGSize(width: 800, height: 600)
+        )
+        let closeEnough = WindowFrame(
+            position: CGPoint(x: 10.5, y: 19.5),
+            size: CGSize(width: 800.5, height: 599.5)
+        )
+        let wrong = WindowFrame(
+            position: CGPoint(x: 10, y: 60),
+            size: CGSize(width: 800, height: 560)
+        )
+
+        XCTAssertEqual(
+            WakeLayoutVerificationPolicy.mismatchedWindowKeys(
+                expectedFrames: ["retained": expected, "wrong": expected, "missing": expected],
+                observedFrames: ["retained": closeEnough, "wrong": wrong]
+            ),
+            ["wrong", "missing"]
+        )
+    }
+
+    func testWakeLayoutVerificationIsBounded() {
+        XCTAssertEqual(
+            WakeLayoutVerificationPolicy.verificationDelaysMilliseconds,
+            [120, 300, 650]
         )
     }
 
@@ -397,6 +945,27 @@ final class WakeReconciliationTests: XCTestCase {
         ))
     }
 
+    func testGameModeProfileEligibilityRequiresExplicitLaunchServicesOptIn() {
+        XCTAssertTrue(FullscreenGameMetadataPolicy.isGameModeEligible(
+            supportsGameMode: true
+        ))
+        XCTAssertFalse(FullscreenGameMetadataPolicy.isGameModeEligible(
+            supportsGameMode: false
+        ))
+        XCTAssertFalse(FullscreenGameMetadataPolicy.isGameModeEligible(
+            supportsGameMode: nil
+        ))
+
+        XCTAssertTrue(FullscreenGameMetadataPolicy.isDeclaredGame(
+            supportsGameMode: nil,
+            supportsGameControllerMode: true,
+            applicationCategory: nil
+        ))
+        XCTAssertFalse(FullscreenGameMetadataPolicy.isGameModeEligible(
+            supportsGameMode: nil
+        ))
+    }
+
     func testWakeFocusRestoresPriorVisibleLocalWindowAndNeverParkedOrOtherDisplay() {
         let candidates = [
             WakeFocusCandidate(
@@ -507,6 +1076,24 @@ final class WakeReconciliationTests: XCTestCase {
             receivedAdditionalLifecycleSignal: receivedAdditionalSignal,
             windowServerSessionAvailable: sessionAvailable
         ))
+    }
+
+    private func tiledRecoveryTree(
+        left: WindowKey,
+        topRight: WindowKey,
+        bottomRight: WindowKey
+    ) -> TiledNode {
+        .split(
+            axis: .horizontal,
+            ratio: 0.53,
+            first: .window(left),
+            second: .split(
+                axis: .vertical,
+                ratio: 0.5,
+                first: .window(topRight),
+                second: .window(bottomRight)
+            )
+        )
     }
 
     private func display(_ identifier: String, x: CGFloat, isMain: Bool = false) -> DisplaySnapshot {

@@ -26,6 +26,164 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertEqual(decoded, WorkspaceDefinition.defaults)
     }
 
+    func testWorkspaceEngineLookupIndexPreservesFirstWorkspaceAndRevalidatesRules() {
+        let retainedID = UUID(uuidString: "A0000000-0000-0000-0000-000000000001")!
+        let removedID = UUID(uuidString: "A0000000-0000-0000-0000-000000000002")!
+        let retained = WorkspaceDefinition(
+            id: retainedID,
+            name: "Retained",
+            key: "r",
+            layout: .tiled
+        )
+        let duplicate = WorkspaceDefinition(
+            id: retainedID,
+            name: "Duplicate",
+            key: "d",
+            layout: .accordion
+        )
+        let removed = WorkspaceDefinition(id: removedID, name: "Removed", key: "x")
+        let validRule = AppRule(
+            bundleIdentifier: "com.example.Editor",
+            displayName: "Editor",
+            actions: [.assignWorkspace(retainedID)]
+        )
+        let staleRule = AppRule(
+            bundleIdentifier: "com.example.Stale",
+            displayName: "Stale",
+            actions: [.assignWorkspace(removedID)]
+        )
+        let rules = [validRule.id: validRule, staleRule.id: staleRule]
+
+        let initial = WorkspaceEngineLookupIndex(
+            workspaces: [retained, duplicate, removed],
+            appRulesByBundleIdentifier: rules
+        )
+
+        XCTAssertEqual(initial.validWorkspaceIDs, [retainedID, removedID])
+        XCTAssertEqual(initial.workspace(for: retainedID), retained)
+        XCTAssertEqual(
+            initial.resolvedRule(forBundleIdentifier: "COM.EXAMPLE.EDITOR").assignedWorkspaceID,
+            retainedID
+        )
+        XCTAssertEqual(
+            initial.resolvedRule(forBundleIdentifier: "com.example.stale").assignedWorkspaceID,
+            removedID
+        )
+
+        let afterRemoval = WorkspaceEngineLookupIndex(
+            workspaces: [retained],
+            appRulesByBundleIdentifier: rules
+        )
+
+        XCTAssertEqual(afterRemoval.validWorkspaceIDs, [retainedID])
+        XCTAssertNil(afterRemoval.workspace(for: removedID))
+        XCTAssertNil(
+            afterRemoval.resolvedRule(forBundleIdentifier: "com.example.stale").assignedWorkspaceID
+        )
+    }
+
+    func testPeriodicStateEmissionSkipsOnlyAnIdenticalPreviouslyScheduledState() {
+        let workspaceID = UUID(uuidString: "A0000000-0000-0000-0000-000000000001")!
+        let otherWorkspaceID = UUID(uuidString: "A0000000-0000-0000-0000-000000000002")!
+        let profileID = UUID(uuidString: "B0000000-0000-0000-0000-000000000001")!
+        let state = WorkspaceEngineState(
+            currentWorkspaceID: workspaceID,
+            activeWorkspaceIDs: [workspaceID],
+            previousWorkspaceID: nil,
+            managedWindowCount: 2,
+            accessibilityGranted: true,
+            profileID: profileID
+        )
+        let changedStates = [
+            WorkspaceEngineState(
+                currentWorkspaceID: otherWorkspaceID,
+                activeWorkspaceIDs: [otherWorkspaceID],
+                previousWorkspaceID: workspaceID,
+                managedWindowCount: 2,
+                accessibilityGranted: true,
+                profileID: profileID
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 3,
+                accessibilityGranted: true,
+                profileID: profileID
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 2,
+                accessibilityGranted: false,
+                profileID: profileID
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 2,
+                accessibilityGranted: true,
+                profileID: UUID(uuidString: "B0000000-0000-0000-0000-000000000002")!,
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 2,
+                accessibilityGranted: true,
+                profileID: profileID,
+                activeWorkspaceIDByDisplay: ["display": workspaceID]
+            ),
+            WorkspaceEngineState(
+                currentWorkspaceID: workspaceID,
+                activeWorkspaceIDs: [workspaceID],
+                previousWorkspaceID: nil,
+                managedWindowCount: 2,
+                accessibilityGranted: true,
+                profileID: profileID,
+                focusedWindowHighlightWorkspaceContexts: [
+                    WindowKey(processIdentifier: 42, windowIdentifier: 7):
+                        FocusedWindowHighlightWorkspaceContext(layout: .tiled, windowCount: 2),
+                ]
+            ),
+        ]
+
+        for changedState in changedStates {
+            var gate = WorkspaceEngineStateEmissionGate()
+            XCTAssertTrue(gate.shouldSchedule(state, force: false))
+            XCTAssertFalse(gate.shouldSchedule(state, force: false))
+            XCTAssertTrue(gate.shouldSchedule(changedState, force: false))
+            XCTAssertTrue(gate.shouldSchedule(state, force: false))
+        }
+    }
+
+    func testExplicitStateEmissionRemainsAForcedBroadInvalidation() {
+        let workspaceID = UUID(uuidString: "A0000000-0000-0000-0000-000000000001")!
+        let state = WorkspaceEngineState(
+            currentWorkspaceID: workspaceID,
+            activeWorkspaceIDs: [workspaceID],
+            previousWorkspaceID: nil,
+            managedWindowCount: 0,
+            accessibilityGranted: true
+        )
+
+        var gate = WorkspaceEngineStateEmissionGate()
+        XCTAssertTrue(gate.shouldSchedule(state, force: false))
+        XCTAssertTrue(gate.shouldSchedule(state, force: true))
+        XCTAssertFalse(gate.shouldSchedule(state, force: false))
+
+        let changedState = WorkspaceEngineState(
+            currentWorkspaceID: workspaceID,
+            activeWorkspaceIDs: [workspaceID],
+            previousWorkspaceID: nil,
+            managedWindowCount: 1,
+            accessibilityGranted: true
+        )
+        XCTAssertTrue(gate.shouldSchedule(changedState, force: false))
+    }
+
     func testLegacyWorkspaceDefinitionMigratesToNoneLayout() throws {
         let id = WorkspaceDefinition.defaults[0].id
         let json = """
@@ -112,6 +270,51 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertTrue(history.isEmpty)
     }
 
+    func testSuccessfulEnumerationReleasesClosedDiagnosticFocusWithoutCachingStaleObservation() {
+        let previous = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let closed = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+        let replacement = WindowKey(processIdentifier: 73, windowIdentifier: 200)
+
+        let failedEnumerationRemoval = WindowEnumerationLifecycle.removedTrackedWindowKeys(
+            trackedWindowKeys: [previous],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [],
+            enumeratedWindowKeys: []
+        )
+        XCTAssertTrue(failedEnumerationRemoval.isEmpty)
+        XCTAssertEqual(WindowEnumerationLifecycle.diagnosticFocusKeyAfterEnumeration(
+            previousKey: previous,
+            observedKey: nil,
+            ownProcessIdentifier: 999,
+            removedWindowKeys: failedEnumerationRemoval
+        ), previous)
+
+        XCTAssertNil(WindowEnumerationLifecycle.diagnosticFocusKeyAfterEnumeration(
+            previousKey: closed,
+            observedKey: closed,
+            ownProcessIdentifier: 999,
+            removedWindowKeys: [closed]
+        ))
+        XCTAssertEqual(WindowEnumerationLifecycle.diagnosticFocusKeyAfterEnumeration(
+            previousKey: previous,
+            observedKey: closed,
+            ownProcessIdentifier: 999,
+            removedWindowKeys: [closed]
+        ), previous)
+        XCTAssertEqual(WindowEnumerationLifecycle.diagnosticFocusKeyAfterEnumeration(
+            previousKey: previous,
+            observedKey: replacement,
+            ownProcessIdentifier: 999,
+            removedWindowKeys: [closed]
+        ), replacement)
+        XCTAssertEqual(WindowEnumerationLifecycle.diagnosticFocusKeyAfterEnumeration(
+            previousKey: previous,
+            observedKey: WindowKey(processIdentifier: 999, windowIdentifier: 300),
+            ownProcessIdentifier: 999,
+            removedWindowKeys: []
+        ), previous)
+    }
+
     func testFailedWindowEnumerationRetainsNativeTabsForRecovery() {
         let first = WindowKey(processIdentifier: 42, windowIdentifier: 100)
         let inactiveTab = WindowKey(processIdentifier: 42, windowIdentifier: 101)
@@ -124,6 +327,139 @@ final class WorkspaceDefinitionTests: XCTestCase {
         ).isEmpty)
     }
 
+    func testStableLayoutSlotPolicyRetainsOnlyTrackedNonAuthoritativeFailures() {
+        XCTAssertEqual(
+            StableLayoutSlotPolicy.retentionReason(
+                wasTracked: true,
+                applicationEnumerationSucceeded: false,
+                windowWasEnumerated: false,
+                isCurrentlyIncludedInLayout: true,
+                hasReadableFrame: false
+            ),
+            .applicationEnumerationUnavailable
+        )
+        XCTAssertEqual(
+            StableLayoutSlotPolicy.retentionReason(
+                wasTracked: true,
+                applicationEnumerationSucceeded: true,
+                windowWasEnumerated: true,
+                isCurrentlyIncludedInLayout: true,
+                hasReadableFrame: false
+            ),
+            .frameUnavailable
+        )
+
+        XCTAssertNil(StableLayoutSlotPolicy.retentionReason(
+            wasTracked: true,
+            applicationEnumerationSucceeded: true,
+            windowWasEnumerated: true,
+            isCurrentlyIncludedInLayout: false,
+            hasReadableFrame: false
+        ))
+        XCTAssertNil(StableLayoutSlotPolicy.retentionReason(
+            wasTracked: true,
+            applicationEnumerationSucceeded: true,
+            windowWasEnumerated: false,
+            isCurrentlyIncludedInLayout: true,
+            hasReadableFrame: false
+        ))
+        XCTAssertNil(StableLayoutSlotPolicy.retentionReason(
+            wasTracked: false,
+            applicationEnumerationSucceeded: false,
+            windowWasEnumerated: false,
+            isCurrentlyIncludedInLayout: true,
+            hasReadableFrame: false
+        ))
+    }
+
+    func testStableLayoutSlotPolicyReleasesUnreadableWindowReclassifiedAsFloatingDialog() {
+        let previousDecision = WorkspaceEngine.layoutDecision(
+            layoutOverride: .automatic,
+            admissionDecision: WindowAdmissionDecision(
+                disposition: .managedNormal,
+                reason: .normalWindow
+            ),
+            rule: .none
+        )
+        let currentDecision = WorkspaceEngine.layoutDecision(
+            layoutOverride: .automatic,
+            admissionDecision: WindowAdmissionDecision(
+                disposition: .managedDialog,
+                reason: .nativeFilePanelIdentifier
+            ),
+            rule: .none
+        )
+
+        XCTAssertTrue(previousDecision.includesInLayout)
+        XCTAssertFalse(currentDecision.includesInLayout)
+        XCTAssertNil(StableLayoutSlotPolicy.retentionReason(
+            wasTracked: true,
+            applicationEnumerationSucceeded: true,
+            windowWasEnumerated: true,
+            isCurrentlyIncludedInLayout: currentDecision.includesInLayout,
+            hasReadableFrame: false
+        ))
+    }
+
+    func testRetainedLayoutSlotPreservesParticipantButNotGeometryEligibility() {
+        XCTAssertTrue(StableLayoutSlotPolicy.isAvailableForLayout(
+            isWriteDeferred: true,
+            retainsLayoutSlot: true
+        ))
+        XCTAssertFalse(StableLayoutSlotPolicy.isAvailableForLayout(
+            isWriteDeferred: true,
+            retainsLayoutSlot: false
+        ))
+        XCTAssertFalse(StableLayoutSlotPolicy.isAvailableForLayout(
+            isWriteDeferred: true,
+            retainsLayoutSlot: true,
+            isExplicitlyEligible: false
+        ))
+        XCTAssertTrue(StableLayoutSlotPolicy.isAvailableForVisibilityLayout(
+            isWriteDeferred: true,
+            retainsLayoutSlot: true,
+            isExcludedFromWorkspaceParticipation: false,
+            isExplicitlyWriteEligible: false
+        ))
+        XCTAssertFalse(StableLayoutSlotPolicy.isAvailableForVisibilityLayout(
+            isWriteDeferred: true,
+            retainsLayoutSlot: false,
+            isExcludedFromWorkspaceParticipation: false,
+            isExplicitlyWriteEligible: false
+        ))
+        XCTAssertFalse(StableLayoutSlotPolicy.isAvailableForVisibilityLayout(
+            isWriteDeferred: true,
+            retainsLayoutSlot: true,
+            isExcludedFromWorkspaceParticipation: true,
+            isExplicitlyWriteEligible: false
+        ))
+
+        let participants = [false, false, true].filter { isDeferred in
+            StableLayoutSlotPolicy.isAvailableForLayout(
+                isWriteDeferred: isDeferred,
+                retainsLayoutSlot: isDeferred
+            )
+        }
+        XCTAssertEqual(participants.count, 3)
+        XCTAssertEqual(
+            WorkspaceEngine.layoutFrames(
+                .accordion,
+                count: participants.count,
+                in: CGRect(x: 0, y: 0, width: 1_200, height: 800),
+                accordionFocusedIndex: 0
+            ).count,
+            3
+        )
+
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        XCTAssertEqual(StableLayoutSlotPolicy.transitions(previous: [], current: [key]).entered, [key])
+        XCTAssertEqual(StableLayoutSlotPolicy.transitions(previous: [key], current: []).released, [key])
+        XCTAssertFalse(FullscreenSessionPolicy.allowsGeometryWrite(
+            hasFullscreenSession: false,
+            isTemporarilyDeferred: true
+        ))
+    }
+
     func testFreeformDisplayNamePreservesMigrationSafeRawValue() {
         XCTAssertEqual(WorkspaceLayout.none.title, "Freeform")
         XCTAssertEqual(WorkspaceLayout.none.rawValue, "none")
@@ -131,8 +467,8 @@ final class WorkspaceDefinitionTests: XCTestCase {
     }
 
     func testLayoutSelectionShortcutsKeepEstablishedDirectMappings() {
-        XCTAssertEqual(HotKeyManager.accordionKeyCode, 43)
-        XCTAssertEqual(HotKeyManager.tiledKeyCode, 47)
+        XCTAssertEqual(ConfigurableHotKeyAction.selectAccordion.defaultKeyCode, 43)
+        XCTAssertEqual(ConfigurableHotKeyAction.selectTiled.defaultKeyCode, 47)
         XCTAssertEqual(
             ConfigurableHotKeyAction.selectAccordion.command,
             .selectLayoutFromShortcut(.accordion)
@@ -306,11 +642,11 @@ final class WorkspaceDefinitionTests: XCTestCase {
         )
     }
 
-    func testFloatingShortcutMatchesAeroSpaceControlOptionF() {
-        XCTAssertEqual(HotKeyManager.toggleFloatingKeyCode, 3)
+    func testFloatingShortcutUsesApprovedArrangeFDefault() {
+        XCTAssertEqual(ConfigurableHotKeyAction.toggleFloating.defaultKeyCode, 3)
         XCTAssertEqual(
-            HotKeyManager.toggleFloatingModifiers,
-            UInt32(controlKey | optionKey)
+            ConfigurableHotKeyAction.toggleFloating.family.defaultModifiers,
+            UInt32(optionKey | cmdKey)
         )
     }
 
@@ -634,7 +970,27 @@ final class WorkspaceDefinitionTests: XCTestCase {
 
         XCTAssertEqual(decision, WindowAdmissionDecision(
             disposition: .ignoredTransientPopup,
-            reason: .verifiedBundleNonNormalLayer
+            reason: .verifiedBundleNonNormalLayer,
+            compatibilityProfileIdentifier: "codex-transient-non-normal-layer-v1"
+        ))
+        XCTAssertFalse(decision.disposition.admitsNewWindow)
+        XCTAssertTrue(decision.disposition.evictsTrackedWindow)
+    }
+
+    func testTaggedDesktopRangerSurfaceIsIgnoredAtCentralAdmissionBoundary() {
+        let decision = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifier: AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier,
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false
+        ))
+
+        XCTAssertEqual(decision, WindowAdmissionDecision(
+            disposition: .ignoredCompanionSurface,
+            reason: .rangerCompanionSurface,
+            compatibilityProfileIdentifier: "desktopranger-owned-surface-v1"
         ))
         XCTAssertFalse(decision.disposition.admitsNewWindow)
         XCTAssertTrue(decision.disposition.evictsTrackedWindow)
@@ -663,19 +1019,373 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertTrue(unknownDialog.disposition.admitsNewWindow)
     }
 
-    func testNonNormalLayerIsNotRejectedGloballyForUnverifiedApplications() {
+    func testFixedSizeSimulatorDeviceWindowFloatsByCapabilityWithoutWholeAppPolicy() {
+        let coreMetadata = WindowAdmissionMetadata(
+            bundleIdentifier: "com.apple.iphonesimulator",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            fullscreenButton: .present,
+            closeButton: .present
+        )
+        XCTAssertTrue(AccessibilityWindow.shouldCollectFixedSizeStandardWindowEvidence(coreMetadata))
+        XCTAssertFalse(AccessibilityWindow.shouldCollectSupportMetadataForCompatibility(coreMetadata))
+        XCTAssertFalse(AccessibilityWindow.mayNeedDirectLayerResolutionForCompatibility(
+            "com.apple.iphonesimulator"
+        ))
+
+        let fixedSizeDevice = WindowAdmissionMetadata(
+            bundleIdentifier: "com.apple.iphonesimulator",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            fullscreenButton: .present,
+            minimizeButton: .present,
+            closeButton: .present,
+            zoomButton: .present,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue
+        )
+        let decision = AccessibilityWindow.admissionDecision(for: fixedSizeDevice)
+
+        XCTAssertEqual(decision, WindowAdmissionDecision(
+            disposition: .managedDialog,
+            reason: .fixedSizeStandardWindow
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldIncludeInLayout(
+            layoutOverride: .automatic,
+            admissionDecision: decision,
+            rule: .none
+        ))
+        XCTAssertEqual(
+            WorkspaceEngine.layoutDecision(
+                layoutOverride: .managed,
+                admissionDecision: decision,
+                rule: .none
+            ),
+            .automaticallyFloatingDialog
+        )
+        XCTAssertEqual(
+            WorkspaceEngine.floatingToggleDecision(
+                currentOverride: .automatic,
+                admissionDecision: decision,
+                rule: .none
+            ),
+            .blockedByFixedSizeWindow
+        )
+        XCTAssertEqual(WorkspaceEngine.geometryWriteMode(for: decision), .positionOnly)
+
+        let resolvedOnSmallerDisplay = WorkspaceEngine.resolveDisplayFrame(
+            savedFrame: WindowFrame(
+                position: CGPoint(x: 3_839, y: 1_568),
+                size: CGSize(width: 1_400, height: 1_200)
+            ),
+            placement: PersistedDisplayPlacement(
+                displayIdentifier: "removed-display",
+                normalizedOrigin: CGPoint(x: 0.5, y: 0.5)
+            ),
+            displays: [DisplaySnapshot(
+                identifier: "main",
+                bounds: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+                isMain: true,
+                name: "Main"
+            )]
+        )
+        XCTAssertEqual(resolvedOnSmallerDisplay.frame.size, CGSize(width: 1_000, height: 800))
+        XCTAssertEqual(resolvedOnSmallerDisplay.frame.position, .zero)
+        XCTAssertEqual(WorkspaceEngine.geometryWriteMode(for: decision), .positionOnly)
+
+        let resizableDevice = WindowAdmissionMetadata(
+            bundleIdentifier: "com.apple.iphonesimulator",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            fullscreenButton: .present,
+            minimizeButton: .present,
+            closeButton: .present,
+            zoomButton: .present,
+            positionSettable: .trueValue,
+            sizeSettable: .trueValue
+        )
+        XCTAssertEqual(
+            AccessibilityWindow.admissionDecision(for: resizableDevice),
+            WindowAdmissionDecision(disposition: .managedNormal, reason: .normalWindow)
+        )
+        XCTAssertEqual(
+            WorkspaceEngine.geometryWriteMode(
+                for: AccessibilityWindow.admissionDecision(for: resizableDevice)
+            ),
+            .frame
+        )
+
+        let unrelatedFixedSizeWindow = WindowAdmissionMetadata(
+            bundleIdentifier: "com.example.FixedSizeUtility",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            fullscreenButton: .present,
+            closeButton: .present,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue
+        )
+        XCTAssertEqual(
+            AccessibilityWindow.admissionDecision(for: unrelatedFixedSizeWindow),
+            WindowAdmissionDecision(disposition: .managedDialog, reason: .fixedSizeStandardWindow)
+        )
+
+        let normalDecision = WindowAdmissionDecision(
+            disposition: .managedNormal,
+            reason: .normalWindow
+        )
+        let participantCount = [normalDecision, normalDecision, decision, decision].filter {
+            WorkspaceEngine.shouldIncludeInLayout(
+                layoutOverride: .automatic,
+                admissionDecision: $0,
+                rule: .none
+            )
+        }.count
+        XCTAssertEqual(participantCount, 2)
+    }
+
+    func testStandardWindowWithDefaultAndCancelControlsFloatsWithoutResizeWrites() {
+        let metadata = WindowAdmissionMetadata(
+            bundleIdentifier: "com.apple.TextEdit",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: nil,
+            isMinimized: false,
+            modalObservation: .unsupported,
+            fullscreenButton: .absent,
+            minimizeButton: .unavailable,
+            closeButton: .absent,
+            zoomButton: .unavailable,
+            defaultButton: .present,
+            cancelButton: .present,
+            positionSettable: .trueValue,
+            sizeSettable: .trueValue
+        )
+        let decision = AccessibilityWindow.admissionDecision(for: metadata)
+
+        XCTAssertEqual(decision, WindowAdmissionDecision(
+            disposition: .managedDialog,
+            reason: .standardWindowWithDialogControls
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldIncludeInLayout(
+            layoutOverride: .automatic,
+            admissionDecision: decision,
+            rule: .none
+        ))
+        XCTAssertEqual(
+            WorkspaceEngine.layoutDecision(
+                layoutOverride: .managed,
+                admissionDecision: decision,
+                rule: .none
+            ),
+            .automaticallyFloatingDialog
+        )
+        XCTAssertEqual(
+            WorkspaceEngine.floatingToggleDecision(
+                currentOverride: .automatic,
+                admissionDecision: decision,
+                rule: .none
+            ),
+            .blockedByProtectedDialog
+        )
+        XCTAssertEqual(WorkspaceEngine.geometryWriteMode(for: decision), .positionOnly)
+    }
+
+    func testNativeFilePanelIdentifierFloatsWithoutResizeWrites() {
+        let metadata = WindowAdmissionMetadata(
+            bundleIdentifier: "com.apple.TextEdit",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: nil,
+            isMinimized: false,
+            modalObservation: .falseValue,
+            fullscreenButton: .absent,
+            minimizeButton: .absent,
+            closeButton: .absent,
+            zoomButton: .absent,
+            defaultButton: .absent,
+            cancelButton: .absent,
+            nativeFilePanelIdentifierObservation: .trueValue,
+            positionSettable: .trueValue,
+            sizeSettable: .trueValue
+        )
+        let decision = AccessibilityWindow.admissionDecision(for: metadata)
+
+        XCTAssertEqual(decision, WindowAdmissionDecision(
+            disposition: .managedDialog,
+            reason: .nativeFilePanelIdentifier
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldIncludeInLayout(
+            layoutOverride: .automatic,
+            admissionDecision: decision,
+            rule: .none
+        ))
+        XCTAssertEqual(WorkspaceEngine.geometryWriteMode(for: decision), .positionOnly)
+        XCTAssertEqual(
+            WorkspaceEngine.floatingToggleDecision(
+                currentOverride: .managed,
+                admissionDecision: decision,
+                rule: .none
+            ),
+            .blockedByProtectedDialog
+        )
+    }
+
+    func testNonNormalLayerStandardWindowIsNotRejectedGloballyForUnverifiedApplications() {
         let decision = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
             bundleIdentifier: "com.example.UnusualWindowLevels",
             role: kAXWindowRole as String,
-            subrole: kAXDialogSubrole as String,
+            subrole: kAXStandardWindowSubrole as String,
             windowLayer: 3,
             isMinimized: false
         ))
 
         XCTAssertEqual(decision.disposition, .managedNormal)
-        XCTAssertEqual(decision.reason, .ambiguousDialogMetadata)
-        XCTAssertTrue(AccessibilityWindow.hasVerifiedTransientNonNormalLayers("COM.OPENAI.CODEX"))
-        XCTAssertFalse(AccessibilityWindow.hasVerifiedTransientNonNormalLayers("com.example.UnusualWindowLevels"))
+        XCTAssertEqual(decision.reason, .normalWindow)
+        XCTAssertTrue(AccessibilityWindow.mayNeedDirectLayerResolutionForCompatibility("COM.OPENAI.CODEX"))
+        XCTAssertFalse(AccessibilityWindow.mayNeedDirectLayerResolutionForCompatibility("com.example.UnusualWindowLevels"))
+        XCTAssertNil(decision.compatibilityProfileIdentifier)
+    }
+
+    func testCompatibilityProfilesRequireBundleAndEveryDeclaredSurfaceSignal() {
+        let profile = WindowCompatibilityProfile(
+            identifier: "example-picker-v1",
+            bundleIdentifiers: ["com.example.Editor"],
+            accessibilityIdentifier: "com.example.editor.picker.v1",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            layer: .exact(3),
+            modalObservation: .trueValue,
+            closeButton: .present,
+            positionSettable: .falseValue,
+            disposition: .ignoredCompanionSurface,
+            reason: .verifiedBundleNonNormalLayer
+        )
+        let matching = WindowAdmissionMetadata(
+            bundleIdentifier: "COM.EXAMPLE.EDITOR",
+            accessibilityIdentifier: "com.example.editor.picker.v1",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 3,
+            isMinimized: false,
+            modalObservation: .trueValue,
+            closeButton: .present,
+            positionSettable: .falseValue
+        )
+
+        XCTAssertTrue(profile.matches(matching))
+        XCTAssertEqual(profile.decision().compatibilityProfileIdentifier, "example-picker-v1")
+        XCTAssertFalse(profile.matches(WindowAdmissionMetadata(
+            bundleIdentifier: "com.example.Editor",
+            accessibilityIdentifier: "com.example.editor.picker.v1",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 3,
+            isMinimized: false,
+            modalObservation: .falseValue,
+            closeButton: .present,
+            positionSettable: .falseValue
+        )))
+        XCTAssertFalse(profile.matches(WindowAdmissionMetadata(
+            bundleIdentifier: "com.example.Other",
+            accessibilityIdentifier: "com.example.editor.picker.v1",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 3,
+            isMinimized: false,
+            modalObservation: .trueValue,
+            closeButton: .present,
+            positionSettable: .falseValue
+        )))
+        XCTAssertFalse(profile.matches(WindowAdmissionMetadata(
+            bundleIdentifier: "com.example.Editor",
+            accessibilityIdentifier: "com.example.editor.other.v1",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 3,
+            isMinimized: false,
+            modalObservation: .trueValue,
+            closeButton: .present,
+            positionSettable: .falseValue
+        )))
+
+        let coreCandidate = WindowAdmissionMetadata(
+            bundleIdentifier: "com.example.Editor",
+            accessibilityIdentifier: "com.example.editor.picker.v1",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 3,
+            isMinimized: false,
+            closeButton: .present
+        )
+        XCTAssertTrue(AccessibilityWindow.shouldCollectSupportMetadataForCompatibility(
+            coreCandidate,
+            profiles: [profile]
+        ))
+        XCTAssertFalse(AccessibilityWindow.shouldCollectSupportMetadataForCompatibility(
+            WindowAdmissionMetadata(
+                bundleIdentifier: "com.example.Editor",
+                accessibilityIdentifier: "com.example.editor.picker.v1",
+                role: kAXWindowRole as String,
+                subrole: kAXStandardWindowSubrole as String,
+                windowLayer: 3,
+                isMinimized: false,
+                closeButton: .present
+            ),
+            profiles: [profile]
+        ))
+    }
+
+    func testBuiltInCompatibilityRegistryCannotContainWholeAppPolicy() {
+        let profiles = AccessibilityWindow.builtInCompatibilityProfiles
+
+        XCTAssertEqual(Set(profiles.map(\.identifier)).count, profiles.count)
+        for profile in profiles {
+            XCTAssertFalse(profile.identifier.isEmpty)
+            XCTAssertFalse(profile.bundleIdentifiers.isEmpty)
+            XCTAssertTrue(profile.bundleIdentifiers.allSatisfy { $0 == $0.lowercased() })
+            XCTAssertTrue(
+                profile.accessibilityIdentifier != nil ||
+                    profile.role != nil ||
+                    profile.subrole != nil ||
+                    profile.layer != nil ||
+                    profile.modalObservation != nil ||
+                    profile.focusedObservation != nil ||
+                    profile.mainObservation != nil ||
+                    profile.fullscreenButton != nil ||
+                    profile.minimizeButton != nil ||
+                    profile.closeButton != nil ||
+                    profile.zoomButton != nil ||
+                    profile.positionSettable != nil ||
+                    profile.sizeSettable != nil,
+                "A compatibility profile must identify a surface, not apply policy to a whole app"
+            )
+        }
+    }
+
+    func testOverlappingCompatibilityProfilesDoNotSelectBySourceOrder() throws {
+        let profile = try XCTUnwrap(AccessibilityWindow.builtInCompatibilityProfiles.first {
+            $0.identifier == "codex-transient-non-normal-layer-v1"
+        })
+        let metadata = WindowAdmissionMetadata(
+            bundleIdentifier: "com.openai.codex",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 3,
+            isMinimized: false
+        )
+
+        XCTAssertNil(AccessibilityWindow.uniqueMatchingCompatibilityProfile(
+            for: metadata,
+            in: [profile, profile]
+        ))
     }
 
     func testHighConfidenceSheetAndSystemDialogMetadataFloatAutomatically() {
@@ -732,6 +1442,34 @@ final class WorkspaceDefinitionTests: XCTestCase {
         ))
     }
 
+    func testNonNormalLayerDialogDefersUntilItsLayerSettles() {
+        let transient = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 8,
+            isMinimized: false,
+            fullscreenButton: .absent
+        ))
+        let settled = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
+            bundleIdentifier: "com.mitchellh.ghostty",
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            fullscreenButton: .absent
+        ))
+
+        XCTAssertEqual(transient, WindowAdmissionDecision(
+            disposition: .temporarilyIneligible,
+            reason: .transientDialogNonNormalLayer
+        ))
+        XCTAssertEqual(settled, WindowAdmissionDecision(
+            disposition: .managedDialog,
+            reason: .dialogSubroleWithoutFullscreenButton
+        ))
+    }
+
     func testNormalAndAmbiguousDialogLikeWindowsStayLayoutManaged() {
         let normalWithoutFullscreen = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
             bundleIdentifier: "com.example.Editor",
@@ -739,7 +1477,10 @@ final class WorkspaceDefinitionTests: XCTestCase {
             subrole: kAXStandardWindowSubrole as String,
             windowLayer: 0,
             isMinimized: false,
-            fullscreenButton: .absent
+            fullscreenButton: .absent,
+            closeButton: .present,
+            positionSettable: .unsupported,
+            sizeSettable: .unsupported
         ))
         let dialogWithFullscreen = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
             bundleIdentifier: "com.example.Editor",
@@ -1039,8 +1780,17 @@ final class WorkspaceDefinitionTests: XCTestCase {
             subrole: kAXDialogSubrole as String,
             windowLayer: 0,
             isMinimized: false,
+            modalObservation: .trueValue,
+            focusedObservation: .falseValue,
+            mainObservation: .trueValue,
             fullscreenButton: .absent,
-            closeButton: .present
+            minimizeButton: .absent,
+            closeButton: .present,
+            zoomButton: .absent,
+            defaultButton: .present,
+            cancelButton: .present,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue
         )
         let decision = AccessibilityWindow.admissionDecision(for: metadata)
         let fields = WorkspaceEngine.admissionDiagnosticFields(
@@ -1053,7 +1803,18 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertTrue(WorkspaceEngine.shouldLogAdmissionDecisionChange(previous: nil, current: decision))
         XCTAssertFalse(WorkspaceEngine.shouldLogAdmissionDecisionChange(previous: decision, current: decision))
         XCTAssertEqual(fields["automatic-floating"], "true")
+        XCTAssertEqual(fields["ax-modal"], "true")
+        XCTAssertEqual(fields["ax-focused"], "false")
+        XCTAssertEqual(fields["ax-main"], "true")
         XCTAssertEqual(fields["fullscreen-button"], "absent")
+        XCTAssertEqual(fields["minimize-button"], "absent")
+        XCTAssertEqual(fields["zoom-button"], "absent")
+        XCTAssertEqual(fields["default-button"], "present")
+        XCTAssertEqual(fields["cancel-button"], "present")
+        XCTAssertEqual(fields["native-file-panel-identifier"], "unsupported")
+        XCTAssertEqual(fields["position-settable"], "true")
+        XCTAssertEqual(fields["size-settable"], "false")
+        XCTAssertEqual(fields["compatibility-profile"], "none")
         XCTAssertNil(fields["title"])
         XCTAssertNil(fields["document"])
         XCTAssertNil(fields["url"])
@@ -1061,14 +1822,60 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertFalse(fields.values.contains { $0.contains("/Users/") })
     }
 
-    func testIgnoredTrackedWindowIsEvictedWithoutARecoveryOrFrameOperation() {
+    func testCompanionSurfaceDiagnosticsReportContractWithoutRawMarker() {
+        let marker = AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier
+        let metadata = WindowAdmissionMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifier: marker,
+            role: kAXWindowRole as String,
+            subrole: kAXFloatingWindowSubrole as String,
+            windowLayer: 3,
+            isMinimized: false
+        )
+        let decision = AccessibilityWindow.admissionDecision(for: metadata)
+        let fields = WorkspaceEngine.admissionDiagnosticFields(
+            decision: decision,
+            metadata: metadata,
+            key: WindowKey(processIdentifier: 303, windowIdentifier: 404),
+            layerSource: "test"
+        )
+
+        XCTAssertEqual(fields["reason"], WindowAdmissionReason.rangerCompanionSurface.rawValue)
+        XCTAssertEqual(fields["compatibility-profile"], "desktopranger-owned-surface-v1")
+        XCTAssertFalse(fields.values.contains(marker))
+        XCTAssertNil(fields["ax-identifier"])
+        XCTAssertNil(fields["accessibility-identifier"])
+    }
+
+    func testLateCompanionIdentifierEvictsTrackedWindowWithoutARecoveryOrFrameOperation() {
         let workspace = WorkspaceDefinition(name: "Mail", key: "m")
         let ignored = WindowKey(processIdentifier: 42_394, windowIdentifier: 17_298)
         let legitimate = WindowKey(processIdentifier: 1_697, windowIdentifier: 115)
-        var tracked = [ignored: "Codex pet", legitimate: "Mail"]
+        let initiallyManagedDecision = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false
+        ))
+        let companionDecision = AccessibilityWindow.admissionDecision(for: WindowAdmissionMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifier: AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier,
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false
+        ))
+        XCTAssertEqual(initiallyManagedDecision.disposition, .managedNormal)
+        XCTAssertEqual(companionDecision, WindowAdmissionDecision(
+            disposition: .ignoredCompanionSurface,
+            reason: .rangerCompanionSurface,
+            compatibilityProfileIdentifier: "desktopranger-owned-surface-v1"
+        ))
+        var tracked = [ignored: "DesktopRanger surface", legitimate: "Mail"]
         var pending = [
             "17298": PersistedWindowAssignment(
-                bundleIdentifier: "com.openai.codex",
+                bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
                 workspaceID: workspace.id,
                 restoreFrame: WindowFrame(
                     position: CGPoint(x: -3_094, y: 0),
@@ -1078,23 +1885,47 @@ final class WorkspaceDefinitionTests: XCTestCase {
             ),
         ]
         var lastFocused = [workspace.id: ignored]
+        let partition = TiledLayoutPartitionKey(
+            workspaceID: workspace.id,
+            displayIdentifier: "main"
+        )
+        var tiledTrees = [
+            partition: TiledNode.split(
+                axis: .horizontal,
+                ratio: 0.5,
+                first: .window(ignored),
+                second: .window(legitimate)
+            ),
+        ]
+        var fullscreenSessions = [ignored: "DesktopRanger fullscreen", legitimate: "Mail fullscreen"]
+        var fullscreenFalseCounts = [ignored: 1, legitimate: 2]
 
         let result = WorkspaceEngine.removeIgnoredWindowState(
             ignored,
-            bundleIdentifier: "com.openai.codex",
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
             trackedWindows: &tracked,
             pendingRestoredWindows: &pending,
-            lastFocusedWindow: &lastFocused
+            lastFocusedWindow: &lastFocused,
+            tiledTrees: &tiledTrees,
+            fullscreenSessions: &fullscreenSessions,
+            fullscreenAuthoritativeFalseCounts: &fullscreenFalseCounts
         )
 
         XCTAssertEqual(result, IgnoredWindowRemovalResult(
             removedTrackedWindow: true,
             removedPendingAssignment: true,
-            clearedLastFocusedWorkspaceIDs: [workspace.id]
+            clearedLastFocusedWorkspaceIDs: [workspace.id],
+            removedTiledLayoutState: true,
+            removedFullscreenState: true
         ))
         XCTAssertEqual(tracked, [legitimate: "Mail"])
         XCTAssertTrue(pending.isEmpty)
         XCTAssertTrue(lastFocused.isEmpty)
+        XCTAssertEqual(tiledTrees[partition]?.windowKeys, [legitimate])
+        XCTAssertEqual(fullscreenSessions, [legitimate: "Mail fullscreen"])
+        XCTAssertEqual(fullscreenFalseCounts, [legitimate: 2])
+        XCTAssertFalse(companionDecision.disposition.admitsNewWindow)
+        XCTAssertTrue(companionDecision.disposition.evictsTrackedWindow)
         // The cleanup API deliberately has no AX element or frame writer: ignored windows can
         // only be removed from state, never restored, parked, resized, or moved.
         XCTAssertEqual(WorkspaceEngine.layoutFrames(
@@ -1139,6 +1970,39 @@ final class WorkspaceDefinitionTests: XCTestCase {
         ))
     }
 
+    func testAppOwnedAndIgnoredWindowsPreserveExternalInteractionFocusAnchor() {
+        let ownWindow = WindowKey(processIdentifier: 69767, windowIdentifier: 20689)
+        let ignoredPopup = WindowKey(processIdentifier: 42_394, windowIdentifier: 17_298)
+        let externalWindow = WindowKey(processIdentifier: 1_697, windowIdentifier: 115)
+
+        XCTAssertTrue(WorkspaceEngine.shouldPreserveInteractionFocusAnchor(
+            focusedWindow: ownWindow,
+            ownProcessIdentifier: ownWindow.processIdentifier,
+            ignoredWindowKeys: [ignoredPopup]
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldPreserveInteractionFocusAnchor(
+            focusedWindow: ignoredPopup,
+            ownProcessIdentifier: ownWindow.processIdentifier,
+            ignoredWindowKeys: [ignoredPopup]
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldPreserveInteractionFocusAnchor(
+            focusedWindow: externalWindow,
+            ownProcessIdentifier: ownWindow.processIdentifier,
+            ignoredWindowKeys: [ignoredPopup]
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldPreserveInteractionFocusAnchor(
+            focusedWindow: nil,
+            ownProcessIdentifier: ownWindow.processIdentifier,
+            ignoredWindowKeys: [ignoredPopup]
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldPreserveInteractionFocusAnchor(
+            focusedWindow: nil,
+            ownProcessIdentifier: ownWindow.processIdentifier,
+            ignoredWindowKeys: [ignoredPopup],
+            commandPalettePresented: true
+        ))
+    }
+
     func testUnchangedAdmissionDecisionDoesNotRepeatDiagnosticsOrReadmitPopup() {
         let ignored = WindowAdmissionDecision(
             disposition: .ignoredTransientPopup,
@@ -1161,7 +2025,8 @@ final class WorkspaceDefinitionTests: XCTestCase {
                 ),
                 ignoredKey: WindowAdmissionDecision(
                     disposition: .ignoredTransientPopup,
-                    reason: .verifiedBundleNonNormalLayer
+                    reason: .verifiedBundleNonNormalLayer,
+                    compatibilityProfileIdentifier: "codex-transient-non-normal-layer-v1"
                 ),
             ],
             metadata: [
@@ -1170,7 +2035,16 @@ final class WorkspaceDefinitionTests: XCTestCase {
                     role: "AXWindow",
                     subrole: "AXSystemDialog",
                     windowLayer: 0,
-                    isMinimized: false
+                    isMinimized: false,
+                    modalObservation: .trueValue,
+                    focusedObservation: .trueValue,
+                    mainObservation: .trueValue,
+                    fullscreenButton: .absent,
+                    minimizeButton: .absent,
+                    closeButton: .present,
+                    zoomButton: .absent,
+                    positionSettable: .trueValue,
+                    sizeSettable: .falseValue
                 ),
                 ignoredKey: WindowAdmissionMetadata(
                     bundleIdentifier: "com.openai.codex",
@@ -1186,7 +2060,24 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertEqual(records[0].disposition, "managed-dialog")
         XCTAssertEqual(records[1].reason, "verified-bundle-non-normal-layer")
         XCTAssertEqual(records[1].windowLayer, "3")
+        XCTAssertEqual(
+            records[1].compatibilityProfileIdentifier,
+            "codex-transient-non-normal-layer-v1"
+        )
+        XCTAssertEqual(records[0].modalObservation, "true")
+        XCTAssertEqual(records[0].positionSettable, "true")
+        XCTAssertEqual(records[0].sizeSettable, "false")
         XCTAssertFalse(String(describing: records).lowercased().contains("title"))
+
+        let snapshot = try? XCTUnwrap(
+            WindowAdmissionSupportSnapshot(records: records).encodedString()
+        )
+        XCTAssertTrue(snapshot?.contains("\"schemaVersion\" : 4") == true)
+        XCTAssertTrue(snapshot?.contains("\"modalObservation\" : \"true\"") == true)
+        XCTAssertTrue(snapshot?.contains("nativeFilePanelIdentifierObservation") == true)
+        XCTAssertTrue(snapshot?.contains("codex-transient-non-normal-layer-v1") == true)
+        XCTAssertFalse(snapshot?.lowercased().contains("title") == true)
+        XCTAssertFalse(snapshot?.contains("/Users/") == true)
     }
 
     func testAssignedWorkspaceUsesItsIndependentDisplayHome() {
@@ -1491,6 +2382,69 @@ final class WorkspaceDefinitionTests: XCTestCase {
         )
     }
 
+    func testAutoHiddenBottomDockRestoresOnlyBottomDisplayEdge() {
+        let screen = CGRect(x: 0, y: 0, width: 3360, height: 1418)
+        let visible = CGRect(x: 0, y: 59, width: 3360, height: 1329)
+
+        XCTAssertEqual(
+            WorkspaceEngine.usableCocoaBounds(
+                screenFrame: screen,
+                visibleFrame: visible,
+                dockPreferences: DockLayoutPreferences(automaticallyHides: true, edge: .bottom)
+            ),
+            CGRect(x: 0, y: 0, width: 3360, height: 1388)
+        )
+    }
+
+    func testVisibleBottomDockKeepsAppKitSafeBounds() {
+        let visible = CGRect(x: 0, y: 59, width: 3360, height: 1329)
+
+        XCTAssertEqual(
+            WorkspaceEngine.usableCocoaBounds(
+                screenFrame: CGRect(x: 0, y: 0, width: 3360, height: 1418),
+                visibleFrame: visible,
+                dockPreferences: DockLayoutPreferences(automaticallyHides: false, edge: .bottom)
+            ),
+            visible
+        )
+    }
+
+    func testAutoHiddenSideDockRestoresOnlyConfiguredEdge() {
+        let screen = CGRect(x: -1200, y: 0, width: 1200, height: 900)
+        let leftVisible = CGRect(x: -1140, y: 0, width: 1140, height: 875)
+        let rightVisible = CGRect(x: -1200, y: 0, width: 1140, height: 875)
+
+        XCTAssertEqual(
+            WorkspaceEngine.usableCocoaBounds(
+                screenFrame: screen,
+                visibleFrame: leftVisible,
+                dockPreferences: DockLayoutPreferences(automaticallyHides: true, edge: .left)
+            ),
+            CGRect(x: -1200, y: 0, width: 1200, height: 875)
+        )
+        XCTAssertEqual(
+            WorkspaceEngine.usableCocoaBounds(
+                screenFrame: screen,
+                visibleFrame: rightVisible,
+                dockPreferences: DockLayoutPreferences(automaticallyHides: true, edge: .right)
+            ),
+            CGRect(x: -1200, y: 0, width: 1200, height: 875)
+        )
+    }
+
+    func testUnknownAutoHiddenDockEdgeKeepsAppKitSafeBounds() {
+        let visible = CGRect(x: 0, y: 59, width: 3360, height: 1329)
+
+        XCTAssertEqual(
+            WorkspaceEngine.usableCocoaBounds(
+                screenFrame: CGRect(x: 0, y: 0, width: 3360, height: 1418),
+                visibleFrame: visible,
+                dockPreferences: DockLayoutPreferences(automaticallyHides: true, edge: nil)
+            ),
+            visible
+        )
+    }
+
     func testAccordionExcludesFloatingAndAppExcludedWindowsFromItsCount() {
         let excludedRule = ResolvedAppRule(
             assignedWorkspaceID: nil,
@@ -1606,6 +2560,78 @@ final class WorkspaceDefinitionTests: XCTestCase {
             CGPoint(x: 100, y: 200),
             CGPoint(x: 101, y: 200)
         ))
+    }
+
+    func testFrameWriteStopsBeforePositionWhenInitialSizeIsRejected() {
+        var operations: [String] = []
+
+        let succeeded = AccessibilityWindow.applyFrameWriteSequence(
+            writeSize: {
+                operations.append("size")
+                return false
+            },
+            writePosition: {
+                operations.append("position")
+                return true
+            }
+        )
+
+        XCTAssertFalse(succeeded)
+        XCTAssertEqual(operations, ["size"])
+    }
+
+    func testFrameWriteRetainsSizePositionSizeSequenceWhenSupported() {
+        var operations: [String] = []
+
+        let succeeded = AccessibilityWindow.applyFrameWriteSequence(
+            writeSize: {
+                operations.append("size")
+                return true
+            },
+            writePosition: {
+                operations.append("position")
+                return true
+            }
+        )
+
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(operations, ["size", "position", "size"])
+    }
+
+    func testFrameWriteResultPromotesOnlyAnInitialSizeRejection() {
+        XCTAssertEqual(
+            AccessibilityWindow.applyFrameWriteSequenceResult(
+                writeSize: { false },
+                writePosition: { true }
+            ),
+            .initialSizeRejected
+        )
+
+        var positionFailureSizeWrites = 0
+        XCTAssertEqual(
+            AccessibilityWindow.applyFrameWriteSequenceResult(
+                writeSize: {
+                    positionFailureSizeWrites += 1
+                    return true
+                },
+                writePosition: { false }
+            ),
+            .positionRejected
+        )
+        XCTAssertEqual(positionFailureSizeWrites, 1)
+
+        var finalSizeWrites = 0
+        XCTAssertEqual(
+            AccessibilityWindow.applyFrameWriteSequenceResult(
+                writeSize: {
+                    finalSizeWrites += 1
+                    return finalSizeWrites == 1
+                },
+                writePosition: { true }
+            ),
+            .finalSizeRejected
+        )
+        XCTAssertEqual(finalSizeWrites, 2)
     }
 
     func testTrustedInteractiveLaunchChecksTrustOnceWithoutPrompting() {

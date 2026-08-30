@@ -138,6 +138,43 @@ struct InstalledApplication: Identifiable, Equatable, Sendable {
     var id: String { bundleIdentifier.lowercased() }
 }
 
+struct InstalledApplicationGroups: Equatable, Sendable {
+    let openApplications: [InstalledApplication]
+    let otherApplications: [InstalledApplication]
+
+    var isEmpty: Bool { openApplications.isEmpty && otherApplications.isEmpty }
+}
+
+enum InstalledApplicationPickerPolicy {
+    static func groups(
+        applications: [InstalledApplication],
+        search: String
+    ) -> InstalledApplicationGroups {
+        let filtered = search.isEmpty ? applications : applications.filter {
+            $0.displayName.localizedCaseInsensitiveContains(search) ||
+                $0.bundleIdentifier.localizedCaseInsensitiveContains(search)
+        }
+        let sorted = filtered.sorted {
+            $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+        return InstalledApplicationGroups(
+            openApplications: sorted.filter(\.isRunning),
+            otherApplications: sorted.filter { !$0.isRunning }
+        )
+    }
+}
+
+enum AppRuleDefaultWorkspacePolicy {
+    static func resolve(
+        applicationIsRunning: Bool,
+        liveWorkspaceIDs: [UUID]
+    ) -> UUID? {
+        guard applicationIsRunning else { return nil }
+        let uniqueWorkspaceIDs = Set(liveWorkspaceIDs)
+        return uniqueWorkspaceIDs.count == 1 ? uniqueWorkspaceIDs.first : nil
+    }
+}
+
 enum InstalledApplicationCatalog {
     static func discover() -> [InstalledApplication] {
         var applications: [String: InstalledApplication] = [:]

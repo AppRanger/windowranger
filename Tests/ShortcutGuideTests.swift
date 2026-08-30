@@ -1,0 +1,522 @@
+import AppKit
+import Carbon
+import SwiftUI
+import XCTest
+
+final class ShortcutGuideTests: XCTestCase {
+    func testGuideResolverAndHeaderFollowConfiguredFamilies() {
+        var configuration = HotKeyConfiguration()
+        XCTAssertNil(configuration.setModifierMask(UInt32(controlKey | shiftKey), for: .navigate))
+        XCTAssertNil(configuration.setModifierMask(UInt32(optionKey | cmdKey | shiftKey), for: .arrange))
+
+        XCTAssertEqual(
+            ShortcutGuideModifierResolver.resolve(
+                carbonModifiers: UInt32(controlKey | shiftKey),
+                configuration: configuration
+            ),
+            .navigate
+        )
+        let content = ShortcutGuideContentBuilder.build(
+            family: .navigate,
+            workspaces: [WorkspaceDefinition(name: "One", key: "1")],
+            configuration: configuration,
+            runtimeIssues: []
+        )
+        XCTAssertEqual(content?.modifierLabel, "⌃ + ⇧")
+    }
+
+    func testModifierResolverRequiresExactFamiliesAndIgnoresCapsLock() {
+        XCTAssertEqual(
+            ShortcutGuideModifierResolver.resolve(carbonModifiers: UInt32(controlKey | optionKey)),
+            .navigate
+        )
+        XCTAssertEqual(
+            ShortcutGuideModifierResolver.resolve(carbonModifiers: UInt32(optionKey | cmdKey)),
+            .arrange
+        )
+        XCTAssertNil(ShortcutGuideModifierResolver.resolve(carbonModifiers: UInt32(controlKey | optionKey | cmdKey)))
+        XCTAssertNil(ShortcutGuideModifierResolver.resolve(carbonModifiers: UInt32(controlKey | optionKey | shiftKey)))
+        XCTAssertNil(ShortcutGuideModifierResolver.resolve(carbonModifiers: UInt32(optionKey)))
+        XCTAssertNil(ShortcutGuideModifierResolver.resolve([.control, .option, .function]))
+    }
+
+    func testContentBuilderUsesEligibleWorkspaceOwnersAndLetterKeys() {
+        let workspaces = [
+            WorkspaceDefinition(name: "Writing", key: "w"),
+            WorkspaceDefinition(name: "3", key: "3"),
+        ]
+        let navigation = try! XCTUnwrap(ShortcutGuideContentBuilder.build(
+            family: .navigate,
+            workspaces: workspaces,
+            configuration: HotKeyConfiguration(),
+            runtimeIssues: []
+        ))
+        XCTAssertEqual(navigation.primaryActions.map(\.keyLabel), ["3", "W"])
+        XCTAssertEqual(navigation.primaryActions.map(\.title), ["3", "Writing"])
+        XCTAssertTrue(navigation.primaryActions.allSatisfy {
+            if case .workspaceSwitch = $0.kind { return true }
+            return false
+        })
+
+        let movement = try! XCTUnwrap(ShortcutGuideContentBuilder.build(
+            family: .arrange,
+            workspaces: workspaces,
+            configuration: HotKeyConfiguration(),
+            runtimeIssues: []
+        ))
+        XCTAssertTrue(movement.primaryActions.allSatisfy {
+            if case .workspaceMove = $0.kind { return true }
+            return false
+        })
+    }
+
+    func testContentBuilderExcludesConflictedAndRuntimeFailedActions() {
+        let workspace = WorkspaceDefinition(name: "Writing", key: "w")
+        var configuration = HotKeyConfiguration()
+        // Deliberately collides with workspace navigation, which makes both owners ineligible.
+        configuration.setKeyCode(13, for: .toggleDropDownApp)
+        let conflicted = try! XCTUnwrap(ShortcutGuideContentBuilder.build(
+            family: .navigate,
+            workspaces: [workspace],
+            configuration: configuration,
+            runtimeIssues: []
+        ))
+        XCTAssertFalse(conflicted.primaryActions.contains { $0.keyLabel == "W" })
+        XCTAssertFalse(conflicted.secondaryActions.contains { $0.kind == .global(.toggleDropDownApp) })
+
+        let runtimeIssue = HotKeyRuntimeIssue(
+            owner: .workspaceSwitch(workspace),
+            chord: HotKeyChord(keyCode: 13, modifiers: UInt32(controlKey | optionKey)),
+            status: -9876
+        )
+        let runtimeFailed = try! XCTUnwrap(ShortcutGuideContentBuilder.build(
+            family: .navigate,
+            workspaces: [workspace],
+            configuration: HotKeyConfiguration(),
+            runtimeIssues: [runtimeIssue]
+        ))
+        XCTAssertFalse(runtimeFailed.primaryActions.contains { $0.keyLabel == "W" })
+    }
+
+    func testGeometryHonoursPositionsAndClampsToScreen() {
+        let visible = CGRect(x: 0, y: 24, width: 800, height: 600)
+        let center = ShortcutGuideGeometry.frame(
+            panelSize: CGSize(width: 570, height: 178),
+            visibleFrame: visible,
+            position: .bottomCenter
+        )
+        XCTAssertEqual(center.midX, visible.midX, accuracy: 0.001)
+        XCTAssertEqual(center.minY, 48, accuracy: 0.001)
+        let topLeading = ShortcutGuideGeometry.frame(
+            panelSize: CGSize(width: 900, height: 900),
+            visibleFrame: visible,
+            position: .topLeading
+        )
+        XCTAssertTrue(visible.contains(topLeading))
+        XCTAssertEqual(ShortcutGuideSize.defaultValue, .medium)
+        XCTAssertEqual(ShortcutGuidePosition.defaultValue, .bottomCenter)
+        XCTAssertEqual(ShortcutGuidePosition.allCases.count, 9)
+    }
+
+    func testPassivePanelPolicyDoesNotTakeFocusOrInput() {
+        XCTAssertFalse(ShortcutGuidePanelPolicy.passive.canBecomeKey)
+        XCTAssertFalse(ShortcutGuidePanelPolicy.passive.canBecomeMain)
+        XCTAssertTrue(ShortcutGuidePanelPolicy.passive.ignoresMouseEvents)
+        XCTAssertFalse(ShortcutGuidePanelPolicy.passive.participatesInWindowCycle)
+    }
+
+    @MainActor
+    func testConfiguredPanelCarriesThePassivePolicy() {
+        let controller = ShortcutGuidePanelController()
+        let panel = controller.panelForTesting
+        XCTAssertFalse(panel.canBecomeKey)
+        XCTAssertFalse(panel.canBecomeMain)
+        XCTAssertTrue(panel.ignoresMouseEvents)
+        XCTAssertTrue(panel.collectionBehavior.contains(.ignoresCycle))
+        XCTAssertTrue(panel.collectionBehavior.contains(.moveToActiveSpace))
+        XCTAssertFalse(panel.collectionBehavior.contains(.canJoinAllSpaces))
+        XCTAssertFalse(panel.isVisible)
+    }
+
+    func testObservationGenerationRejectsCallbacksFromStoppedSessions() {
+        var generation = ShortcutGuideObservationGeneration()
+        let firstSession = generation.advance()
+        XCTAssertTrue(generation.accepts(firstSession))
+        _ = generation.advance()
+        XCTAssertFalse(generation.accepts(firstSession))
+    }
+
+    func testMixedDirectionalFamiliesRemainVisibleAsRegularActions() {
+        let actions = [
+            ShortcutGuideAction(id: "move-left", kind: .global(.moveLeft), title: "Reorder left", keyLabel: "←", isDirectional: true),
+            ShortcutGuideAction(id: "focus-right", kind: .global(.focusRight), title: "Focus right", keyLabel: "L", isDirectional: true),
+            ShortcutGuideAction(id: "commands", kind: .global(.commandWheel), title: "Commands", keyLabel: "Space", isDirectional: false),
+        ]
+        let mixed = ShortcutGuidePresentationGroups(actions: actions)
+        XCTAssertEqual(mixed.regularSecondaryActions, actions)
+        XCTAssertTrue(mixed.clusteredDirectionalActions.isEmpty)
+        let mixedGroups = ShortcutGuideActionGroupBuilder.build(
+            family: .navigate,
+            actions: actions
+        )
+        XCTAssertEqual(mixedGroups.map(\.kind), [.supporting, .focusWindow, .reorderWindow])
+        XCTAssertEqual(mixedGroups.map(\.title), [nil, "Focus Window", "Reorder Window"])
+        XCTAssertEqual(mixedGroups[1].actions.map(\.title), ["Focus right"])
+        XCTAssertEqual(mixedGroups[2].actions.map(\.title), ["Reorder left"])
+
+        let reorderOnly = ShortcutGuidePresentationGroups(actions: [actions[0], actions[2]])
+        XCTAssertEqual(reorderOnly.regularSecondaryActions, [actions[2]])
+        XCTAssertEqual(reorderOnly.clusteredDirectionalActions, [actions[0]])
+    }
+
+    func testNavigateGuideGroupsNameTheActionAndTarget() throws {
+        let content = try XCTUnwrap(ShortcutGuideContentBuilder.build(
+            family: .navigate,
+            workspaces: [WorkspaceDefinition(name: "1", key: "1")],
+            configuration: HotKeyConfiguration(),
+            runtimeIssues: []
+        ))
+
+        let groups = ShortcutGuideActionGroupBuilder.build(
+            family: content.family,
+            actions: content.secondaryActions
+        )
+
+        XCTAssertEqual(groups.map(\.kind), [.switchWorkspace, .supporting, .cycleWindows])
+        XCTAssertEqual(groups.map(\.title), ["Switch Workspace", nil, "Cycle Windows in Order"])
+        XCTAssertEqual(groups[0].actions.map(\.title), ["Previous Workspace", "Next Workspace", "Last Workspace"])
+        XCTAssertEqual(groups[1].actions.map(\.title), ["Commands", "Quick App"])
+        XCTAssertEqual(groups[2].actions.map(\.title), ["Previous", "Next"])
+    }
+
+    func testOpenShelfGuideKeepsOnlyTruthfulNavigateActionsForItsAxis() throws {
+        let primary = ShortcutGuideAction(
+            id: "workspace",
+            kind: .workspaceSwitch(UUID()),
+            title: "Writing",
+            keyLabel: "W",
+            isDirectional: false
+        )
+        let actionDefinitions: [(ConfigurableHotKeyAction, String)] = [
+            (.previousWorkspace, "Previous Workspace"),
+            (.commandWheel, "Commands"),
+            (.toggleDropDownApp, "Quick App"),
+            (.previousWindow, "Previous"),
+            (.nextWindow, "Next"),
+            (.focusLeft, "Focus Left"),
+            (.focusRight, "Focus Right"),
+            (.focusUp, "Focus Up"),
+            (.focusDown, "Focus Down"),
+            (.toggleFloating, "Floating"),
+        ]
+        let directionalActions: Set<ConfigurableHotKeyAction> = [
+            .focusLeft, .focusRight, .focusUp, .focusDown,
+        ]
+        let actions = actionDefinitions.enumerated().map { index, value in
+            ShortcutGuideAction(
+                id: "action-\(index)",
+                kind: .global(value.0),
+                title: value.1,
+                keyLabel: String(index),
+                isDirectional: directionalActions.contains(value.0)
+            )
+        }
+        let base = ShortcutGuideContent(
+            family: .navigate,
+            primaryActions: [primary],
+            secondaryActions: actions
+        )
+
+        let contextual = try XCTUnwrap(
+            ShortcutGuideShelfPresentationPolicy.contextualContent(
+                from: base,
+                direction: .top
+            )
+        )
+
+        XCTAssertEqual(contextual.presentationContext, .quickAppShelf)
+        XCTAssertEqual(contextual.primaryActions, [primary])
+        XCTAssertEqual(
+            contextual.secondaryActions.compactMap { action -> ConfigurableHotKeyAction? in
+                guard case let .global(value) = action.kind else { return nil }
+                return value
+            },
+            [
+                .previousWorkspace, .commandWheel, .toggleDropDownApp,
+                .previousWindow, .nextWindow, .focusLeft, .focusRight,
+            ]
+        )
+        XCTAssertEqual(
+            contextual.secondaryActions.map(\.title),
+            [
+                "Previous Workspace", "Commands", "Hide Shelf",
+                "Previous Shelf Window", "Next Shelf Window", "Focus Left", "Focus Right",
+            ]
+        )
+        let groups = ShortcutGuideActionGroupBuilder.build(
+            family: contextual.family,
+            actions: contextual.secondaryActions,
+            presentationContext: contextual.presentationContext
+        )
+        XCTAssertEqual(groups.map(\.kind), [.switchWorkspace, .supporting, .cycleShelfWindows])
+        XCTAssertEqual(groups.map(\.title), ["Switch Workspace", nil, "Cycle Shelf Windows"])
+    }
+
+    func testSideShelfGuideUsesVerticalFocusAxisAndOppositeEdge() throws {
+        let focusActions: [ConfigurableHotKeyAction] = [
+            .focusLeft, .focusRight, .focusUp, .focusDown,
+        ]
+        let base = ShortcutGuideContent(
+            family: .navigate,
+            primaryActions: [],
+            secondaryActions: focusActions.enumerated().map { index, value in
+                ShortcutGuideAction(
+                    id: "focus-\(index)",
+                    kind: .global(value),
+                    title: value.title,
+                    keyLabel: String(index),
+                    isDirectional: true
+                )
+            }
+        )
+        let contextual = try XCTUnwrap(
+            ShortcutGuideShelfPresentationPolicy.contextualContent(
+                from: base,
+                direction: .left
+            )
+        )
+        XCTAssertEqual(
+            contextual.secondaryActions.map(\.kind),
+            [.global(.focusUp), .global(.focusDown)]
+        )
+        XCTAssertEqual(
+            ShortcutGuideShelfPresentationPolicy.position(opposite: .left),
+            .centerTrailing
+        )
+        XCTAssertEqual(
+            ShortcutGuideShelfPresentationPolicy.position(opposite: .right),
+            .centerLeading
+        )
+        XCTAssertEqual(
+            ShortcutGuideShelfPresentationPolicy.position(opposite: .top),
+            .bottomCenter
+        )
+        XCTAssertEqual(
+            ShortcutGuideShelfPresentationPolicy.position(opposite: .bottom),
+            .topCenter
+        )
+        XCTAssertEqual(ShortcutGuideShelfPresentationPolicy.compactSize(for: .small), .small)
+        XCTAssertEqual(ShortcutGuideShelfPresentationPolicy.compactSize(for: .medium), .small)
+        XCTAssertEqual(ShortcutGuideShelfPresentationPolicy.compactSize(for: .large), .medium)
+    }
+
+    func testOpenShelfSuppressesArrangeGuide() {
+        let content = ShortcutGuideContent(
+            family: .arrange,
+            primaryActions: [],
+            secondaryActions: [
+                ShortcutGuideAction(
+                    id: "floating",
+                    kind: .global(.toggleFloating),
+                    title: "Floating",
+                    keyLabel: "F",
+                    isDirectional: false
+                ),
+            ]
+        )
+        XCTAssertNil(
+            ShortcutGuideShelfPresentationPolicy.contextualContent(
+                from: content,
+                direction: .top
+            )
+        )
+    }
+
+    func testArrangeGuideGroupsNameTheActionAndTarget() throws {
+        let content = try XCTUnwrap(ShortcutGuideContentBuilder.build(
+            family: .arrange,
+            workspaces: [WorkspaceDefinition(name: "1", key: "1")],
+            configuration: HotKeyConfiguration(),
+            runtimeIssues: []
+        ))
+
+        let groups = ShortcutGuideActionGroupBuilder.build(
+            family: content.family,
+            actions: content.secondaryActions
+        )
+
+        XCTAssertEqual(groups.map(\.kind), [.arrangeWindow, .chooseLayout, .moveWorkspace])
+        XCTAssertEqual(groups.map(\.title), ["Arrange Window", "Choose Layout", "Move Workspace"])
+        XCTAssertEqual(groups[0].actions.map(\.title), ["Floating", "Smaller", "Larger"])
+        XCTAssertEqual(groups[1].actions.map(\.title), ["Accordion", "Tiled"])
+        XCTAssertEqual(groups[2].actions.map(\.title), ["Next Display"])
+    }
+
+    func testPreferredInteractionDisplayWinsOverPointerDisplay() {
+        XCTAssertEqual(
+            ShortcutGuideDisplayChoice.resolve(
+                preferredIdentifier: "display-b",
+                pointerIdentifier: "display-a",
+                availableIdentifiers: ["display-a", "display-b"]
+            ),
+            "display-b"
+        )
+        XCTAssertEqual(
+            ShortcutGuideDisplayChoice.resolve(
+                preferredIdentifier: "disconnected",
+                pointerIdentifier: "display-a",
+                availableIdentifiers: ["display-a", "display-b"]
+            ),
+            "display-a"
+        )
+    }
+
+    func testDenseContentAddsRowsRatherThanClippingActions() {
+        let workspaces = HotKeyManager.keyCodes.keys.sorted().enumerated().map { index, key in
+            ShortcutGuideAction(
+                id: "workspace-\(index)",
+                kind: .workspaceSwitch(UUID()),
+                title: "Workspace \(key.uppercased())",
+                keyLabel: key.uppercased(),
+                isDirectional: false
+            )
+        }
+        let secondary = ConfigurableHotKeyAction.allCases.prefix(15).enumerated().map { index, action in
+            ShortcutGuideAction(
+                id: "secondary-\(index)",
+                kind: .global(action),
+                title: action.title,
+                keyLabel: String(index + 1),
+                isDirectional: false
+            )
+        }
+        let content = ShortcutGuideContent(
+            family: .navigate,
+            primaryActions: workspaces,
+            secondaryActions: secondary
+        )
+        for size in ShortcutGuideSize.allCases {
+            let metrics = ShortcutGuideLayoutMetrics(size: size, content: content)
+            XCTAssertGreaterThan(metrics.primaryRowCount, 1)
+            XCTAssertGreaterThan(metrics.secondaryRowCount, 1)
+            XCTAssertGreaterThan(metrics.panelSize.height, size.panelSize.height)
+            XCTAssertGreaterThanOrEqual(
+                metrics.primaryColumnCount * metrics.primaryRowCount,
+                workspaces.count
+            )
+            XCTAssertGreaterThanOrEqual(
+                metrics.secondaryColumnCount * metrics.secondaryRowCount,
+                secondary.count
+            )
+        }
+    }
+
+    func testDirectionalOnlyContentKeepsThePrimaryBandVisible() {
+        let action = ShortcutGuideAction(
+            id: "directional",
+            kind: .global(.moveLeft),
+            title: "Move Left",
+            keyLabel: "Left",
+            isDirectional: true
+        )
+        let content = ShortcutGuideContent(
+            family: .navigate,
+            primaryActions: [],
+            secondaryActions: [action]
+        )
+        XCTAssertTrue(ShortcutGuideLayoutMetrics(size: .medium, content: content).showsPrimaryBand)
+    }
+
+    func testMonitorStartStopIsIdempotentAndDoesNotRequireEventConsumption() {
+        let fake = FakeShortcutGuideMonitor()
+        let monitor = ShortcutGuideModifierMonitor(events: fake)
+        var observed: [ShortcutFamily?] = []
+        XCTAssertTrue(monitor.start { observed.append($0) })
+        XCTAssertTrue(monitor.start { observed.append($0) })
+        XCTAssertEqual(fake.globalAdds, 2)
+        XCTAssertEqual(fake.localAdds, 2)
+        XCTAssertEqual(fake.removals, 2) // restart removes the first pair
+        fake.globalHandler?([.option, .command])
+        XCTAssertEqual(observed.last!, .arrange)
+        monitor.stop()
+        monitor.stop()
+        XCTAssertEqual(fake.removals, 4)
+        XCTAssertNil(observed.last!)
+    }
+
+    @MainActor
+    func testOffscreenShortcutGuideSnapshots() throws {
+        guard let path = ProcessInfo.processInfo.environment["WINDOWRANGER_VISUAL_SNAPSHOT_OUTPUT_DIR"], !path.isEmpty else { return }
+        let output = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let workspaces = (1...5).map { value in
+            WorkspaceDefinition(name: String(value), key: String(value))
+        }
+        let navigate = try XCTUnwrap(ShortcutGuideContentBuilder.build(
+            family: .navigate,
+            workspaces: workspaces,
+            configuration: HotKeyConfiguration(),
+            runtimeIssues: []
+        ))
+        let arrange = try XCTUnwrap(ShortcutGuideContentBuilder.build(
+            family: .arrange,
+            workspaces: workspaces,
+            configuration: HotKeyConfiguration(),
+            runtimeIssues: []
+        ))
+        let shelf = try XCTUnwrap(
+            ShortcutGuideShelfPresentationPolicy.contextualContent(
+                from: navigate,
+                direction: .top
+            )
+        )
+        let contents = [
+            (name: "navigate", content: navigate),
+            (name: "arrange", content: arrange),
+            (name: "quick-app-shelf", content: shelf),
+        ]
+        for entry in contents {
+            for size in ShortcutGuideSize.allCases {
+                for scheme in [ColorScheme.light, .dark] {
+                    let name = scheme == .light ? "light" : "dark"
+                    let snapshotSize = size.panelSize(for: entry.content)
+                    let view = ShortcutGuideView(
+                        content: entry.content,
+                        size: size,
+                        surfaceStyle: .snapshot
+                    )
+                    .frame(width: snapshotSize.width, height: snapshotSize.height)
+                    .environment(\.colorScheme, scheme)
+                    let renderer = ImageRenderer(content: view)
+                    renderer.proposedSize = ProposedViewSize(snapshotSize)
+                    renderer.scale = 2
+                    let image = try XCTUnwrap(renderer.cgImage)
+                    let data = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+                    let filename = "windowranger-shortcut-guide-\(entry.name)-\(size.rawValue)-\(name).png"
+                    try data.write(to: output.appendingPathComponent(filename), options: .atomic)
+                    XCTAssertGreaterThan(data.count, 10_000)
+                }
+            }
+        }
+    }
+}
+
+private final class FakeShortcutGuideMonitor: ShortcutGuideEventMonitoring {
+    var globalAdds = 0
+    var localAdds = 0
+    var removals = 0
+    var globalHandler: ((NSEvent.ModifierFlags) -> Void)?
+
+    func addGlobalFlagsChanged(_ handler: @escaping (NSEvent.ModifierFlags) -> Void) -> Any? {
+        globalAdds += 1
+        globalHandler = handler
+        return "global-\(globalAdds)" as NSString
+    }
+
+    func addLocalFlagsChanged(_ handler: @escaping (NSEvent) -> NSEvent?) -> Any? {
+        localAdds += 1
+        return "local-\(localAdds)" as NSString
+    }
+
+    func removeMonitor(_ monitor: Any) { removals += 1 }
+}

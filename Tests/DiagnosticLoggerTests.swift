@@ -2,6 +2,131 @@ import ApplicationServices
 import XCTest
 
 final class DiagnosticLoggerTests: XCTestCase {
+    func testWindowServerFrontmostNormalWindowRejectsApplicationWithHigherLayerWindowInFront() {
+        let entries = [
+            WindowServerWindowOrderEntry(
+                processIdentifier: 10,
+                windowIdentifier: 100,
+                layer: 3
+            ),
+            WindowServerWindowOrderEntry(
+                processIdentifier: 20,
+                windowIdentifier: 200,
+                layer: 0
+            ),
+            WindowServerWindowOrderEntry(
+                processIdentifier: 10,
+                windowIdentifier: 101,
+                layer: 0
+            ),
+            WindowServerWindowOrderEntry(
+                processIdentifier: 10,
+                windowIdentifier: 102,
+                layer: 0
+            ),
+        ]
+
+        XCTAssertNil(AccessibilityWindow.frontmostNormalWindowIdentifier(for: 10, in: entries))
+        XCTAssertEqual(
+            AccessibilityWindow.frontmostNormalWindowIdentifier(for: 20, in: entries),
+            200
+        )
+        XCTAssertNil(
+            AccessibilityWindow.frontmostNormalWindowIdentifier(for: 30, in: entries)
+        )
+    }
+
+    func testWindowServerFrontmostNormalWindowReturnsLayerZeroWhenItIsApplicationFrontmost() {
+        let entries = [
+            WindowServerWindowOrderEntry(
+                processIdentifier: 10,
+                windowIdentifier: 101,
+                layer: 0
+            ),
+            WindowServerWindowOrderEntry(
+                processIdentifier: 20,
+                windowIdentifier: 200,
+                layer: 3
+            ),
+            WindowServerWindowOrderEntry(
+                processIdentifier: 10,
+                windowIdentifier: 102,
+                layer: 0
+            ),
+        ]
+
+        XCTAssertEqual(
+            AccessibilityWindow.frontmostNormalWindowIdentifier(for: 10, in: entries),
+            101
+        )
+    }
+
+    func testPointerTargetUsesFrontmostEligibleSurfaceWithoutClickingThrough() {
+        let front = WindowKey(processIdentifier: 10, windowIdentifier: 101)
+        let back = WindowKey(processIdentifier: 20, windowIdentifier: 201)
+        let entries = [
+            WindowServerPointerEntry(
+                key: front,
+                layer: 0,
+                bounds: CGRect(x: 100, y: 100, width: 400, height: 300)
+            ),
+            WindowServerPointerEntry(
+                key: back,
+                layer: 0,
+                bounds: CGRect(x: 0, y: 0, width: 800, height: 600)
+            ),
+        ]
+
+        XCTAssertEqual(
+            AccessibilityWindow.pointerTargetWindow(
+                at: CGPoint(x: 200, y: 200),
+                in: entries,
+                eligibleWindowKeys: [front, back]
+            ),
+            front
+        )
+        XCTAssertNil(
+            AccessibilityWindow.pointerTargetWindow(
+                at: CGPoint(x: 200, y: 200),
+                in: entries,
+                eligibleWindowKeys: [back]
+            ),
+            "An ineligible front surface must block selection of a covered window."
+        )
+    }
+
+    func testPointerTargetRejectsPanelsAndDesktopMisses() {
+        let panel = WindowKey(processIdentifier: 10, windowIdentifier: 102)
+        let normal = WindowKey(processIdentifier: 20, windowIdentifier: 202)
+        let entries = [
+            WindowServerPointerEntry(
+                key: panel,
+                layer: 3,
+                bounds: CGRect(x: 100, y: 100, width: 300, height: 200)
+            ),
+            WindowServerPointerEntry(
+                key: normal,
+                layer: 0,
+                bounds: CGRect(x: 0, y: 0, width: 800, height: 600)
+            ),
+        ]
+
+        XCTAssertNil(
+            AccessibilityWindow.pointerTargetWindow(
+                at: CGPoint(x: 150, y: 150),
+                in: entries,
+                eligibleWindowKeys: [normal]
+            )
+        )
+        XCTAssertNil(
+            AccessibilityWindow.pointerTargetWindow(
+                at: CGPoint(x: 900, y: 700),
+                in: entries,
+                eligibleWindowKeys: [normal]
+            )
+        )
+    }
+
     func testReleaseLoggerDoesNotCreateVerboseFile() throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -94,6 +219,38 @@ final class DiagnosticLoggerTests: XCTestCase {
         _ = try decodedRecords(text)
     }
 
+    func testCompleteJSONLineSuffixDropsNestedObjectAtByteCap() throws {
+        let firstRecord = Data(
+            "{\"fields\":{\"index\":\"484\"},\"category\":\"background\"}\n".utf8
+        )
+        let completeRecord = Data("{\"sequence\":2}\n".utf8)
+        var data = firstRecord
+        data.append(completeRecord)
+        let nestedObject = Data("{\"index\"".utf8)
+        let nestedStart = try XCTUnwrap(data.range(of: nestedObject)?.lowerBound)
+        let maxBytes = data.distance(from: nestedStart, to: data.endIndex)
+
+        let suffix = DiagnosticLogger.completeJSONLinesSuffix(from: data, maxBytes: maxBytes)
+
+        XCTAssertEqual(suffix, completeRecord)
+        _ = try decodedRecords(String(decoding: suffix, as: UTF8.self))
+    }
+
+    func testCompleteJSONLineSuffixRetainsRecordAtExactLineBoundary() throws {
+        let firstRecord = Data("{\"sequence\":1}\n".utf8)
+        let secondRecord = Data("{\"sequence\":2}\n".utf8)
+        var data = firstRecord
+        data.append(secondRecord)
+
+        let suffix = DiagnosticLogger.completeJSONLinesSuffix(
+            from: data,
+            maxBytes: secondRecord.count
+        )
+
+        XCTAssertEqual(suffix, secondRecord)
+        _ = try decodedRecords(String(decoding: suffix, as: UTF8.self))
+    }
+
     func testPrivacyFilterRemovesForbiddenFieldsAndSensitiveValues() {
         let sink = MemoryDiagnosticSink()
         let logger = DiagnosticLogger(buildMode: .test, sink: sink)
@@ -143,6 +300,60 @@ final class DiagnosticLoggerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path + ".1"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path + ".2"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path + ".3"))
+    }
+
+    func testControlledSlowStorageMeasurementPreservesOrderAndQuantifiesBlocking() throws {
+        let eventCount = 100
+        let injectedWriteLatency: TimeInterval = 0.002
+        let baselineSink = MemoryDiagnosticSink()
+        let baselineLogger = DiagnosticLogger(
+            buildMode: .debug,
+            sink: baselineSink,
+            sessionIdentifier: "wr-005-baseline"
+        )
+        let baselineStarted = Date()
+        for index in 0..<eventCount {
+            baselineLogger.log(
+                category: "measurement",
+                event: "noisy-debug-record",
+                correlation: "action-measurement",
+                fields: ["index": String(index), "payload": String(repeating: "x", count: 256)]
+            )
+        }
+        let baselineElapsed = Date().timeIntervalSince(baselineStarted)
+        let sink = LatencyInjectingDiagnosticSink(writeLatency: injectedWriteLatency)
+        let logger = DiagnosticLogger(
+            buildMode: .debug,
+            sink: sink,
+            sessionIdentifier: "wr-005-measurement"
+        )
+
+        let started = Date()
+        for index in 0..<eventCount {
+            logger.log(
+                category: "measurement",
+                event: "noisy-debug-record",
+                correlation: "action-measurement",
+                fields: ["index": String(index), "payload": String(repeating: "x", count: 256)]
+            )
+        }
+        let elapsed = Date().timeIntervalSince(started)
+        let records = try decodedRecords(sink.text)
+
+        XCTAssertEqual(records.count, eventCount)
+        XCTAssertEqual(records.compactMap { $0["sequence"] as? Int }, Array(1...eventCount))
+        XCTAssertGreaterThanOrEqual(elapsed, injectedWriteLatency * Double(eventCount) * 0.9)
+        XCTAssertGreaterThan(elapsed, baselineElapsed + injectedWriteLatency * Double(eventCount) * 0.8)
+        // CI timer granularity can make a requested 2 ms sleep substantially longer. The
+        // measurement is intentionally bounded below to prove synchronous blocking; an upper
+        // wall-clock bound would measure runner scheduling rather than logger behavior.
+        print(String(
+            format: "WR-005 controlled measurement: %d records, %.1f ms memory baseline; %.1f ms at 2 ms injected write latency (%.2f ms/record)",
+            eventCount,
+            baselineElapsed * 1_000,
+            elapsed * 1_000,
+            elapsed * 1_000 / Double(eventCount)
+        ))
     }
 
     func testInteractionDisplayUsesActualFocusedFrameOnSecondDisplay() {
@@ -214,7 +425,7 @@ final class DiagnosticLoggerTests: XCTestCase {
             [
                 .markWindowMain,
                 .raiseWindow,
-                .activateApplication,
+                .makeApplicationFrontmost,
                 .markWindowMain,
                 .focusWindowElement,
                 .focusApplicationWindow,
@@ -229,6 +440,101 @@ final class DiagnosticLoggerTests: XCTestCase {
             activatedProcessIdentifier: 100,
             focusedProcessIdentifier: 200
         ))
+    }
+
+    func testPointerFocusActivationPreservesOnlyItsCurrentRadialInteraction() {
+        let now = Date(timeIntervalSince1970: 10)
+        let deadline = now.addingTimeInterval(1)
+
+        XCTAssertFalse(WorkspaceEngine.shouldCancelRadialInteractionForActivation(
+            activatedProcessIdentifier: 100,
+            expectedProcessIdentifier: 100,
+            programmaticFocusDeadline: deadline,
+            now: now,
+            verificationIsCurrent: true
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldCancelRadialInteractionForActivation(
+            activatedProcessIdentifier: 200,
+            expectedProcessIdentifier: 100,
+            programmaticFocusDeadline: deadline,
+            now: now,
+            verificationIsCurrent: true
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldCancelRadialInteractionForActivation(
+            activatedProcessIdentifier: 100,
+            expectedProcessIdentifier: 100,
+            programmaticFocusDeadline: now,
+            now: now,
+            verificationIsCurrent: true
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldCancelRadialInteractionForActivation(
+            activatedProcessIdentifier: 100,
+            expectedProcessIdentifier: 100,
+            programmaticFocusDeadline: deadline,
+            now: now,
+            verificationIsCurrent: false
+        ))
+    }
+
+    func testImmediateAppKitCompatibilityFallbackIsOnlyForRejectedAccessibilityWrite() {
+        XCTAssertFalse(WorkspaceEngine.shouldUseAppKitActivationFallback(
+            accessibilityFrontmostResult: .success
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldUseAppKitActivationFallback(
+            accessibilityFrontmostResult: .attributeUnsupported
+        ))
+        XCTAssertTrue(WorkspaceEngine.shouldUseAppKitActivationFallback(
+            accessibilityFrontmostResult: .cannotComplete
+        ))
+    }
+
+    func testSuccessfulAccessibilityWriteStillGetsOneFallbackWhenAppRemainsInactive() {
+        let expected = WindowKey(processIdentifier: 42394, windowIdentifier: 15153)
+        let staleSameApp = WindowKey(processIdentifier: 42394, windowIdentifier: 14533)
+
+        XCTAssertEqual(
+            WorkspaceEngine.focusCycleVerificationDecision(
+                expected: expected,
+                actual: nil,
+                applicationIsActive: false,
+                appKitActivationAttempted: false,
+                exactAttempt: 0
+            ),
+            .retryAppKitActivation
+        )
+        XCTAssertEqual(
+            WorkspaceEngine.focusCycleVerificationDecision(
+                expected: expected,
+                actual: staleSameApp,
+                applicationIsActive: false,
+                appKitActivationAttempted: false,
+                exactAttempt: 0
+            ),
+            .retryAppKitActivation
+        )
+        XCTAssertEqual(
+            WorkspaceEngine.focusCycleVerificationDecision(
+                expected: expected,
+                actual: nil,
+                applicationIsActive: false,
+                appKitActivationAttempted: true,
+                exactAttempt: 0
+            ),
+            .advanceToNextCandidate
+        )
+    }
+
+    func testActivationFallbackPhaseRetainsHistoryWithoutRepeatingActivationOnExactRetry() {
+        let fallback = FocusCandidateAttemptPhase.appKitActivationFallback
+        let exactRetry = fallback.exactRetryPhase
+
+        XCTAssertTrue(fallback.performsAppKitActivation)
+        XCTAssertTrue(fallback.appKitActivationAttempted)
+        XCTAssertEqual(fallback.exactAttempt, 0)
+        XCTAssertEqual(exactRetry, .exactRetryAfterAppKitActivation)
+        XCTAssertFalse(exactRetry.performsAppKitActivation)
+        XCTAssertTrue(exactRetry.appKitActivationAttempted)
+        XCTAssertEqual(exactRetry.exactAttempt, 1)
     }
 
     func testFocusCycleEligibilityRejectsUtilityLayerAndKeepsCapableNormalWindow() {
@@ -260,6 +566,57 @@ final class DiagnosticLoggerTests: XCTestCase {
         )
         XCTAssertFalse(AccessibilityWindow.isEligibleFocusCycleCandidate(utilityPanel))
 
+        let inactiveManagedStandardWindow = WindowFocusCapabilities(
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: -1,
+            isMinimized: false,
+            isFocused: false,
+            isMain: false,
+            focusedAttributeSettable: false,
+            mainAttributeSettable: true,
+            applicationFocusedWindowAttributeSettable: false,
+            raiseActionSupported: true
+        )
+        XCTAssertTrue(
+            AccessibilityWindow.isEligibleFocusCycleCandidate(inactiveManagedStandardWindow),
+            "A managed standard window may expose a transient negative layer before first activation"
+        )
+
+        let negativeLayerReadOnlyWindow = WindowFocusCapabilities(
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: -1,
+            isMinimized: false,
+            isFocused: true,
+            isMain: true,
+            focusedAttributeSettable: false,
+            mainAttributeSettable: false,
+            applicationFocusedWindowAttributeSettable: false,
+            raiseActionSupported: true
+        )
+        XCTAssertFalse(
+            AccessibilityWindow.isEligibleFocusCycleCandidate(negativeLayerReadOnlyWindow),
+            "A negative-layer window still needs a writable exact-focus route"
+        )
+
+        let negativeLayerDialog = WindowFocusCapabilities(
+            role: kAXWindowRole as String,
+            subrole: kAXDialogSubrole as String,
+            windowLayer: -1,
+            isMinimized: false,
+            isFocused: false,
+            isMain: false,
+            focusedAttributeSettable: true,
+            mainAttributeSettable: true,
+            applicationFocusedWindowAttributeSettable: true,
+            raiseActionSupported: true
+        )
+        XCTAssertFalse(
+            AccessibilityWindow.isEligibleFocusCycleCandidate(negativeLayerDialog),
+            "The negative-layer exception is limited to standard managed windows"
+        )
+
         let nonFocusable = WindowFocusCapabilities(
             role: kAXWindowRole as String,
             subrole: kAXStandardWindowSubrole as String,
@@ -273,6 +630,40 @@ final class DiagnosticLoggerTests: XCTestCase {
             raiseActionSupported: true
         )
         XCTAssertFalse(AccessibilityWindow.isEligibleFocusCycleCandidate(nonFocusable))
+
+        let activationOnlyMainWindow = WindowFocusCapabilities(
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            isFocused: true,
+            isMain: true,
+            focusedAttributeSettable: false,
+            mainAttributeSettable: false,
+            applicationFocusedWindowAttributeSettable: false,
+            raiseActionSupported: true
+        )
+        XCTAssertTrue(
+            AccessibilityWindow.isEligibleFocusCycleCandidate(activationOnlyMainWindow),
+            "A locally selected main window can use verified raise-and-activate focus"
+        )
+
+        let ambiguousActivationOnlyWindow = WindowFocusCapabilities(
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            isFocused: false,
+            isMain: true,
+            focusedAttributeSettable: false,
+            mainAttributeSettable: false,
+            applicationFocusedWindowAttributeSettable: false,
+            raiseActionSupported: true
+        )
+        XCTAssertFalse(
+            AccessibilityWindow.isEligibleFocusCycleCandidate(ambiguousActivationOnlyWindow),
+            "A read-only window must identify itself as both focused and main before activation fallback"
+        )
     }
 
     func testSameAppWrongWindowRetriesThenAdvancesDespiteSuccessfulAXWrites() {
@@ -532,6 +923,56 @@ final class DiagnosticLoggerTests: XCTestCase {
         XCTAssertFalse(policy.participatesInWindowCycle)
     }
 
+    @MainActor
+    func testCommandFeedbackUsesNativeGlassWhenAvailableAndSystemMaterialOtherwise() throws {
+        let surface = CommandFeedbackSurfaceFactory.make(
+            frame: CGRect(x: 0, y: 0, width: 360, height: 72)
+        )
+
+        if #available(macOS 26.0, *) {
+            let glass = try XCTUnwrap(surface as? NSGlassEffectView)
+            XCTAssertEqual(glass.style, .regular)
+            XCTAssertEqual(glass.cornerRadius, 36)
+        } else {
+            let material = try XCTUnwrap(surface as? NSVisualEffectView)
+            XCTAssertEqual(material.material, .hudWindow)
+            XCTAssertEqual(material.layer?.cornerRadius, 36)
+        }
+    }
+
+    @MainActor
+    func testCommandFeedbackPillTracksClampedToastHeight() throws {
+        let surface = CommandFeedbackSurfaceFactory.make(
+            frame: CGRect(x: 0, y: 0, width: 220, height: 60)
+        )
+
+        surface.frame.size.height = 40
+        CommandFeedbackSurfaceFactory.updatePillShape(surface)
+
+        if #available(macOS 26.0, *) {
+            let glass = try XCTUnwrap(surface as? NSGlassEffectView)
+            XCTAssertEqual(glass.cornerRadius, 20)
+        } else {
+            XCTAssertEqual(surface.layer?.cornerRadius, 20)
+        }
+    }
+
+    @MainActor
+    func testCommandFeedbackInstallsContentInsideTheSystemSurface() {
+        let surface = CommandFeedbackSurfaceFactory.make(
+            frame: CGRect(x: 0, y: 0, width: 360, height: 72)
+        )
+        let content = NSView()
+
+        CommandFeedbackSurfaceFactory.installContent(content, in: surface)
+
+        if #available(macOS 26.0, *), let glass = surface as? NSGlassEffectView {
+            XCTAssertTrue(glass.contentView === content)
+        } else {
+            XCTAssertTrue(content.superview === surface)
+        }
+    }
+
     func testFloatingToggleFeedbackUsesSharedCommandFeedbackMessage() {
         XCTAssertEqual(FloatingToggleResult.enabled.commandFeedbackMessage, "Window is floating")
         XCTAssertEqual(
@@ -542,15 +983,80 @@ final class DiagnosticLoggerTests: XCTestCase {
             FloatingToggleResult.blockedByAppRule("Mail").commandFeedbackMessage,
             "Mail is excluded by an App Rule. That rule remains in control."
         )
+        XCTAssertEqual(
+            FloatingToggleResult.blockedByFixedSizeWindow.commandFeedbackMessage,
+            "This window cannot be resized, so it must remain floating."
+        )
+        XCTAssertEqual(
+            FloatingToggleResult.blockedByProtectedDialog.commandFeedbackMessage,
+            "This dialog must remain floating at its application-chosen size."
+        )
     }
 
     @MainActor
-    func testDebugConfigurationExposesDiagnosticMenuControls() {
-        let enabled = WorkspaceStatusBarController.verboseDiagnosticsMenuEnabled
+    func testNormalStatusMenuOpenOmitsVerboseDiagnostics() {
+        XCTAssertEqual(VerboseDiagnosticsMenuPolicy.entries(
+            buildSupportsVerboseDiagnostics: true,
+            modifierFlags: [],
+            diagnosticFileAvailable: true
+        ), [])
+    }
+
+    @MainActor
+    func testOptionStatusMenuOpenShowsOneCompleteDiagnosticsSection() {
+        XCTAssertEqual(VerboseDiagnosticsMenuPolicy.entries(
+            buildSupportsVerboseDiagnostics: true,
+            modifierFlags: [.option],
+            diagnosticFileAvailable: true
+        ), [
+            .separator,
+            .header,
+            .copyRecent,
+            .revealFile(isEnabled: true),
+        ])
+    }
+
+    @MainActor
+    func testDiagnosticsVisibilityIsRecalculatedForEveryMenuOpening() {
+        let sequence: [NSEvent.ModifierFlags] = [[], [.option], [], [.option]]
+        let results = sequence.map {
+            VerboseDiagnosticsMenuPolicy.entries(
+                buildSupportsVerboseDiagnostics: true,
+                modifierFlags: $0,
+                diagnosticFileAvailable: true
+            )
+        }
+
+        XCTAssertEqual(results.map(\.isEmpty), [true, false, true, false])
+        XCTAssertEqual(results[1], results[3])
+        XCTAssertEqual(results[1].filter { $0 == .separator }.count, 1)
+    }
+
+    @MainActor
+    func testOptionDiagnosticsDisablesRevealWhenNoFileExists() {
+        XCTAssertEqual(VerboseDiagnosticsMenuPolicy.entries(
+            buildSupportsVerboseDiagnostics: true,
+            modifierFlags: [.option, .shift],
+            diagnosticFileAvailable: false
+        ).last, .revealFile(isEnabled: false))
+    }
+
+    @MainActor
+    func testReleaseBoundaryOmitsVerboseDiagnosticsRegardlessOfOption() {
+        XCTAssertEqual(VerboseDiagnosticsMenuPolicy.entries(
+            buildSupportsVerboseDiagnostics: false,
+            modifierFlags: [.option],
+            diagnosticFileAvailable: true
+        ), [])
+
+        let compiledEntries = WorkspaceStatusBarController.verboseDiagnosticsMenuEntries(
+            modifierFlags: [.option],
+            diagnosticFileAvailable: true
+        )
         #if DEBUG
-        XCTAssertTrue(enabled)
+        XCTAssertFalse(compiledEntries.isEmpty)
         #else
-        XCTAssertFalse(enabled)
+        XCTAssertTrue(compiledEntries.isEmpty)
         #endif
     }
 
@@ -566,5 +1072,25 @@ final class DiagnosticLoggerTests: XCTestCase {
             let object = try JSONSerialization.jsonObject(with: Data(line.utf8))
             return try XCTUnwrap(object as? [String: Any])
         }
+    }
+}
+
+private final class LatencyInjectingDiagnosticSink: DiagnosticSink {
+    private let writeLatency: TimeInterval
+    private let memory = MemoryDiagnosticSink()
+    var fileURL: URL? { nil }
+    var text: String { memory.text }
+
+    init(writeLatency: TimeInterval) {
+        self.writeLatency = writeLatency
+    }
+
+    func append(_ data: Data) {
+        Thread.sleep(forTimeInterval: writeLatency)
+        memory.append(data)
+    }
+
+    func recent(maxBytes: Int) -> Data {
+        memory.recent(maxBytes: maxBytes)
     }
 }
