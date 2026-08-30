@@ -64,6 +64,9 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.appranger.WindowRanger.CLI
         PRODUCT_NAME: windowranger
+        # The CLI is shipped only inside WindowRanger.app. Installing it as a second archive
+        # product turns the app archive into a generic archive that cannot be Developer ID-exported.
+        SKIP_INSTALL: YES
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 44NAD22AK6
         ENABLE_HARDENED_RUNTIME: YES
