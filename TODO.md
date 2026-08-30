@@ -3965,9 +3965,11 @@ second copy of that checklist.
   generated Cask declares Sparkle coexistence, macOS 14, ordinary uninstall that preserves user
   configuration, and an explicit local-only `--zap` scope. Deterministic fixtures reject Beta,
   malformed or mismatched artifacts, prerelease metadata, silent overwrite, and failed-publication
-  mutation. No Stable v1 artifact, tap repository, Cask submission, installation, or publication
-  exists yet. The main Homebrew Cask currently fails the documented notability threshold, so an
-  AppRanger tap is the immediate route once separately approved.
+  mutation. The public v1 artifact generated the exact Cask successfully. Homebrew 6 audit then
+  identified its now-deprecated `verified:` URL parameter before tap publication; the generator and
+  deterministic workflow are being updated to omit it. The main Homebrew Cask still fails the
+  documented notability threshold, so the separately approved `AppRanger/homebrew-tap` route is
+  being used instead.
 - **1.0.0 candidate preparation:** The first Stable release notes are drafted at
   `docs/releases/v1.0.0.md`. The CLI and release-tooling changes were integrated into `develop` by
   PR #77, build 12 is allocated as the first Stable candidate, and exact release source was promoted

@@ -185,8 +185,7 @@ temporary_output="$(/usr/bin/mktemp "$output_directory/.windowranger-cask.XXXXXX
     print "  version \"$version\""
     print "  sha256 \"$actual_checksum\""
     print ''
-    print '  url "https://github.com/AppRanger/windowranger/releases/download/v#{version}/WindowRanger-#{version}.dmg",'
-    print '      verified: "github.com/AppRanger/windowranger/"'
+    print '  url "https://github.com/AppRanger/windowranger/releases/download/v#{version}/WindowRanger-#{version}.dmg"'
     print '  name "WindowRanger"'
     print '  desc "Native workspace and window manager"'
     print '  homepage "https://windowranger.com/"'

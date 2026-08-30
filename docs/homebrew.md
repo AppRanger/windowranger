@@ -45,7 +45,9 @@ Run the deterministic construction checks with:
 
 Then copy the generated `windowranger.rb` into the selected tap and run the tap's current required
 `brew style`, `brew audit`, installation, upgrade, ordinary uninstall, and `--zap` validation before
-publication.
+publication. Audit the AppRanger tap with `--strict --online`; `--new` applies the upstream
+`homebrew/cask` notability gate and is expected to reject the separately documented tap route until
+WindowRanger becomes eligible upstream.
 
 ## Sparkle coexistence
 
