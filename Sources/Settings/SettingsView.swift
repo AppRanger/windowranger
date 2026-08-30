@@ -653,8 +653,10 @@ private struct GeneralSettingsView: View {
     @Environment(\.undoManager) private var undoManager
     @StateObject private var accessibilityPermission = AccessibilityPermissionMonitor()
     @StateObject private var launchAtLogin = LaunchAtLoginController()
+    private let cliPathManager = CLIPathManager()
     @State private var showsFocusBorderAppPicker = false
     @State private var showsICloudReplacementConfirmation = false
+    @State private var cliPathState: CLIPathManager.State = .notInstalled
 
     private var iCloudSyncStatusTitle: String {
         switch store.iCloudSyncState {
@@ -742,6 +744,31 @@ private struct GeneralSettingsView: View {
                     if let errorMessage = launchAtLogin.errorMessage {
                         Text(errorMessage).font(.caption).foregroundStyle(.red)
                     }
+                }
+
+                Section("Command Line") {
+                    LabeledContent("windowranger") {
+                        Text(cliPathStatusTitle)
+                            .foregroundStyle(cliPathStatusColor)
+                    }
+                    HStack {
+                        if cliPathCanInstall {
+                            Button(cliPathState == .stale ? "Repair Command" : "Add Command to PATH") {
+                                cliPathState = cliPathManager.install()
+                            }
+                        }
+                        if cliPathState == .installed || cliPathState == .stale {
+                            Button("Remove from PATH") {
+                                cliPathState = cliPathManager.remove()
+                            }
+                        }
+                    }
+                    Text(cliPathHelpText)
+                        .font(.caption)
+                        .foregroundStyle(cliPathNeedsAttention ? .orange : .secondary)
+                    Text("The bundled command can query and control the signed app, and can export, validate or explicitly replace its complete configuration. Run `windowranger skill` to create agent instructions. This PATH setting is local to this Mac and never syncs.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Setup") {
@@ -1071,6 +1098,7 @@ private struct GeneralSettingsView: View {
             guard category == .general else { return }
             accessibilityPermission.refresh()
             launchAtLogin.refresh()
+            cliPathState = cliPathManager.state()
             previewRepository?.isEnabled = store.workspacePreviewThumbnailsEnabled
             previewRepository?.refreshAuthorization()
         }
@@ -1078,6 +1106,7 @@ private struct GeneralSettingsView: View {
             guard category == .general else { return }
             accessibilityPermission.refresh()
             launchAtLogin.refresh()
+            cliPathState = cliPathManager.state()
             previewRepository?.refreshAuthorization()
         }
         .task(id: accessibilityPermission.isGranted) {
@@ -1101,6 +1130,54 @@ private struct GeneralSettingsView: View {
     private var screenRecordingStatusTitle: String {
         guard store.workspacePreviewThumbnailsEnabled else { return "Off" }
         return previewRepository?.authorization == .authorized ? "Granted" : "Required"
+    }
+
+    private var cliPathStatusTitle: String {
+        switch cliPathState {
+        case .installed: "Available in new terminals"
+        case .notInstalled: "Not added"
+        case .stale: "Needs repair"
+        case .conflict: "Needs attention"
+        case .unsupported: "Shell not supported"
+        case .error: "Unavailable"
+        }
+    }
+
+    private var cliPathStatusColor: Color {
+        switch cliPathState {
+        case .installed: .green
+        case .notInstalled: .secondary
+        case .stale, .conflict, .unsupported, .error: .orange
+        }
+    }
+
+    private var cliPathCanInstall: Bool {
+        switch cliPathState {
+        case .notInstalled, .stale: true
+        case .installed, .conflict, .unsupported, .error: false
+        }
+    }
+
+    private var cliPathNeedsAttention: Bool {
+        switch cliPathState {
+        case .stale, .conflict, .unsupported, .error: true
+        case .installed, .notInstalled: false
+        }
+    }
+
+    private var cliPathHelpText: String {
+        switch cliPathState {
+        case .installed:
+            "WindowRanger links its bundled command at ~/.local/bin/windowranger. Open a new terminal before using it."
+        case .notInstalled, .stale:
+            "Adds ~/.local/bin/windowranger for your user account and updates your login-shell PATH only when needed. No administrator access is required."
+        case .conflict:
+            "WindowRanger found an existing command, shell-file link, or edited WindowRanger PATH block and left it unchanged. Remove or rename that conflict manually, then reopen Settings."
+        case .unsupported:
+            "Automatic PATH setup currently supports zsh and bash. The bundled command can still be run directly from the app."
+        case let .error(message):
+            message
+        }
     }
 
     private var screenRecordingStatusColor: Color {

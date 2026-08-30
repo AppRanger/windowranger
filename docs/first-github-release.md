@@ -214,6 +214,10 @@ immutable release ZIP is available. Generating the local appcast, publishing the
 and deploying the reviewed website appcast plus its checksum-identical update archives remain three
 separate approval checkpoints.
 
+For the first Stable release, follow [the Homebrew runbook](homebrew.md) only after the immutable
+GitHub release and exact DMG are public. Cask generation, tap publication, and a future
+`homebrew/cask` submission are separately reviewed checkpoints.
+
 ## Repository visibility
 
 The repository became public on 10 August 2026 after the history/privacy scan, licence review,

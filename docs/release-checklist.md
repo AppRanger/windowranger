@@ -45,6 +45,12 @@ promotion and versioning. It is a design authority, not evidence that the releas
 - [x] Run static analysis and address compiler warnings relevant to project code.
 - [x] Build universal Release and verify bundle ID, architectures, entitlements and Developer ID
       signature.
+- [ ] Verify the universal Developer ID build embeds `Contents/Helpers/windowranger` with the
+      expected Team ID, code identifier, Hardened Runtime and nested-signature validity.
+- [ ] On a clean user account, add/remove the CLI from General Settings, open a new terminal, and
+      smoke-test status, action discovery/invocation, workspace switch, layout, pause/resume, JSON
+      output and generated skill. Export the complete configuration, validate it, prove stale-revision
+      and missing-`--replace` failures are non-mutating, then round-trip a deliberate harmless edit.
 - [x] Confirm the exact Beta Release omits the Debug menu labels, verbose diagnostic path, and
       internal-only copy while retaining the inert logging type required by shared code.
 - [ ] Audit LaunchServices so validation leaves only intended products registered.

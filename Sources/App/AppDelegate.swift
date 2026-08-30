@@ -12,10 +12,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var updateController = UpdateController()
     lazy var settingsWindowCoordinator = SettingsWindowCoordinator(diagnostics: diagnostics)
     lazy var settingsCommandRequestRouter = SettingsCommandRequestRouter()
+    private let onboardingProgressStore = OnboardingProgressStore()
     private lazy var onboardingWindowController = OnboardingWindowController(
         settingsStore: settingsStore,
+        progressStore: onboardingProgressStore,
         diagnostics: diagnostics
     )
+    private lazy var cliLaunchAtLoginController = LaunchAtLoginController()
     lazy var menuBarState = MenuBarStateModel(
         workspaces: settingsStore.workspaces,
         displayMode: settingsStore.multiDisplayMode,
@@ -78,12 +81,121 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
             }
         },
-        setPauseMode: { [weak self] isPaused, correlationID in
+        setPauseMode: { [weak self] isPaused, correlationID, source in
             Task { @MainActor [weak self] in
-                self?.setPauseMode(isPaused, source: "command-palette", correlationID: correlationID)
+                self?.setPauseMode(isPaused, source: source.rawValue, correlationID: correlationID)
             }
         }
     )
+    // Kept separate from the request router because live actions require an engine-context
+    // capture before they can be validated. The router supplies this bridge once its expanded
+    // action operation is decoded.
+    private lazy var cliActionBridge = WindowRangerCLIActionBridge(
+        engine: engine,
+        dispatcher: commandDispatcher,
+        contextEnricher: { [weak self] context in
+            self?.enrichedCommandContext(context) ?? context
+        },
+        openSettings: { [weak self] category in
+            guard let self else { return }
+            self.settingsCommandRequestRouter.prepare(.init(
+                category: category,
+                preferPointerDisplay: false
+            ))
+            if !SettingsMenuCommandDispatcher.performSettingsCommand(in: NSApp.mainMenu) {
+                self.settingsCommandRequestRouter.cancelPendingRequest()
+            }
+        },
+        openScreenRecordingSettings: { [weak self] in
+            self?.workspacePreviewRepository.openScreenRecordingSettings()
+        },
+        openLoginItemsSettings: {
+            MainAppLaunchAtLoginService().openSystemSettings()
+        },
+        restartOnboarding: { [weak self] in
+            self?.restartOnboardingFromSettings()
+        },
+        checkForUpdates: { [weak self] in
+            guard let updateController = self?.updateController,
+                  updateController.canCheckForUpdates
+            else { return false }
+            updateController.checkForUpdates()
+            return true
+        },
+        setICloudSyncEnabled: { [weak self] enabled in
+            guard let self else { return false }
+            self.settingsStore.iCloudSyncEnabled = enabled
+            return self.settingsStore.iCloudSyncEnabled == enabled
+        },
+        replaceICloudWithLocal: { [weak self] in
+            self?.settingsStore.replaceICloudSettingsWithLocalCopy() ?? false
+        }
+    )
+    private lazy var cliRequestRouter = WindowRangerCLIRequestRouter(
+        snapshotProvider: { [weak self] in
+            guard let self else {
+                return .init(workspaces: [], accessibilityGranted: false, isPaused: false)
+            }
+            return .init(
+                workspaces: self.settingsStore.workspaces,
+                accessibilityGranted: AXIsProcessTrusted(),
+                isPaused: self.isPauseModeEnabled
+            )
+        },
+        commandDispatcher: { [weak self] command, correlationID in
+            self?.commandDispatcher.dispatch(
+                command,
+                source: .cli,
+                correlationID: correlationID
+            ) ?? .rejectedReentrant
+        },
+        actionExecutor: { [weak self] action, arguments, requestID, deadline, completion in
+            guard let self else {
+                completion(.unavailable)
+                return
+            }
+            self.cliActionBridge.perform(
+                action: action,
+                arguments: arguments,
+                requestID: requestID,
+                deadlineUptimeNanoseconds: deadline,
+                completion: completion
+            )
+        },
+        configurationProvider: { [weak self] in
+            self?.cliConfigurationSnapshot() ?? .failure(.unavailable)
+        },
+        configurationValidator: { [weak self] document in
+            self?.validateCLIConfiguration(document) ?? .failure(.unavailable)
+        },
+        configurationApplier: { [weak self] document, revision in
+            self?.applyCLIConfiguration(document, expectedRevision: revision)
+                ?? .failure(.unavailable)
+        }
+    )
+    private lazy var cliServer: CLIIPCServer? = {
+        let helperURL = Bundle.main.bundleURL
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Helpers", isDirectory: true)
+            .appendingPathComponent("windowranger", isDirectory: false)
+        guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {
+            diagnostics.log(category: "cli", event: "bundled-helper-unavailable")
+            return nil
+        }
+        let peerPolicy = CLIIPCPeerPolicy(
+            codeIdentifier: "windowranger",
+            executableURL: helperURL
+        )
+        return CLIIPCServer(peerPolicy: peerPolicy, asyncHandler: { [weak self] request, completion in
+            DispatchQueue.main.async {
+                guard let self else {
+                    completion(Data())
+                    return
+                }
+                self.cliRequestRouter.handle(request, completion: completion)
+            }
+        })
+    }()
     private lazy var commandPaletteController = CommandPaletteController(
         engine: engine,
         dispatcher: commandDispatcher,
@@ -688,6 +800,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // active profile while the engine misses its generated transition request.
         tiledResizePointerMonitor.start()
         engine.start()
+        do {
+            try cliServer?.start()
+            if cliServer != nil {
+                diagnostics.log(category: "cli", event: "server-started")
+            }
+        } catch {
+            diagnostics.log(
+                category: "cli",
+                event: "server-start-failed",
+                fields: ["error": String(describing: type(of: error))]
+            )
+        }
         onboardingWindowController.presentIfNeeded()
     }
 
@@ -711,6 +835,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingMenuBarDisplayIconUpdate = nil
         pendingMenuBarHighlightUpdate?.cancel()
         pendingMenuBarHighlightUpdate = nil
+        cliServer?.stop()
         unregisterScreenLockNotifications()
         tiledPlacementUndoManager.removeAllActions()
         hotKeyManager.cancelDirectionalMoveGesture(reason: "application-terminating")
@@ -1008,6 +1133,120 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ].joined(separator: "|")
         enriched.quickApps = settingsStore.quickApps
         return enriched
+    }
+
+    private func cliConfigurationSnapshot()
+        -> Result<WindowRangerCLIConfigurationSnapshot, WindowRangerCLIErrorCode> {
+        cliLaunchAtLoginController.refresh()
+        let applicationConfiguration = WindowRangerCLIApplicationConfiguration(
+            settings: settingsStore.cliConfigurationSnapshot(),
+            launchAtLoginEnabled: cliLaunchAtLoginController.isEnabled,
+            updates: WindowRangerCLIUpdateConfiguration(
+                betaUpdatesEnabled: updateController.betaUpdatesEnabled,
+                automaticChecksEnabled: updateController.automaticChecksEnabled,
+                automaticDownloadsEnabled: updateController.automaticDownloadsEnabled
+            ),
+            onboarding: onboardingProgressStore.configurationSnapshot
+        )
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let data = try encoder.encode(applicationConfiguration)
+            let document = try JSONDecoder().decode(WindowRangerCLIJSONValue.self, from: data)
+            return .success(.init(revision: Self.cliRevision(for: data), document: document))
+        } catch {
+            diagnostics.log(
+                category: "cli",
+                event: "configuration-encode-failed",
+                fields: ["error": String(describing: type(of: error))]
+            )
+            return .failure(.internalError)
+        }
+    }
+
+    private func validateCLIConfiguration(
+        _ document: WindowRangerCLIJSONValue
+    ) -> Result<WindowRangerCLIJSONValue, WindowRangerCLIErrorCode> {
+        switch decodedCLIConfiguration(document) {
+        case .failure:
+            return .failure(.invalidRequest)
+        case let .success(configuration):
+            switch configuration.validated() {
+            case .failure:
+                return .failure(.invalidRequest)
+            case let .success(normalized):
+                do {
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.sortedKeys]
+                    let data = try encoder.encode(normalized)
+                    return .success(try JSONDecoder().decode(WindowRangerCLIJSONValue.self, from: data))
+                } catch {
+                    return .failure(.internalError)
+                }
+            }
+        }
+    }
+
+    private func applyCLIConfiguration(
+        _ document: WindowRangerCLIJSONValue,
+        expectedRevision: String
+    ) -> Result<WindowRangerCLIConfigurationSnapshot, WindowRangerCLIErrorCode> {
+        guard case let .success(current) = cliConfigurationSnapshot() else {
+            return .failure(.internalError)
+        }
+        guard current.revision == expectedRevision else { return .failure(.staleState) }
+        guard case let .success(decoded) = decodedCLIConfiguration(document),
+              case let .success(configuration) = decoded.validated()
+        else { return .failure(.invalidRequest) }
+        if let preflightError = configuration.applicationPreflightError(
+            currentlyICloudSyncEnabled: settingsStore.iCloudSyncEnabled
+        ) {
+            // Turning sync on may immediately replace this Mac's library with an accepted remote
+            // copy. Keep that explicit asynchronous choice separate from atomic config replacement.
+            return .failure(preflightError)
+        }
+
+        // Registration is the only fallible external setting. Do it after complete validation and
+        // before the otherwise deterministic in-process replacement so a failure cannot leave a
+        // half-applied WindowRanger configuration.
+        cliLaunchAtLoginController.setEnabled(configuration.launchAtLoginEnabled)
+        cliLaunchAtLoginController.refresh()
+        guard cliLaunchAtLoginController.isEnabled == configuration.launchAtLoginEnabled else {
+            return .failure(.unavailable)
+        }
+
+        switch settingsStore.applyCLIConfiguration(configuration.settings) {
+        case .failure:
+            return .failure(.invalidRequest)
+        case .success:
+            break
+        }
+        updateController.betaUpdatesEnabled = configuration.updates.betaUpdatesEnabled
+        updateController.automaticChecksEnabled = configuration.updates.automaticChecksEnabled
+        updateController.automaticDownloadsEnabled = configuration.updates.automaticDownloadsEnabled
+        guard onboardingProgressStore.apply(configuration: configuration.onboarding) else {
+            return .failure(.invalidRequest)
+        }
+        return cliConfigurationSnapshot()
+    }
+
+    private func decodedCLIConfiguration(
+        _ document: WindowRangerCLIJSONValue
+    ) -> Result<WindowRangerCLIApplicationConfiguration, Error> {
+        do {
+            return .success(try WindowRangerCLIApplicationConfiguration.decodeStrict(from: document))
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    private static func cliRevision(for data: Data) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in data {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return String(format: "fnv1a64-%016llx", hash)
     }
 
     func shortcutRecordingStateDidChange(_ isRecording: Bool) {

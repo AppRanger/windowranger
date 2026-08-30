@@ -27,6 +27,7 @@ not an installable macOS app.
 - [Release channels and branching](docs/release-channels-and-branching.md)
 - [First GitHub release runbook](docs/first-github-release.md)
 - [Release notes template](docs/release-notes-template.md)
+- [Draft WindowRanger 1.0.0 release notes](docs/releases/v1.0.0.md)
 - [WindowRanger 0.1.0 Beta 10 release notes](docs/releases/v0.1.0-beta.10.md)
 - [Sparkle update design and release flow](docs/sparkle-updates.md)
 - [WindowRanger 0.1.0 Beta 9 release notes](docs/releases/v0.1.0-beta.9.md)
@@ -508,6 +509,52 @@ The spatial interaction/provider contract remains documented in
 preview deterministic tiled-tree transformations without Accessibility writes, then commit the
 validated proposal through one normal layout transaction. Tree state remains local to the current
 WindowServer session and never becomes synced profile configuration.
+
+## Command-line tool and agent skill
+
+WindowRanger includes a separately signed `windowranger` helper inside the app. General Settings can
+add a user-owned link at `~/.local/bin/windowranger` and, only when needed, an exact managed PATH
+block to zsh or bash's login file. It does not require administrator access, replace an existing
+command, or overwrite unrelated shell configuration. Removing it deletes only WindowRanger's exact
+link and managed block. Open a new terminal after changing PATH.
+
+The helper exposes both the familiar shortcuts and the complete first-party action/configuration
+surface:
+
+```text
+windowranger status [--json]
+windowranger capabilities [--json]
+windowranger workspaces [--names] [--json]
+windowranger workspace <id-or-key> [--json]
+windowranger layout <freeform|tiled|accordion> [--json]
+windowranger pause [--json]
+windowranger resume [--json]
+windowranger actions [--json]
+windowranger action <name> [--args <json>] [--json]
+windowranger config get [--json]
+windowranger config validate <file|-> [--json]
+windowranger config apply <file|-> --replace [--json]
+windowranger skill [--output <directory-or-SKILL.md> [--force]]
+```
+
+The helper is a thin client to the one running app and uses the same command dispatcher as in-app
+controls. `actions` discovers every stable user-facing runtime and system action. `config get`
+returns a versioned snapshot of all persisted WindowRanger settings, including reusable profiles and
+machine-local choices. Applying a configuration is deliberately a whole-document replacement: the
+caller must validate it, preserve its optimistic revision, and explicitly pass `--replace`, so an
+older export cannot silently overwrite newer edits. Enabling iCloud is kept out of whole-document
+replacement because joining may pull a different cloud library: it uses the separately confirmed
+`enable-icloud-sync` action, after which callers must fetch a fresh snapshot. Destructively replacing
+the cloud copy likewise requires the exact `replace-icloud-with-local` confirmation token.
+
+`--json` returns a bounded versioned envelope with code-only errors. Workspace IDs and keys are
+available for exact targeting; user-authored names are omitted from the convenience workspace list
+unless `--names` is supplied. Complete configuration output is intentionally private and includes
+user-authored names, app bundle identifiers and local display bindings; callers should avoid
+retaining or publishing it.
+`windowranger skill` prints a deterministic, privacy-safe `SKILL.md`, or writes it to a requested
+agent-skill directory without copying runtime workspace or window data. Existing files are refused
+unless `--force` is explicit, and symbolic-link destinations are always refused.
 
 ## Current behaviour and limits
 

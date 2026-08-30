@@ -48,6 +48,12 @@ jobs:
       - name: Check release script syntax
         run: zsh -n scripts/*.sh
 
+      - name: Verify deterministic release workflows
+        run: |
+          ./scripts/verify-release-build-registry.sh
+          ./scripts/verify-sparkle-feed-workflow.sh
+          ./scripts/verify-homebrew-cask-workflow.sh
+
       - name: Verify non-hosted test isolation
         run: ./scripts/verify-test-isolation.sh
 

@@ -5,8 +5,9 @@
 > Sparkle implementation. Those remain gated by the pre-release checklist.
 
 WindowRanger uses three release channels—Stable, Beta, and Dev—on a lightweight Gitflow-style
-branch model. Stable and Beta builds contain Sparkle support, with public-feed activation still a
-release gate. Dev is a rolling development-build stream and is not an auto-update channel.
+branch model. Stable and Beta builds contain Sparkle support; the first Beta feed became public at
+Beta 10 build 11. Each later feed change remains a separately approved release checkpoint. Dev is a
+rolling development-build stream and is not an auto-update channel.
 
 The initial pipeline is intentionally local-first. While the repository is private, an opt-in
 pre-push hook runs the non-hosted checkpoint against the exact pushed commit, and the maintainer can
@@ -142,10 +143,13 @@ increasing number by appending an `allocated` row to `config/release-builds.tsv`
 committing that reservation before the release branch is created or promoted. The ledger records
 published and superseded numbers permanently and permits only one active allocation. The release
 build must match that latest allocation and must also exceed every build already in the public
-appcast. Appcast generation rechecks the ledger from central `develop`, so a stale release branch
-cannot publish after a newer number is reserved, and rechecks the live appcast maximum immediately
-before staging. Mark the active row `published` after the feed is live, or `superseded` when
-abandoning it, before allocating another number.
+appcast. Mark the active row `published` once that exact immutable GitHub release is public, or
+`superseded` when abandoning it, before allocating another number. Appcast generation accepts only
+the latest pair whose state is `published` (even when a later candidate was superseded), verifies
+its local ZIP against the checksum attached to that GitHub
+release, rechecks the ledger from central `develop`, and rechecks the live appcast maximum
+immediately before staging. This keeps distribution preflight tied to an active allocation while
+allowing the separately approved feed checkpoint to happen after GitHub publication.
 
 ## Sparkle behaviour
 

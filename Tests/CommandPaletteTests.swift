@@ -169,7 +169,9 @@ final class CommandPaletteTests: XCTestCase {
         var requested: (Bool, String)?
         let dispatcher = WindowManagerCommandDispatcher(
             engine: WorkspaceEngine(workspaces: WorkspaceDefinition.defaults),
-            setPauseMode: { requested = ($0, $1) }
+            setPauseMode: { isPaused, correlationID, _ in
+                requested = (isPaused, correlationID)
+            }
         )
 
         XCTAssertEqual(

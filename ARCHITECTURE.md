@@ -14,6 +14,7 @@ parking them at a recoverable screen edge.
 |---|---|---|
 | Application lifecycle | `Sources/App` | Creates the shared stores/controllers, wires publishers, handles sleep/wake and graceful quit. |
 | Commands and hotkeys | `Sources/Commands`, `Sources/Hotkeys` | Shared typed command dispatch, conflict validation, Carbon registration and event routing. |
+| Command-line integration | `Sources/CLI`, `CommandLine/WindowRangerCLI` | Bundled thin client, bounded versioned protocol, same-user signed-peer IPC, safe PATH management and deterministic agent-skill output. |
 | Window engine | `Sources/Windows` | AX discovery, admission, membership, parking/restoration, focus, layout application and wake reconciliation. |
 | Reusable models | `Sources/Model` | Workspaces, layouts, profiles, display identity, app rules, window manipulation and radial-menu preferences. |
 | Settings | `Sources/Settings` | Profile/iCloud-backed configuration, machine-local state, searchable native UI and app-owned Settings-window routing. |
@@ -41,13 +42,37 @@ installing production hotkeys, asking for Accessibility permission or moving liv
    hide it; permission state comes from the same bounded, prompt-free monitor used by Settings.
 3. `WorkspaceEngine.start()` checks Accessibility trust, enumerates applications/windows and sends
    each candidate through the central admission classifier before it can enter any other subsystem.
-4. Hotkeys, the optional local workspace-swipe monitor, the menu bar, and the Command Palette emit
+4. Hotkeys, the optional local workspace-swipe monitor, the menu bar, the Command Palette, and the
+   authenticated local CLI emit
    `WindowManagerCommand` values through one dispatcher. The engine validates current context again
    before applying a mutation.
 5. Engine state changes update the menu bar, Settings utility visibility and the persisted local
    workspace session. Configuration changes flow in the opposite direction from `SettingsStore`
    into the engine through debounced publishers.
 6. Debug diagnostics attach correlation IDs to a command and its resulting AX/layout/focus work.
+
+The CLI executable is copied into `WindowRanger.app/Contents/Helpers/windowranger`; it never links or
+starts a second engine. A length-prefixed, 4 MiB-bounded Unix-domain message reaches the running app
+through a per-user socket. Both peers verify the current user, exact resolved executable path, Team
+ID and code identifier before exchanging version-2 JSON. The larger fixed ceiling accommodates the
+already bounded complete profile library without allowing unbounded allocation.
+
+The app serializes accepted commands onto its main actor and the existing command dispatcher. Stable
+action names are resolved against freshly captured command context, so callers cannot provide stale
+window identities or validation tokens. Request IDs provide bounded in-process replay protection.
+Each request also expires before the client's response timeout, including while fresh action context
+is being captured, preventing a command delayed behind a busy main actor from executing after the
+caller has already timed out.
+
+Complete configuration is encoded from and applied through `SettingsStore` and the app-owned updater,
+login-item and onboarding controllers; the helper never reads preference or cache files directly.
+The schema is independently versioned. Validation normalizes the entire document before mutation,
+and apply requires both explicit replacement confirmation and a matching deterministic revision.
+An atomic apply cannot turn iCloud on: joining is a separately confirmed action because the existing
+pull-first policy may legitimately select a different remote library. Destructive cloud replacement
+has its own distinct exact confirmation token.
+Workspace names remain omitted from the convenience list unless explicitly requested; complete
+configuration is an intentional private-data export.
 
 ## Virtual-workspace model
 

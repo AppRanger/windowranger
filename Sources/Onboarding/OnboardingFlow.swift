@@ -107,6 +107,25 @@ final class OnboardingProgressStore {
         return step
     }
 
+    var configurationSnapshot: WindowRangerCLIOnboardingConfiguration {
+        WindowRangerCLIOnboardingConfiguration(
+            requiresOnboarding: requiresOnboarding,
+            currentStep: currentStep.rawValue
+        )
+    }
+
+    func apply(configuration: WindowRangerCLIOnboardingConfiguration) -> Bool {
+        guard let step = OnboardingStep(rawValue: configuration.currentStep) else { return false }
+        if configuration.requiresOnboarding {
+            defaults.removeObject(forKey: Keys.completedVersion)
+            defaults.set(step.rawValue, forKey: Keys.currentStep(version: version))
+        } else {
+            defaults.set(version, forKey: Keys.completedVersion)
+            defaults.removeObject(forKey: Keys.currentStep(version: version))
+        }
+        return true
+    }
+
     func save(step: OnboardingStep) {
         guard requiresOnboarding else { return }
         defaults.set(step.rawValue, forKey: Keys.currentStep(version: version))

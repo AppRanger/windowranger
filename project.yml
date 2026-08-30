@@ -38,11 +38,40 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
     dependencies:
+      - target: WindowRangerCLI
+        link: false
+        codeSign: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Helpers
       - package: Sparkle
       - sdk: ApplicationServices.framework
       - sdk: Carbon.framework
       - sdk: ScreenCaptureKit.framework
       - sdk: ServiceManagement.framework
+      - sdk: Security.framework
+  WindowRangerCLI:
+    type: tool
+    platform: macOS
+    sources:
+      - path: CommandLine/WindowRangerCLI
+      - path: Sources/CLI
+        excludes:
+          - CLIPathManager.swift
+          - WindowRangerCLIActionBridge.swift
+          - WindowRangerCLIRequestRouter.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.appranger.WindowRanger.CLI
+        PRODUCT_NAME: windowranger
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 44NAD22AK6
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_APP_SANDBOX: NO
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - sdk: AppKit.framework
+      - sdk: Security.framework
   WindowRangerTests:
     type: bundle.unit-test
     platform: macOS
@@ -57,6 +86,7 @@ targets:
       - sdk: Carbon.framework
       - sdk: ScreenCaptureKit.framework
       - sdk: ServiceManagement.framework
+      - sdk: Security.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.appranger.WindowRangerTests

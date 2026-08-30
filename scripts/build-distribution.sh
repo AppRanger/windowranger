@@ -10,6 +10,7 @@ release_build_registry="$repository_root/config/release-builds.tsv"
 release_team_id="$(/usr/libexec/PlistBuddy -c 'Print :teamID' "$export_options" 2>/dev/null || true)"
 release_bundle_id="dev.appranger.WindowRanger"
 release_root="${WINDOWRANGER_RELEASE_ROOT:-$repository_root/.build/releases}"
+appcast_build_reader="$repository_root/scripts/read-sparkle-appcast-builds.sh"
 developer_directory="${WINDOWRANGER_DEVELOPER_DIR:-${DEVELOPER_DIR:-$(/usr/bin/xcode-select -p)}}"
 dmg_tool_root="${WINDOWRANGER_DMG_TOOL_ROOT:-$repository_root/.build/dmg-tools}"
 dmgbuild="${WINDOWRANGER_DMGBUILD:-$dmg_tool_root/bin/dmgbuild}"
@@ -134,6 +135,7 @@ require_command() {
 for required_command in git xcodegen xcodebuild codesign security ditto shasum hdiutil curl; do
     require_command "$required_command"
 done
+[[ -x "$appcast_build_reader" ]] || blockers+=("Missing appcast build reader: $appcast_build_reader")
 
 if [[ -x "$repository_root/scripts/verify-release-build-registry.sh" ]]; then
     if ! registry_result="$($repository_root/scripts/verify-release-build-registry.sh \
@@ -186,16 +188,15 @@ else
     if [[ "$appcast_http_code" != 200 ]]; then
         blockers+=("Could not download the current Sparkle appcast (HTTP $appcast_http_code); use --initial-update-feed only when the public endpoint authoritatively returns 404 or 410")
     else
-        latest_feed_build="$(
-            /usr/bin/grep -Eo 'sparkle:version="[1-9][0-9]*"' "$appcast_preflight" |
-                /usr/bin/sed -E 's/.*="([0-9]+)"/\1/' |
-                /usr/bin/sort -n |
-                /usr/bin/tail -1
-        )"
-        if [[ -z "$latest_feed_build" ]]; then
-            blockers+=("The current Sparkle appcast contains no numeric sparkle:version values")
-        elif (( build_number <= latest_feed_build )); then
-            blockers+=("Build $build_number must be greater than appcast build $latest_feed_build")
+        if [[ -x "$appcast_build_reader" ]]; then
+            if ! feed_builds="$($appcast_build_reader "$appcast_preflight" 2>/dev/null)"; then
+                blockers+=("The current Sparkle appcast contains invalid build history")
+            else
+                latest_feed_build="$(print -r -- "$feed_builds" | /usr/bin/tail -1)"
+                if (( build_number <= latest_feed_build )); then
+                    blockers+=("Build $build_number must be greater than appcast build $latest_feed_build")
+                fi
+            fi
         fi
     fi
 fi
