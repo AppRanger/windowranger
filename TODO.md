@@ -3972,11 +3972,19 @@ second copy of that checklist.
   `docs/releases/v1.0.0.md`. The CLI and release-tooling changes were integrated into `develop` by
   PR #77, build 12 is allocated as the first Stable candidate, and exact release source was promoted
   to `main` through PR #79 after its protected release checks passed. The first credentialed build
-  passed all 857 non-hosted tests, static analysis, and archive creation, but Developer ID export
-  exposed that the new CLI target was also being installed as a standalone archive product. That
-  made Xcode classify the result as a generic multi-product archive. The CLI is being corrected to
-  remain embedded-only, with a deterministic `SKIP_INSTALL` release guard. No signed artifact,
-  notarization, tag, draft release, appcast change, or Homebrew publication has occurred.
+  exposed and PR #80 fixed the new CLI target being installed as a second archive product; PR #81
+  synced the embedded-only fix and deterministic `SKIP_INSTALL` guard back to `develop`.
+- **1.0.0 candidate evidence:** Stable Xcode 26.6 built candidate `1.0.0` build 12 from exact `main`
+  commit `9a5c26e9b30226c86b4e39bf7e32305a30c6524d` after all 857 non-hosted tests and static analysis
+  passed. The app and embedded CLI are universal `arm64`/`x86_64`, carry the expected Developer ID
+  team and Hardened Runtime, and pass strict nested-signature verification. Apple accepted the app
+  (`f63dcde6-be8f-448e-be5c-8cfc7348bccf`) and DMG
+  (`d4db64d4-6049-4630-be12-bdea055bf08f`) notarizations with zero logged issues; both tickets are
+  stapled and Gatekeeper accepts both artifacts. The independently verified SHA-256 values are
+  `9820099f19240d64b500cdd5e4121ec8ea6f34d53cdb6c6313d8cfebd8711d25` for the ZIP and
+  `387f50a42a542729f27efb6c473e771568bb0701e049e71d3c6210ff0215f604` for the DMG. Exact packaged
+  installation/live validation remains required. No tag, draft release, appcast change, or Homebrew
+  publication has occurred.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
