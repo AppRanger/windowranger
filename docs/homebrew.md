@@ -5,11 +5,11 @@ immutable DMG offered as the direct download. Beta and Dev builds are deliberate
 Creating a Cask file, publishing an AppRanger tap, and submitting to `homebrew/cask` are separate
 checkpoints; none authorizes another.
 
-## Current route
+## Published route
 
 The main `homebrew/cask` repository applies notability requirements to new submissions. Until
-WindowRanger meets the current threshold, publish the reviewed Cask through a separately approved
-`AppRanger/homebrew-tap` repository. That route installs directly with:
+WindowRanger meets the current threshold, the reviewed Stable Cask is published through the public
+[`AppRanger/homebrew-tap`](https://github.com/AppRanger/homebrew-tap) repository. Install it with:
 
 ```sh
 brew install --cask appranger/tap/windowranger
@@ -17,7 +17,11 @@ brew install --cask appranger/tap/windowranger
 
 After `brew tap appranger/tap`, the shorter `brew install --cask windowranger` also works. Once the
 app is eligible and accepted upstream, the unqualified command works without the AppRanger tap.
-Do not open either repository or submit a pull request without explicit maintainer approval.
+
+The published 1.0.0 Cask was generated from the exact public release DMG. Homebrew 6 style and
+strict online tap audit passed after fetching the Cask from the public repository, and `brew info`
+resolved version 1.0.0 with the intended application artifact. The install, upgrade, uninstall,
+`--zap`, cross-architecture, and macOS privacy-permission checks below remain live validation.
 
 ## Generate the exact Cask
 
@@ -77,9 +81,9 @@ Before uninstalling, a user who enabled **Add to PATH** should use **Remove from
 Settings. A later dedicated, ownership-checking uninstall helper may automate that without risking
 another tool's link or deleting a user's shell file.
 
-## Stable acceptance boundary
+## Remaining Stable live-validation boundary
 
-Before advertising the Homebrew command:
+Before treating Homebrew distribution as fully live-validated:
 
 1. Generate from the exact public Stable DMG with `--verify-public`.
 2. Run the selected tap's current style and online audit checks.

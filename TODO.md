@@ -3886,13 +3886,13 @@ second copy of that checklist.
 ### WR-014 — Distribution, updates, notarization, and publication
 
 - **Type:** Release epic
-- **Status:** In progress. The maintainer approved repairing the updater path, signing and deploying
-  the Beta 10 feed, and adding Stable Homebrew installation on 30 August 2026. The first feed is
-  live and its packaged Beta 7-to-Beta-10 upgrade passed maintainer validation. Tap
-  submission/publication and later release actions remain separately held until explicitly
-  approved.
+- **Status:** In progress. With explicit maintainer approval on 30 August 2026, the Beta 10 updater
+  repair, public 1.0.0 Stable release, combined Stable/Beta feed, and Stable Homebrew tap were
+  published. The packaged Beta 7-to-Beta-10 upgrade and exact 1.0.0 DMG installation passed
+  maintainer validation. Remaining updater and Homebrew live-validation work is recorded below;
+  each later release remains separately held until explicitly approved.
 - **Decided:** Stable (`main`), Beta (`release/*`), and Dev (`develop`) channels using the documented
-  Gitflow-style promotion model. Sparkle is the intended future updater for the default Stable and
+  Gitflow-style promotion model. Sparkle is the updater for the default Stable and
   opt-in Beta channels; Dev remains outside auto-update feeds.
 - **Updater feature boundary:**
   - integrate Sparkle as the signed update framework for distributable builds;
@@ -3958,19 +3958,19 @@ second copy of that checklist.
   upgrade to Beta 10 completed successfully and the resulting app worked normally.
 - **Remaining scope:** Back up the release EdDSA key through the maintainer's secure credential
   process; validate cancellation/failure/Beta-to-Stable/rollback behavior; then decide when
-  automatic checking can default on. Accessibility migration guidance, Homebrew Stable
-  distribution, and update/rollback failure handling also remain.
+  automatic checking can default on. Update/rollback failure handling and the Homebrew install,
+  upgrade, uninstall, `--zap`, architecture, and macOS privacy-permission matrix also remain.
 - **Homebrew preparation:** Stable-only Cask generation now verifies the local DMG checksum and can
   require a public, immutable, non-prerelease GitHub release whose DMG is byte-identical. The
   generated Cask declares Sparkle coexistence, macOS 14, ordinary uninstall that preserves user
   configuration, and an explicit local-only `--zap` scope. Deterministic fixtures reject Beta,
   malformed or mismatched artifacts, prerelease metadata, silent overwrite, and failed-publication
-  mutation. The public v1 artifact generated the exact Cask successfully. Homebrew 6 audit then
-  identified its now-deprecated `verified:` URL parameter before tap publication; the generator and
-  deterministic workflow are being updated to omit it. The main Homebrew Cask still fails the
+  mutation. The public v1 artifact generated the exact Cask successfully. Homebrew 6 audit found
+  and prompted removal of its deprecated `verified:` URL parameter before publication; the
+  deterministic workflow now rejects that regression. The main Homebrew Cask still fails the
   documented notability threshold, so the separately approved `AppRanger/homebrew-tap` route is
-  being used instead.
-- **1.0.0 candidate preparation:** The first Stable release notes are drafted at
+  used instead.
+- **1.0.0 candidate preparation:** The first Stable release notes are published at
   `docs/releases/v1.0.0.md`. The CLI and release-tooling changes were integrated into `develop` by
   PR #77, build 12 is allocated as the first Stable candidate, and exact release source was promoted
   to `main` through PR #79 after its protected release checks passed. The first credentialed build
@@ -3990,8 +3990,22 @@ second copy of that checklist.
   commit `9a5c26e9b30226c86b4e39bf7e32305a30c6524d`. The public non-prerelease GitHub release contains
   the expected DMG, ZIP, both checksum files, and provenance manifest; all five downloaded assets
   round-trip verified against the immutable tag and local candidate. Build 12 is therefore marked
-  `published` in the central ledger. Stable appcast and Homebrew publication remain in progress as
-  separately verified release stages.
+  `published` in the central ledger.
+- **1.0.0 feed publication:** The signed feed retaining Beta 10 build 11 and adding Stable 1.0.0
+  build 12 plus its delta was deployed through Cloudflare version
+  `1f3fc001-8180-4255-ae77-b71cefd1c16c`. The live appcast has SHA-256
+  `8d54a8db20539ec56119af39e4281da25217b533987536182b6ca7dbdeb47c09`; all three downloaded
+  payloads match the deployment source, and Sparkle accepts every live enclosure and delta
+  signature. The XML, ZIP, and cache headers were also checked at their public endpoints.
+- **Homebrew publication:** The public
+  [`AppRanger/homebrew-tap`](https://github.com/AppRanger/homebrew-tap) contains the exact Stable
+  1.0.0 Cask with SHA-256
+  `b1403c2263c5185f053df1ccbc4866e5357e066b64cf796a1246df6f35461363`. After a fresh public tap,
+  Homebrew 6 style and strict online audit passed, and `brew info` resolved version 1.0.0, the macOS
+  14 minimum, automatic-update declaration, and application artifact. The supported install command
+  is `brew install --cask appranger/tap/windowranger`. Installation was intentionally not run on the
+  maintainer's current Mac because it could replace the already validated working copy; install,
+  upgrade, uninstall, `--zap`, architecture, and privacy-permission behavior remain live validation.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
