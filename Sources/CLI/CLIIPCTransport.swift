@@ -38,7 +38,7 @@ enum CLIIPCTransportError: Error, Equatable, LocalizedError {
         case .peerUserMismatch: "The WindowRanger command peer belongs to another user."
         case .peerProcessUnavailable: "The WindowRanger command peer process could not be verified."
         case .peerSignatureRejected: "The WindowRanger command peer has an unexpected code signature."
-        case .peerPathRejected: "The WindowRanger command peer is not the bundled executable."
+        case .peerPathRejected: "The WindowRanger command peer is not the expected bundled code."
         }
     }
 }
@@ -47,17 +47,28 @@ struct CLIIPCPeerPolicy: Sendable {
     static let teamIdentifier = "44NAD22AK6"
 
     let codeIdentifier: String
-    let executableURL: URL
+    let codeLocationURL: URL
     let teamIdentifier: String
 
     init(
         codeIdentifier: String,
-        executableURL: URL,
+        codeLocationURL: URL,
         teamIdentifier: String = Self.teamIdentifier
     ) {
         self.codeIdentifier = codeIdentifier
-        self.executableURL = executableURL
+        self.codeLocationURL = codeLocationURL
         self.teamIdentifier = teamIdentifier
+    }
+
+    static func windowRangerApp(
+        bundleURL: URL,
+        teamIdentifier: String = Self.teamIdentifier
+    ) -> Self {
+        Self(
+            codeIdentifier: "dev.appranger.WindowRanger",
+            codeLocationURL: bundleURL,
+            teamIdentifier: teamIdentifier
+        )
     }
 
     func verify(socket: Int32) throws {
@@ -112,7 +123,7 @@ struct CLIIPCPeerPolicy: Sendable {
             throw CLIIPCTransportError.peerProcessUnavailable
         }
         let observedURL = (codeURL as URL).standardizedFileURL.resolvingSymlinksInPath()
-        let expectedURL = executableURL.standardizedFileURL.resolvingSymlinksInPath()
+        let expectedURL = codeLocationURL.standardizedFileURL.resolvingSymlinksInPath()
         guard observedURL == expectedURL else {
             throw CLIIPCTransportError.peerPathRejected
         }
