@@ -45,7 +45,7 @@ promotion and versioning. It is a design authority, not evidence that the releas
 - [x] Run static analysis and address compiler warnings relevant to project code.
 - [x] Build universal Release and verify bundle ID, architectures, entitlements and Developer ID
       signature.
-- [ ] Verify the universal Developer ID build embeds `Contents/Helpers/windowranger` with the
+- [x] Verify the universal Developer ID build embeds `Contents/Helpers/windowranger` with the
       expected Team ID, code identifier, Hardened Runtime and nested-signature validity.
 - [ ] On a clean user account, add/remove the CLI from General Settings, open a new terminal, and
       smoke-test status, action discovery/invocation, workspace switch, layout, pause/resume, JSON
