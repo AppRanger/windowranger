@@ -2,6 +2,15 @@ import Foundation
 import XCTest
 
 final class CLIIPCTransportTests: XCTestCase {
+    func testWindowRangerAppPolicyUsesBundleCodeLocation() {
+        let bundleURL = URL(fileURLWithPath: "/Applications/WindowRanger.app", isDirectory: true)
+        let policy = CLIIPCPeerPolicy.windowRangerApp(bundleURL: bundleURL)
+
+        XCTAssertEqual(policy.codeIdentifier, "dev.appranger.WindowRanger")
+        XCTAssertEqual(policy.codeLocationURL, bundleURL)
+        XCTAssertEqual(policy.teamIdentifier, CLIIPCPeerPolicy.teamIdentifier)
+    }
+
     func testRoundTripUsesBoundedLengthPrefixedMessages() throws {
         let socketPath = temporarySocketPath()
         let server = CLIIPCServer(
