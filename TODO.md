@@ -3983,8 +3983,13 @@ second copy of that checklist.
   stapled and Gatekeeper accepts both artifacts. The independently verified SHA-256 values are
   `9820099f19240d64b500cdd5e4121ec8ea6f34d53cdb6c6313d8cfebd8711d25` for the ZIP and
   `387f50a42a542729f27efb6c473e771568bb0701e049e71d3c6210ff0215f604` for the DMG. Exact packaged
-  installation/live validation remains required. No tag, draft release, appcast change, or Homebrew
-  publication has occurred.
+  installation/live validation was completed by the maintainer without an observed issue.
+- **1.0.0 GitHub publication:** The protected annotated tag `v1.0.0` resolves to exact candidate
+  commit `9a5c26e9b30226c86b4e39bf7e32305a30c6524d`. The public non-prerelease GitHub release contains
+  the expected DMG, ZIP, both checksum files, and provenance manifest; all five downloaded assets
+  round-trip verified against the immutable tag and local candidate. Build 12 is therefore marked
+  `published` in the central ledger. Stable appcast and Homebrew publication remain in progress as
+  separately verified release stages.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
