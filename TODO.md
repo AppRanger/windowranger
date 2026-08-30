@@ -3969,10 +3969,10 @@ second copy of that checklist.
   exists yet. The main Homebrew Cask currently fails the documented notability threshold, so an
   AppRanger tap is the immediate route once separately approved.
 - **1.0.0 candidate preparation:** The first Stable release notes are drafted at
-  `docs/releases/v1.0.0.md`. The next public build is 12, but it remains deliberately unallocated
-  until the CLI and release-tooling changes are committed, reviewed, and integrated into `develop`.
-  No Stable branch promotion, signed artifact, notarization, tag, draft release, appcast change, or
-  Homebrew publication has occurred.
+  `docs/releases/v1.0.0.md`. The CLI and release-tooling changes were integrated into `develop` by
+  PR #77, and build 12 is now allocated as the first Stable candidate. No Stable branch promotion,
+  signed artifact, notarization, tag, draft release, appcast change, or Homebrew publication has
+  occurred.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
