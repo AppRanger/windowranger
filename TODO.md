@@ -1802,8 +1802,10 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Integration contract and CLI
 - **Priority:** P2
-- **Status:** Automated source implementation complete for the complete WindowRanger CLI v2 surface;
-  signed installed validation and the separate DesktopRanger adapter remain.
+- **Status:** Source implementation complete for the complete WindowRanger CLI v2 surface. Signed
+  installed validation exposed a blocking packaged-peer path comparison defect; the narrow source
+  correction is implemented, while replacement signed build validation and the separate
+  DesktopRanger adapter remain.
 - **Source:** `docs/desktop-ranger-integration.md`
 - **Requested outcome:** Define a versioned, non-interactive WindowRanger command contract that gives
   first-party callers access to every stable user-facing action and persisted setting without giving
@@ -1841,6 +1843,17 @@ smallest useful outcome and acceptance boundary.
   generated skill passes the Codex skill validator. Prior v1 signed arm64 and universal bundles
   passed nested-signature validation. Exact v2 installed PATH/UI interaction, live signed IPC,
   relaunch, concurrent-process and DesktopRanger two-app checks remain required.
+- **User-observed signed-package failure:** During the public Homebrew 1.0.0 install test on
+  30 August 2026, `windowranger version` correctly reported 1.0.0 build 12, but every IPC-backed
+  command rejected the running app with `The WindowRanger command peer is not the bundled
+  executable.` The same exact DMG-installed build failed before Homebrew replacement, so this is not
+  a Cask fault. The app and helper have the expected Team ID, identifiers, signatures, universal
+  architectures, and installed paths. Apple documents that `SecCodeCopyPath` returns the bundle
+  directory for bundled code; the CLI instead compares that result with
+  `Contents/MacOS/WindowRanger`. The smallest security-preserving repair is to compare the known app
+  bundle root while retaining the same-user, Team ID, code-identifier, and exact helper checks. The
+  1.0.1 source correction now does exactly that and adds a policy regression test; signed installed
+  IPC remains the acceptance boundary.
 
 ### WR-070 — Add a branded, settings-backed first-run onboarding wizard
 
@@ -3972,11 +3985,50 @@ second copy of that checklist.
   `docs/releases/v1.0.0.md`. The CLI and release-tooling changes were integrated into `develop` by
   PR #77, build 12 is allocated as the first Stable candidate, and exact release source was promoted
   to `main` through PR #79 after its protected release checks passed. The first credentialed build
-  passed all 857 non-hosted tests, static analysis, and archive creation, but Developer ID export
-  exposed that the new CLI target was also being installed as a standalone archive product. That
-  made Xcode classify the result as a generic multi-product archive. The CLI is being corrected to
-  remain embedded-only, with a deterministic `SKIP_INSTALL` release guard. No signed artifact,
-  notarization, tag, draft release, appcast change, or Homebrew publication has occurred.
+  exposed and PR #80 fixed the new CLI target being installed as a second archive product; PR #81
+  synced the embedded-only fix and deterministic `SKIP_INSTALL` guard back to `develop`.
+- **1.0.0 candidate evidence:** Stable Xcode 26.6 built candidate `1.0.0` build 12 from exact `main`
+  commit `9a5c26e9b30226c86b4e39bf7e32305a30c6524d` after all 857 non-hosted tests and static analysis
+  passed. The app and embedded CLI are universal `arm64`/`x86_64`, carry the expected Developer ID
+  team and Hardened Runtime, and pass strict nested-signature verification. Apple accepted the app
+  (`f63dcde6-be8f-448e-be5c-8cfc7348bccf`) and DMG
+  (`d4db64d4-6049-4630-be12-bdea055bf08f`) notarizations with zero logged issues; both tickets are
+  stapled and Gatekeeper accepts both artifacts. The independently verified SHA-256 values are
+  `9820099f19240d64b500cdd5e4121ec8ea6f34d53cdb6c6313d8cfebd8711d25` for the ZIP and
+  `387f50a42a542729f27efb6c473e771568bb0701e049e71d3c6210ff0215f604` for the DMG. Exact packaged
+  installation/live validation was completed by the maintainer without an observed issue.
+- **1.0.0 GitHub publication:** The protected annotated tag `v1.0.0` resolves to exact candidate
+  commit `9a5c26e9b30226c86b4e39bf7e32305a30c6524d`. The public non-prerelease GitHub release contains
+  the expected DMG, ZIP, both checksum files, and provenance manifest; all five downloaded assets
+  round-trip verified against the immutable tag and local candidate. Build 12 is therefore marked
+  `published` in the central ledger.
+- **1.0.0 feed publication:** The signed feed retaining Beta 10 build 11 and adding Stable 1.0.0
+  build 12 plus its delta was deployed through Cloudflare version
+  `1f3fc001-8180-4255-ae77-b71cefd1c16c`. The live appcast has SHA-256
+  `8d54a8db20539ec56119af39e4281da25217b533987536182b6ca7dbdeb47c09`; all three downloaded
+  payloads match the deployment source, and Sparkle accepts every live enclosure and delta
+  signature. The XML, ZIP, and cache headers were also checked at their public endpoints.
+- **Homebrew publication:** The public
+  [`AppRanger/homebrew-tap`](https://github.com/AppRanger/homebrew-tap) contains the exact Stable
+  1.0.0 Cask with SHA-256
+  `b1403c2263c5185f053df1ccbc4866e5357e066b64cf796a1246df6f35461363`. After a fresh public tap,
+  Homebrew 6 style and strict online audit passed, and `brew info` resolved version 1.0.0, the macOS
+  14 minimum, automatic-update declaration, and application artifact. The supported install command
+  is `brew install --cask appranger/tap/windowranger`.
+- **Homebrew live evidence:** On 30 August 2026, Homebrew 6 installed the public Cask on an Apple
+  Silicon Mac running macOS 27. The resulting 1.0.0 build 12 has the expected bundle identifier,
+  Team ID, notarized Developer ID acceptance, stapled ticket, strict nested signature, and universal
+  app/helper architectures. Reinstall preserved the preference domain byte-for-byte. Ordinary
+  uninstall removed the app while retaining all four existing declared local-state locations and
+  byte-identical preferences; reinstall retained them again. Explicit `--zap` removed all nine
+  declared current/legacy paths while leaving shell-startup and CLI PATH-link state unchanged. A
+  private backup then restored the four paths that existed before the test and the preference domain
+  byte-for-byte before final Cask reinstall and launch. Homebrew's first ordinary uninstall also
+  auto-removed an unrelated unneeded `go@1.26` formula; it was restored at the same 1.26.7 version
+  and autoremove was explicitly disabled for the zap test. The Homebrew-managed app is installed and
+  running. Intel, a real later-version Homebrew/Sparkle upgrade in both orders, Settings PATH UI,
+  and macOS privacy-permission retention remain live validation. The separately tracked WR-074 CLI
+  peer-path failure prevents claiming packaged CLI runtime acceptance for 1.0.0.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done

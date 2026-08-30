@@ -17,7 +17,14 @@ brew install --cask appranger/tap/windowranger
 
 After `brew tap appranger/tap`, the shorter `brew install --cask windowranger` also works. Once the
 app is eligible and accepted upstream, the unqualified command works without the AppRanger tap.
-Do not open either repository or submit a pull request without explicit maintainer approval.
+
+The published 1.0.0 Cask was generated from the exact public release DMG. Homebrew 6 style and
+strict online tap audit passed after fetching the Cask from the public repository, and `brew info`
+resolved version 1.0.0 with the intended application artifact. On 30 August 2026, the public Cask
+also passed install, reinstall, ordinary uninstall, explicit `--zap`, state restoration, and final
+reinstall on an Apple Silicon Mac running macOS 27. The later-version upgrade paths, Intel,
+Settings-managed PATH interaction, and macOS privacy-permission checks below remain live
+validation.
 
 ## Generate the exact Cask
 
@@ -81,12 +88,12 @@ Before advertising the Homebrew command:
 
 1. Generate from the exact public Stable DMG with `--verify-public`.
 2. Run the selected tap's current style and online audit checks.
-3. Install on both Apple Silicon and Intel-supported environments without first placing another
-   WindowRanger copy in `/Applications`.
+3. Complete the already-passing Apple Silicon install lifecycle on an Intel-supported environment
+   without first placing another WindowRanger copy in `/Applications`.
 4. Launch and verify the app version, bundle identifier, Developer ID signature, notarization,
    embedded universal CLI, and Settings-managed PATH action.
 5. Upgrade through Homebrew and Sparkle in both orders and confirm neither path downgrades the app.
-6. Verify ordinary uninstall preserves configuration, while `--zap` removes exactly its declared
-   local scope.
+6. Retain the passing evidence that ordinary uninstall preserves configuration, while `--zap`
+   removes exactly its declared local scope.
 7. Retest Accessibility and Screen Recording permission behavior. Matching bundle identity and
    signature are necessary but do not prove macOS will preserve either permission.
