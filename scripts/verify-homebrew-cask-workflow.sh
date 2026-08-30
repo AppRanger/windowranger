@@ -35,6 +35,10 @@ expected_checksum="$(/usr/bin/shasum -a 256 "$release_directory/$dmg_name" | /us
 /usr/bin/grep -Fq 'auto_updates true' "$output"
 /usr/bin/grep -Fq 'depends_on macos: :sonoma' "$output"
 /usr/bin/grep -Fq 'uninstall quit: "dev.appranger.WindowRanger"' "$output"
+if /usr/bin/grep -Fq 'verified:' "$output"; then
+    print -u2 "Generator emitted Homebrew's deprecated verified URL parameter"
+    exit 1
+fi
 
 before_existing="$(/usr/bin/shasum -a 256 "$output" | /usr/bin/awk '{ print $1 }')"
 if run_generator 2>/dev/null; then
