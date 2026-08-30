@@ -1802,10 +1802,9 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Integration contract and CLI
 - **Priority:** P2
-- **Status:** Source implementation complete for the complete WindowRanger CLI v2 surface. Signed
-  installed validation exposed a blocking packaged-peer path comparison defect; the narrow source
-  correction is implemented, while replacement signed build validation and the separate
-  DesktopRanger adapter remain.
+- **Status:** Source implementation and signed installed validation are complete for the packaged
+  WindowRanger CLI v2 peer correction. Complete PATH/UI and mutating configuration validation plus
+  the separate DesktopRanger adapter remain.
 - **Source:** `docs/desktop-ranger-integration.md`
 - **Requested outcome:** Define a versioned, non-interactive WindowRanger command contract that gives
   first-party callers access to every stable user-facing action and persisted setting without giving
@@ -1836,13 +1835,13 @@ smallest useful outcome and acceptance boundary.
   General Settings can conservatively add/remove `~/.local/bin/windowranger` without administrator
   access, unrelated shell-file edits, or lost startup-file metadata. `windowranger skill` prints or
   safely writes a deterministic agent skill with no runtime data.
-- **Automated evidence:** All 857 non-hosted tests pass, including strict protocol/configuration
+- **Automated evidence:** All 858 non-hosted tests pass, including strict protocol/configuration
   shape checks, no-mutation invalid apply, cloud confirmation policy, async deadline/late-completion
   handling, concurrent retry coalescing, 128 KiB transport, peer rejection, safe PATH and skill
   export. Unsigned Debug app and helper builds succeed as universal arm64/x86_64 executables, and the
   generated skill passes the Codex skill validator. Prior v1 signed arm64 and universal bundles
-  passed nested-signature validation. Exact v2 installed PATH/UI interaction, live signed IPC,
-  relaunch, concurrent-process and DesktopRanger two-app checks remain required.
+  passed nested-signature validation. Exact v2 installed PATH/UI interaction, mutating configuration,
+  and DesktopRanger two-app checks remain required.
 - **User-observed signed-package failure:** During the public Homebrew 1.0.0 install test on
   30 August 2026, `windowranger version` correctly reported 1.0.0 build 12, but every IPC-backed
   command rejected the running app with `The WindowRanger command peer is not the bundled
@@ -1852,8 +1851,13 @@ smallest useful outcome and acceptance boundary.
   directory for bundled code; the CLI instead compares that result with
   `Contents/MacOS/WindowRanger`. The smallest security-preserving repair is to compare the known app
   bundle root while retaining the same-user, Team ID, code-identifier, and exact helper checks. The
-  1.0.1 source correction now does exactly that and adds a policy regression test; signed installed
-  IPC remains the acceptance boundary.
+  1.0.1 correction does exactly that and adds a policy regression test.
+- **Signed installed correction evidence:** The exact notarized 1.0.1 build 13 DMG was installed at
+  `/Applications` before publication. Its embedded universal CLI completed authenticated status,
+  capabilities, 37-action discovery, nine-workspace discovery, full configuration read/validation,
+  and skill generation. Eight concurrent signed clients succeeded, and signed IPC recovered after a
+  full app quit and relaunch. This exercises both app-to-helper and helper-to-app peer verification
+  without weakening any identity check.
 
 ### WR-070 — Add a branded, settings-backed first-run onboarding wizard
 
@@ -4004,6 +4008,15 @@ second copy of that checklist.
   the expected DMG, ZIP, both checksum files, and provenance manifest; all five downloaded assets
   round-trip verified against the immutable tag and local candidate. Build 12 is therefore marked
   `published` in the central ledger.
+- **1.0.1 GitHub publication:** The protected annotated tag `v1.0.1` resolves to exact `main` commit
+  `22049ae01d9ade88fd9d0eb7eb5ac8a0cfb8838b`. Stable Xcode 26.6 produced universal build 13;
+  Apple accepted both app and DMG notarizations with zero issues, and the signed installed CLI peer
+  correction passed the live checks recorded under WR-074. The public non-prerelease release's five
+  assets round-trip verified against SHA-256
+  `781715f5ef1deb63534553c44c42eb5048e758a867fb2d5525d9e5938091909a` for the ZIP and
+  `6bf88eec14cf28d4dae03b3d27ddbf7898b0c2e1d505e57c9cb05f13c7a31f90` for the DMG. Build 13 is
+  therefore marked `published` in the central ledger; signed-feed and Homebrew 1.0.1 publication
+  remain separate checkpoints.
 - **1.0.0 feed publication:** The signed feed retaining Beta 10 build 11 and adding Stable 1.0.0
   build 12 plus its delta was deployed through Cloudflare version
   `1f3fc001-8180-4255-ae77-b71cefd1c16c`. The live appcast has SHA-256
