@@ -184,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let peerPolicy = CLIIPCPeerPolicy(
             codeIdentifier: "windowranger",
-            executableURL: helperURL
+            codeLocationURL: helperURL
         )
         return CLIIPCServer(peerPolicy: peerPolicy, asyncHandler: { [weak self] request, completion in
             DispatchQueue.main.async {

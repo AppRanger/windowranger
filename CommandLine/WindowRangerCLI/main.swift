@@ -306,15 +306,11 @@ private enum WindowRangerCommandLine {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let appURL = try enclosingAppURL()
-        let appExecutable = appURL
-            .appendingPathComponent("Contents", isDirectory: true)
-            .appendingPathComponent("MacOS", isDirectory: true)
-            .appendingPathComponent("WindowRanger", isDirectory: false)
         let client = CLIIPCClient(
-            peerPolicy: CLIIPCPeerPolicy(
-                codeIdentifier: "dev.appranger.WindowRanger",
-                executableURL: appExecutable
-            ),
+            // SecCodeCopyPath returns a bundle's root rather than its main executable. The code
+            // identifier, Team ID and dynamic signature checks still bind this exact location to
+            // the trusted running WindowRanger app.
+            peerPolicy: .windowRangerApp(bundleURL: appURL),
             timeout: 1
         )
 
