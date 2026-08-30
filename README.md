@@ -1,20 +1,25 @@
 # WindowRanger
 
-> **Pre-release:** WindowRanger is under active development. Signed and notarized Beta builds are
-> publicly available, with live-validation work still outstanding.
+> **Stable release:** WindowRanger 1.0.0 is available as a signed and notarized macOS app.
 
 A small, native macOS virtual-workspace manager built around one workflow rather than a
 general-purpose command language.
 
-WindowRanger will use three release channels: Stable from `main`, Beta from release branches, and
+WindowRanger uses three release channels: Stable from `main`, Beta from release branches, and
 rolling Dev builds from `develop`. Stable and opt-in Beta builds contain Sparkle update support;
-Dev builds remain outside automatic updates. The public feed will be activated only after its first
-signed update archive passes the packaged-app upgrade checks.
+Dev builds remain outside automatic updates. The public signed feed serves Stable and Beta updates
+without offering Beta builds to Stable users.
 
 Download the signed and notarized
-[`v0.1.0-beta.10` GitHub prerelease](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.10)
+[`v1.0.0` GitHub release](https://github.com/AppRanger/windowranger/releases/tag/v1.0.0)
 as a DMG, with a notarized ZIP as a fallback. GitHub's automatically generated source archives are
 not an installable macOS app.
+
+Or install the Stable release from the public AppRanger Homebrew tap:
+
+```sh
+brew install --cask appranger/tap/windowranger
+```
 
 ## Project documentation
 
@@ -27,7 +32,8 @@ not an installable macOS app.
 - [Release channels and branching](docs/release-channels-and-branching.md)
 - [First GitHub release runbook](docs/first-github-release.md)
 - [Release notes template](docs/release-notes-template.md)
-- [Draft WindowRanger 1.0.0 release notes](docs/releases/v1.0.0.md)
+- [WindowRanger 1.0.0 release notes](docs/releases/v1.0.0.md)
+- [Homebrew distribution](docs/homebrew.md)
 - [WindowRanger 0.1.0 Beta 10 release notes](docs/releases/v0.1.0-beta.10.md)
 - [Sparkle update design and release flow](docs/sparkle-updates.md)
 - [WindowRanger 0.1.0 Beta 9 release notes](docs/releases/v0.1.0-beta.9.md)
