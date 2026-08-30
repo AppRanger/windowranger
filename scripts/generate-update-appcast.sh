@@ -9,14 +9,17 @@ version=""
 feed_directory=""
 sparkle_bin="${WINDOWRANGER_SPARKLE_BIN:-}"
 release_notes=""
-key_account="${WINDOWRANGER_SPARKLE_KEY_ACCOUNT:-ed25519}"
+key_account="${WINDOWRANGER_SPARKLE_KEY_ACCOUNT:-dev.appranger.WindowRanger.updates}"
 published_archive_prefix="https://windowranger.com/updates/"
 published_appcast_url="https://windowranger.com/appcast.xml"
+published_release_prefix="https://github.com/AppRanger/windowranger/releases/download/v"
 authoritative_registry_url="https://raw.githubusercontent.com/AppRanger/windowranger/develop/config/release-builds.tsv"
+appcast_build_reader="$repository_root/scripts/read-sparkle-appcast-builds.sh"
 test_release_inputs_enabled=false
+preflight_only=false
 
 usage() {
-    print "Usage: $script_name --version VERSION --feed-directory DIR --sparkle-bin DIR --release-notes FILE [--key-account ACCOUNT]"
+    print "Usage: $script_name --version VERSION --feed-directory DIR --sparkle-bin DIR --release-notes FILE [--key-account ACCOUNT] [--preflight]"
     print ""
     print "Adds an already notarized WindowRanger ZIP to a local signed Sparkle appcast."
     print "The command never creates keys, uploads files, deploys the website, or publishes a release."
@@ -54,6 +57,7 @@ while (( $# > 0 )); do
             key_account="$2"
             shift
             ;;
+        --preflight) preflight_only=true ;;
         -h|--help)
             usage
             exit 0
@@ -100,6 +104,7 @@ if [[ "${WINDOWRANGER_TEST_RELEASE_INPUTS:-0}" == 1 ]]; then
 fi
 
 [[ -x "$generate_appcast" ]] || { print -u2 "Sparkle tool not executable: $generate_appcast"; exit 1; }
+[[ -x "$appcast_build_reader" ]] || { print -u2 "Appcast build reader not executable: $appcast_build_reader"; exit 1; }
 [[ -d "$feed_directory" ]] || { print -u2 "Feed directory does not exist: $feed_directory"; exit 1; }
 [[ -d "$feed_parent" && -n "$feed_name" && "$feed_name" != . && "$feed_name" != .. ]] || {
     print -u2 "Feed directory must have a safe existing parent: $feed_directory"
@@ -119,6 +124,40 @@ print -r -- "$build_number" | /usr/bin/grep -Eq '^[1-9][0-9]*$' || {
 }
 (cd "$release_directory" && /usr/bin/shasum -a 256 -c "${checksum:t}")
 
+# Feed publication follows the public GitHub release. Refuse to sign a local archive unless it is
+# byte-for-byte identical to the checksum already published for that exact release tag.
+published_checksum_snapshot="$(/usr/bin/mktemp "${TMPDIR:-/tmp}/windowranger-release-checksum.XXXXXX")"
+if [[ "$test_release_inputs_enabled" == true ]]; then
+    test_published_checksum="$release_root/published-checksums/${archive_name}.sha256"
+    [[ -f "$test_published_checksum" ]] || {
+        /bin/rm -f -- "$published_checksum_snapshot"
+        print -u2 "Published checksum fixture not found: $test_published_checksum"
+        exit 1
+    }
+    /bin/cp "$test_published_checksum" "$published_checksum_snapshot"
+else
+    published_checksum_url="${published_release_prefix}${version}/${archive_name}.sha256"
+    if ! /usr/bin/curl --fail --silent --show-error --location --max-time 30 \
+        --header 'Cache-Control: no-cache' \
+        "$published_checksum_url?release_check=$(/bin/date +%s)" \
+        --output "$published_checksum_snapshot"; then
+        /bin/rm -f -- "$published_checksum_snapshot"
+        print -u2 "Could not download the published checksum for v$version"
+        exit 1
+    fi
+fi
+published_archive_hash="$(/usr/bin/awk 'NR == 1 { print $1 }' "$published_checksum_snapshot")"
+/bin/rm -f -- "$published_checksum_snapshot"
+print -r -- "$published_archive_hash" | /usr/bin/grep -Eq '^[0-9a-fA-F]{64}$' || {
+    print -u2 "The published checksum for v$version is invalid"
+    exit 1
+}
+local_archive_hash="$(/usr/bin/shasum -a 256 "$archive" | /usr/bin/awk '{ print $1 }')"
+[[ "${local_archive_hash:l}" == "${published_archive_hash:l}" ]] || {
+    print -u2 "Local archive does not match the public GitHub release for v$version"
+    exit 1
+}
+
 # Compare again with the public feed immediately before local generation. This is deliberately
 # repeated after distribution preflight because release preparation can take long enough for a
 # different artifact to be published.
@@ -137,17 +176,13 @@ elif ! public_appcast_http_code="$(/usr/bin/curl --silent --show-error --locatio
     public_appcast_http_code=000
 fi
 if [[ "$public_appcast_http_code" == 200 ]]; then
-    latest_published_build="$(
-        /usr/bin/grep -Eo 'sparkle:version="[1-9][0-9]*"' "$public_appcast_snapshot" |
-            /usr/bin/sed -E 's/.*="([0-9]+)"/\1/' |
-            /usr/bin/sort -n |
-            /usr/bin/tail -1
-    )"
-    if [[ -z "$latest_published_build" ]]; then
+    if ! published_builds="$($appcast_build_reader "$public_appcast_snapshot" 2>/dev/null)"; then
         /bin/rm -f -- "$public_appcast_snapshot"
-        print -u2 "The public Sparkle appcast contains no numeric build history"
+        print -u2 "The public Sparkle appcast has invalid build history"
         exit 1
-    elif (( build_number <= latest_published_build )); then
+    fi
+    latest_published_build="$(print -r -- "$published_builds" | /usr/bin/tail -1)"
+    if (( build_number <= latest_published_build )); then
         /bin/rm -f -- "$public_appcast_snapshot"
         print -u2 "Build $build_number cannot follow public appcast build $latest_published_build"
         exit 1
@@ -174,13 +209,24 @@ elif ! /usr/bin/curl --fail --silent --show-error --location --max-time 20 \
 fi
 if ! registry_result="$(WINDOWRANGER_RELEASE_BUILD_REGISTRY="$registry_snapshot" \
     "$repository_root/scripts/verify-release-build-registry.sh" \
-    --version "$version" --build-number "$build_number" 2>&1)"; then
+    --version "$version" --build-number "$build_number" \
+    --require-state published 2>&1)"; then
     /bin/rm -f -- "$registry_snapshot"
     print -u2 "$registry_result"
     print -u2 "Resolve or publish the central allocation before generating this appcast"
     exit 1
 fi
 /bin/rm -f -- "$registry_snapshot"
+
+if [[ "$preflight_only" == true ]]; then
+    print "Sparkle feed preflight passed:"
+    print "  Version: $version"
+    print "  Build: $build_number"
+    print "  Archive: $archive_name"
+    print "  Published artifact: verified"
+    print "  Public feed: $([[ "$public_appcast_http_code" == 200 ]] && print present || print initial)"
+    exit 0
+fi
 
 staging_directory="$(/usr/bin/mktemp -d "$feed_parent/.${feed_name}.staging.XXXXXX")"
 backup_directory="$feed_parent/.${feed_name}.backup.$$"
@@ -225,26 +271,37 @@ fi
 
 appcast="$staging_directory/appcast.xml"
 [[ -f "$appcast" ]] || { print -u2 "Sparkle did not generate $appcast"; exit 1; }
-/usr/bin/grep -Fq "sparkle:version=\"$build_number\"" "$appcast" || {
+if ! generated_builds="$($appcast_build_reader "$appcast" 2>/dev/null)" ||
+   ! print -r -- "$generated_builds" | /usr/bin/grep -Fxq "$build_number"; then
     print -u2 "Generated appcast does not contain build $build_number"
     exit 1
-}
-/usr/bin/grep -Fq "$archive_name" "$appcast" || {
+fi
+
+version_item="//*[local-name()='item'][normalize-space(*[local-name()='version'])='$build_number' or *[local-name()='enclosure']/@*[local-name()='version']='$build_number']"
+matching_archive_count="$(/usr/bin/xmllint --nonet --xpath \
+    "count(($version_item)/*[local-name()='enclosure' and contains(@url, '$archive_name') and @*[local-name()='edSignature'] and number(@length) > 0])" \
+    "$appcast")"
+[[ "$matching_archive_count" == 1 ]] || {
     print -u2 "Generated appcast does not contain $archive_name"
     exit 1
 }
 if [[ "$version" == *-beta.* ]]; then
-    /usr/bin/grep -Fq '<sparkle:channel>beta</sparkle:channel>' "$appcast" || {
+    beta_item_count="$(/usr/bin/xmllint --nonet --xpath \
+        "count(($version_item)[normalize-space(*[local-name()='channel'])='beta'])" "$appcast")"
+    [[ "$beta_item_count" == 1 ]] || {
         print -u2 "Generated Beta entry is missing the Sparkle beta channel"
         exit 1
     }
 fi
 
 typeset -a enclosure_urls
-enclosure_urls=("${(@f)$(
-    /usr/bin/grep -Eo 'url="[^"]+"' "$appcast" |
-        /usr/bin/sed -E 's/^url="([^"]+)"$/\1/'
-)}")
+enclosure_url_count="$(/usr/bin/xmllint --nonet --xpath \
+    "count(//*[local-name()='enclosure']/@url)" "$appcast")"
+enclosure_urls=()
+for (( index = 1; index <= enclosure_url_count; index += 1 )); do
+    enclosure_urls+=("$(/usr/bin/xmllint --nonet --xpath \
+        "string((//*[local-name()='enclosure']/@url)[$index])" "$appcast")")
+done
 (( ${#enclosure_urls} > 0 )) || {
     print -u2 "Generated appcast contains no enclosure URLs"
     exit 1

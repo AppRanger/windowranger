@@ -7,12 +7,13 @@ script_name="${0:t}"
 registry="${WINDOWRANGER_RELEASE_BUILD_REGISTRY:-$repository_root/config/release-builds.tsv}"
 version=""
 build_number=""
+required_state="allocated"
 
 usage() {
-    print "Usage: $script_name [--version VERSION --build-number NUMBER]"
+    print "Usage: $script_name [--version VERSION --build-number NUMBER [--require-state STATE]]"
     print ""
     print "Validates the append-only public build-number ledger. When a version and build number are"
-    print "supplied, also requires that exact pair to be the latest allocated entry."
+    print "supplied, also requires that exact pair to be the latest entry in STATE (default: allocated)."
 }
 
 while (( $# > 0 )); do
@@ -25,6 +26,11 @@ while (( $# > 0 )); do
         --build-number)
             (( $# >= 2 )) || { print -u2 "--build-number requires a value"; exit 2; }
             build_number="$2"
+            shift
+            ;;
+        --require-state)
+            (( $# >= 2 )) || { print -u2 "--require-state requires a value"; exit 2; }
+            required_state="$2"
             shift
             ;;
         -h|--help)
@@ -46,6 +52,10 @@ if [[ -n "$version" || -n "$build_number" ]]; then
         exit 2
     }
 fi
+[[ "$required_state" == allocated || "$required_state" == published ]] || {
+    print -u2 "--require-state must be allocated or published"
+    exit 2
+}
 
 [[ -f "$registry" ]] || { print -u2 "Release build registry not found: $registry"; exit 1; }
 
@@ -53,6 +63,7 @@ typeset -A seen_builds
 typeset -A seen_allocations
 previous_build=0
 latest_build=0
+latest_required_state_build=0
 line_number=0
 matching_state=""
 active_allocation_count=0
@@ -100,6 +111,9 @@ while IFS=$'\t' read -r row_build row_version row_state row_note extra; do
     seen_allocations[$allocation_key]=1
     previous_build="$row_build"
     latest_build="$row_build"
+    if [[ "$row_state" == "$required_state" ]]; then
+        latest_required_state_build="$row_build"
+    fi
 
     if [[ "$row_state" == allocated ]]; then
         (( active_allocation_count += 1 ))
@@ -120,16 +134,16 @@ done < "$registry"
 }
 
 if [[ -n "$version" ]]; then
-    [[ "$matching_state" == allocated ]] || {
+    [[ "$matching_state" == "$required_state" ]] || {
         if [[ -z "$matching_state" ]]; then
             print -u2 "Build $build_number for $version has not been allocated in $registry"
         else
-            print -u2 "Build $build_number for $version is '$matching_state', not an active allocation"
+            print -u2 "Build $build_number for $version is '$matching_state', not '$required_state'"
         fi
         exit 1
     }
-    [[ "$build_number" == "$latest_build" ]] || {
-        print -u2 "Build $build_number is not the latest reserved number ($latest_build)"
+    [[ "$build_number" == "$latest_required_state_build" ]] || {
+        print -u2 "Build $build_number is not the latest '$required_state' number ($latest_required_state_build)"
         exit 1
     }
 fi

@@ -3865,7 +3865,13 @@ second copy of that checklist.
 ### WR-012 — Clean build and package verification
 
 - **Type:** Release epic
-- **Status:** Held
+- **Status:** In progress for the 1.0.0 candidate. On 30 August 2026, the combined CLI,
+  updater-repair, and Homebrew-preparation source passed the complete 857-test non-hosted suite,
+  static analysis, an unsigned universal Release app/CLI build, and both Stable and Beta DMG
+  construction and verification under stable Xcode 26.6. The same checkpoint also passed under
+  Xcode 27 beta as compatibility evidence. This was a dirty topic-branch preparation check, not the
+  required clean, committed, exact-release build; the Stable checkpoint must be repeated after
+  build 12 is allocated on `develop` and the reviewed contents reach `main`.
 - **Scope:** Clean-checkout generation, isolated suite, static analysis, universal Release identity
   and signature, Debug-boundary audit, LaunchServices hygiene, and clean-machine lifecycle testing.
 
@@ -3880,7 +3886,11 @@ second copy of that checklist.
 ### WR-014 — Distribution, updates, notarization, and publication
 
 - **Type:** Release epic
-- **Status:** Held
+- **Status:** In progress. The maintainer approved repairing the updater path, signing and deploying
+  the Beta 10 feed, and adding Stable Homebrew installation on 30 August 2026. The first feed is
+  live and its packaged Beta 7-to-Beta-10 upgrade passed maintainer validation. Tap
+  submission/publication and later release actions remain separately held until explicitly
+  approved.
 - **Decided:** Stable (`main`), Beta (`release/*`), and Dev (`develop`) channels using the documented
   Gitflow-style promotion model. Sparkle is the intended future updater for the default Stable and
   opt-in Beta channels; Dev remains outside auto-update feeds.
@@ -3918,11 +3928,51 @@ second copy of that checklist.
   initial-feed/monotonic-feed preflight, central allocation recheck, atomic feed staging, and
   deterministic two-release/stale-publication/runtime tests (691-test full suite and universal app
   build on 23 August 2026).
+- **User-observed updater failure:** On 29 August 2026, a second Mac could not update to Beta 10 and
+  eventually reported an updater error. Read-only investigation on 30 August confirmed that Beta
+  7–10 all contain the intended HTTPS feed URL, Beta channel, incrementing builds 8–11, the same
+  public EdDSA key, and valid Developer ID signatures. The live `appcast.xml` and every expected
+  `/updates/WindowRanger-*.zip` endpoint return HTTP 404. The GitHub releases and exact ZIP assets
+  are public, but the separately gated Sparkle feed was never generated and deployed. This is a
+  missing publication checkpoint, not evidence of an app-side polling fault.
+- **Repair implementation:** Feed preflight now requires the latest public GitHub release to be
+  `published` in the central ledger, while distribution builds still require an active `allocated`
+  row. It verifies the local ZIP against the checksum attached to that public release before any
+  Keychain signing access, and `--preflight` exercises the complete uncredentialed boundary. This
+  removes the earlier deadlock where the documented post-release feed step rejected every already
+  published build. The generator now defaults to WindowRanger's matching project-specific Keychain
+  account and structurally accepts Sparkle's recommended top-level build version as well as retained
+  legacy enclosure attributes.
+- **First-feed publication evidence:** With explicit maintainer approval, Beta 10 build 11 was
+  signed using the matching project-specific Keychain key and deployed with its exact public ZIP
+  through Cloudflare version `a5cb408a-5341-486b-b2f5-33658e30c80a` on 30 August 2026. The live
+  appcast and archive return HTTP 200 with the intended XML/ZIP content types and cache policy. The
+  downloaded appcast is well-formed, selects build 11 on the `beta` channel, and retains SHA-256
+  `8aaa31d3b734408d36c7de13f7fa38f1e82624b46d280c41595750f4d4d1aa48`. Its downloaded
+  16,003,813-byte archive matches the immutable GitHub release SHA-256
+  `de8b2a282780d128358855dfcdf83934f40e4eac493805bc2c36ef7d71082fe6`, and Sparkle's
+  `sign_update --verify` accepts the enclosure signature. This establishes feed publication, not
+  an installed-app upgrade result.
+- **Packaged upgrade evidence:** On 30 August 2026, the maintainer installed the public packaged
+  Beta 7 baseline, used its in-app updater against the newly published feed, and confirmed that the
+  upgrade to Beta 10 completed successfully and the resulting app worked normally.
 - **Remaining scope:** Back up the release EdDSA key through the maintainer's secure credential
-  process, create and host the first appcast, validate older-to-newer packaged updates plus
-  cancellation/failure/Beta-to-Stable/rollback behavior, then decide when automatic checking can
-  default on. Accessibility migration guidance, Homebrew Stable distribution, and update/rollback
-  failure handling also remain.
+  process; validate cancellation/failure/Beta-to-Stable/rollback behavior; then decide when
+  automatic checking can default on. Accessibility migration guidance, Homebrew Stable
+  distribution, and update/rollback failure handling also remain.
+- **Homebrew preparation:** Stable-only Cask generation now verifies the local DMG checksum and can
+  require a public, immutable, non-prerelease GitHub release whose DMG is byte-identical. The
+  generated Cask declares Sparkle coexistence, macOS 14, ordinary uninstall that preserves user
+  configuration, and an explicit local-only `--zap` scope. Deterministic fixtures reject Beta,
+  malformed or mismatched artifacts, prerelease metadata, silent overwrite, and failed-publication
+  mutation. No Stable v1 artifact, tap repository, Cask submission, installation, or publication
+  exists yet. The main Homebrew Cask currently fails the documented notability threshold, so an
+  AppRanger tap is the immediate route once separately approved.
+- **1.0.0 candidate preparation:** The first Stable release notes are drafted at
+  `docs/releases/v1.0.0.md`. The next public build is 12, but it remains deliberately unallocated
+  until the CLI and release-tooling changes are committed, reviewed, and integrated into `develop`.
+  No Stable branch promotion, signed artifact, notarization, tag, draft release, appcast change, or
+  Homebrew publication has occurred.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done

@@ -47,6 +47,9 @@ print "Verifying the release build-number ledger..."
 print "Verifying the Sparkle feed ordering and failure workflow..."
 ./scripts/verify-sparkle-feed-workflow.sh
 
+print "Verifying the Stable Homebrew Cask workflow..."
+./scripts/verify-homebrew-cask-workflow.sh
+
 print "Generating the Xcode project..."
 xcodegen generate
 
