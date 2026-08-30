@@ -3904,10 +3904,10 @@ second copy of that checklist.
 
 - **Type:** Release epic
 - **Status:** In progress. With explicit maintainer approval on 30 August 2026, the Beta 10 updater
-  repair, public 1.0.0 Stable release, combined Stable/Beta feed, and Stable Homebrew tap were
-  published. The packaged Beta 7-to-Beta-10 upgrade and exact 1.0.0 DMG installation passed
-  maintainer validation. Remaining updater and Homebrew live-validation work is recorded below;
-  each later release remains separately held until explicitly approved.
+  repair, public 1.0.0 and 1.0.1 Stable releases, combined Stable/Beta feed, and Stable Homebrew tap
+  were published. The packaged Beta 7-to-Beta-10 updater path, exact Stable DMG installations, and
+  Homebrew 1.0.0-to-1.0.1 upgrade passed live validation. Remaining updater and Homebrew validation
+  work is recorded below; each later release remains separately held until explicitly approved.
 - **Decided:** Stable (`main`), Beta (`release/*`), and Dev (`develop`) channels using the documented
   Gitflow-style promotion model. Sparkle is the updater for the default Stable and
   opt-in Beta channels; Dev remains outside auto-update feeds.
@@ -4015,14 +4015,21 @@ second copy of that checklist.
   assets round-trip verified against SHA-256
   `781715f5ef1deb63534553c44c42eb5048e758a867fb2d5525d9e5938091909a` for the ZIP and
   `6bf88eec14cf28d4dae03b3d27ddbf7898b0c2e1d505e57c9cb05f13c7a31f90` for the DMG. Build 13 is
-  therefore marked `published` in the central ledger; signed-feed and Homebrew 1.0.1 publication
-  remain separate checkpoints.
+  therefore marked `published` in the central ledger. Its signed-feed and Homebrew publication
+  evidence is recorded below.
 - **1.0.0 feed publication:** The signed feed retaining Beta 10 build 11 and adding Stable 1.0.0
   build 12 plus its delta was deployed through Cloudflare version
   `1f3fc001-8180-4255-ae77-b71cefd1c16c`. The live appcast has SHA-256
   `8d54a8db20539ec56119af39e4281da25217b533987536182b6ca7dbdeb47c09`; all three downloaded
   payloads match the deployment source, and Sparkle accepts every live enclosure and delta
   signature. The XML, ZIP, and cache headers were also checked at their public endpoints.
+- **1.0.1 feed publication:** Website commit
+  `d66e68cb9684e18446b32cd08f034456542ae997` published the feed retaining builds 11 and 12 and
+  adding Stable 1.0.1 build 13 with deltas from both retained builds. Cloudflare deployment
+  `24e5fe44-77e2-4320-bcb9-2203e3ac014f` serves the exact appcast SHA-256
+  `56cf7a07cfa88bc041bd7f241e5de341a1fd397c87de81f5e68e93b59e919453` from both domains. All six
+  downloaded ZIP/delta payloads match their publication-source hashes, and Sparkle accepts every
+  live enclosure and delta signature. The public homepage also links the 1.0.1 Stable release.
 - **Homebrew publication:** The public
   [`AppRanger/homebrew-tap`](https://github.com/AppRanger/homebrew-tap) contains the exact Stable
   1.0.0 Cask with SHA-256
@@ -4044,6 +4051,17 @@ second copy of that checklist.
   running. Intel, a real later-version Homebrew/Sparkle upgrade in both orders, Settings PATH UI,
   and macOS privacy-permission retention remain live validation. The separately tracked WR-074 CLI
   peer-path failure prevents claiming packaged CLI runtime acceptance for 1.0.0.
+- **1.0.1 Homebrew publication and upgrade evidence:** Tap commit
+  `962dc4015cd742ea1a292e97b8b7dcd89e6863de` publishes the generated 1.0.1 Cask for the exact
+  notarized release DMG SHA-256
+  `6bf88eec14cf28d4dae03b3d27ddbf7898b0c2e1d505e57c9cb05f13c7a31f90`. Homebrew 6 style and
+  strict online audit passed. On the same Apple Silicon/macOS 27 Mac, a genuine 1.0.0 build 12 app
+  and receipt upgraded through Homebrew to 1.0.1 build 13. The installed app passed strict nested
+  signature, notarized Gatekeeper, relaunch, signed CLI read/configuration/skill, and eight-client
+  concurrency checks. Configuration values were preserved; only request/revision metadata and
+  collection serialization ordering changed across relaunch. This proves the Homebrew-forward
+  upgrade direction. Sparkle-first/Homebrew coexistence, Intel, Settings PATH UI, and privacy
+  permission retention remain live validation.
 - **Gate:** Each later release still requires explicit maintainer approval.
 
 ## Done
