@@ -1154,6 +1154,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private var displayGroupStatusItems: [ManagedDisplayGroupStatusItem] = []
     private var displayGroupContentByButton: [ObjectIdentifier: MenuBarDisplayGroupRenderedContent] = [:]
     private var systemColorsObserver: NSObjectProtocol?
+    private var statusItemAppearanceRefreshGate = MenuBarStatusItemAppearanceRefreshGate()
+    private var pendingStatusItemAppearanceRefresh: DispatchWorkItem?
     private var lastSnapshot: MenuBarPresentationSnapshot?
     private var focusedWindowDiagnosticReport: String?
     private var supportSectionVisibleForCurrentOpen = false
@@ -1317,6 +1319,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         while displayGroupStatusItems.count < count {
             let slot = displayGroupStatusItems.count
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            let appearanceObserver = MenuBarStatusItemAppearanceObserver(frame: .zero)
+            appearanceObserver.setAccessibilityElement(false)
+            appearanceObserver.onAttachedAppearanceChange = { [weak self] in
+                self?.scheduleStatusItemAppearanceRefresh()
+            }
+            item.button?.addSubview(appearanceObserver)
             // Keep one established autosave identity per logical display-group slot across modes.
             item.autosaveName = "\(ApplicationIdentity.bundleIdentifier).full-display-group-\(slot)"
             displayGroupStatusItems.append(ManagedDisplayGroupStatusItem(
@@ -1325,6 +1333,19 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
                 hoverTracker: nil
             ))
         }
+    }
+
+    private func scheduleStatusItemAppearanceRefresh() {
+        guard statusItemAppearanceRefreshGate.request() else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.statusItemAppearanceRefreshGate.consume() else { return }
+            self.pendingStatusItemAppearanceRefresh = nil
+            // The observer has proved the status button is attached to its menu-bar window. Render
+            // on the following turn so adaptive label and symbol colours use that appearance.
+            self.rebuild(force: true)
+        }
+        pendingStatusItemAppearanceRefresh = work
+        DispatchQueue.main.async(execute: work)
     }
 
     private func configureDisplayGroupStatusItem(
@@ -1654,6 +1675,9 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     func invalidate() {
         guard !isInvalidated else { return }
         isInvalidated = true
+        statusItemAppearanceRefreshGate.cancel()
+        pendingStatusItemAppearanceRefresh?.cancel()
+        pendingStatusItemAppearanceRefresh = nil
         menuPresentationRequestGate.cancel()
         if settingsStatusMenuOpenGate.cancel() {
             settingsCommandRequestRouter.cancelPendingRequest()

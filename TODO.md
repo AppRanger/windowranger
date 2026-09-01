@@ -20,6 +20,21 @@ smallest useful outcome and acceptance boundary.
 
 ## Done
 
+### WR-108 — Render menu-bar labels with the attached status-item appearance at startup
+
+- **Type:** Menu-bar appearance bug
+- **Priority:** P1
+- **Status:** Done
+- **Result:** Each status item now observes attachment to its real menu-bar window and later
+  effective-appearance changes, then coalesces a deferred raster refresh so adaptive label and
+  symbol colours no longer remain black until the first workspace switch.
+- **Evidence:** All 44 focused Menu Bar Presentation tests pass, covering attachment observation,
+  refresh coalescing/cancellation, and Light/Dark rasterization. Signed universal Debug revision
+  `f50fe060419c-dirty` passed strict signature and startup checks; on 1 September 2026 the maintainer
+  confirmed its menu-bar fonts started in the correct colour before switching workspace. The
+  integration quick gate passes all 861 non-hosted tests plus project generation, release-ledger,
+  Sparkle/Homebrew workflow, shell-syntax, and test-isolation checks.
+
 ### WR-059 — Always resurface Settings on the current workspace
 
 - **Type:** Settings window behavior change

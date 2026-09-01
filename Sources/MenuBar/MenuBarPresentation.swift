@@ -979,6 +979,48 @@ struct MenuBarWorkspaceHoverState: Equatable {
     }
 }
 
+struct MenuBarStatusItemAppearanceRefreshGate: Equatable, Sendable {
+    private(set) var isPending = false
+
+    mutating func request() -> Bool {
+        guard !isPending else { return false }
+        isPending = true
+        return true
+    }
+
+    mutating func consume() -> Bool {
+        guard isPending else { return false }
+        isPending = false
+        return true
+    }
+
+    mutating func cancel() {
+        isPending = false
+    }
+}
+
+@MainActor
+final class MenuBarStatusItemAppearanceObserver: NSView {
+    var onAttachedAppearanceChange: (() -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        notifyIfAttached()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        notifyIfAttached()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    private func notifyIfAttached() {
+        guard window != nil else { return }
+        onAttachedAppearanceChange?()
+    }
+}
+
 struct MenuBarWorkspaceTrackingRegion: Equatable {
     let frame: CGRect
     let hitTarget: MenuBarHitTarget

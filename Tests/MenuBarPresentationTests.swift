@@ -1031,6 +1031,66 @@ final class MenuBarPresentationTests: XCTestCase {
         XCTAssertTrue(standInButton.subviews.isEmpty)
     }
 
+    func testStatusItemAppearanceRefreshCoalescesUntilTheDeferredRenderIsConsumed() {
+        var gate = MenuBarStatusItemAppearanceRefreshGate()
+
+        XCTAssertTrue(gate.request())
+        XCTAssertFalse(gate.request())
+        XCTAssertTrue(gate.consume())
+        XCTAssertFalse(gate.consume())
+
+        XCTAssertTrue(gate.request())
+        gate.cancel()
+        XCTAssertFalse(gate.consume())
+    }
+
+    @MainActor
+    func testStatusItemAppearanceObserverWaitsForAWindowAttachment() {
+        let observer = MenuBarStatusItemAppearanceObserver(frame: .zero)
+        let parent = NSView(frame: CGRect(x: 0, y: 0, width: 20, height: 20))
+        var notifications = 0
+        observer.onAttachedAppearanceChange = { notifications += 1 }
+
+        parent.addSubview(observer)
+        XCTAssertEqual(notifications, 0)
+
+        let window = NSWindow(
+            contentRect: parent.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = parent
+        XCTAssertGreaterThanOrEqual(notifications, 1)
+        window.close()
+    }
+
+    @MainActor
+    func testRenderedDisplayGroupResolvesAdaptiveColoursForItsSuppliedAppearance() throws {
+        let snapshot = independentSnapshot(displays: [mainDisplay]).replacingMode(.full)
+        let plan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+            for: snapshot,
+            availableWidth: 620
+        ).first)
+        let light = MenuBarDisplayGroupRenderedContent(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: .default,
+            appearance: try XCTUnwrap(NSAppearance(named: .aqua))
+        ).image(for: nil)
+        let dark = MenuBarDisplayGroupRenderedContent(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: .default,
+            appearance: try XCTUnwrap(NSAppearance(named: .darkAqua))
+        ).image(for: nil)
+
+        XCTAssertFalse(light.isTemplate)
+        XCTAssertFalse(dark.isTemplate)
+        XCTAssertNotEqual(light.tiffRepresentation, dark.tiffRepresentation)
+    }
+
     @MainActor
     func testInformationalDisplayGroupContentStaysMenuOnly() throws {
         let medium = independentSnapshot(displays: [mainDisplay])
