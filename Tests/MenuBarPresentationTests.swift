@@ -1080,6 +1080,74 @@ final class MenuBarPresentationTests: XCTestCase {
         XCTAssertFalse(gate.consume())
     }
 
+    func testStatusItemAppearanceNotificationGateSuppressesAnUnchangedAppearance() {
+        var gate = MenuBarStatusItemAppearanceNotificationGate()
+        let light = MenuBarStatusItemAppearanceSignature(
+            appearanceName: .aqua,
+            increasesContrast: false
+        )
+        let dark = MenuBarStatusItemAppearanceSignature(
+            appearanceName: .darkAqua,
+            increasesContrast: false
+        )
+
+        XCTAssertTrue(gate.shouldNotify(signature: light))
+        XCTAssertFalse(gate.shouldNotify(signature: light))
+        XCTAssertTrue(gate.shouldNotify(signature: dark))
+        XCTAssertFalse(gate.shouldNotify(signature: dark))
+
+        gate.reset()
+        XCTAssertTrue(gate.shouldNotify(signature: dark))
+    }
+
+    func testStatusItemAppearanceNotificationGateCollapsesVibrantVariants() throws {
+        let aqua = try XCTUnwrap(NSAppearance(named: .aqua))
+        let vibrantLight = try XCTUnwrap(NSAppearance(named: .vibrantLight))
+        let darkAqua = try XCTUnwrap(NSAppearance(named: .darkAqua))
+        let vibrantDark = try XCTUnwrap(NSAppearance(named: .vibrantDark))
+
+        XCTAssertEqual(
+            MenuBarStatusItemAppearanceNotificationGate.supportedSignature(
+                for: aqua,
+                increasesContrast: false
+            ),
+            MenuBarStatusItemAppearanceNotificationGate.supportedSignature(
+                for: vibrantLight,
+                increasesContrast: false
+            )
+        )
+        XCTAssertEqual(
+            MenuBarStatusItemAppearanceNotificationGate.supportedSignature(
+                for: darkAqua,
+                increasesContrast: false
+            ),
+            MenuBarStatusItemAppearanceNotificationGate.supportedSignature(
+                for: vibrantDark,
+                increasesContrast: false
+            )
+        )
+        XCTAssertNotEqual(
+            MenuBarStatusItemAppearanceNotificationGate.supportedSignature(
+                for: aqua,
+                increasesContrast: false
+            ),
+            MenuBarStatusItemAppearanceNotificationGate.supportedSignature(
+                for: darkAqua,
+                increasesContrast: false
+            )
+        )
+        XCTAssertNotEqual(
+            MenuBarStatusItemAppearanceNotificationGate.supportedSignature(
+                for: aqua,
+                increasesContrast: false
+            ),
+            MenuBarStatusItemAppearanceNotificationGate.supportedSignature(
+                for: aqua,
+                increasesContrast: true
+            )
+        )
+    }
+
     @MainActor
     func testStatusItemAppearanceObserverWaitsForAWindowAttachment() {
         let observer = MenuBarStatusItemAppearanceObserver(frame: .zero)
@@ -1098,7 +1166,17 @@ final class MenuBarPresentationTests: XCTestCase {
         )
         window.isReleasedWhenClosed = false
         window.contentView = parent
-        XCTAssertGreaterThanOrEqual(notifications, 1)
+        let attachmentNotifications = notifications
+        XCTAssertGreaterThanOrEqual(attachmentNotifications, 1)
+
+        observer.viewDidChangeEffectiveAppearance()
+        observer.viewDidChangeEffectiveAppearance()
+        XCTAssertEqual(notifications, attachmentNotifications)
+
+        window.contentView = NSView(frame: parent.bounds)
+        XCTAssertNil(observer.window)
+        window.contentView = parent
+        XCTAssertGreaterThan(notifications, attachmentNotifications)
         window.close()
     }
 
