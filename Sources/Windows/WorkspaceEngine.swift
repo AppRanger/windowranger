@@ -157,6 +157,42 @@ struct WindowRefreshReport: Equatable, Sendable {
     let managedWindowCount: Int
 }
 
+/// Bounds the damage from one application whose Accessibility endpoint stops answering. The OS
+/// timeout caps each individual message; this process-level backoff prevents a periodic refresh or
+/// one workspace switch from immediately issuing another series of messages to the same process.
+struct AccessibilityProcessResponsiveness: Equatable, Sendable {
+    static let messagingTimeout: TimeInterval = 0.25
+    static let failureBackoff: TimeInterval = 2
+
+    private(set) var unavailableUntilByProcess: [pid_t: Date] = [:]
+
+    mutating func shouldAttempt(_ processIdentifier: pid_t, now: Date = Date()) -> Bool {
+        guard let deadline = unavailableUntilByProcess[processIdentifier] else { return true }
+        return deadline <= now
+    }
+
+    @discardableResult
+    mutating func recordCannotComplete(
+        _ processIdentifier: pid_t,
+        now: Date = Date()
+    ) -> Bool {
+        let wasAvailable = unavailableUntilByProcess[processIdentifier].map { $0 <= now } ?? true
+        unavailableUntilByProcess[processIdentifier] = now.addingTimeInterval(Self.failureBackoff)
+        return wasAvailable
+    }
+
+    @discardableResult
+    mutating func recordSuccess(_ processIdentifier: pid_t) -> Bool {
+        unavailableUntilByProcess.removeValue(forKey: processIdentifier) != nil
+    }
+
+    mutating func retainOnly(_ processIdentifiers: Set<pid_t>) {
+        unavailableUntilByProcess = unavailableUntilByProcess.filter {
+            processIdentifiers.contains($0.key)
+        }
+    }
+}
+
 enum StableLayoutSlotRetentionReason: String, Equatable, Sendable {
     case applicationEnumerationUnavailable = "application-enumeration-unavailable"
     case frameUnavailable = "frame-unavailable"
@@ -2157,6 +2193,7 @@ final class WorkspaceEngine {
     private var lastSolvedTiledFrames: [WindowKey: WindowFrame] = [:]
     private var temporarilyDeferredWindowKeys = Set<WindowKey>()
     private var retainedLayoutSlotWindowKeys = Set<WindowKey>()
+    private var accessibilityResponsiveness = AccessibilityProcessResponsiveness()
     private var fullscreenSessions: [WindowKey: FullscreenWindowSession] = [:]
     private var fullscreenAuthoritativeFalseCounts: [WindowKey: Int] = [:]
     private var foregroundFullscreenGameSessionKey: WindowKey?
@@ -2286,6 +2323,19 @@ final class WorkspaceEngine {
 
     func start() {
         logSessionHeader()
+        let messagingTimeoutResult = AccessibilityWindow.setGlobalMessagingTimeout(
+            AccessibilityProcessResponsiveness.messagingTimeout
+        )
+        diagnostics.log(
+            category: "accessibility-responsiveness",
+            event: "messaging-timeout-configured",
+            fields: [
+                "timeout-milliseconds": String(Int(
+                    AccessibilityProcessResponsiveness.messagingTimeout * 1_000
+                )),
+                "result": String(messagingTimeoutResult.rawValue),
+            ]
+        )
         _ = AccessibilityWindow.requestPermission()
         queue.async { [weak self] in
             guard let self else { return }
@@ -12069,6 +12119,52 @@ final class WorkspaceEngine {
         invalidateFocusWorkForLifecycle()
     }
 
+    private func shouldAttemptAccessibility(
+        processIdentifier: pid_t,
+        now: Date = Date()
+    ) -> Bool {
+        accessibilityResponsiveness.shouldAttempt(processIdentifier, now: now)
+    }
+
+    private func recordAccessibilityResult(
+        _ result: AXError,
+        processIdentifier: pid_t,
+        bundleIdentifier: String?,
+        stage: String,
+        correlationID: String?
+    ) {
+        if result == .cannotComplete {
+            let enteredBackoff = accessibilityResponsiveness.recordCannotComplete(processIdentifier)
+            if enteredBackoff {
+                diagnostics.log(
+                    category: "accessibility-responsiveness",
+                    event: "application-deferred",
+                    correlation: correlationID,
+                    fields: [
+                        "process": String(processIdentifier),
+                        "bundle": bundleIdentifier ?? "unknown",
+                        "stage": stage,
+                        "backoff-milliseconds": String(Int(
+                            AccessibilityProcessResponsiveness.failureBackoff * 1_000
+                        )),
+                    ]
+                )
+            }
+        } else if result == .success,
+                  accessibilityResponsiveness.recordSuccess(processIdentifier) {
+            diagnostics.log(
+                category: "accessibility-responsiveness",
+                event: "application-recovered",
+                correlation: correlationID,
+                fields: [
+                    "process": String(processIdentifier),
+                    "bundle": bundleIdentifier ?? "unknown",
+                    "stage": stage,
+                ]
+            )
+        }
+    }
+
     @discardableResult
     private func refreshWindows(
         isStartup: Bool = false,
@@ -12139,6 +12235,7 @@ final class WorkspaceEngine {
             )
         }
         let runningProcessIdentifiers = Set(runningApplications.map(\.processIdentifier))
+        accessibilityResponsiveness.retainOnly(runningProcessIdentifiers)
         let requiredProcessIdentifiers = Set(windows.keys.map(\.processIdentifier))
             .intersection(runningProcessIdentifiers)
         let trackedWindowKeysBeforeEnumeration = Set(windows.keys)
@@ -12152,18 +12249,52 @@ final class WorkspaceEngine {
         var evictedIgnoredManagedState = false
 
         for app in runningApplications {
+            guard shouldAttemptAccessibility(processIdentifier: app.processIdentifier) else {
+                continue
+            }
             let appElement = AXUIElementCreateApplication(app.processIdentifier)
-            guard let appWindows = AccessibilityWindow.copyAttribute(
+            let appWindowsRead = AccessibilityWindow.copyAttributeWithError(
                 appElement,
                 kAXWindowsAttribute as CFString,
                 as: [AXUIElement].self
-            ) else { continue }
+            )
+            recordAccessibilityResult(
+                appWindowsRead.error,
+                processIdentifier: app.processIdentifier,
+                bundleIdentifier: app.bundleIdentifier,
+                stage: "application-windows",
+                correlationID: correlationID
+            )
+            guard let appWindows = appWindowsRead.value else { continue }
             successfullyEnumeratedProcesses.insert(app.processIdentifier)
 
-            for element in appWindows {
+            applicationWindows: for element in appWindows {
                 guard let key = AccessibilityWindow.identifier(for: element, processIdentifier: app.processIdentifier)
                 else { continue }
                 enumeratedWindowKeys.insert(key)
+
+                let frameRead = AccessibilityWindow.frameWithError(of: element)
+                if frameRead.error == .cannotComplete {
+                    recordAccessibilityResult(
+                        frameRead.error,
+                        processIdentifier: app.processIdentifier,
+                        bundleIdentifier: app.bundleIdentifier,
+                        stage: "window-frame",
+                        correlationID: correlationID
+                    )
+                    successfullyEnumeratedProcesses.remove(app.processIdentifier)
+                    writeEligibleWindowKeys = Set(writeEligibleWindowKeys.filter {
+                        $0.processIdentifier != app.processIdentifier
+                    })
+                    observedFrames = observedFrames.filter {
+                        $0.key.processIdentifier != app.processIdentifier
+                    }
+                    break applicationWindows
+                }
+                let observedFrame = frameRead.frame
+                if let observedFrame {
+                    observedFrames[key] = observedFrame
+                }
 
                 let visibleLayer = visibleWindowLayers?[key.windowIdentifier]
                 let directlyResolvedLayer: Int?
@@ -12243,10 +12374,6 @@ final class WorkspaceEngine {
                         of: element,
                         coreMetadata: admissionMetadata
                     )
-                }
-                let observedFrame = AccessibilityWindow.frame(of: element)
-                if let observedFrame {
-                    observedFrames[key] = observedFrame
                 }
                 if let tracked = windows[key],
                    isManagedLayoutParticipant(tracked),
@@ -14395,29 +14522,54 @@ final class WorkspaceEngine {
             ?? "main-display"
     }
 
-    private func focusedWindowSnapshot() -> FocusedWindowSnapshot? {
+    private func focusedWindowSnapshot(correlationID: String? = nil) -> FocusedWindowSnapshot? {
         let system = AXUIElementCreateSystemWide()
         guard let focusedApp = AccessibilityWindow.copyAttribute(
             system,
             kAXFocusedApplicationAttribute as CFString,
             as: AXUIElement.self
-        ),
-        let focusedWindow = AccessibilityWindow.copyAttribute(
-            focusedApp,
-            kAXFocusedWindowAttribute as CFString,
-            as: AXUIElement.self
         ) else { return nil }
 
         var processIdentifier: pid_t = 0
         AXUIElementGetPid(focusedApp, &processIdentifier)
+        guard processIdentifier > 0,
+              shouldAttemptAccessibility(processIdentifier: processIdentifier)
+        else { return nil }
+
+        let focusedWindowRead = AccessibilityWindow.copyAttributeWithError(
+            focusedApp,
+            kAXFocusedWindowAttribute as CFString,
+            as: AXUIElement.self
+        )
+        recordAccessibilityResult(
+            focusedWindowRead.error,
+            processIdentifier: processIdentifier,
+            bundleIdentifier: NSRunningApplication(
+                processIdentifier: processIdentifier
+            )?.bundleIdentifier,
+            stage: "focused-window",
+            correlationID: correlationID
+        )
+        guard let focusedWindow = focusedWindowRead.value else { return nil }
+
         guard let key = AccessibilityWindow.identifier(
             for: focusedWindow,
             processIdentifier: processIdentifier
         ) else { return nil }
+        let frameRead = AccessibilityWindow.frameWithError(of: focusedWindow)
+        recordAccessibilityResult(
+            frameRead.error,
+            processIdentifier: processIdentifier,
+            bundleIdentifier: NSRunningApplication(
+                processIdentifier: processIdentifier
+            )?.bundleIdentifier,
+            stage: "focused-window-frame",
+            correlationID: correlationID
+        )
         return FocusedWindowSnapshot(
             key: key,
             element: focusedWindow,
-            frame: AccessibilityWindow.frame(of: focusedWindow)
+            frame: frameRead.frame
         )
     }
 
@@ -17752,11 +17904,33 @@ final class WorkspaceEngine {
             guard !isDropDownAppWindow(key),
                   !isExcludedFromWorkspaceParticipation(tracked)
             else { return nil }
-            let rule = resolvedRule(for: tracked.bundleIdentifier)
-            let frame = AccessibilityWindow.frame(of: tracked.element)
-            let actualDisplayIdentifier = frame.flatMap {
-                Self.displayPlacement(for: $0, displays: displays)?.displayIdentifier
+            guard shouldAttemptAccessibility(processIdentifier: tracked.processIdentifier) else {
+                diagnostics.log(
+                    category: "workspace-switch-focus",
+                    event: "candidate-deferred",
+                    correlation: correlationID,
+                    fields: [
+                        "window": Self.diagnosticWindowKey(key),
+                        "bundle": tracked.bundleIdentifier ?? "unknown",
+                        "reason": "application-accessibility-backoff",
+                    ]
+                )
+                return nil
             }
+            let rule = resolvedRule(for: tracked.bundleIdentifier)
+            let frameRead = AccessibilityWindow.frameWithError(of: tracked.element)
+            recordAccessibilityResult(
+                frameRead.error,
+                processIdentifier: tracked.processIdentifier,
+                bundleIdentifier: tracked.bundleIdentifier,
+                stage: "focus-candidate-frame",
+                correlationID: correlationID
+            )
+            guard let frame = frameRead.frame else { return nil }
+            let actualDisplayIdentifier = Self.displayPlacement(
+                for: frame,
+                displays: displays
+            )?.displayIdentifier
             let capabilities = AccessibilityWindow.focusCapabilities(
                 of: tracked.element,
                 processIdentifier: tracked.processIdentifier,
@@ -17771,9 +17945,7 @@ final class WorkspaceEngine {
                     activeWorkspaceIDs: activeWorkspaceIDs,
                     rule: rule
                 ),
-                isMeaningfullyVisible: frame.map {
-                    Self.isMeaningfullyVisible($0, displays: displays)
-                } ?? false,
+                isMeaningfullyVisible: Self.isMeaningfullyVisible(frame, displays: displays),
                 isOnDestinationDisplay: actualDisplayIdentifier == destinationDisplayIdentifier,
                 isFocusEligible: AccessibilityWindow.isEligibleFocusCycleCandidate(capabilities) &&
                     focusCycleRejectedUntil[key] == nil,
@@ -17808,7 +17980,6 @@ final class WorkspaceEngine {
                     "rejection": Self.workspaceSwitchCandidateRejectionReason(candidate),
                 ]
             )
-            guard let frame else { return nil }
             return (candidate, frame)
         }.sorted { lhs, rhs in
             if layout == .none {
@@ -17901,7 +18072,30 @@ final class WorkspaceEngine {
             )
             return
         }
-
+        guard shouldAttemptAccessibility(processIdentifier: target.processIdentifier) else {
+            diagnostics.log(
+                category: "workspace-switch-focus",
+                event: "candidate-deferred",
+                correlation: correlationID,
+                fields: [
+                    "window": Self.diagnosticWindowKey(targetKey),
+                    "bundle": target.bundleIdentifier ?? "unknown",
+                    "reason": "application-accessibility-backoff",
+                ]
+            )
+            attemptWorkspaceSwitchFocusCandidate(
+                attemptOrder: attemptOrder,
+                candidateIndex: candidateIndex + 1,
+                phase: .initial,
+                previousFocusKey: previousFocusKey,
+                workspaceID: workspaceID,
+                destinationDisplayIdentifier: destinationDisplayIdentifier,
+                displays: displays,
+                correlationID: correlationID,
+                token: token
+            )
+            return
+        }
         if phase == .initial {
             // Re-entering a workspace is fresh user intent for its chosen target, so an older
             // parked-focus suppression must not survive this explicit switch.
@@ -18175,6 +18369,30 @@ final class WorkspaceEngine {
 
         let targetKey = attemptOrder[candidateIndex]
         guard let target = windows[targetKey] else {
+            attemptFocusCycleCandidate(
+                attemptOrder: attemptOrder,
+                candidateIndex: candidateIndex + 1,
+                phase: .initial,
+                originalFocus: originalFocus,
+                workspaceID: workspaceID,
+                interactionDisplayIdentifier: interactionDisplayIdentifier,
+                displays: displays,
+                correlationID: correlationID,
+                token: token
+            )
+            return
+        }
+        guard shouldAttemptAccessibility(processIdentifier: target.processIdentifier) else {
+            diagnostics.log(
+                category: "focus-cycle",
+                event: "candidate-deferred",
+                correlation: correlationID,
+                fields: [
+                    "window": Self.diagnosticWindowKey(targetKey),
+                    "bundle": target.bundleIdentifier ?? "unknown",
+                    "reason": "application-accessibility-backoff",
+                ]
+            )
             attemptFocusCycleCandidate(
                 attemptOrder: attemptOrder,
                 candidateIndex: candidateIndex + 1,
@@ -18493,27 +18711,86 @@ final class WorkspaceEngine {
             event: "pre-activation-exact-focus"
         )
 
-        DispatchQueue.main.async { [weak self, weak application] in
-            if let generation = token?.generation,
-               self?.isFocusActionGenerationCurrent(generation) != true {
-                self?.diagnostics.log(
-                    category: "focus-action",
-                    event: "application-activation-superseded",
-                    correlation: correlationID,
-                    fields: [
-                        "window": Self.diagnosticWindowKey(key),
-                        "generation": String(generation),
-                    ]
-                )
-                return
+        if unhideDecision == .attempt {
+            DispatchQueue.main.async { [weak self, weak application] in
+                let unhidden = application?.unhide() == true
+                self?.queue.async { [weak self, weak application] in
+                    self?.requestAccessibilityApplicationActivation(
+                        key: key,
+                        bundleIdentifier: tracked.bundleIdentifier,
+                        application: application,
+                        unhideDecision: unhideDecision,
+                        unhidden: unhidden,
+                        correlationID: correlationID,
+                        generation: token?.generation,
+                        allowImmediateAppKitCompatibilityFallback:
+                            allowImmediateAppKitCompatibilityFallback
+                    )
+                }
             }
-            let unhidden = unhideDecision == .attempt ? application?.unhide() == true : false
-            let applicationElement = AXUIElementCreateApplication(key.processIdentifier)
-            let accessibilityFrontmostResult = AXUIElementSetAttributeValue(
-                applicationElement,
+        } else {
+            requestAccessibilityApplicationActivation(
+                key: key,
+                bundleIdentifier: tracked.bundleIdentifier,
+                application: application,
+                unhideDecision: unhideDecision,
+                unhidden: false,
+                correlationID: correlationID,
+                generation: token?.generation,
+                allowImmediateAppKitCompatibilityFallback:
+                    allowImmediateAppKitCompatibilityFallback
+            )
+        }
+    }
+
+    /// AXFrontmost is an interprocess message and must never run on AppKit's main thread. The
+    /// process-wide AX timeout bounds this engine-queue request; only the optional AppKit
+    /// compatibility activation is dispatched back to the main thread.
+    private func requestAccessibilityApplicationActivation(
+        key: WindowKey,
+        bundleIdentifier: String?,
+        application: NSRunningApplication?,
+        unhideDecision: ApplicationUnhideDecision,
+        unhidden: Bool,
+        correlationID: String?,
+        generation: UInt64?,
+        allowImmediateAppKitCompatibilityFallback: Bool
+    ) {
+        if let generation, !isFocusActionGenerationCurrent(generation) {
+            diagnostics.log(
+                category: "focus-action",
+                event: "application-activation-superseded",
+                correlation: correlationID,
+                fields: [
+                    "window": Self.diagnosticWindowKey(key),
+                    "generation": String(generation),
+                ]
+            )
+            return
+        }
+        let accessibilityFrontmostResult: AXError
+        if shouldAttemptAccessibility(processIdentifier: key.processIdentifier) {
+            accessibilityFrontmostResult = AXUIElementSetAttributeValue(
+                AXUIElementCreateApplication(key.processIdentifier),
                 kAXFrontmostAttribute as CFString,
                 true as CFTypeRef
             )
+            recordAccessibilityResult(
+                accessibilityFrontmostResult,
+                processIdentifier: key.processIdentifier,
+                bundleIdentifier: bundleIdentifier,
+                stage: "application-frontmost",
+                correlationID: correlationID
+            )
+        } else {
+            accessibilityFrontmostResult = .cannotComplete
+        }
+
+        DispatchQueue.main.async { [weak self, weak application] in
+            guard let self else { return }
+            if let generation, !self.isFocusActionGenerationCurrent(generation) {
+                return
+            }
             let appKitFallbackAttempted = allowImmediateAppKitCompatibilityFallback &&
                 Self.shouldUseAppKitActivationFallback(
                     accessibilityFrontmostResult: accessibilityFrontmostResult
@@ -18522,7 +18799,7 @@ final class WorkspaceEngine {
                 ? application?.activate() == true
                 : false
             let requestAccepted = accessibilityFrontmostResult == .success || appKitFallbackSucceeded
-            self?.diagnostics.log(
+            self.diagnostics.log(
                 category: "focus-action",
                 event: "application-activation-requested",
                 correlation: correlationID,
@@ -18610,6 +18887,18 @@ final class WorkspaceEngine {
         correlationID: String?,
         event: String
     ) {
+        guard shouldAttemptAccessibility(processIdentifier: key.processIdentifier) else {
+            diagnostics.log(
+                category: "focus-action",
+                event: "skipped",
+                correlation: correlationID,
+                fields: [
+                    "window": Self.diagnosticWindowKey(key),
+                    "reason": "application-accessibility-backoff",
+                ]
+            )
+            return
+        }
         let applicationElement = AXUIElementCreateApplication(key.processIdentifier)
         let capabilities = AccessibilityWindow.focusCapabilities(
             of: tracked.element,
@@ -18638,6 +18927,17 @@ final class WorkspaceEngine {
             )
             : nil
         let raiseResult = AXUIElementPerformAction(tracked.element, kAXRaiseAction as CFString)
+        let messagingResults = [mainResult, elementFocusResult, applicationFocusResult, raiseResult]
+            .compactMap { $0 }
+        if let failedMessagingResult = messagingResults.first(where: { $0 == .cannotComplete }) {
+            recordAccessibilityResult(
+                failedMessagingResult,
+                processIdentifier: key.processIdentifier,
+                bundleIdentifier: tracked.bundleIdentifier,
+                stage: "exact-window-focus",
+                correlationID: correlationID
+            )
+        }
         diagnostics.log(
             category: "focus-action",
             event: event,

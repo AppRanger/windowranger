@@ -580,9 +580,27 @@ enum AccessibilityWindow {
     }
 
     static func copyAttribute<T>(_ element: AXUIElement, _ attribute: CFString, as type: T.Type) -> T? {
+        copyAttributeWithError(element, attribute, as: type).value
+    }
+
+    static func copyAttributeWithError<T>(
+        _ element: AXUIElement,
+        _ attribute: CFString,
+        as type: T.Type
+    ) -> (value: T?, error: AXError) {
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else { return nil }
-        return value as? T
+        let error = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard error == .success else { return (nil, error) }
+        guard let typedValue = value as? T else { return (nil, .failure) }
+        return (typedValue, .success)
+    }
+
+    /// Accessibility messaging otherwise inherits the system default, which can wait for many
+    /// seconds when a target application is hung. The system-wide element applies this timeout to
+    /// every AX object created by this process, including equivalent objects returned later.
+    @discardableResult
+    static func setGlobalMessagingTimeout(_ timeout: TimeInterval) -> AXError {
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), Float(timeout))
     }
 
     /// Unlike a plain optional read, this distinguishes an authoritative absence from a transient
@@ -1037,17 +1055,34 @@ enum AccessibilityWindow {
         return (focusedResult, mainResult)
     }
 
-    static func frame(of element: AXUIElement) -> WindowFrame? {
-        guard let positionValue = copyAttribute(element, kAXPositionAttribute as CFString, as: AXValue.self),
-              let sizeValue = copyAttribute(element, kAXSizeAttribute as CFString, as: AXValue.self)
-        else { return nil }
+    static func frameWithError(of element: AXUIElement) -> (frame: WindowFrame?, error: AXError) {
+        let positionRead = copyAttributeWithError(
+            element,
+            kAXPositionAttribute as CFString,
+            as: AXValue.self
+        )
+        guard let positionValue = positionRead.value else {
+            return (nil, positionRead.error)
+        }
+        let sizeRead = copyAttributeWithError(
+            element,
+            kAXSizeAttribute as CFString,
+            as: AXValue.self
+        )
+        guard let sizeValue = sizeRead.value else {
+            return (nil, sizeRead.error)
+        }
 
         var position = CGPoint.zero
         var size = CGSize.zero
         guard AXValueGetValue(positionValue, .cgPoint, &position),
               AXValueGetValue(sizeValue, .cgSize, &size)
-        else { return nil }
-        return WindowFrame(position: position, size: size)
+        else { return (nil, .failure) }
+        return (WindowFrame(position: position, size: size), .success)
+    }
+
+    static func frame(of element: AXUIElement) -> WindowFrame? {
+        frameWithError(of: element).frame
     }
 
     static func position(of element: AXUIElement) -> CGPoint? {

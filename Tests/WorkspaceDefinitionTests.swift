@@ -327,6 +327,69 @@ final class WorkspaceDefinitionTests: XCTestCase {
         ).isEmpty)
     }
 
+    func testAccessibilityBackoffDefersOnlyTheFailedApplicationAndRecovers() {
+        let stalledProcess: pid_t = 42
+        let healthyProcess: pid_t = 84
+        let commandStartedAt = Date(timeIntervalSinceReferenceDate: 1_000)
+        let timeoutObservedAt = commandStartedAt.addingTimeInterval(
+            AccessibilityProcessResponsiveness.messagingTimeout
+        )
+        var responsiveness = AccessibilityProcessResponsiveness()
+
+        // Model an AX endpoint that consumes its complete messaging budget and then returns
+        // kAXErrorCannotComplete. A healthy application's command remains eligible immediately
+        // rather than queuing behind repeated requests to the stalled PID.
+        XCTAssertTrue(responsiveness.recordCannotComplete(
+            stalledProcess,
+            now: timeoutObservedAt
+        ))
+        XCTAssertFalse(responsiveness.shouldAttempt(
+            stalledProcess,
+            now: timeoutObservedAt
+        ))
+        XCTAssertTrue(responsiveness.shouldAttempt(
+            healthyProcess,
+            now: timeoutObservedAt
+        ))
+        XCTAssertLessThanOrEqual(
+            timeoutObservedAt.timeIntervalSince(commandStartedAt),
+            0.25
+        )
+
+        let retryAt = timeoutObservedAt.addingTimeInterval(
+            AccessibilityProcessResponsiveness.failureBackoff
+        )
+        XCTAssertTrue(responsiveness.shouldAttempt(stalledProcess, now: retryAt))
+        XCTAssertTrue(responsiveness.recordSuccess(stalledProcess))
+        XCTAssertTrue(responsiveness.shouldAttempt(stalledProcess, now: retryAt))
+    }
+
+    func testAccessibilityBackoffExtendsAfterARepeatedTimeoutAndPrunesExitedProcesses() {
+        let processIdentifier: pid_t = 42
+        let firstFailure = Date(timeIntervalSinceReferenceDate: 2_000)
+        var responsiveness = AccessibilityProcessResponsiveness()
+
+        XCTAssertTrue(responsiveness.recordCannotComplete(
+            processIdentifier,
+            now: firstFailure
+        ))
+        let retryAt = firstFailure.addingTimeInterval(
+            AccessibilityProcessResponsiveness.failureBackoff
+        )
+        XCTAssertTrue(responsiveness.shouldAttempt(processIdentifier, now: retryAt))
+        XCTAssertTrue(responsiveness.recordCannotComplete(
+            processIdentifier,
+            now: retryAt
+        ))
+        XCTAssertFalse(responsiveness.shouldAttempt(
+            processIdentifier,
+            now: retryAt.addingTimeInterval(0.001)
+        ))
+
+        responsiveness.retainOnly([])
+        XCTAssertTrue(responsiveness.unavailableUntilByProcess.isEmpty)
+    }
+
     func testStableLayoutSlotPolicyRetainsOnlyTrackedNonAuthoritativeFailures() {
         XCTAssertEqual(
             StableLayoutSlotPolicy.retentionReason(
