@@ -661,6 +661,42 @@ final class MenuBarPresentationTests: XCTestCase {
         XCTAssertFalse(gate.cancel())
     }
 
+    func testDetachedStatusMenuUsesButtonLeadingEdgeAndMenuBarLowerEdgeInScreenSpace() {
+        let buttonFrame = CGRect(x: -420, y: 1_050, width: 180, height: 24)
+        let menuBarFrame = CGRect(x: -1_920, y: 1_024, width: 1_920, height: 64)
+
+        XCTAssertEqual(
+            MenuBarDetachedMenuGeometry.popupPoint(
+                for: buttonFrame,
+                menuBarScreenFrame: menuBarFrame,
+                layoutDirection: .leftToRight
+            ),
+            NSPoint(x: -420, y: 1_019)
+        )
+        XCTAssertEqual(
+            MenuBarDetachedMenuGeometry.popupPoint(
+                for: buttonFrame,
+                menuBarScreenFrame: menuBarFrame,
+                layoutDirection: .rightToLeft
+            ),
+            NSPoint(x: -240, y: 1_019)
+        )
+        XCTAssertEqual(MenuBarDetachedMenuGeometry.verticalGap, 5)
+    }
+
+    func testDetachedStatusMenuFallbackAccountsForFlippedButtonCoordinates() {
+        let bounds = CGRect(x: 0, y: 0, width: 180, height: 24)
+
+        XCTAssertEqual(
+            MenuBarDetachedMenuGeometry.localFallbackPoint(
+                in: bounds,
+                isFlipped: true,
+                layoutDirection: .leftToRight
+            ),
+            NSPoint(x: 0, y: 24)
+        )
+    }
+
     func testDisplayGroupStatusItemPlanKeepsOneMovableItemPerDisplay() {
         let snapshot = independentSnapshot(displays: [mainDisplay, externalDisplay])
             .replacingMode(.full)

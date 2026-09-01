@@ -635,7 +635,13 @@ re-shown; this moves the same window to the active native Space instead of switc
 one. Detached status-menu presentation first lets the originating status-item interaction complete:
 standard display-group buttons dispatch on mouse-up, and every menu route schedules presentation on
 the following main-loop turn. This prevents `NSMenu` from consuming the matching mouse-up inside a
-nested tracking loop and leaving the original status control pressed. The Settings menu action then
+nested tracking loop and leaving the original status control pressed. Before tracking starts, the
+controller completes all structural menu updates and asks AppKit to size the finished menu. The
+attached status button supplies horizontal alignment, while the bottom edge of its containing
+menu-bar window supplies the vertical screen anchor so a vertically centred button does not pull the
+popup over the menu bar. A fixed five-point visual gap separates the popup's rounded shadow from that
+edge. It does not rebuild the item tree from `menuWillOpen`, where a later layout can visibly
+relocate the initial popup. The Settings menu action then
 records a pending request, but the explicit synchronous `NSMenu.popUp` call must return before that
 request is consumed and the native Settings command is scheduled on another main-loop turn. Popup
 menus own a nested event loop, so delegate close, tracking-end, and post-action notifications can all

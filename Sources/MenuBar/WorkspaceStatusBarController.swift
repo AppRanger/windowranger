@@ -546,6 +546,34 @@ enum FocusedWindowSupportMenuPolicy {
     }
 }
 
+enum MenuBarDetachedMenuGeometry {
+    static let verticalGap: CGFloat = 5
+
+    static func popupPoint(
+        for anchorScreenFrame: CGRect,
+        menuBarScreenFrame: CGRect,
+        layoutDirection: NSUserInterfaceLayoutDirection
+    ) -> NSPoint {
+        NSPoint(
+            x: layoutDirection == .rightToLeft
+                ? anchorScreenFrame.maxX
+                : anchorScreenFrame.minX,
+            y: menuBarScreenFrame.minY - verticalGap
+        )
+    }
+
+    static func localFallbackPoint(
+        in bounds: CGRect,
+        isFlipped: Bool,
+        layoutDirection: NSUserInterfaceLayoutDirection
+    ) -> NSPoint {
+        NSPoint(
+            x: layoutDirection == .rightToLeft ? bounds.maxX : bounds.minX,
+            y: isFlipped ? bounds.maxY : bounds.minY
+        )
+    }
+}
+
 enum VerboseDiagnosticsMenuPolicy {
     static func entries(
         buildSupportsVerboseDiagnostics: Bool,
@@ -1719,17 +1747,47 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         dismissApplicationShelf()
         guard !isInvalidated, !isPresentingMenu else { return }
         isPresentingMenu = true
+        prepareMenuForPresentation()
+        // Reading the finished menu's public screen size forces AppKit to measure the current item
+        // tree before detached popup positioning begins, independent of automatic item validation.
+        _ = appMenu.size
+        let attachedAnchor = requestedAnchor.window.map { window in
+            (
+                buttonFrame: window.convertToScreen(
+                    requestedAnchor.convert(requestedAnchor.bounds, to: nil)
+                ),
+                menuBarFrame: window.frame
+            )
+        }
         diagnostics.log(category: "status-menu", event: "presentation-started")
         (requestedAnchor as? NSButton)?.highlight(true)
         defer {
             (requestedAnchor as? NSButton)?.highlight(false)
             isPresentingMenu = false
         }
-        _ = appMenu.popUp(
-            positioning: nil,
-            at: NSPoint(x: requestedAnchor.bounds.minX, y: requestedAnchor.bounds.minY),
-            in: requestedAnchor
-        )
+        if let attachedAnchor {
+            _ = appMenu.popUp(
+                positioning: nil,
+                at: MenuBarDetachedMenuGeometry.popupPoint(
+                    for: attachedAnchor.buttonFrame,
+                    menuBarScreenFrame: attachedAnchor.menuBarFrame,
+                    layoutDirection: appMenu.userInterfaceLayoutDirection
+                ),
+                in: nil
+            )
+        } else {
+            // A status-button action should always have an attached window, but retain the local
+            // AppKit fallback so accessibility actions cannot strand the shared menu.
+            _ = appMenu.popUp(
+                positioning: nil,
+                at: MenuBarDetachedMenuGeometry.localFallbackPoint(
+                    in: requestedAnchor.bounds,
+                    isFlipped: requestedAnchor.isFlipped,
+                    layoutDirection: appMenu.userInterfaceLayoutDirection
+                ),
+                in: requestedAnchor
+            )
+        }
         diagnostics.log(category: "status-menu", event: "presentation-returned")
         if settingsStatusMenuOpenGate.consumeAfterMenuPresentationReturns() {
             diagnostics.log(
@@ -1743,7 +1801,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    func menuWillOpen(_ menu: NSMenu) {
+    private func prepareMenuForPresentation() {
         let modifierFlags = NSEvent.modifierFlags
         supportSectionVisibleForCurrentOpen = FocusedWindowSupportMenuPolicy.isVisible(
             modifierFlags: modifierFlags
@@ -1751,6 +1809,9 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         focusedWindowDiagnosticReport = supportSectionVisibleForCurrentOpen
             ? engine.focusedWindowDiagnosticReport()
             : nil
+        // Structural changes must finish before `NSMenu.popUp` starts calculating and tracking its
+        // detached popup. Rebuilding from `menuWillOpen` allowed the initial frame to use stale
+        // geometry and then relocate when the first pointer movement triggered another layout.
         rebuildMenu()
     }
 

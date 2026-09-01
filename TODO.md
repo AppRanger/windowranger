@@ -20,6 +20,22 @@ smallest useful outcome and acceptance boundary.
 
 ## Done
 
+### WR-109 — Keep the first status menu at its final anchored position
+
+- **Type:** Menu-bar popup positioning bug
+- **Priority:** P1
+- **Status:** Done
+- **Result:** The detached status menu now finishes structural updates before tracking, measures its
+  completed item tree, and uses the clicked button for horizontal screen alignment plus the menu-bar
+  window's lower edge and a five-point visual gap for vertical placement. The existing mouse-up
+  deferral and post-popup Settings handoff remain unchanged.
+- **Evidence:** All 46 focused Menu Bar Presentation tests and the adjacent 149 Settings, shortcut,
+  and support-report tests pass. The complete quick integration gate passes all 863 non-hosted tests
+  plus project generation, release-ledger, Sparkle/Homebrew workflow, shell-syntax, and isolation
+  checks. Signed universal Debug candidate `ec1120a0ff12-dirty` passed strict signature and clean
+  startup checks; after successive placement refinements, on 1 September 2026 the maintainer
+  confirmed the menu no longer jumped and accepted the final five-point spacing.
+
 ### WR-108 — Render menu-bar labels with the attached status-item appearance at startup
 
 - **Type:** Menu-bar appearance bug
@@ -4386,7 +4402,8 @@ second copy of that checklist.
   pointer routing, pressure, hover, menu fallback, and accessibility coverage. Matching signed
   candidates preserved macOS 26 behavior and live-validated ordering, group movement, workspace
   clicks, and right-click routing on macOS 27. The initial geometric-menu position jump remains a
-  documented cosmetic macOS 27 beta limitation rather than a reason to reintroduce unsafe routing.
+  documented cosmetic macOS 27 beta limitation rather than a reason to reintroduce unsafe routing;
+  it was later reopened for a safe detached-menu correction under WR-109.
 
 ### WR-038 — Do not let stale parked-window focus undo a workspace switch
 
