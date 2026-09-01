@@ -19,4 +19,5 @@
 11	0.1.0-beta.10	published	GitHub prerelease v0.1.0-beta.10
 12	1.0.0	published	GitHub Stable release v1.0.0
 13	1.0.1	published	GitHub Stable release v1.0.1
-14	1.0.2	allocated	Stable candidate with menu bar and window-dragging fixes
+14	1.0.2	published	GitHub Stable release v1.0.2
+15	1.0.3	allocated	Urgent Stable hotfix for the menu bar appearance refresh CPU loop

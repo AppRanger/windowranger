@@ -999,12 +999,45 @@ struct MenuBarStatusItemAppearanceRefreshGate: Equatable, Sendable {
     }
 }
 
+struct MenuBarStatusItemAppearanceSignature: Equatable, Sendable {
+    let appearanceName: NSAppearance.Name
+    let increasesContrast: Bool
+}
+
+struct MenuBarStatusItemAppearanceNotificationGate: Equatable, Sendable {
+    private(set) var lastSignature: MenuBarStatusItemAppearanceSignature?
+
+    static func supportedSignature(
+        for appearance: NSAppearance,
+        increasesContrast: Bool
+    ) -> MenuBarStatusItemAppearanceSignature {
+        MenuBarStatusItemAppearanceSignature(
+            appearanceName: appearance.bestMatch(from: [.aqua, .darkAqua]) ?? appearance.name,
+            increasesContrast: increasesContrast
+        )
+    }
+
+    mutating func shouldNotify(signature: MenuBarStatusItemAppearanceSignature) -> Bool {
+        guard signature != lastSignature else { return false }
+        lastSignature = signature
+        return true
+    }
+
+    mutating func reset() {
+        lastSignature = nil
+    }
+}
+
 @MainActor
 final class MenuBarStatusItemAppearanceObserver: NSView {
     var onAttachedAppearanceChange: (() -> Void)?
+    private var notificationGate = MenuBarStatusItemAppearanceNotificationGate()
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if window == nil {
+            notificationGate.reset()
+        }
         notifyIfAttached()
     }
 
@@ -1017,6 +1050,11 @@ final class MenuBarStatusItemAppearanceObserver: NSView {
 
     private func notifyIfAttached() {
         guard window != nil else { return }
+        let signature = MenuBarStatusItemAppearanceNotificationGate.supportedSignature(
+            for: effectiveAppearance,
+            increasesContrast: NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        )
+        guard notificationGate.shouldNotify(signature: signature) else { return }
         onAttachedAppearanceChange?()
     }
 }

@@ -1366,11 +1366,14 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private func scheduleStatusItemAppearanceRefresh() {
         guard statusItemAppearanceRefreshGate.request() else { return }
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.statusItemAppearanceRefreshGate.consume() else { return }
+            guard let self, self.statusItemAppearanceRefreshGate.isPending else { return }
             self.pendingStatusItemAppearanceRefresh = nil
             // The observer has proved the status button is attached to its menu-bar window. Render
-            // on the following turn so adaptive label and symbol colours use that appearance.
+            // on the following turn so adaptive label and symbol colours use that appearance. Keep
+            // the gate pending through the render because assigning the refreshed status image can
+            // synchronously repeat AppKit's effective-appearance callback on macOS 27.
             self.rebuild(force: true)
+            _ = self.statusItemAppearanceRefreshGate.consume()
         }
         pendingStatusItemAppearanceRefresh = work
         DispatchQueue.main.async(execute: work)
