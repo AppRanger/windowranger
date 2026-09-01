@@ -102,6 +102,12 @@ then rebuilds the signature from fresh frames so rejected, delayed, or adjusted 
 an assumed baseline; a no-write refresh retains the enumerated signature without rereading every
 visible managed window.
 
+Accessibility messages use a process-wide 250-millisecond timeout instead of the system's
+multi-second default. A `cannotComplete` result defers further reads, writes, and focus attempts for
+that application for two seconds while other applications continue normally. Broad refreshes retain
+the deferred application's existing stable layout slots but do not write to them. A successful retry
+clears the per-process backoff, and terminated processes are removed from the backoff state.
+
 The periodic broad refresh constructs the same public engine state needed to notice Accessibility
 trust, membership, workspace, profile, display, and highlight-context changes, but schedules its
 main-thread observer only when that state differs from the last scheduled value. Explicit engine
@@ -677,11 +683,13 @@ observation.
 
 Exact focus operations use bounded activation/focus/raise verification and generation tokens. For an
 inactive target application, the engine prepares the exact window before setting the public
-application-level Accessibility frontmost attribute. Candidate workflows decide success from the
-observed result rather than the setter return: if the app remains inactive, one explicit AppKit
-activation fallback is allowed before at most one exact-window retry. A genuine competing or ignored
-focus aborts the transaction. One-shot focus paths that do not advance through candidates retain the
-immediate AppKit compatibility fallback only when Accessibility rejects the frontmost write.
+application-level Accessibility frontmost attribute. Interprocess Accessibility activation runs on
+the engine queue, never AppKit's main thread; only unhide and the optional AppKit activation fallback
+run on the main thread. Candidate workflows decide success from the observed result rather than the
+setter return: if the app remains inactive, one explicit AppKit activation fallback is allowed before
+at most one exact-window retry. A genuine competing or ignored focus aborts the transaction. One-shot
+focus paths that do not advance through candidates retain the immediate AppKit compatibility fallback
+only when Accessibility rejects the frontmost write.
 An ordinary layer-0 standard window with read-only focus attributes remains a candidate only when it
 reports itself as both its application's focused and main window and supports raising; the same exact
 WindowServer verification must still succeed after activation. Read-only windows without that local

@@ -223,8 +223,9 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Diagnostic-backed resilience bug
 - **Priority:** P1
-- **Status:** Investigation — Safari was the immediate live trigger; no WindowRanger fix is approved
-  or implemented.
+- **Status:** Public release follow-up — Stable 1.0.4 build 16 is immutable on GitHub. Sparkle,
+  website, and Homebrew publication remain in progress; the maintainer will verify the public update
+  after it lands.
 - **User-observed:** Workspace switching intermittently appeared to lock up in the signed Debug daily
   build. Force-quitting Safari cleared the suspected hung instance.
 - **Diagnostic evidence:** Ordinary switches completed in roughly 0.3–0.6 seconds, while switches to
@@ -237,14 +238,32 @@ smallest useful outcome and acceptance boundary.
   dispatch stalls, XPC reply-decoding failures, helper communication failures, and quarantine for
   excessive logging. Safari PID `1330` then exited and relaunched as PID `98488`; WindowRanger PID
   `97784` remained alive and returned to its normal sleeping, low-CPU state.
+- **Implementation:** Accessibility messaging now has a process-wide 250-millisecond timeout. A
+  `cannotComplete` result puts only that process into a two-second backoff, excludes it from refresh
+  writes and focus candidates, and preserves its existing stable layout slots until a successful
+  retry. Accessibility frontmost activation no longer runs on AppKit's main thread. Focused
+  `WorkspaceDefinitionTests` cover per-process deferral, retry, recovery, repeated failure, and
+  exited-process cleanup; `WorkspaceSwitchFocusTests` remain green.
+- **Live evidence:** In installed Debug build `52c7fdf89c99-dirty`, observed workspace switches
+  completed in approximately 0.42–0.48 seconds. Battle.net and World of Warcraft each returned
+  transient Accessibility timeouts; diagnostics show WindowRanger deferred only the affected
+  process, recovered it automatically, and remained immediately usable. Settled sampling showed
+  roughly 3–6% CPU and 95–125 MB memory in the unoptimised diagnostic build, with no hot loop or
+  multi-second main-thread stall; the maintainer reported that ordinary use felt responsive.
 - **Expected:** A slow or hung application's Accessibility endpoint cannot hold WindowRanger's main
   interaction path for multi-second AX timeouts. Workspace switching skips or temporarily defers the
   unavailable application's windows, preserves stable membership, and remains usable for healthy
   applications.
-- **Acceptance:** Reproduce with a deterministic delayed/unresponsive Accessibility fixture, prove
-  switch commands and the menu-bar event loop remain responsive within a bounded interval, and prove
-  the deferred application's windows reconcile without loss once it answers again. Keep live testing
-  with an actually hung third-party app as a separate validation boundary.
+- **Distribution evidence:** Exact commit `1d5869d0d416ed4701b133c11fd61e8f1fbcfb0d` passed all 892
+  non-hosted tests, static analysis, and protected branch/tag gates. Apple accepted the app
+  notarization `07de93ee-7c77-491f-809c-e5f5544a807f` and DMG notarization
+  `84f9304b-52ef-4624-8c8b-24b7676ecc1c` with zero logged issues; both stapled artifacts passed
+  Gatekeeper. The five immutable GitHub assets round-tripped against tag `v1.0.4`, build 16,
+  provenance, archive SHA-256 `1766460c508d0cbedcd0ecbb45f48f10af035b29f7d4bbb581e83958992bea1e`,
+  and DMG SHA-256 `41af7c05ec1efa3665a245cdb9187822032f07462964afb444a835b85f58af58`.
+- **Acceptance:** Publish immutable Stable 1.0.4 build 16 through GitHub and Sparkle, verify the live
+  artifacts/feed mechanically, then have the maintainer confirm workspace switching in the installed
+  public update. Keep a deliberately sustained third-party hang as an optional stress boundary.
 
 ### WR-113 — Stop appearance refreshes from re-entering the status-item renderer
 
