@@ -173,6 +173,11 @@ struct TiledDragObservation: Equatable, Sendable {
     let destination: TiledDragDestination?
 }
 
+struct TiledCrossPartitionMove: Equatable, Sendable {
+    let sourceTree: TiledNode?
+    let destinationTree: TiledNode
+}
+
 enum TiledPlacementHistoryDirection: String, Equatable, Sendable {
     case undo
     case redo
@@ -526,6 +531,89 @@ enum TiledLayoutEngine {
 
         let proposed = replacing(destination.target, with: replacement, in: remainder)
         guard (try? validated(proposed, participants: participants)) != nil else { return nil }
+        return proposed
+    }
+
+    /// Transfers a leaf between display partitions. The source branch collapses, while the
+    /// destination first admits the leaf and can then apply the same centre/edge placement model
+    /// used by an ordinary within-display drag. A nil landing appends deterministically, including
+    /// the empty-destination case.
+    static func transferringWindow(
+        _ focusedWindow: WindowKey,
+        from sourceTree: TiledNode,
+        to destinationTree: TiledNode?,
+        destinationWindowKeys: [WindowKey],
+        destinationWeights: [CGFloat]?,
+        orientation: WorkspaceLayoutOrientation,
+        landing: TiledDragDestination?
+    ) -> TiledCrossPartitionMove? {
+        guard sourceTree.contains(focusedWindow),
+              !destinationWindowKeys.contains(focusedWindow),
+              Set(destinationWindowKeys).count == destinationWindowKeys.count,
+              destinationWeights == nil || destinationWeights?.count == destinationWindowKeys.count,
+              (try? validated(sourceTree, participants: Set(sourceTree.windowKeys))) != nil
+        else { return nil }
+
+        let reconciledDestination = reconciled(
+            destinationTree,
+            windowKeys: destinationWindowKeys + [focusedWindow],
+            weights: destinationWeights.map { $0 + [1] },
+            orientation: orientation
+        )
+        guard var proposedDestination = reconciledDestination else { return nil }
+        if let landing {
+            guard destinationWindowKeys.contains(landing.target),
+                  let placed = movingWindow(
+                      focusedWindow,
+                      to: landing,
+                      in: proposedDestination
+                  )
+            else { return nil }
+            proposedDestination = placed
+        }
+        guard (try? validated(
+            proposedDestination,
+            participants: Set(destinationWindowKeys + [focusedWindow])
+        )) != nil else { return nil }
+        return TiledCrossPartitionMove(
+            sourceTree: sourceTree.removing(focusedWindow),
+            destinationTree: proposedDestination
+        )
+    }
+
+    /// Admits a window arriving from a non-tiled source into a tiled partition, optionally placing
+    /// it at the same centre/edge landing used by tiled-to-tiled transfers.
+    static func admittingWindow(
+        _ focusedWindow: WindowKey,
+        to destinationTree: TiledNode?,
+        destinationWindowKeys: [WindowKey],
+        destinationWeights: [CGFloat]?,
+        orientation: WorkspaceLayoutOrientation,
+        landing: TiledDragDestination?
+    ) -> TiledNode? {
+        guard !destinationWindowKeys.contains(focusedWindow),
+              Set(destinationWindowKeys).count == destinationWindowKeys.count,
+              destinationWeights == nil || destinationWeights?.count == destinationWindowKeys.count,
+              let appended = reconciled(
+                  destinationTree,
+                  windowKeys: destinationWindowKeys + [focusedWindow],
+                  weights: destinationWeights.map { $0 + [1] },
+                  orientation: orientation
+              )
+        else { return nil }
+        let proposed: TiledNode
+        if let landing {
+            guard destinationWindowKeys.contains(landing.target),
+                  let placed = movingWindow(focusedWindow, to: landing, in: appended)
+            else { return nil }
+            proposed = placed
+        } else {
+            proposed = appended
+        }
+        guard (try? validated(
+            proposed,
+            participants: Set(destinationWindowKeys + [focusedWindow])
+        )) != nil else { return nil }
         return proposed
     }
 

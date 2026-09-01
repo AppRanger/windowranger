@@ -202,6 +202,81 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-110 — Transfer a manually dragged window between displays
+
+- **Type:** Multi-display layout interaction bug
+- **Priority:** P1
+- **Status:** Done — all nine Tiled, Accordion, and Freeform source/destination combinations are
+  accepted in the installed build in Independent Displays mode; Unified transfers and same-display
+  behaviour are also accepted.
+- **User-observed:** Dragging a window from a Tiled workspace on one display to another display
+  makes it snap back to the source display on release. Other layouts were not extensively tested.
+- **Diagnostic-backed cause:** Installed correlation `manual-move-BC4123B4` began on workspace 9
+  and cancelled as `released-without-target` after the pointer crossed displays. The redesigned move
+  transaction resolved landing targets only from the immutable frames in its source display
+  partition, so another display could never become a valid destination.
+- **Second diagnostic-backed cause:** The accepted Tiled-to-Accordion transfer logged an atomic
+  `manual-move-D87B92EB` commit, but the attempted Accordion-to-Tiled return produced no manual-move
+  session before normal Accordion solving restored the window. Mouse-down capture and gesture
+  classification had been restricted to Tiled source workspaces.
+- **Third diagnostic-backed cause:** The source-generalised installed candidate still produced no
+  session for the Accordion-to-Tiled retry while `focused-window-highlight` was presented. The
+  click-through WindowRanger focus-border panel is above the real window in WindowServer order, so
+  the conservative pointer resolver treated it as a blocking ineligible surface. Resolution now
+  registers and skips only the exact WindowServer keys for the passive focus-border and
+  landing-preview panels; every interactive WindowRanger surface and unrelated overlay continues to
+  block click-through regardless of layer.
+- **Fourth diagnostic-backed cause:** The next installed retry showed the Accordion window being
+  restored from several partially cross-display positions to its solved `254,34` frame while the
+  left mouse button was still held, with no cross-layout session active. The periodic Accordion
+  solver was therefore fighting the native drag before release. Reconciliation now recovers a
+  layout-aware move anchor from the last solved Accordion frame (or the stored Freeform frame),
+  starts the same cross-layout transaction, and suppresses corrective layout writes for that drag.
+- **Fifth diagnostic-backed cause:** Freeform-to-Tiled committed once, but later retries produced no
+  session while background visibility reconciliation kept issuing position writes to the dragged
+  Freeform window roughly every 0.7 seconds, including large horizontal jumps. Freeform was updating
+  its stored geometry during the native drag, so fallback classification could lose its stable
+  reference. WindowRanger now retains the last button-up Freeform frame, recovers from it directly
+  during drag events, and suppresses all background Freeform writes while the left button is held.
+- **Expected:** Crossing onto another display shows a valid landing hint and release transfers the
+  window instead of restoring it. A Tiled destination uses its centre/four-edge insertion model,
+  Accordion admits and focuses the window in its stack, and Freeform preserves the manually dragged
+  frame. Unified mode retains workspace membership and changes display affinity. Independent
+  Displays transfers membership to the destination display's currently active workspace, preserving
+  the existing manual app-rule override contract.
+- **Implemented:** A pointer-down anchor now identifies the actual window under the pointer and
+  classifies title-bar movement independently of the source layout. The transaction resolves the
+  display under the pointer and builds an atomic source-and-destination proposal. A Tiled
+  destination applies the same centre/four-edge landing model or deterministic append;
+  Accordion appends and focuses the window in its resolved stack; Freeform commits the observed drag
+  frame and keeps its landing preview aligned as that frame moves. Release revalidates the relevant
+  trees, participant sets, layout/configuration, workspace activity, display topology, and geometry
+  before updating membership, display affinity, order/weights, frames, focus history, and persistence
+  together. A Tiled source collapses its branch, Accordion re-solves the remaining focused stack,
+  and Freeform leaves other source windows alone. Cancellation restores exact source frames, while a
+  same-display Freeform drag persists its native position. A single-window source is supported, and
+  an undersized directional Tiled landing falls back to the safe appended result.
+- **Automated evidence:** The 248-test focused diagnostics, Tiled tree, preview, and
+  workspace-definition domain passes,
+  including a nine-pair source/destination primitive matrix, populated and empty Tiled transfers,
+  non-Tiled admission into Tiled, Accordion source reflow and destination focus, Freeform source
+  preservation and destination-frame persistence, successive Freeform preview movement, and exact
+  mouse-down restoration when an Accordion drag is cancelled, plus recovery of an Accordion or
+  Freeform anchor when the initial pointer-down capture is unavailable. Pointer targeting proves an
+  explicitly registered passive WindowRanger overlay can reveal the managed window below while
+  unregistered interactive WindowRanger windows and unrelated overlays still block click-through.
+  Workspace routing coverage proves Unified
+  retains the source workspace, Independent chooses the destination display's active workspace, and
+  a missing active destination fails closed. Review found and corrected the initially unreachable
+  single-window source, frozen Freeform-preview path, and post-threshold Accordion cancellation
+  frame; final review found no remaining P1/P2 issue. The release-checkpoint run passed all 888
+  non-hosted tests with zero failures, Release static analysis, the unsigned universal Release
+  build, and both Stable and Beta DMG construction and verification.
+- **Live validation:** The user accepted all nine Tiled, Accordion, and Freeform
+  source/destination combinations in the installed development build in Independent Displays mode,
+  including the previously failing reverse and Freeform routes. Unified transfers and existing
+  same-display behaviour were also confirmed working.
+
 ### WR-106 — Reconstruct Tiled preview geometry before its first visit
 
 - **Type:** Workspace preview correctness bug

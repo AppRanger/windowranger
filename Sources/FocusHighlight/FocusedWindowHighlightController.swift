@@ -176,6 +176,7 @@ enum FocusedWindowHighlightPolicy {
 
 @MainActor
 protocol FocusedWindowHighlightPresenting: AnyObject {
+    var passiveWindowIdentifier: CGWindowID? { get }
     func update(enabled: Bool, color: NSColor, filters: FocusedWindowHighlightFilters)
     func updateVerifiedFocusTarget(_ target: FocusedWindowHighlightTarget)
     func updateCornerRadiusOverrides(_ overrides: [String: Double])
@@ -213,6 +214,10 @@ final class FocusedWindowHighlightController: FocusedWindowHighlightPresenting {
     private var borderView: FocusedWindowHighlightView?
     private var presentedTarget: WindowKey?
     private var verifiedFocusTargetLease: VerifiedFocusTargetLease?
+
+    var passiveWindowIdentifier: CGWindowID? {
+        panel.map { CGWindowID($0.windowNumber) }
+    }
 
     init(
         diagnostics: DiagnosticLogger = .disabled,

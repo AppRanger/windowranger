@@ -194,6 +194,7 @@ enum TiledManualDragClassifier {
 
 @MainActor
 protocol TiledResizePreviewPresenting: AnyObject {
+    var passiveWindowIdentifier: CGWindowID? { get }
     func present(_ presentation: TiledResizePreviewPresentation)
     @discardableResult func dismiss(token: UUID?, reason: String) -> Bool
     @discardableResult func screenParametersDidChange() -> Bool
@@ -211,6 +212,9 @@ final class TiledResizePreviewController: TiledResizePreviewPresenting {
     private var presentation: TiledResizePreviewPresentation?
 
     var presentedToken: UUID? { presentation?.token }
+    var passiveWindowIdentifier: CGWindowID? {
+        panel.map { CGWindowID($0.windowNumber) }
+    }
 
     init(
         diagnostics: DiagnosticLogger = .disabled,
@@ -325,12 +329,18 @@ final class TiledResizePreviewController: TiledResizePreviewPresenting {
 
 @MainActor
 final class TiledResizePointerMonitor {
+    private let onPressed: () -> Void
     private let onDragged: () -> Void
     private let onReleased: () -> Void
     private var monitor: Any?
     private var lastUpdate = Date.distantPast
 
-    init(onDragged: @escaping () -> Void, onReleased: @escaping () -> Void) {
+    init(
+        onPressed: @escaping () -> Void,
+        onDragged: @escaping () -> Void,
+        onReleased: @escaping () -> Void
+    ) {
+        self.onPressed = onPressed
         self.onDragged = onDragged
         self.onReleased = onReleased
     }
@@ -338,7 +348,7 @@ final class TiledResizePointerMonitor {
     func start() {
         guard monitor == nil else { return }
         monitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDragged, .leftMouseUp]
+            matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]
         ) { [weak self] event in
             Task { @MainActor [weak self] in self?.handle(event) }
         }
@@ -352,6 +362,9 @@ final class TiledResizePointerMonitor {
 
     private func handle(_ event: NSEvent) {
         switch event.type {
+        case .leftMouseDown:
+            lastUpdate = .distantPast
+            onPressed()
         case .leftMouseDragged:
             let now = Date()
             guard now.timeIntervalSince(lastUpdate) >= TiledResizePreviewPolicy.updateInterval else {

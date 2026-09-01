@@ -239,6 +239,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var tiledResizePreviewPresenter: TiledResizePreviewPresenting =
         TiledResizePreviewController(diagnostics: diagnostics)
     private lazy var tiledResizePointerMonitor = TiledResizePointerMonitor(
+        onPressed: { [weak self] in
+            guard let self else { return }
+            let processIdentifier = ProcessInfo.processInfo.processIdentifier
+            let passiveWindowKeys = Set([
+                self.focusedWindowHighlightPresenter.passiveWindowIdentifier,
+                self.tiledResizePreviewPresenter.passiveWindowIdentifier,
+            ].compactMap { identifier in
+                identifier.map {
+                    WindowKey(
+                        processIdentifier: processIdentifier,
+                        windowIdentifier: $0
+                    )
+                }
+            })
+            self.engine.layoutMovePointerPressed(
+                ignoredOverlayWindowKeys: passiveWindowKeys
+            )
+        },
         onDragged: { [weak self] in self?.engine.tiledResizePointerDragged() },
         onReleased: { [weak self] in self?.engine.tiledResizePointerReleased() }
     )

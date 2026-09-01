@@ -1289,6 +1289,114 @@ final class TiledLayoutTreeTests: XCTestCase {
         ))
     }
 
+    func testCrossPartitionTransferCollapsesSourceAndUsesDestinationLanding() throws {
+        let source = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.4,
+            first: .window(a),
+            second: .window(b)
+        )
+        let destination = TiledNode.split(
+            axis: .vertical,
+            ratio: 0.6,
+            first: .window(c),
+            second: .window(d)
+        )
+
+        let moved = try XCTUnwrap(TiledLayoutEngine.transferringWindow(
+            a,
+            from: source,
+            to: destination,
+            destinationWindowKeys: [c, d],
+            destinationWeights: [1, 1],
+            orientation: .horizontal,
+            landing: .init(target: c, placement: .right)
+        ))
+
+        XCTAssertEqual(moved.sourceTree, .window(b))
+        XCTAssertEqual(moved.destinationTree, .split(
+            axis: .vertical,
+            ratio: 0.6,
+            first: .split(
+                axis: .horizontal,
+                ratio: 0.5,
+                first: .window(c),
+                second: .window(a)
+            ),
+            second: .window(d)
+        ))
+    }
+
+    func testCrossPartitionTransferSupportsEmptyDestinationAndRejectsOverlap() throws {
+        let source = TiledNode.window(a)
+        let emptyMove = try XCTUnwrap(TiledLayoutEngine.transferringWindow(
+            a,
+            from: source,
+            to: nil,
+            destinationWindowKeys: [],
+            destinationWeights: [],
+            orientation: .horizontal,
+            landing: nil
+        ))
+
+        XCTAssertNil(emptyMove.sourceTree)
+        XCTAssertEqual(emptyMove.destinationTree, .window(a))
+        XCTAssertNil(TiledLayoutEngine.transferringWindow(
+            a,
+            from: source,
+            to: .window(a),
+            destinationWindowKeys: [a],
+            destinationWeights: [1],
+            orientation: .horizontal,
+            landing: nil
+        ))
+    }
+
+    func testAdmissionFromNonTiledSourceUsesLandingAndSupportsEmptyDestination() throws {
+        let destination = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(b),
+            second: .window(c)
+        )
+        let landed = try XCTUnwrap(TiledLayoutEngine.admittingWindow(
+            a,
+            to: destination,
+            destinationWindowKeys: [b, c],
+            destinationWeights: [1, 1],
+            orientation: .horizontal,
+            landing: .init(target: c, placement: .top)
+        ))
+
+        XCTAssertEqual(landed, .split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(b),
+            second: .split(
+                axis: .vertical,
+                ratio: 0.5,
+                first: .window(a),
+                second: .window(c)
+            )
+        ))
+        XCTAssertEqual(TiledLayoutEngine.admittingWindow(
+            a,
+            to: nil,
+            destinationWindowKeys: [],
+            destinationWeights: [],
+            orientation: .horizontal,
+            landing: nil
+        ), .window(a))
+        XCTAssertNil(TiledLayoutEngine.admittingWindow(
+            a,
+            to: .window(a),
+            destinationWindowKeys: [a],
+            destinationWeights: [1],
+            orientation: .horizontal,
+            landing: nil
+        ))
+    }
+
     func testDirectionalInsertionMinimumLengthPreflightRejectsNarrowNestedLanding() throws {
         let tree = try XCTUnwrap(TiledLayoutEngine.flatTree(
             windowKeys: [a, b, c],

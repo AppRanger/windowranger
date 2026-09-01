@@ -81,6 +81,15 @@ layout and layout geometry. In Unified mode one active workspace applies across 
 windows retain their physical display affinity. In Independent Displays mode each logical display
 has its own active workspace and workspaces have synced abstract display-role homes.
 
+A manual cross-display drag is one atomic source-and-destination transaction. Unified mode preserves
+the window's workspace membership and changes its physical display affinity. Independent Displays
+moves it into the destination display's currently active workspace. A Tiled source collapses its BSP
+after removing the leaf, Accordion re-solves its remaining focused stack, and Freeform leaves the
+other source frames alone. The destination then uses its own layout semantics—BSP admission for
+Tiled, focused stack admission for Accordion, or the observed manual frame for Freeform—only after
+the relevant tree, participant sets, layout configuration, active-workspace routing, and display
+topology revalidate at release.
+
 Window membership is session state, not profile content. Inactive members are parked using
 position-only AX writes where possible. Their recoverable frames are retained so switching back,
 graceful quit, startup recovery and explicit reset can return them to meaningful visible geometry.

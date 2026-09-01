@@ -356,6 +356,45 @@ final class DiagnosticLoggerTests: XCTestCase {
         ))
     }
 
+    func testPointerTargetSkipsOnlyExplicitPassiveOverlayWindows() {
+        let ownOverlay = WindowKey(processIdentifier: 10, windowIdentifier: 101)
+        let ownNormalWindow = WindowKey(processIdentifier: 10, windowIdentifier: 102)
+        let managed = WindowKey(processIdentifier: 20, windowIdentifier: 201)
+        let pointer = CGPoint(x: 150, y: 150)
+        let managedEntry = WindowServerPointerEntry(
+            key: managed,
+            layer: 0,
+            bounds: CGRect(x: 0, y: 0, width: 800, height: 600)
+        )
+
+        XCTAssertEqual(AccessibilityWindow.pointerTargetWindow(
+            at: pointer,
+            in: [
+                WindowServerPointerEntry(
+                    key: ownOverlay,
+                    layer: 3,
+                    bounds: CGRect(x: 100, y: 100, width: 300, height: 200)
+                ),
+                managedEntry,
+            ],
+            eligibleWindowKeys: [managed],
+            ignoredOverlayWindowKeys: [ownOverlay]
+        ), managed)
+        XCTAssertNil(AccessibilityWindow.pointerTargetWindow(
+            at: pointer,
+            in: [
+                WindowServerPointerEntry(
+                    key: ownNormalWindow,
+                    layer: 0,
+                    bounds: CGRect(x: 100, y: 100, width: 300, height: 200)
+                ),
+                managedEntry,
+            ],
+            eligibleWindowKeys: [managed],
+            ignoredOverlayWindowKeys: [ownOverlay]
+        ), "An interactive WindowRanger window must still block click-through.")
+    }
+
     func testInteractionDisplayUsesActualFocusedFrameOnSecondDisplay() {
         let displays = [
             DisplaySnapshot(
