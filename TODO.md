@@ -219,6 +219,76 @@ smallest useful outcome and acceptance boundary.
   configuration. Add a deterministic linked-worktree regression check and retain the complete
   pre-push gate; do not bypass validation.
 
+### WR-112 — Keep workspace switching responsive when an application stops answering Accessibility
+
+- **Type:** Diagnostic-backed resilience bug
+- **Priority:** P1
+- **Status:** Investigation — Safari was the immediate live trigger; no WindowRanger fix is approved
+  or implemented.
+- **User-observed:** Workspace switching intermittently appeared to lock up in the signed Debug daily
+  build. Force-quitting Safari cleared the suspected hung instance.
+- **Diagnostic evidence:** Ordinary switches completed in roughly 0.3–0.6 seconds, while switches to
+  Safari window `1330:127` took 8.4, 9.0, 15.9, and 20.9 seconds. One switch away from Safari paused
+  for 15.0 seconds partway through candidate enumeration. The gaps follow Accessibility focus or
+  enumeration work involving Safari; WindowRanger later reports `focus-verified` and `complete`
+  rather than crashing. Its lifecycle diagnostics also retain Safari's slot with
+  `application-enumeration-unavailable` while the app cannot be queried.
+- **Corroborating system evidence:** During the same interval Safari logged repeated main-thread
+  dispatch stalls, XPC reply-decoding failures, helper communication failures, and quarantine for
+  excessive logging. Safari PID `1330` then exited and relaunched as PID `98488`; WindowRanger PID
+  `97784` remained alive and returned to its normal sleeping, low-CPU state.
+- **Expected:** A slow or hung application's Accessibility endpoint cannot hold WindowRanger's main
+  interaction path for multi-second AX timeouts. Workspace switching skips or temporarily defers the
+  unavailable application's windows, preserves stable membership, and remains usable for healthy
+  applications.
+- **Acceptance:** Reproduce with a deterministic delayed/unresponsive Accessibility fixture, prove
+  switch commands and the menu-bar event loop remain responsive within a bounded interval, and prove
+  the deferred application's windows reconcile without loss once it answers again. Keep live testing
+  with an actually hung third-party app as a separate validation boundary.
+
+### WR-113 — Stop appearance refreshes from re-entering the status-item renderer
+
+- **Type:** Diagnostic-backed performance regression
+- **Priority:** P0
+- **Status:** Stable 1.0.3 build 15 is public on GitHub; Sparkle and Homebrew publication are in
+  progress. The maintainer explicitly approved publication before broader local and manual release
+  verification, which remains post-release validation.
+- **User-observed:** WindowRanger 1.0.2 build 14 suddenly sustained roughly one full CPU core while
+  otherwise idle on macOS 27.
+- **Diagnostic-backed cause:** The Developer ID build remained at 97–100% CPU, and the equivalent
+  signed Debug build reproduced at 92–98%. A five-second symbolicated sample attributed 926 of
+  2,393 main-thread samples to `scheduleStatusItemAppearanceRefresh()`, its forced status rebuild,
+  and the WR-091 bitmap rasterizer. WR-108's deferred refresh gate was consumed before rendering,
+  so AppKit's appearance callback during the render could schedule the next render. Installed
+  follow-up proved raw identity equality was insufficient because compatible Aqua/vibrant variants
+  alternated around bitmap capture.
+- **Implemented:** The attached observer reduces compatible Aqua/vibrant variants to a Light/Dark
+  family through `bestMatch(from:)`, combines that with the explicit system increase-contrast state,
+  suppresses equivalent notifications, and resets on detach. The controller keeps its coalescing
+  gate pending until the forced render finishes, suppressing synchronous re-entrant callbacks.
+- **Automated evidence:** All 48 focused Menu Bar Presentation tests passed, covering duplicate
+  suppression, actual detach/reattach reset, Aqua/vibrant equivalence, preserved Light/Dark and
+  normal/high-contrast distinctions, attachment behavior, and adaptive raster output.
+- **Installed evidence:** The final signed universal Debug candidate ran from
+  `/Applications/WindowRanger.app`; its executable and Debug dylib matched the built products byte
+  for byte. Fifteen settled readings ranged from 2.3% to 8.5% CPU instead of roughly 100%, and a
+  five-second symbolicated sample contained no appearance-refresh or menu-bar rasterization stack.
+- **Fast-track boundary:** Skip the duplicate broad local suite, exact packaged-artifact replacement
+  install, and pre-publication manual regression at the maintainer's explicit request. Retain central
+  protected checks plus distribution preflight, stable-Xcode Developer ID signing, notarization,
+  stapling, Gatekeeper, checksum, provenance, immutable asset round-trip, and live feed verification.
+  The maintainer will verify the public release after it lands.
+- **Distribution evidence:** Exact commit `ba7d47c30a876540f214be12f82f0bfa3c8d4f22` passed 824 local
+  tests, static analysis, and the protected `main` CI Release/DMG gate. Apple accepted the app
+  notarization `26af4ef6-8eb8-427d-8e7a-61738ba2f574` and DMG notarization
+  `ec08bb9e-6321-4af6-8a87-3027fabeddea` with zero logged issues; both stapled artifacts passed
+  Gatekeeper. The five public GitHub assets round-tripped against tag `v1.0.3`, build 15, provenance,
+  archive SHA-256 `f5d95cc97ee6d465daa3d2c0019ac0b3a7d4bfbc51c81912bcc658118f7643dd`,
+  and DMG SHA-256 `c691671fc03f1e79c04b648e6f5d9400e7e64f4085293349165e1e97db5e2787`.
+- **Acceptance:** Publish immutable Stable 1.0.3 build 15 through GitHub and Sparkle, verify the live
+  artifacts/feed mechanically, then have the maintainer confirm settled CPU and menu-bar behavior in
+  the installed public update. Keep WR-112's unresponsive-application resilience work separate.
+
 ### WR-110 — Transfer a manually dragged window between displays
 
 - **Type:** Multi-display layout interaction bug
