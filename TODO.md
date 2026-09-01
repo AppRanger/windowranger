@@ -223,9 +223,9 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Diagnostic-backed resilience bug
 - **Priority:** P1
-- **Status:** Live validation — implementation and all 892 non-hosted tests pass, and the
-  installed signed Debug build remained responsive through real transient Accessibility failures.
-  A deliberately sustained third-party hang remains an optional stress boundary.
+- **Status:** Approved for Stable 1.0.4 build 16 — implementation and all 892 non-hosted tests pass,
+  and the installed signed Debug build remained responsive through real transient Accessibility
+  failures. A deliberately sustained third-party hang remains an optional stress boundary.
 - **User-observed:** Workspace switching intermittently appeared to lock up in the signed Debug daily
   build. Force-quitting Safari cleared the suspected hung instance.
 - **Diagnostic evidence:** Ordinary switches completed in roughly 0.3–0.6 seconds, while switches to
@@ -254,11 +254,11 @@ smallest useful outcome and acceptance boundary.
   interaction path for multi-second AX timeouts. Workspace switching skips or temporarily defers the
   unavailable application's windows, preserves stable membership, and remains usable for healthy
   applications.
-- **Acceptance:** The deterministic responsiveness-policy coverage proves bounded per-process
-  deferral and recovery, while existing stable-slot coverage proves failed enumeration retains
-  layout membership. Confirm in a signed build that workspace switches and the menu-bar remain
-  responsive with an actually hung third-party app, and that its windows reconcile without loss once
-  it answers again.
+- **Release boundary:** Publish the focused immutable Stable 1.0.4 build 16 through GitHub, Sparkle,
+  the website, and Homebrew after the protected, Developer ID, notarization, packaging, checksum,
+  and public round-trip gates pass. The deterministic responsiveness-policy coverage proves bounded
+  per-process deferral and recovery, while existing stable-slot coverage proves failed enumeration
+  retains layout membership. The maintainer will verify the public update after it lands.
 
 ### WR-113 — Stop appearance refreshes from re-entering the status-item renderer
 
