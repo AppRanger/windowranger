@@ -202,6 +202,23 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-111 — Make pre-push validation safe from linked-worktree Git environment
+
+- **Type:** Development workflow bug
+- **Priority:** P2
+- **Status:** Inbox — reproduced during the Stable 1.0.2 tag push.
+- **Reproduced:** Pushing the annotated tag from the clean linked release worktree made the
+  pre-push hook's fresh Xcode build inherit that worktree's Git repository environment. SwiftPM
+  then resolved Sparkle Git operations against WindowRanger and either could not check out pinned
+  revision `5581748cef2bae787496fe6d61139aebe0a451f6` or reported that no Sparkle 2.8.1 version
+  existed. The identical hook passed all 888 tests when invoked from the primary checkout.
+- **Expected:** The isolated pre-push worktree must resolve pinned packages and run identically
+  whether the initiating checkout is the primary repository or a linked worktree.
+- **Smallest useful outcome:** Clear only Git's repository-local environment before invoking
+  Xcode/SwiftPM in the isolated worktree, while preserving authentication and ordinary user Git
+  configuration. Add a deterministic linked-worktree regression check and retain the complete
+  pre-push gate; do not bypass validation.
+
 ### WR-110 — Transfer a manually dragged window between displays
 
 - **Type:** Multi-display layout interaction bug
@@ -4224,6 +4241,22 @@ second copy of that checklist.
   representative Unified transfers, same-display behaviour, the menu bar appearance correction,
   and the first status-menu placement correction were accepted in the installed development build.
   Build 14 is allocated for the candidate, with release notes at `docs/releases/v1.0.2.md`.
+- **1.0.2 signed candidate and GitHub publication:** Stable Xcode 26.6 built universal Stable 1.0.2
+  build 14 from exact `main` commit `e72ef29420a32497816c925941a40908241975cb` after all 888
+  non-hosted tests, Release static analysis, unsigned universal Release construction, and both DMG
+  smoke variants passed. Apple accepted the app notarization
+  (`2ea57883-cd4b-4b9a-b8ef-89e2cd775ff3`) and DMG notarization
+  (`731d742d-22b4-4953-bc1a-1a4f7530c11e`) with zero issues; both tickets are stapled and
+  Gatekeeper accepts the app and DMG. The exact DMG-installed Developer ID build passed launch,
+  signed CLI status/capabilities/actions/workspaces/configuration/skill checks, eight concurrent
+  clients, full quit/relaunch recovery, and the maintainer's menu-bar, same-display tiled movement,
+  and bidirectional cross-display drag smoke checks. The protected annotated tag `v1.0.2` resolves
+  to that commit. The public immutable non-prerelease GitHub release contains the expected DMG,
+  ZIP, both checksum files, and provenance manifest; all five downloaded assets round-trip verified
+  at SHA-256 `1f2b586bca059e27f038393ca2f49f80fe254092e575ce4fc7745f6d2bcb33cb`
+  for the ZIP and `565b26134b1315a8529bee8860fa52855d2e694a106164bc8fdd6bbaf23a3247`
+  for the DMG. Build 14 is therefore marked `published`; signed-feed, website, and Homebrew
+  publication remain separate checkpoints below.
 
 ## Done
 
