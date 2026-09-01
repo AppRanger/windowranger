@@ -743,6 +743,302 @@ final class WorkspaceDefinitionTests: XCTestCase {
         ), .unified)
     }
 
+    func testManualCrossDisplayMoveKeepsUnifiedWorkspaceAndUsesIndependentActiveWorkspace() {
+        let source = UUID()
+        let destination = UUID()
+        let active = ["external": destination]
+
+        XCTAssertEqual(WorkspaceEngine.manualMoveDestinationWorkspaceID(
+            effectiveMode: .unified,
+            sourceWorkspaceID: source,
+            destinationDisplayIdentifier: "external",
+            activeWorkspaceIDByDisplay: active
+        ), source)
+        XCTAssertEqual(WorkspaceEngine.manualMoveDestinationWorkspaceID(
+            effectiveMode: .independent,
+            sourceWorkspaceID: source,
+            destinationDisplayIdentifier: "external",
+            activeWorkspaceIDByDisplay: active
+        ), destination)
+        XCTAssertNil(WorkspaceEngine.manualMoveDestinationWorkspaceID(
+            effectiveMode: .independent,
+            sourceWorkspaceID: source,
+            destinationDisplayIdentifier: "missing",
+            activeWorkspaceIDByDisplay: active
+        ))
+    }
+
+    func testManualCrossDisplayMoveAppendsAndFocusesAccordionDestination() throws {
+        let first = WindowKey(processIdentifier: 10, windowIdentifier: 1)
+        let second = WindowKey(processIdentifier: 20, windowIdentifier: 2)
+        let moved = WindowKey(processIdentifier: 30, windowIdentifier: 3)
+        let bounds = CGRect(x: 100, y: 50, width: 1200, height: 800)
+
+        let frames = try XCTUnwrap(WorkspaceEngine.manualMoveNonTiledDestinationFrames(
+            layout: .accordion,
+            orderedWindowKeys: [first, moved, second],
+            movedWindow: moved,
+            observedFrame: WindowFrame(
+                position: CGPoint(x: 900, y: 200),
+                size: CGSize(width: 500, height: 400)
+            ),
+            layoutBounds: bounds,
+            layoutConfiguration: nil
+        ))
+        let expected = WorkspaceEngine.layoutFrames(
+            .accordion,
+            count: 3,
+            in: bounds,
+            accordionFocusedIndex: 2
+        )
+
+        XCTAssertEqual(frames[first], expected[0])
+        XCTAssertEqual(frames[second], expected[1])
+        XCTAssertEqual(frames[moved], expected[2])
+    }
+
+    func testManualCrossDisplayMovePreservesObservedFrameForFreeformDestination() throws {
+        let stationary = WindowKey(processIdentifier: 10, windowIdentifier: 1)
+        let moved = WindowKey(processIdentifier: 20, windowIdentifier: 2)
+        let observed = WindowFrame(
+            position: CGPoint(x: 1800, y: 140),
+            size: CGSize(width: 720, height: 540)
+        )
+
+        let frames = try XCTUnwrap(WorkspaceEngine.manualMoveNonTiledDestinationFrames(
+            layout: .none,
+            orderedWindowKeys: [stationary],
+            movedWindow: moved,
+            observedFrame: observed,
+            layoutBounds: CGRect(x: 1600, y: 0, width: 1920, height: 1080),
+            layoutConfiguration: nil
+        ))
+
+        XCTAssertEqual(frames, [moved: observed])
+        XCTAssertNil(WorkspaceEngine.manualMoveNonTiledDestinationFrames(
+            layout: .tiled,
+            orderedWindowKeys: [stationary],
+            movedWindow: moved,
+            observedFrame: observed,
+            layoutBounds: .zero,
+            layoutConfiguration: nil
+        ))
+    }
+
+    func testManualCrossDisplayMoveReflowsAccordionSourceWithoutMovedWindow() throws {
+        let first = WindowKey(processIdentifier: 10, windowIdentifier: 1)
+        let moved = WindowKey(processIdentifier: 20, windowIdentifier: 2)
+        let focusedAfterRemoval = WindowKey(processIdentifier: 30, windowIdentifier: 3)
+        let bounds = CGRect(x: 0, y: 40, width: 1400, height: 900)
+
+        let frames = try XCTUnwrap(WorkspaceEngine.manualMoveNonTiledSourceFrames(
+            layout: .accordion,
+            orderedWindowKeys: [first, moved, focusedAfterRemoval],
+            movedWindow: moved,
+            focusedWindowAfterRemoval: focusedAfterRemoval,
+            layoutBounds: bounds,
+            layoutConfiguration: nil
+        ))
+        let expected = WorkspaceEngine.layoutFrames(
+            .accordion,
+            count: 2,
+            in: bounds,
+            accordionFocusedIndex: 1
+        )
+
+        XCTAssertEqual(frames, [first: expected[0], focusedAfterRemoval: expected[1]])
+        XCTAssertNil(frames[moved])
+    }
+
+    func testManualCrossDisplayMoveLeavesFreeformSourceGeometryAlone() throws {
+        let moved = WindowKey(processIdentifier: 20, windowIdentifier: 2)
+
+        XCTAssertEqual(try XCTUnwrap(WorkspaceEngine.manualMoveNonTiledSourceFrames(
+            layout: .none,
+            orderedWindowKeys: [moved],
+            movedWindow: moved,
+            focusedWindowAfterRemoval: nil,
+            layoutBounds: .zero,
+            layoutConfiguration: nil
+        )), [:])
+        XCTAssertNil(WorkspaceEngine.manualMoveNonTiledSourceFrames(
+            layout: .tiled,
+            orderedWindowKeys: [moved],
+            movedWindow: moved,
+            focusedWindowAfterRemoval: nil,
+            layoutBounds: .zero,
+            layoutConfiguration: nil
+        ))
+    }
+
+    func testAccordionCancellationRestoresFocusedWindowMouseDownFrame() throws {
+        let focused = WindowKey(processIdentifier: 10, windowIdentifier: 1)
+        let stationary = WindowKey(processIdentifier: 20, windowIdentifier: 2)
+        let anchor = WindowFrame(
+            position: CGPoint(x: 0, y: 40),
+            size: CGSize(width: 900, height: 700)
+        )
+        let alreadyDragged = WindowFrame(
+            position: CGPoint(x: 300, y: 120),
+            size: anchor.size
+        )
+        let stationaryFrame = WindowFrame(
+            position: CGPoint(x: 250, y: 40),
+            size: anchor.size
+        )
+
+        let originals = try XCTUnwrap(WorkspaceEngine.manualMoveNonTiledOriginalFrames(
+            layout: .accordion,
+            focusedWindow: focused,
+            anchorFrame: anchor,
+            participantFrames: [focused: alreadyDragged, stationary: stationaryFrame]
+        ))
+
+        XCTAssertEqual(originals[focused], anchor)
+        XCTAssertEqual(originals[stationary], stationaryFrame)
+        XCTAssertEqual(WorkspaceEngine.manualMoveNonTiledOriginalFrames(
+            layout: .none,
+            focusedWindow: focused,
+            anchorFrame: anchor,
+            participantFrames: [focused: alreadyDragged]
+        ), [focused: anchor])
+    }
+
+    func testManualMoveFallbackRecoversAccordionSolvedFrameAndFreeformStoredFrame() throws {
+        let first = WindowKey(processIdentifier: 10, windowIdentifier: 1)
+        let focused = WindowKey(processIdentifier: 20, windowIdentifier: 2)
+        let bounds = CGRect(x: 4, y: 34, width: 3832, height: 1523)
+        let stored = WindowFrame(
+            position: CGPoint(x: 120, y: 90),
+            size: CGSize(width: 900, height: 700)
+        )
+        let accordionFrames = WorkspaceEngine.layoutFrames(
+            .accordion,
+            count: 2,
+            in: bounds,
+            accordionFocusedIndex: 1
+        )
+
+        XCTAssertEqual(WorkspaceEngine.manualMoveFallbackAnchorFrame(
+            layout: .accordion,
+            orderedWindowKeys: [first, focused],
+            focusedWindow: focused,
+            storedFrame: stored,
+            layoutBounds: bounds,
+            layoutConfiguration: nil
+        ), accordionFrames[1])
+        XCTAssertEqual(WorkspaceEngine.manualMoveFallbackAnchorFrame(
+            layout: .none,
+            orderedWindowKeys: [focused],
+            focusedWindow: focused,
+            storedFrame: stored,
+            layoutBounds: bounds,
+            layoutConfiguration: nil
+        ), stored)
+        XCTAssertNil(WorkspaceEngine.manualMoveFallbackAnchorFrame(
+            layout: .tiled,
+            orderedWindowKeys: [focused],
+            focusedWindow: focused,
+            storedFrame: stored,
+            layoutBounds: bounds,
+            layoutConfiguration: nil
+        ))
+    }
+
+    func testCrossDisplayLayoutPrimitiveMatrixSupportsAllNineCombinations() {
+        let moved = WindowKey(processIdentifier: 10, windowIdentifier: 1)
+        let stationary = WindowKey(processIdentifier: 20, windowIdentifier: 2)
+        let bounds = CGRect(x: 0, y: 0, width: 1200, height: 800)
+        let observed = WindowFrame(
+            position: CGPoint(x: 100, y: 100),
+            size: CGSize(width: 600, height: 500)
+        )
+        let layouts: [WorkspaceLayout] = [.tiled, .accordion, .none]
+        var supportedPairs: Set<String> = []
+
+        for source in layouts {
+            for destination in layouts {
+                let sourceIsSupported: Bool
+                if source == .tiled {
+                    sourceIsSupported = TiledNode.split(
+                        axis: .horizontal,
+                        ratio: 0.5,
+                        first: .window(moved),
+                        second: .window(stationary)
+                    ).removing(moved) == .window(stationary)
+                } else {
+                    sourceIsSupported = WorkspaceEngine.manualMoveNonTiledSourceFrames(
+                        layout: source,
+                        orderedWindowKeys: [moved],
+                        movedWindow: moved,
+                        focusedWindowAfterRemoval: nil,
+                        layoutBounds: bounds,
+                        layoutConfiguration: nil
+                    ) != nil
+                }
+
+                let destinationIsSupported: Bool
+                if destination == .tiled {
+                    destinationIsSupported = TiledLayoutEngine.admittingWindow(
+                        moved,
+                        to: .window(stationary),
+                        destinationWindowKeys: [stationary],
+                        destinationWeights: [1],
+                        orientation: .horizontal,
+                        landing: nil
+                    ) != nil
+                } else {
+                    destinationIsSupported = WorkspaceEngine.manualMoveNonTiledDestinationFrames(
+                        layout: destination,
+                        orderedWindowKeys: [stationary],
+                        movedWindow: moved,
+                        observedFrame: observed,
+                        layoutBounds: bounds,
+                        layoutConfiguration: nil
+                    ) != nil
+                }
+
+                if sourceIsSupported, destinationIsSupported {
+                    supportedPairs.insert("\(source.rawValue)->\(destination.rawValue)")
+                }
+            }
+        }
+
+        XCTAssertEqual(supportedPairs.count, 9)
+    }
+
+    func testManualCrossDisplayPreviewRefreshesWhenFreeformFrameMoves() {
+        let partition = TiledLayoutPartitionKey(
+            workspaceID: UUID(),
+            displayIdentifier: "external"
+        )
+        let first = WindowFrame(
+            position: CGPoint(x: 1800, y: 140),
+            size: CGSize(width: 720, height: 540)
+        )
+        let second = WindowFrame(
+            position: CGPoint(x: 1940, y: 220),
+            size: first.size
+        )
+
+        XCTAssertTrue(WorkspaceEngine.manualMoveCrossDisplayPreviewChanged(
+            previousPartition: partition,
+            previousLanding: nil,
+            previousLandingFrame: first,
+            proposedPartition: partition,
+            proposedLanding: nil,
+            proposedLandingFrame: second
+        ))
+        XCTAssertFalse(WorkspaceEngine.manualMoveCrossDisplayPreviewChanged(
+            previousPartition: partition,
+            previousLanding: nil,
+            previousLandingFrame: second,
+            proposedPartition: partition,
+            proposedLanding: nil,
+            proposedLandingFrame: second
+        ))
+    }
+
     func testAppRuleActionsCanBeCreatedAndEditedIndependently() {
         let workspaceID = WorkspaceDefinition.defaults[1].id
         var rule = AppRule(bundleIdentifier: "com.example.Editor", displayName: "Editor")

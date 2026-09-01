@@ -661,6 +661,42 @@ final class MenuBarPresentationTests: XCTestCase {
         XCTAssertFalse(gate.cancel())
     }
 
+    func testDetachedStatusMenuUsesButtonLeadingEdgeAndMenuBarLowerEdgeInScreenSpace() {
+        let buttonFrame = CGRect(x: -420, y: 1_050, width: 180, height: 24)
+        let menuBarFrame = CGRect(x: -1_920, y: 1_024, width: 1_920, height: 64)
+
+        XCTAssertEqual(
+            MenuBarDetachedMenuGeometry.popupPoint(
+                for: buttonFrame,
+                menuBarScreenFrame: menuBarFrame,
+                layoutDirection: .leftToRight
+            ),
+            NSPoint(x: -420, y: 1_019)
+        )
+        XCTAssertEqual(
+            MenuBarDetachedMenuGeometry.popupPoint(
+                for: buttonFrame,
+                menuBarScreenFrame: menuBarFrame,
+                layoutDirection: .rightToLeft
+            ),
+            NSPoint(x: -240, y: 1_019)
+        )
+        XCTAssertEqual(MenuBarDetachedMenuGeometry.verticalGap, 5)
+    }
+
+    func testDetachedStatusMenuFallbackAccountsForFlippedButtonCoordinates() {
+        let bounds = CGRect(x: 0, y: 0, width: 180, height: 24)
+
+        XCTAssertEqual(
+            MenuBarDetachedMenuGeometry.localFallbackPoint(
+                in: bounds,
+                isFlipped: true,
+                layoutDirection: .leftToRight
+            ),
+            NSPoint(x: 0, y: 24)
+        )
+    }
+
     func testDisplayGroupStatusItemPlanKeepsOneMovableItemPerDisplay() {
         let snapshot = independentSnapshot(displays: [mainDisplay, externalDisplay])
             .replacingMode(.full)
@@ -1029,6 +1065,66 @@ final class MenuBarPresentationTests: XCTestCase {
             rendered.workspaceRegions.first?.frame.offsetBy(dx: 5, dy: 3)
         )
         XCTAssertTrue(standInButton.subviews.isEmpty)
+    }
+
+    func testStatusItemAppearanceRefreshCoalescesUntilTheDeferredRenderIsConsumed() {
+        var gate = MenuBarStatusItemAppearanceRefreshGate()
+
+        XCTAssertTrue(gate.request())
+        XCTAssertFalse(gate.request())
+        XCTAssertTrue(gate.consume())
+        XCTAssertFalse(gate.consume())
+
+        XCTAssertTrue(gate.request())
+        gate.cancel()
+        XCTAssertFalse(gate.consume())
+    }
+
+    @MainActor
+    func testStatusItemAppearanceObserverWaitsForAWindowAttachment() {
+        let observer = MenuBarStatusItemAppearanceObserver(frame: .zero)
+        let parent = NSView(frame: CGRect(x: 0, y: 0, width: 20, height: 20))
+        var notifications = 0
+        observer.onAttachedAppearanceChange = { notifications += 1 }
+
+        parent.addSubview(observer)
+        XCTAssertEqual(notifications, 0)
+
+        let window = NSWindow(
+            contentRect: parent.bounds,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = parent
+        XCTAssertGreaterThanOrEqual(notifications, 1)
+        window.close()
+    }
+
+    @MainActor
+    func testRenderedDisplayGroupResolvesAdaptiveColoursForItsSuppliedAppearance() throws {
+        let snapshot = independentSnapshot(displays: [mainDisplay]).replacingMode(.full)
+        let plan = try XCTUnwrap(MenuBarDisplayGroupStatusItemPlanner.groups(
+            for: snapshot,
+            availableWidth: 620
+        ).first)
+        let light = MenuBarDisplayGroupRenderedContent(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: .default,
+            appearance: try XCTUnwrap(NSAppearance(named: .aqua))
+        ).image(for: nil)
+        let dark = MenuBarDisplayGroupRenderedContent(
+            plan: plan,
+            workspaceLabelMode: snapshot.workspaceLabelMode,
+            highlightColor: .default,
+            appearance: try XCTUnwrap(NSAppearance(named: .darkAqua))
+        ).image(for: nil)
+
+        XCTAssertFalse(light.isTemplate)
+        XCTAssertFalse(dark.isTemplate)
+        XCTAssertNotEqual(light.tiffRepresentation, dark.tiffRepresentation)
     }
 
     @MainActor

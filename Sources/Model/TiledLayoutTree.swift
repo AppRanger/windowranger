@@ -156,8 +156,26 @@ struct TiledPlacementPreview: Equatable, Sendable {
     let fingerprint: String
 }
 
+enum TiledDragPlacement: String, Equatable, Sendable {
+    case swap
+    case left
+    case right
+    case top
+    case bottom
+}
+
+struct TiledDragDestination: Equatable, Sendable {
+    let target: WindowKey
+    let placement: TiledDragPlacement
+}
+
 struct TiledDragObservation: Equatable, Sendable {
-    let swapTarget: WindowKey?
+    let destination: TiledDragDestination?
+}
+
+struct TiledCrossPartitionMove: Equatable, Sendable {
+    let sourceTree: TiledNode?
+    let destinationTree: TiledNode
 }
 
 enum TiledPlacementHistoryDirection: String, Equatable, Sendable {
@@ -267,6 +285,20 @@ enum TiledLayoutEngine {
         var result: [WindowKey: WindowFrame] = [:]
         solve(tree, in: bounds, gaps: configuration.clamped().gaps, result: &result)
         return result
+    }
+
+    static func accommodatesMinimumWindowLength(
+        _ frames: [WindowKey: WindowFrame],
+        minimumWindowLength: CGFloat = 120
+    ) -> Bool {
+        guard minimumWindowLength.isFinite, minimumWindowLength > 0, !frames.isEmpty else {
+            return false
+        }
+        return frames.values.allSatisfy { frame in
+            frame.size.width.isFinite && frame.size.height.isFinite &&
+                frame.size.width >= minimumWindowLength &&
+                frame.size.height >= minimumWindowLength
+        }
     }
 
     static func placing(
@@ -438,6 +470,153 @@ enum TiledLayoutEngine {
         return swapped
     }
 
+    /// Moves one leaf beside any other leaf while retaining a valid BSP tree. The source is first
+    /// removed so its old parent collapses, then the hovered destination leaf is replaced by a new
+    /// equal split. A centre destination preserves the familiar leaf-for-leaf swap.
+    static func movingWindow(
+        _ focusedWindow: WindowKey,
+        to destination: TiledDragDestination,
+        in tree: TiledNode
+    ) -> TiledNode? {
+        guard focusedWindow != destination.target,
+              tree.contains(focusedWindow),
+              tree.contains(destination.target),
+              (try? validated(tree, participants: Set(tree.windowKeys))) != nil
+        else { return nil }
+
+        if destination.placement == .swap {
+            return swappingWindows(focusedWindow, destination.target, in: tree)
+        }
+
+        let participants = Set(tree.windowKeys)
+        guard let remainder = tree.removing(focusedWindow),
+              remainder.contains(destination.target)
+        else { return nil }
+
+        let focused = TiledNode.window(focusedWindow)
+        let target = TiledNode.window(destination.target)
+        let replacement: TiledNode
+        switch destination.placement {
+        case .swap:
+            return nil
+        case .left:
+            replacement = .split(
+                axis: .horizontal,
+                ratio: initialSplitRatio,
+                first: focused,
+                second: target
+            )
+        case .right:
+            replacement = .split(
+                axis: .horizontal,
+                ratio: initialSplitRatio,
+                first: target,
+                second: focused
+            )
+        case .top:
+            replacement = .split(
+                axis: .vertical,
+                ratio: initialSplitRatio,
+                first: focused,
+                second: target
+            )
+        case .bottom:
+            replacement = .split(
+                axis: .vertical,
+                ratio: initialSplitRatio,
+                first: target,
+                second: focused
+            )
+        }
+
+        let proposed = replacing(destination.target, with: replacement, in: remainder)
+        guard (try? validated(proposed, participants: participants)) != nil else { return nil }
+        return proposed
+    }
+
+    /// Transfers a leaf between display partitions. The source branch collapses, while the
+    /// destination first admits the leaf and can then apply the same centre/edge placement model
+    /// used by an ordinary within-display drag. A nil landing appends deterministically, including
+    /// the empty-destination case.
+    static func transferringWindow(
+        _ focusedWindow: WindowKey,
+        from sourceTree: TiledNode,
+        to destinationTree: TiledNode?,
+        destinationWindowKeys: [WindowKey],
+        destinationWeights: [CGFloat]?,
+        orientation: WorkspaceLayoutOrientation,
+        landing: TiledDragDestination?
+    ) -> TiledCrossPartitionMove? {
+        guard sourceTree.contains(focusedWindow),
+              !destinationWindowKeys.contains(focusedWindow),
+              Set(destinationWindowKeys).count == destinationWindowKeys.count,
+              destinationWeights == nil || destinationWeights?.count == destinationWindowKeys.count,
+              (try? validated(sourceTree, participants: Set(sourceTree.windowKeys))) != nil
+        else { return nil }
+
+        let reconciledDestination = reconciled(
+            destinationTree,
+            windowKeys: destinationWindowKeys + [focusedWindow],
+            weights: destinationWeights.map { $0 + [1] },
+            orientation: orientation
+        )
+        guard var proposedDestination = reconciledDestination else { return nil }
+        if let landing {
+            guard destinationWindowKeys.contains(landing.target),
+                  let placed = movingWindow(
+                      focusedWindow,
+                      to: landing,
+                      in: proposedDestination
+                  )
+            else { return nil }
+            proposedDestination = placed
+        }
+        guard (try? validated(
+            proposedDestination,
+            participants: Set(destinationWindowKeys + [focusedWindow])
+        )) != nil else { return nil }
+        return TiledCrossPartitionMove(
+            sourceTree: sourceTree.removing(focusedWindow),
+            destinationTree: proposedDestination
+        )
+    }
+
+    /// Admits a window arriving from a non-tiled source into a tiled partition, optionally placing
+    /// it at the same centre/edge landing used by tiled-to-tiled transfers.
+    static func admittingWindow(
+        _ focusedWindow: WindowKey,
+        to destinationTree: TiledNode?,
+        destinationWindowKeys: [WindowKey],
+        destinationWeights: [CGFloat]?,
+        orientation: WorkspaceLayoutOrientation,
+        landing: TiledDragDestination?
+    ) -> TiledNode? {
+        guard !destinationWindowKeys.contains(focusedWindow),
+              Set(destinationWindowKeys).count == destinationWindowKeys.count,
+              destinationWeights == nil || destinationWeights?.count == destinationWindowKeys.count,
+              let appended = reconciled(
+                  destinationTree,
+                  windowKeys: destinationWindowKeys + [focusedWindow],
+                  weights: destinationWeights.map { $0 + [1] },
+                  orientation: orientation
+              )
+        else { return nil }
+        let proposed: TiledNode
+        if let landing {
+            guard destinationWindowKeys.contains(landing.target),
+                  let placed = movingWindow(focusedWindow, to: landing, in: appended)
+            else { return nil }
+            proposed = placed
+        } else {
+            proposed = appended
+        }
+        guard (try? validated(
+            proposed,
+            participants: Set(destinationWindowKeys + [focusedWindow])
+        )) != nil else { return nil }
+        return proposed
+    }
+
     /// Classifies a position-only move of the focused tiled window and resolves the tile under the
     /// pointer. Resizes are deliberately excluded because they update split ratios through the
     /// manual-resize path, while small position jitter remains ordinary layout correction.
@@ -447,8 +626,10 @@ enum TiledLayoutEngine {
         observedFrame: WindowFrame,
         pointerLocation: CGPoint?,
         expectedFrames: [WindowKey: WindowFrame],
+        previousDestination: TiledDragDestination? = nil,
         positionTolerance: CGFloat = 8,
-        sizeTolerance: CGFloat = 2
+        sizeTolerance: CGFloat = 2,
+        requiresStableSize: Bool = true
     ) -> TiledDragObservation? {
         guard positionTolerance.isFinite, positionTolerance >= 0,
               sizeTolerance.isFinite, sizeTolerance >= 0,
@@ -462,27 +643,35 @@ enum TiledLayoutEngine {
             abs(observedFrame.size.height - expectedFrame.size.height) <= sizeTolerance
         let positionMoved = abs(observedFrame.position.x - expectedFrame.position.x) > positionTolerance ||
             abs(observedFrame.position.y - expectedFrame.position.y) > positionTolerance
-        guard sizeIsStable, positionMoved else { return nil }
+        guard (!requiresStableSize || sizeIsStable), positionMoved else { return nil }
 
-        let target = pointerLocation.flatMap {
-            swapTarget(
+        let destination = pointerLocation.flatMap {
+            dragDestination(
                 at: $0,
                 focusedWindow: focusedWindow,
-                expectedFrames: expectedFrames
+                expectedFrames: expectedFrames,
+                previousDestination: previousDestination
             )
         }
-        return TiledDragObservation(swapTarget: target)
+        return TiledDragObservation(destination: destination)
     }
 
-    /// Resolves the proposed destination for an already-classified title-bar drag. Once the real
-    /// windows are parked, their Accessibility frames no longer describe the gesture, so the
-    /// pointer is tested against the immutable committed tile frames instead.
-    static func swapTarget(
+    /// Resolves both the target leaf and the user's placement intent from immutable committed tile
+    /// frames. The central region remains a swap target; outside it the closest normalized edge
+    /// selects a directional insertion without giving large tiles disproportionately wide zones.
+    static func dragDestination(
         at pointerLocation: CGPoint,
         focusedWindow: WindowKey,
-        expectedFrames: [WindowKey: WindowFrame]
-    ) -> WindowKey? {
-        expectedFrames.keys
+        expectedFrames: [WindowKey: WindowFrame],
+        previousDestination: TiledDragDestination? = nil,
+        centerFraction: CGFloat = 0.44,
+        hysteresisFraction: CGFloat = 0.04
+    ) -> TiledDragDestination? {
+        guard centerFraction.isFinite, centerFraction > 0, centerFraction < 1,
+              hysteresisFraction.isFinite, hysteresisFraction >= 0,
+              hysteresisFraction < centerFraction / 2
+        else { return nil }
+        guard let target = (expectedFrames.keys
             .filter { $0 != focusedWindow }
             .sorted { lhs, rhs in
                 if lhs.processIdentifier != rhs.processIdentifier {
@@ -493,7 +682,55 @@ enum TiledLayoutEngine {
             .first { key in
                 guard let frame = expectedFrames[key] else { return false }
                 return CGRect(origin: frame.position, size: frame.size).contains(pointerLocation)
+            })
+        else { return nil }
+        guard let windowFrame = expectedFrames[target] else { return nil }
+        let frame = CGRect(origin: windowFrame.position, size: windowFrame.size)
+        let horizontalInset = frame.width * (1 - centerFraction) / 2
+        let verticalInset = frame.height * (1 - centerFraction) / 2
+        let center = frame.insetBy(dx: horizontalInset, dy: verticalInset)
+        let horizontalHysteresis = frame.width * hysteresisFraction
+        let verticalHysteresis = frame.height * hysteresisFraction
+        if let previousDestination, previousDestination.target == target {
+            switch previousDestination.placement {
+            case .swap:
+                if center.insetBy(
+                    dx: -horizontalHysteresis,
+                    dy: -verticalHysteresis
+                ).contains(pointerLocation) {
+                    return previousDestination
+                }
+            case .left, .right, .top, .bottom:
+                if center.contains(pointerLocation),
+                   !center.insetBy(
+                       dx: horizontalHysteresis,
+                       dy: verticalHysteresis
+                   ).contains(pointerLocation) {
+                    return previousDestination
+                }
             }
+        }
+        if center.contains(pointerLocation) {
+            return TiledDragDestination(target: target, placement: .swap)
+        }
+
+        let distances: [(TiledDragPlacement, CGFloat)] = [
+            (.left, (pointerLocation.x - frame.minX) / frame.width),
+            (.right, (frame.maxX - pointerLocation.x) / frame.width),
+            (.top, (pointerLocation.y - frame.minY) / frame.height),
+            (.bottom, (frame.maxY - pointerLocation.y) / frame.height),
+        ]
+        guard let placement = distances.min(by: { $0.1 < $1.1 })?.0 else { return nil }
+        if let previousDestination, previousDestination.target == target,
+           previousDestination.placement != .swap,
+           let previousDistance = distances.first(where: {
+               $0.0 == previousDestination.placement
+           })?.1,
+           let nearestDistance = distances.map(\.1).min(),
+           previousDistance <= nearestDistance + hysteresisFraction {
+            return previousDestination
+        }
+        return TiledDragDestination(target: target, placement: placement)
     }
 
     /// Moves a focused leaf across the split that directly contains it by exchanging that leaf

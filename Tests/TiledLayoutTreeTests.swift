@@ -1029,7 +1029,7 @@ final class TiledLayoutTreeTests: XCTestCase {
         ), "Dragging only the outer display edge has no tiled neighbour to reflow")
     }
 
-    func testObservedPositionOnlyDragTargetsTileUnderPointerAndSwapsLeaves() throws {
+    func testObservedPositionOnlyDragTargetsCentreOfTileAndSwapsLeaves() throws {
         let tree = try XCTUnwrap(TiledLayoutEngine.flatTree(
             windowKeys: [a, b, c],
             orientation: .horizontal
@@ -1047,12 +1047,20 @@ final class TiledLayoutTreeTests: XCTestCase {
                 position: CGPoint(x: 700, y: 0),
                 size: CGSize(width: 400, height: 800)
             ),
-            pointerLocation: CGPoint(x: 450, y: 100),
+            pointerLocation: CGPoint(x: 600, y: 400),
             expectedFrames: expectedFrames
         ))
 
-        XCTAssertEqual(drag.swapTarget, b, "The pointer target wins even when the dragged frame overlaps another tile")
-        let swapped = try XCTUnwrap(TiledLayoutEngine.swappingWindows(a, drag.swapTarget!, in: tree))
+        XCTAssertEqual(
+            drag.destination,
+            TiledDragDestination(target: b, placement: .swap),
+            "The pointer target wins even when the dragged frame overlaps another tile"
+        )
+        let swapped = try XCTUnwrap(TiledLayoutEngine.movingWindow(
+            a,
+            to: try XCTUnwrap(drag.destination),
+            in: tree
+        ))
         XCTAssertEqual(swapped.windowKeys, [b, a, c])
         let swappedFrames = try rects(swapped, bounds: bounds, configuration: configuration())
         XCTAssertEqual(swappedFrames[a], expectedFrames[b]?.rect)
@@ -1095,17 +1103,17 @@ final class TiledLayoutTreeTests: XCTestCase {
             observedFrame: moved,
             pointerLocation: CGPoint(x: 100, y: 100),
             expectedFrames: expectedFrames
-        )).swapTarget)
+        )).destination)
         XCTAssertNil(try XCTUnwrap(TiledLayoutEngine.observedDrag(
             in: tree,
             focusedWindow: a,
             observedFrame: moved,
             pointerLocation: CGPoint(x: 500, y: 100),
             expectedFrames: expectedFrames
-        )).swapTarget)
+        )).destination)
     }
 
-    func testConcealedDragContinuesResolvingTargetsFromCommittedFrames() throws {
+    func testDragDestinationContinuesResolvingFromCommittedFrames() throws {
         let tree = try XCTUnwrap(TiledLayoutEngine.flatTree(
             windowKeys: [a, b, c],
             orientation: .horizontal
@@ -1117,17 +1125,301 @@ final class TiledLayoutTreeTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            TiledLayoutEngine.swapTarget(
-                at: CGPoint(x: 600, y: 200),
+            TiledLayoutEngine.dragDestination(
+                at: CGPoint(x: 600, y: 400),
                 focusedWindow: a,
                 expectedFrames: expectedFrames
             ),
-            b
+            TiledDragDestination(target: b, placement: .swap)
         )
-        XCTAssertNil(TiledLayoutEngine.swapTarget(
+        XCTAssertNil(TiledLayoutEngine.dragDestination(
             at: CGPoint(x: 100, y: 200),
             focusedWindow: a,
             expectedFrames: expectedFrames
+        ))
+    }
+
+    func testDragDestinationClassifiesFourEdgesAndCentre() {
+        let frames: [WindowKey: WindowFrame] = [
+            a: WindowFrame(position: CGPoint(x: 0, y: 0), size: CGSize(width: 400, height: 400)),
+            b: WindowFrame(position: CGPoint(x: 400, y: 0), size: CGSize(width: 400, height: 400)),
+        ]
+
+        func destination(_ point: CGPoint) -> TiledDragDestination? {
+            TiledLayoutEngine.dragDestination(
+                at: point,
+                focusedWindow: a,
+                expectedFrames: frames
+            )
+        }
+
+        XCTAssertEqual(destination(CGPoint(x: 410, y: 200)), .init(target: b, placement: .left))
+        XCTAssertEqual(destination(CGPoint(x: 790, y: 200)), .init(target: b, placement: .right))
+        XCTAssertEqual(destination(CGPoint(x: 600, y: 10)), .init(target: b, placement: .top))
+        XCTAssertEqual(destination(CGPoint(x: 600, y: 390)), .init(target: b, placement: .bottom))
+        XCTAssertEqual(destination(CGPoint(x: 600, y: 200)), .init(target: b, placement: .swap))
+    }
+
+    func testDragDestinationRetainsPriorIntentAcrossBoundaryJitter() {
+        let frames: [WindowKey: WindowFrame] = [
+            a: WindowFrame(position: CGPoint(x: 0, y: 0), size: CGSize(width: 400, height: 400)),
+            b: WindowFrame(position: CGPoint(x: 400, y: 0), size: CGSize(width: 400, height: 400)),
+        ]
+        let swap = TiledDragDestination(target: b, placement: .swap)
+        let left = TiledDragDestination(target: b, placement: .left)
+
+        XCTAssertEqual(TiledLayoutEngine.dragDestination(
+            at: CGPoint(x: 500, y: 200),
+            focusedWindow: a,
+            expectedFrames: frames,
+            previousDestination: swap
+        ), swap, "A centre target survives a small excursion into the left zone")
+        XCTAssertEqual(TiledLayoutEngine.dragDestination(
+            at: CGPoint(x: 520, y: 200),
+            focusedWindow: a,
+            expectedFrames: frames,
+            previousDestination: left
+        ), left, "An edge target survives a small excursion into the centre zone")
+        XCTAssertEqual(TiledLayoutEngine.dragDestination(
+            at: CGPoint(x: 540, y: 200),
+            focusedWindow: a,
+            expectedFrames: frames,
+            previousDestination: left
+        ), swap, "Moving decisively into the centre changes the intent")
+    }
+
+    func testObservedDragThreadsPriorIntentIntoFallbackClassification() throws {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(a),
+            second: .window(b)
+        )
+        let frames: [WindowKey: WindowFrame] = [
+            a: WindowFrame(position: CGPoint(x: 0, y: 0), size: CGSize(width: 400, height: 400)),
+            b: WindowFrame(position: CGPoint(x: 400, y: 0), size: CGSize(width: 400, height: 400)),
+        ]
+        let previous = TiledDragDestination(target: b, placement: .swap)
+
+        let drag = try XCTUnwrap(TiledLayoutEngine.observedDrag(
+            in: tree,
+            focusedWindow: a,
+            observedFrame: WindowFrame(
+                position: CGPoint(x: 50, y: 0),
+                size: CGSize(width: 400, height: 400)
+            ),
+            pointerLocation: CGPoint(x: 500, y: 200),
+            expectedFrames: frames,
+            previousDestination: previous
+        ))
+
+        XCTAssertEqual(drag.destination, previous)
+    }
+
+    func testMovingWindowBesideNestedTargetCollapsesSourceAndInsertsLocalSplit() throws {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.4,
+            first: .window(a),
+            second: .split(
+                axis: .vertical,
+                ratio: 0.6,
+                first: .window(b),
+                second: .window(c)
+            )
+        )
+
+        let moved = try XCTUnwrap(TiledLayoutEngine.movingWindow(
+            a,
+            to: TiledDragDestination(target: c, placement: .left),
+            in: tree
+        ))
+
+        XCTAssertEqual(moved, .split(
+            axis: .vertical,
+            ratio: 0.6,
+            first: .window(b),
+            second: .split(
+                axis: .horizontal,
+                ratio: 0.5,
+                first: .window(a),
+                second: .window(c)
+            )
+        ))
+        XCTAssertEqual(Set(moved.windowKeys), [a, b, c])
+    }
+
+    func testMovingWindowSupportsEveryDirectionalInsertionAndRejectsInvalidTargets() throws {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.7,
+            first: .window(a),
+            second: .window(b)
+        )
+
+        XCTAssertEqual(TiledLayoutEngine.movingWindow(
+            a,
+            to: .init(target: b, placement: .left),
+            in: tree
+        ), .split(axis: .horizontal, ratio: 0.5, first: .window(a), second: .window(b)))
+        XCTAssertEqual(TiledLayoutEngine.movingWindow(
+            a,
+            to: .init(target: b, placement: .right),
+            in: tree
+        ), .split(axis: .horizontal, ratio: 0.5, first: .window(b), second: .window(a)))
+        XCTAssertEqual(TiledLayoutEngine.movingWindow(
+            a,
+            to: .init(target: b, placement: .top),
+            in: tree
+        ), .split(axis: .vertical, ratio: 0.5, first: .window(a), second: .window(b)))
+        XCTAssertEqual(TiledLayoutEngine.movingWindow(
+            a,
+            to: .init(target: b, placement: .bottom),
+            in: tree
+        ), .split(axis: .vertical, ratio: 0.5, first: .window(b), second: .window(a)))
+        XCTAssertNil(TiledLayoutEngine.movingWindow(
+            a,
+            to: .init(target: a, placement: .left),
+            in: tree
+        ))
+        XCTAssertNil(TiledLayoutEngine.movingWindow(
+            a,
+            to: .init(target: c, placement: .left),
+            in: tree
+        ))
+    }
+
+    func testCrossPartitionTransferCollapsesSourceAndUsesDestinationLanding() throws {
+        let source = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.4,
+            first: .window(a),
+            second: .window(b)
+        )
+        let destination = TiledNode.split(
+            axis: .vertical,
+            ratio: 0.6,
+            first: .window(c),
+            second: .window(d)
+        )
+
+        let moved = try XCTUnwrap(TiledLayoutEngine.transferringWindow(
+            a,
+            from: source,
+            to: destination,
+            destinationWindowKeys: [c, d],
+            destinationWeights: [1, 1],
+            orientation: .horizontal,
+            landing: .init(target: c, placement: .right)
+        ))
+
+        XCTAssertEqual(moved.sourceTree, .window(b))
+        XCTAssertEqual(moved.destinationTree, .split(
+            axis: .vertical,
+            ratio: 0.6,
+            first: .split(
+                axis: .horizontal,
+                ratio: 0.5,
+                first: .window(c),
+                second: .window(a)
+            ),
+            second: .window(d)
+        ))
+    }
+
+    func testCrossPartitionTransferSupportsEmptyDestinationAndRejectsOverlap() throws {
+        let source = TiledNode.window(a)
+        let emptyMove = try XCTUnwrap(TiledLayoutEngine.transferringWindow(
+            a,
+            from: source,
+            to: nil,
+            destinationWindowKeys: [],
+            destinationWeights: [],
+            orientation: .horizontal,
+            landing: nil
+        ))
+
+        XCTAssertNil(emptyMove.sourceTree)
+        XCTAssertEqual(emptyMove.destinationTree, .window(a))
+        XCTAssertNil(TiledLayoutEngine.transferringWindow(
+            a,
+            from: source,
+            to: .window(a),
+            destinationWindowKeys: [a],
+            destinationWeights: [1],
+            orientation: .horizontal,
+            landing: nil
+        ))
+    }
+
+    func testAdmissionFromNonTiledSourceUsesLandingAndSupportsEmptyDestination() throws {
+        let destination = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(b),
+            second: .window(c)
+        )
+        let landed = try XCTUnwrap(TiledLayoutEngine.admittingWindow(
+            a,
+            to: destination,
+            destinationWindowKeys: [b, c],
+            destinationWeights: [1, 1],
+            orientation: .horizontal,
+            landing: .init(target: c, placement: .top)
+        ))
+
+        XCTAssertEqual(landed, .split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(b),
+            second: .split(
+                axis: .vertical,
+                ratio: 0.5,
+                first: .window(a),
+                second: .window(c)
+            )
+        ))
+        XCTAssertEqual(TiledLayoutEngine.admittingWindow(
+            a,
+            to: nil,
+            destinationWindowKeys: [],
+            destinationWeights: [],
+            orientation: .horizontal,
+            landing: nil
+        ), .window(a))
+        XCTAssertNil(TiledLayoutEngine.admittingWindow(
+            a,
+            to: .window(a),
+            destinationWindowKeys: [a],
+            destinationWeights: [1],
+            orientation: .horizontal,
+            landing: nil
+        ))
+    }
+
+    func testDirectionalInsertionMinimumLengthPreflightRejectsNarrowNestedLanding() throws {
+        let tree = try XCTUnwrap(TiledLayoutEngine.flatTree(
+            windowKeys: [a, b, c],
+            orientation: .horizontal
+        ))
+        let moved = try XCTUnwrap(TiledLayoutEngine.movingWindow(
+            a,
+            to: .init(target: c, placement: .left),
+            in: tree
+        ))
+        let frames = try TiledLayoutEngine.frames(
+            for: moved,
+            in: CGRect(x: 0, y: 0, width: 400, height: 800),
+            configuration: configuration()
+        )
+
+        XCTAssertFalse(TiledLayoutEngine.accommodatesMinimumWindowLength(frames))
+        XCTAssertTrue(TiledLayoutEngine.accommodatesMinimumWindowLength(
+            try TiledLayoutEngine.frames(
+                for: moved,
+                in: CGRect(x: 0, y: 0, width: 800, height: 800),
+                configuration: configuration()
+            )
         ))
     }
 
@@ -1165,6 +1457,32 @@ final class TiledLayoutTreeTests: XCTestCase {
             pointerLocation: CGPoint(x: 750, y: 100),
             expectedFrames: expectedFrames
         ), "Small AX position jitter must not begin a drag")
+    }
+
+    func testObservedDragCanAcceptClassifierApprovedMoveWithSizeNoise() throws {
+        let tree = TiledNode.split(
+            axis: .horizontal,
+            ratio: 0.5,
+            first: .window(a),
+            second: .window(b)
+        )
+        let expectedFrames = try TiledLayoutEngine.frames(
+            for: tree,
+            in: CGRect(x: 0, y: 0, width: 1_000, height: 700),
+            configuration: configuration()
+        )
+
+        XCTAssertNotNil(TiledLayoutEngine.observedDrag(
+            in: tree,
+            focusedWindow: a,
+            observedFrame: WindowFrame(
+                position: CGPoint(x: 120, y: 40),
+                size: CGSize(width: 506, height: 704)
+            ),
+            pointerLocation: CGPoint(x: 750, y: 100),
+            expectedFrames: expectedFrames,
+            requiresStableSize: false
+        ))
     }
 
     func testPreviewIsPureDataAndCodingRoundTripRetainsSessionPartition() throws {
