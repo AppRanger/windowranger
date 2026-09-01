@@ -762,9 +762,12 @@ enum AccessibilityWindow {
     static func pointerTargetWindow(
         at pointer: CGPoint,
         in orderedWindows: [WindowServerPointerEntry],
-        eligibleWindowKeys: Set<WindowKey>
+        eligibleWindowKeys: Set<WindowKey>,
+        ignoredOverlayWindowKeys: Set<WindowKey> = []
     ) -> WindowKey? {
-        guard let frontmostHit = orderedWindows.first(where: { $0.bounds.contains(pointer) }),
+        guard let frontmostHit = orderedWindows.first(where: {
+            $0.bounds.contains(pointer) && !ignoredOverlayWindowKeys.contains($0.key)
+        }),
               frontmostHit.layer == 0,
               eligibleWindowKeys.contains(frontmostHit.key)
         else { return nil }

@@ -1,20 +1,25 @@
 # WindowRanger
 
-> **Pre-release:** WindowRanger is under active development. Signed and notarized Beta builds are
-> publicly available, with live-validation work still outstanding.
+> **Stable release:** WindowRanger 1.0.0 is available as a signed and notarized macOS app.
 
 A small, native macOS virtual-workspace manager built around one workflow rather than a
 general-purpose command language.
 
-WindowRanger will use three release channels: Stable from `main`, Beta from release branches, and
+WindowRanger uses three release channels: Stable from `main`, Beta from release branches, and
 rolling Dev builds from `develop`. Stable and opt-in Beta builds contain Sparkle update support;
-Dev builds remain outside automatic updates. The public feed will be activated only after its first
-signed update archive passes the packaged-app upgrade checks.
+Dev builds remain outside automatic updates. The public signed feed serves Stable and Beta updates
+without offering Beta builds to Stable users.
 
 Download the signed and notarized
-[`v0.1.0-beta.10` GitHub prerelease](https://github.com/AppRanger/windowranger/releases/tag/v0.1.0-beta.10)
+[`v1.0.0` GitHub release](https://github.com/AppRanger/windowranger/releases/tag/v1.0.0)
 as a DMG, with a notarized ZIP as a fallback. GitHub's automatically generated source archives are
 not an installable macOS app.
+
+Or install the Stable release from the public AppRanger Homebrew tap:
+
+```sh
+brew install --cask appranger/tap/windowranger
+```
 
 ## Project documentation
 
@@ -27,7 +32,8 @@ not an installable macOS app.
 - [Release channels and branching](docs/release-channels-and-branching.md)
 - [First GitHub release runbook](docs/first-github-release.md)
 - [Release notes template](docs/release-notes-template.md)
-- [Draft WindowRanger 1.0.0 release notes](docs/releases/v1.0.0.md)
+- [WindowRanger 1.0.0 release notes](docs/releases/v1.0.0.md)
+- [Homebrew distribution](docs/homebrew.md)
 - [WindowRanger 0.1.0 Beta 10 release notes](docs/releases/v0.1.0-beta.10.md)
 - [Sparkle update design and release flow](docs/sparkle-updates.md)
 - [WindowRanger 0.1.0 Beta 9 release notes](docs/releases/v0.1.0-beta.9.md)
@@ -606,7 +612,7 @@ and AppKit's main-actor
 
 Inactive windows are parked at the lower-right desktop edge because public macOS APIs do not provide a per-window hide operation. Unified mode keeps one active workspace across every display. Independent Displays mode gives each display its own active workspace and assigns each workspace an abstract display-role home. Role assignments sync with their profile, while this Mac retains the physical UUID/fingerprint binding locally; a disconnected role falls back safely and returns on reconnect. The Settings recovery button restores every tracked window; if a prior crash or force-stop left only a parked coordinate to recover, it centers that window on the main display without resizing it. A normal app quit performs the same cleanup. Animation suppression is temporary and app-scoped; it does not change macOS system animation or Accessibility settings.
 
-Layout is selected independently for each workspace. **Freeform** preserves manual window frames and stops automatic positioning or resizing; its contextual Place wheel can explicitly snap only the focused window to a usable-screen half or quarter, with an exact preview and Undo. WindowRanger still manages workspace visibility, focus, persistence, display assignment, and quit/wake recovery. Tiled uses a session-local, non-overlapping binary split tree derived migration-safely from stable order and per-window weight. Manually resizing a focused tile temporarily parks only the participating real windows, leaving the desktop visible through lightly bordered, click-through clear-glass hints that follow the pointer; releasing snaps the real windows directly into the proposed split, while cancellation restores their exact original frames. A position-only title-bar drag uses the same concealed-window preview: the glass tiles slide and resize into the swap proposed by the tile under the pointer, then the real windows replace them on release. Contextual edge/corner placement previews and commits through the same tree calculation. Accordion follows the current AeroSpace-style overlapping stack with the focused window promoted to its primary pane. Both automatic layouts can resolve orientation from the display shape or use an explicit horizontal/vertical direction, with per-workspace inner gaps, outer screen padding, and configurable Accordion visible-edge padding. In Unified mode each display's windows are laid out separately according to saved display affinity; Independent Displays mode lays the workspace out only on its assigned display. The persisted raw value remains `none`, so existing and legacy saved definitions migrate without changing behavior.
+Layout is selected independently for each workspace. **Freeform** preserves manual window frames and stops automatic positioning or resizing; its contextual Place wheel can explicitly snap only the focused window to a usable-screen half or quarter, with an exact preview and Undo. WindowRanger still manages workspace visibility, focus, persistence, display assignment, and quit/wake recovery. Tiled uses a session-local, non-overlapping binary split tree derived migration-safely from stable order and per-window weight. Manually resizing a focused tile temporarily parks only the participating real windows, leaving the desktop visible through lightly bordered, click-through clear-glass hints that follow the pointer; releasing snaps the real windows directly into the proposed split, while cancellation restores their exact original frames. A title-bar drag keeps the real layout visible and shows one accent-glass landing region: a target centre swaps leaves, while its four edges insert the dragged leaf beside it. A drag can cross displays from Tiled, Accordion, or Freeform and hands the window to the destination workspace's own layout: Tiled inserts it into that display's tree, Accordion appends and focuses it in the stack, and Freeform keeps the manually dragged frame. The source layout closes the gap using its own rules. Unified retains the window's workspace, while Independent Displays transfers it to that display's active workspace. Contextual edge/corner placement previews and commits through the same tree calculation. Accordion follows the current AeroSpace-style overlapping stack with the focused window promoted to its primary pane. Both automatic layouts can resolve orientation from the display shape or use an explicit horizontal/vertical direction, with per-workspace inner gaps, outer screen padding, and configurable Accordion visible-edge padding. In Unified mode each display's windows are laid out separately according to saved display affinity; Independent Displays mode lays the workspace out only on its assigned display. The persisted raw value remains `none`, so existing and legacy saved definitions migrate without changing behavior.
 
 Tiled and Accordion preserve AppKit's menu-bar, camera-housing, and visible-Dock safe edges. When the
 user's Dock preference is auto-hide, WindowRanger deliberately restores only the configured Dock

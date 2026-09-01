@@ -20,6 +20,37 @@ smallest useful outcome and acceptance boundary.
 
 ## Done
 
+### WR-109 — Keep the first status menu at its final anchored position
+
+- **Type:** Menu-bar popup positioning bug
+- **Priority:** P1
+- **Status:** Done
+- **Result:** The detached status menu now finishes structural updates before tracking, measures its
+  completed item tree, and uses the clicked button for horizontal screen alignment plus the menu-bar
+  window's lower edge and a five-point visual gap for vertical placement. The existing mouse-up
+  deferral and post-popup Settings handoff remain unchanged.
+- **Evidence:** All 46 focused Menu Bar Presentation tests and the adjacent 149 Settings, shortcut,
+  and support-report tests pass. The complete quick integration gate passes all 863 non-hosted tests
+  plus project generation, release-ledger, Sparkle/Homebrew workflow, shell-syntax, and isolation
+  checks. Signed universal Debug candidate `ec1120a0ff12-dirty` passed strict signature and clean
+  startup checks; after successive placement refinements, on 1 September 2026 the maintainer
+  confirmed the menu no longer jumped and accepted the final five-point spacing.
+
+### WR-108 — Render menu-bar labels with the attached status-item appearance at startup
+
+- **Type:** Menu-bar appearance bug
+- **Priority:** P1
+- **Status:** Done
+- **Result:** Each status item now observes attachment to its real menu-bar window and later
+  effective-appearance changes, then coalesces a deferred raster refresh so adaptive label and
+  symbol colours no longer remain black until the first workspace switch.
+- **Evidence:** All 44 focused Menu Bar Presentation tests pass, covering attachment observation,
+  refresh coalescing/cancellation, and Light/Dark rasterization. Signed universal Debug revision
+  `f50fe060419c-dirty` passed strict signature and startup checks; on 1 September 2026 the maintainer
+  confirmed its menu-bar fonts started in the correct colour before switching workspace. The
+  integration quick gate passes all 861 non-hosted tests plus project generation, release-ledger,
+  Sparkle/Homebrew workflow, shell-syntax, and test-isolation checks.
+
 ### WR-059 — Always resurface Settings on the current workspace
 
 - **Type:** Settings window behavior change
@@ -170,6 +201,81 @@ smallest useful outcome and acceptance boundary.
   accepted flow keeps the palette open while the halo expands and returns Escape focus to search.
 
 ## Inbox
+
+### WR-110 — Transfer a manually dragged window between displays
+
+- **Type:** Multi-display layout interaction bug
+- **Priority:** P1
+- **Status:** Done — all nine Tiled, Accordion, and Freeform source/destination combinations are
+  accepted in the installed build in Independent Displays mode; Unified transfers and same-display
+  behaviour are also accepted.
+- **User-observed:** Dragging a window from a Tiled workspace on one display to another display
+  makes it snap back to the source display on release. Other layouts were not extensively tested.
+- **Diagnostic-backed cause:** Installed correlation `manual-move-BC4123B4` began on workspace 9
+  and cancelled as `released-without-target` after the pointer crossed displays. The redesigned move
+  transaction resolved landing targets only from the immutable frames in its source display
+  partition, so another display could never become a valid destination.
+- **Second diagnostic-backed cause:** The accepted Tiled-to-Accordion transfer logged an atomic
+  `manual-move-D87B92EB` commit, but the attempted Accordion-to-Tiled return produced no manual-move
+  session before normal Accordion solving restored the window. Mouse-down capture and gesture
+  classification had been restricted to Tiled source workspaces.
+- **Third diagnostic-backed cause:** The source-generalised installed candidate still produced no
+  session for the Accordion-to-Tiled retry while `focused-window-highlight` was presented. The
+  click-through WindowRanger focus-border panel is above the real window in WindowServer order, so
+  the conservative pointer resolver treated it as a blocking ineligible surface. Resolution now
+  registers and skips only the exact WindowServer keys for the passive focus-border and
+  landing-preview panels; every interactive WindowRanger surface and unrelated overlay continues to
+  block click-through regardless of layer.
+- **Fourth diagnostic-backed cause:** The next installed retry showed the Accordion window being
+  restored from several partially cross-display positions to its solved `254,34` frame while the
+  left mouse button was still held, with no cross-layout session active. The periodic Accordion
+  solver was therefore fighting the native drag before release. Reconciliation now recovers a
+  layout-aware move anchor from the last solved Accordion frame (or the stored Freeform frame),
+  starts the same cross-layout transaction, and suppresses corrective layout writes for that drag.
+- **Fifth diagnostic-backed cause:** Freeform-to-Tiled committed once, but later retries produced no
+  session while background visibility reconciliation kept issuing position writes to the dragged
+  Freeform window roughly every 0.7 seconds, including large horizontal jumps. Freeform was updating
+  its stored geometry during the native drag, so fallback classification could lose its stable
+  reference. WindowRanger now retains the last button-up Freeform frame, recovers from it directly
+  during drag events, and suppresses all background Freeform writes while the left button is held.
+- **Expected:** Crossing onto another display shows a valid landing hint and release transfers the
+  window instead of restoring it. A Tiled destination uses its centre/four-edge insertion model,
+  Accordion admits and focuses the window in its stack, and Freeform preserves the manually dragged
+  frame. Unified mode retains workspace membership and changes display affinity. Independent
+  Displays transfers membership to the destination display's currently active workspace, preserving
+  the existing manual app-rule override contract.
+- **Implemented:** A pointer-down anchor now identifies the actual window under the pointer and
+  classifies title-bar movement independently of the source layout. The transaction resolves the
+  display under the pointer and builds an atomic source-and-destination proposal. A Tiled
+  destination applies the same centre/four-edge landing model or deterministic append;
+  Accordion appends and focuses the window in its resolved stack; Freeform commits the observed drag
+  frame and keeps its landing preview aligned as that frame moves. Release revalidates the relevant
+  trees, participant sets, layout/configuration, workspace activity, display topology, and geometry
+  before updating membership, display affinity, order/weights, frames, focus history, and persistence
+  together. A Tiled source collapses its branch, Accordion re-solves the remaining focused stack,
+  and Freeform leaves other source windows alone. Cancellation restores exact source frames, while a
+  same-display Freeform drag persists its native position. A single-window source is supported, and
+  an undersized directional Tiled landing falls back to the safe appended result.
+- **Automated evidence:** The 248-test focused diagnostics, Tiled tree, preview, and
+  workspace-definition domain passes,
+  including a nine-pair source/destination primitive matrix, populated and empty Tiled transfers,
+  non-Tiled admission into Tiled, Accordion source reflow and destination focus, Freeform source
+  preservation and destination-frame persistence, successive Freeform preview movement, and exact
+  mouse-down restoration when an Accordion drag is cancelled, plus recovery of an Accordion or
+  Freeform anchor when the initial pointer-down capture is unavailable. Pointer targeting proves an
+  explicitly registered passive WindowRanger overlay can reveal the managed window below while
+  unregistered interactive WindowRanger windows and unrelated overlays still block click-through.
+  Workspace routing coverage proves Unified
+  retains the source workspace, Independent chooses the destination display's active workspace, and
+  a missing active destination fails closed. Review found and corrected the initially unreachable
+  single-window source, frozen Freeform-preview path, and post-threshold Accordion cancellation
+  frame; final review found no remaining P1/P2 issue. The release-checkpoint run passed all 888
+  non-hosted tests with zero failures, Release static analysis, the unsigned universal Release
+  build, and both Stable and Beta DMG construction and verification.
+- **Live validation:** The user accepted all nine Tiled, Accordion, and Freeform
+  source/destination combinations in the installed development build in Independent Displays mode,
+  including the previously failing reverse and Freeform routes. Unified transfers and existing
+  same-display behaviour were also confirmed working.
 
 ### WR-106 — Reconstruct Tiled preview geometry before its first visit
 
@@ -1063,19 +1169,22 @@ smallest useful outcome and acceptance boundary.
   checkpoint `a249b813213a`, preserving the accepted static-rendering implementation with a clean
   embedded source marker.
 
-### WR-089 — Preview manual Tiled resize and move with glass tiles
+### WR-089 — Preview manual Tiled resize and move with intuitive BSP landing targets
 
 - **Type:** Tiled layout interaction refinement
 - **Priority:** P2
-- **Status:** Live validation — transparent resize was accepted; animated move preview is
-  implemented, automated/build verified, installed, and awaiting maintainer interaction acceptance.
+- **Status:** Done — transparent resize and the redesigned title-bar move interaction are
+  implemented, reviewed, automated-test verified, installed, and maintainer accepted as of
+  1 September 2026.
 - **Requested:** 25 August 2026.
 - **Smallest useful outcome:** When the user begins resizing a managed window in a Tiled workspace,
   visually replace every participating tile with a click-through glass placeholder that follows the
   proposed split geometry. Temporarily park only the participating real windows, commit their new
   frames once on mouse release, then remove the preview. Apply the same transaction to a genuine
-  title-bar move: animate the glass tiles into the swap proposed by the pointer target, and replace
-  them with the real windows only on release.
+  title-bar move: keep the real windows visible, retain the dragged window under the pointer, and
+  show one accent-glass landing region. The centre of a target window proposes the familiar leaf
+  swap; its left, right, top, and bottom regions propose inserting the dragged leaf beside that
+  target while remaining inside the existing BSP model.
 - **Safety boundary:** Do not hide an application, minimise a window, activate WindowRanger, or
   disturb unrelated windows. Capture exact original frames before parking participants, and restore
   them on every cancellation path. The overlay must never intercept the resize gesture. Cancel and
@@ -1087,9 +1196,11 @@ smallest useful outcome and acceptance boundary.
   use the exact proposed final frames and native glass on macOS 26 or later, with the existing HUD
   material fallback on older supported macOS versions. Once the preview begins, only bounded
   concealment writes keep the participating windows parked while pointer movement drives the hints.
-  For a title-bar move, the source layout appears first and changed placeholders slide and resize to
-  each newly targeted tile; moving over the source or a gap previews and restores the original tree.
-  Release validates and commits the latest tree once before revealing the real windows. Focused
+  For a title-bar move, stationary real windows remain visible and only the dragged window's exact
+  proposed landing frame appears as an accent-glass hint. Moving between a target's centre and four
+  edges updates that hint without restructuring the committed tree; moving over the source or a gap
+  removes it. Release validates and commits the latest tree once, while cancellation restores the
+  dragged window to its committed frame. Focused
   deterministic tests, the complete non-hosted suite, an unsigned app build, visual inspection, and
   separately approved installed-app interaction validation are required.
 - **Implemented:** A passive global pointer monitor samples drag updates at a bounded 30 Hz without
@@ -1105,8 +1216,13 @@ smallest useful outcome and acceptance boundary.
   profile changes, display/session lifecycle changes, WindowServer replacement, and quit explicitly
   cancel the preview. A position-only title-bar move now starts the same tokened overlay from the
   committed frames, resolves subsequent targets without consulting the parked AX windows, and
-  animates changed tile frames over 160 ms. Release commits the proposed leaf swap; release over the
-  source or a gap and every cancellation boundary restore the captured frames.
+  originally animated changed tile frames over 160 ms and committed a proposed leaf swap. The
+  1 September redesign replaces that move-only presentation: participants are no longer parked,
+  the real layout remains recognisable, and a single accent landing tile follows the pointer. A
+  centre target still swaps leaves; an edge target removes and collapses the source branch, then
+  inserts the source beside any hovered leaf with a new equal horizontal or vertical split. Release
+  commits that exact proposed tree; release over the source or a gap and every cancellation boundary
+  restore the captured frames. The accepted resize transaction is unchanged.
 - **Review correction:** A display-configuration change now reports whether it directly dismissed an
   active preview and immediately restores the focused-window border before the engine completes its
   tokened cancellation. This prevents the border remaining suppressed after the presenter has
@@ -1117,6 +1233,26 @@ smallest useful outcome and acceptance boundary.
   including concealed move target resolution from immutable committed frames. The complete
   non-hosted suite passes all 754 tests, and the unsigned universal Debug app build succeeds for
   both `arm64` and `x86_64`.
+- **1 September redesign evidence:** All 56 focused Tiled tree and preview tests pass, covering
+  centre swapping, four-direction insertion, nested source collapse and target splitting, invalid
+  targets, centre/edge hysteresis in both live-preview and fallback reconciliation, the 120-point
+  minimum-frame preflight, and the accent landing surface. The complete non-hosted quick checkpoint
+  passes all 870 tests, including project generation, test isolation, release-ledger, Sparkle-feed,
+  and Stable Homebrew workflow checks. A skeptical read-only review found no remaining material
+  issue after its jitter and minimum-frame findings were corrected.
+- **Installed follow-up:** The maintainer found that some attempted title-bar moves still entered
+  the resize presentation. Diagnostics confirmed correlation `manual-resize-95D95A89` concealed
+  three participants and committed changed horizontal split ratios, so this was a real gesture
+  classification fault rather than visual uncertainty. Resize had first refusal and treated any AX
+  size delta over two points as sufficient evidence. Gesture start now prefers an edge-aware move
+  classification: a resize is accepted only while the pointer is on every inferred changing edge;
+  otherwise meaningful position displacement begins a move even when AX reports transient size
+  noise. Once either tokened session begins, its intent remains locked through release. Review also
+  tightened edge matching to the real perpendicular edge span, preventing a distant pointer that
+  merely shares one coordinate from claiming a resize. The updated 61-test Tiled tree and preview
+  domain passes, including noisy title-bar movement, leading and trailing edge resizes, corner-edge
+  agreement, and out-of-span rejection. A replacement installed interaction check is still
+  required.
 - **Visual evidence:** The first installed candidate proved the exact 1+2 split and interaction but
   its nearly opaque backing, tint, wash, mask, and outline visually flattened the native material.
   Those custom layers are removed in the refined candidate; AppKit's live refraction over real
@@ -1134,6 +1270,26 @@ smallest useful outcome and acceptance boundary.
   `startup-state-ready` without a diagnostic error or fault. This installed build contains the
   accepted resize transaction and the new animated move extension; move interaction remains
   unaccepted.
+- **1 September installed candidate:** The signed universal Debug daily for
+  `9f4e673a1fd7-dirty` is running from `/Applications/WindowRanger.app` as PID 46143. Its
+  `dev.appranger.WindowRanger` bundle identity, Team ID `44NAD22AK6`, `x86_64` and `arm64`
+  architectures, embedded revision, running path, and strict deep signature were verified. Fresh
+  diagnostics session `2B1A5BEF-7080-4431-8810-5B10EDD1DFDD` reached `startup-state-ready` without
+  an error or fault in the inspected startup tail. The previous accepted daily remains recoverable
+  at `/Applications/.WindowRanger.previous`; directional move interaction is awaiting maintainer
+  acceptance.
+- **Gesture-classifier replacement candidate:** The edge-aware follow-up was installed as a new
+  Apple Development-signed universal Debug daily at `/Applications/WindowRanger.app`, retaining the
+  preceding candidate at `/Applications/.WindowRanger.previous`. The running process is PID 49730;
+  bundle identity `dev.appranger.WindowRanger`, Team ID `44NAD22AK6`, embedded revision
+  `9f4e673a1fd7-dirty`, `x86_64` and `arm64` architectures, running path, and strict deep signature
+  were verified. Fresh diagnostics session `245C9D7B-DBCB-4613-9432-F7C775807155` reached
+  `startup-state-ready` without an error or fault in the inspected session. The maintainer then
+  exercised the installed interaction and confirmed that the move-versus-resize misclassification
+  was resolved and the resulting feel was accepted.
+- **Final checkpoint:** The complete quick verification passes all 875 non-hosted tests after the
+  accepted classifier correction, together with the release-ledger, Sparkle-feed, Stable Homebrew,
+  project-generation, and test/archive-isolation checks.
 
 ### WR-087 — Copy a workspace layout without creating a preset library
 
@@ -1802,10 +1958,9 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Integration contract and CLI
 - **Priority:** P2
-- **Status:** Source implementation complete for the complete WindowRanger CLI v2 surface. Signed
-  installed validation exposed a blocking packaged-peer path comparison defect; the narrow source
-  correction is implemented, while replacement signed build validation and the separate
-  DesktopRanger adapter remain.
+- **Status:** Source implementation and signed installed validation are complete for the packaged
+  WindowRanger CLI v2 peer correction. Complete PATH/UI and mutating configuration validation plus
+  the separate DesktopRanger adapter remain.
 - **Source:** `docs/desktop-ranger-integration.md`
 - **Requested outcome:** Define a versioned, non-interactive WindowRanger command contract that gives
   first-party callers access to every stable user-facing action and persisted setting without giving
@@ -1836,13 +1991,13 @@ smallest useful outcome and acceptance boundary.
   General Settings can conservatively add/remove `~/.local/bin/windowranger` without administrator
   access, unrelated shell-file edits, or lost startup-file metadata. `windowranger skill` prints or
   safely writes a deterministic agent skill with no runtime data.
-- **Automated evidence:** All 857 non-hosted tests pass, including strict protocol/configuration
+- **Automated evidence:** All 858 non-hosted tests pass, including strict protocol/configuration
   shape checks, no-mutation invalid apply, cloud confirmation policy, async deadline/late-completion
   handling, concurrent retry coalescing, 128 KiB transport, peer rejection, safe PATH and skill
   export. Unsigned Debug app and helper builds succeed as universal arm64/x86_64 executables, and the
   generated skill passes the Codex skill validator. Prior v1 signed arm64 and universal bundles
-  passed nested-signature validation. Exact v2 installed PATH/UI interaction, live signed IPC,
-  relaunch, concurrent-process and DesktopRanger two-app checks remain required.
+  passed nested-signature validation. Exact v2 installed PATH/UI interaction, mutating configuration,
+  and DesktopRanger two-app checks remain required.
 - **User-observed signed-package failure:** During the public Homebrew 1.0.0 install test on
   30 August 2026, `windowranger version` correctly reported 1.0.0 build 12, but every IPC-backed
   command rejected the running app with `The WindowRanger command peer is not the bundled
@@ -1852,8 +2007,13 @@ smallest useful outcome and acceptance boundary.
   directory for bundled code; the CLI instead compares that result with
   `Contents/MacOS/WindowRanger`. The smallest security-preserving repair is to compare the known app
   bundle root while retaining the same-user, Team ID, code-identifier, and exact helper checks. The
-  1.0.1 source correction now does exactly that and adds a policy regression test; signed installed
-  IPC remains the acceptance boundary.
+  1.0.1 correction does exactly that and adds a policy regression test.
+- **Signed installed correction evidence:** The exact notarized 1.0.1 build 13 DMG was installed at
+  `/Applications` before publication. Its embedded universal CLI completed authenticated status,
+  capabilities, 37-action discovery, nine-workspace discovery, full configuration read/validation,
+  and skill generation. Eight concurrent signed clients succeeded, and signed IPC recovered after a
+  full app quit and relaunch. This exercises both app-to-helper and helper-to-app peer verification
+  without weakening any identity check.
 
 ### WR-070 — Add a branded, settings-backed first-run onboarding wizard
 
@@ -3900,10 +4060,10 @@ second copy of that checklist.
 
 - **Type:** Release epic
 - **Status:** In progress. With explicit maintainer approval on 30 August 2026, the Beta 10 updater
-  repair, public 1.0.0 Stable release, combined Stable/Beta feed, and Stable Homebrew tap were
-  published. The packaged Beta 7-to-Beta-10 upgrade and exact 1.0.0 DMG installation passed
-  maintainer validation. Remaining updater and Homebrew live-validation work is recorded below;
-  each later release remains separately held until explicitly approved.
+  repair, public 1.0.0 and 1.0.1 Stable releases, combined Stable/Beta feed, and Stable Homebrew tap
+  were published. The packaged Beta 7-to-Beta-10 updater path, exact Stable DMG installations, and
+  Homebrew 1.0.0-to-1.0.1 upgrade passed live validation. Remaining updater and Homebrew validation
+  work is recorded below; each later release remains separately held until explicitly approved.
 - **Decided:** Stable (`main`), Beta (`release/*`), and Dev (`develop`) channels using the documented
   Gitflow-style promotion model. Sparkle is the updater for the default Stable and
   opt-in Beta channels; Dev remains outside auto-update feeds.
@@ -4004,12 +4164,28 @@ second copy of that checklist.
   the expected DMG, ZIP, both checksum files, and provenance manifest; all five downloaded assets
   round-trip verified against the immutable tag and local candidate. Build 12 is therefore marked
   `published` in the central ledger.
+- **1.0.1 GitHub publication:** The protected annotated tag `v1.0.1` resolves to exact `main` commit
+  `22049ae01d9ade88fd9d0eb7eb5ac8a0cfb8838b`. Stable Xcode 26.6 produced universal build 13;
+  Apple accepted both app and DMG notarizations with zero issues, and the signed installed CLI peer
+  correction passed the live checks recorded under WR-074. The public non-prerelease release's five
+  assets round-trip verified against SHA-256
+  `781715f5ef1deb63534553c44c42eb5048e758a867fb2d5525d9e5938091909a` for the ZIP and
+  `6bf88eec14cf28d4dae03b3d27ddbf7898b0c2e1d505e57c9cb05f13c7a31f90` for the DMG. Build 13 is
+  therefore marked `published` in the central ledger. Its signed-feed and Homebrew publication
+  evidence is recorded below.
 - **1.0.0 feed publication:** The signed feed retaining Beta 10 build 11 and adding Stable 1.0.0
   build 12 plus its delta was deployed through Cloudflare version
   `1f3fc001-8180-4255-ae77-b71cefd1c16c`. The live appcast has SHA-256
   `8d54a8db20539ec56119af39e4281da25217b533987536182b6ca7dbdeb47c09`; all three downloaded
   payloads match the deployment source, and Sparkle accepts every live enclosure and delta
   signature. The XML, ZIP, and cache headers were also checked at their public endpoints.
+- **1.0.1 feed publication:** Website commit
+  `d66e68cb9684e18446b32cd08f034456542ae997` published the feed retaining builds 11 and 12 and
+  adding Stable 1.0.1 build 13 with deltas from both retained builds. Cloudflare deployment
+  `24e5fe44-77e2-4320-bcb9-2203e3ac014f` serves the exact appcast SHA-256
+  `56cf7a07cfa88bc041bd7f241e5de341a1fd397c87de81f5e68e93b59e919453` from both domains. All six
+  downloaded ZIP/delta payloads match their publication-source hashes, and Sparkle accepts every
+  live enclosure and delta signature. The public homepage also links the 1.0.1 Stable release.
 - **Homebrew publication:** The public
   [`AppRanger/homebrew-tap`](https://github.com/AppRanger/homebrew-tap) contains the exact Stable
   1.0.0 Cask with SHA-256
@@ -4031,7 +4207,23 @@ second copy of that checklist.
   running. Intel, a real later-version Homebrew/Sparkle upgrade in both orders, Settings PATH UI,
   and macOS privacy-permission retention remain live validation. The separately tracked WR-074 CLI
   peer-path failure prevents claiming packaged CLI runtime acceptance for 1.0.0.
+- **1.0.1 Homebrew publication and upgrade evidence:** Tap commit
+  `962dc4015cd742ea1a292e97b8b7dcd89e6863de` publishes the generated 1.0.1 Cask for the exact
+  notarized release DMG SHA-256
+  `6bf88eec14cf28d4dae03b3d27ddbf7898b0c2e1d505e57c9cb05f13c7a31f90`. Homebrew 6 style and
+  strict online audit passed. On the same Apple Silicon/macOS 27 Mac, a genuine 1.0.0 build 12 app
+  and receipt upgraded through Homebrew to 1.0.1 build 13. The installed app passed strict nested
+  signature, notarized Gatekeeper, relaunch, signed CLI read/configuration/skill, and eight-client
+  concurrency checks. Configuration values were preserved; only request/revision metadata and
+  collection serialization ordering changed across relaunch. This proves the Homebrew-forward
+  upgrade direction. Sparkle-first/Homebrew coexistence, Intel, Settings PATH UI, and privacy
+  permission retention remain live validation.
 - **Gate:** Each later release still requires explicit maintainer approval.
+- **1.0.2 preparation:** The maintainer explicitly approved committing the accepted fixes and
+  cutting Stable 1.0.2 on 1 September 2026. All nine cross-display layout combinations,
+  representative Unified transfers, same-display behaviour, the menu bar appearance correction,
+  and the first status-menu placement correction were accepted in the installed development build.
+  Build 14 is allocated for the candidate, with release notes at `docs/releases/v1.0.2.md`.
 
 ## Done
 
@@ -4340,7 +4532,8 @@ second copy of that checklist.
   pointer routing, pressure, hover, menu fallback, and accessibility coverage. Matching signed
   candidates preserved macOS 26 behavior and live-validated ordering, group movement, workspace
   clicks, and right-click routing on macOS 27. The initial geometric-menu position jump remains a
-  documented cosmetic macOS 27 beta limitation rather than a reason to reintroduce unsafe routing.
+  documented cosmetic macOS 27 beta limitation rather than a reason to reintroduce unsafe routing;
+  it was later reopened for a safe detached-menu correction under WR-109.
 
 ### WR-038 — Do not let stale parked-window focus undo a workspace switch
 

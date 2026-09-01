@@ -81,6 +81,15 @@ layout and layout geometry. In Unified mode one active workspace applies across 
 windows retain their physical display affinity. In Independent Displays mode each logical display
 has its own active workspace and workspaces have synced abstract display-role homes.
 
+A manual cross-display drag is one atomic source-and-destination transaction. Unified mode preserves
+the window's workspace membership and changes its physical display affinity. Independent Displays
+moves it into the destination display's currently active workspace. A Tiled source collapses its BSP
+after removing the leaf, Accordion re-solves its remaining focused stack, and Freeform leaves the
+other source frames alone. The destination then uses its own layout semantics—BSP admission for
+Tiled, focused stack admission for Accordion, or the observed manual frame for Freeform—only after
+the relevant tree, participant sets, layout configuration, active-workspace routing, and display
+topology revalidate at release.
+
 Window membership is session state, not profile content. Inactive members are parked using
 position-only AX writes where possible. Their recoverable frames are retained so switching back,
 graceful quit, startup recovery and explicit reset can return them to meaningful visible geometry.
@@ -635,7 +644,13 @@ re-shown; this moves the same window to the active native Space instead of switc
 one. Detached status-menu presentation first lets the originating status-item interaction complete:
 standard display-group buttons dispatch on mouse-up, and every menu route schedules presentation on
 the following main-loop turn. This prevents `NSMenu` from consuming the matching mouse-up inside a
-nested tracking loop and leaving the original status control pressed. The Settings menu action then
+nested tracking loop and leaving the original status control pressed. Before tracking starts, the
+controller completes all structural menu updates and asks AppKit to size the finished menu. The
+attached status button supplies horizontal alignment, while the bottom edge of its containing
+menu-bar window supplies the vertical screen anchor so a vertically centred button does not pull the
+popup over the menu bar. A fixed five-point visual gap separates the popup's rounded shadow from that
+edge. It does not rebuild the item tree from `menuWillOpen`, where a later layout can visibly
+relocate the initial popup. The Settings menu action then
 records a pending request, but the explicit synchronous `NSMenu.popUp` call must return before that
 request is consumed and the native Settings command is scheduled on another main-loop turn. Popup
 menus own a nested event loop, so delegate close, tracking-end, and post-action notifications can all

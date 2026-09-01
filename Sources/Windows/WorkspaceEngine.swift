@@ -1884,7 +1884,22 @@ final class WorkspaceEngine {
     private struct ManualTiledDragSession: Equatable {
         let focusedWindow: WindowKey
         let partition: TiledLayoutPartitionKey
-        let candidateTarget: WindowKey?
+        let candidateDestination: TiledDragDestination?
+    }
+
+    private struct ManualTiledCrossDisplayMoveProposal {
+        let destinationWorkspaceID: UUID
+        let destinationLayout: WorkspaceLayout
+        let destinationPartition: TiledLayoutPartitionKey
+        let destinationParticipantKeys: Set<WindowKey>
+        let destinationCommittedTree: TiledNode?
+        let destinationConfiguration: WorkspaceLayoutConfiguration?
+        let destinationLayoutBounds: CGRect
+        let landing: TiledDragDestination?
+        let sourceTree: TiledNode?
+        let sourceFrames: [WindowKey: WindowFrame]
+        let destinationTree: TiledNode?
+        let destinationFrames: [WindowKey: WindowFrame]
     }
 
     private struct ManualTiledMovePreviewSession {
@@ -1898,9 +1913,36 @@ final class WorkspaceEngine {
         let layoutBounds: CGRect
         let topologySignature: String
         let profileID: UUID?
-        var candidateTarget: WindowKey?
+        var candidateDestination: TiledDragDestination?
         var proposedTree: TiledNode
         var proposedFrames: [WindowKey: WindowFrame]
+        var crossDisplayProposal: ManualTiledCrossDisplayMoveProposal?
+    }
+
+    private struct ManualNonTiledCrossDisplayMoveSession {
+        let token: UUID
+        let focusedWindow: WindowKey
+        let sourceWorkspaceID: UUID
+        let sourceLayout: WorkspaceLayout
+        let sourceDisplayIdentifier: String
+        let sourceParticipantKeys: Set<WindowKey>
+        let sourceConfiguration: WorkspaceLayoutConfiguration?
+        let sourceLayoutBounds: CGRect
+        let originalFrames: [WindowKey: WindowFrame]
+        let sourceFocusAfterRemoval: WindowKey?
+        let topologySignature: String
+        let profileID: UUID?
+        var proposal: ManualTiledCrossDisplayMoveProposal?
+    }
+
+    private struct ManualCrossDisplayPointerAnchor {
+        let focusedWindow: WindowKey
+        let frame: WindowFrame
+        let workspaceID: UUID
+        let layout: WorkspaceLayout
+        let displayIdentifier: String
+        let topologySignature: String
+        let profileID: UUID?
     }
 
     private struct ManualTiledResizeSession {
@@ -1999,7 +2041,7 @@ final class WorkspaceEngine {
     private enum ManualTiledMoveReconciliation: Equatable {
         case none
         case dragInProgress
-        case swapped
+        case moved
     }
 
     private let queue = DispatchQueue(
@@ -2079,6 +2121,10 @@ final class WorkspaceEngine {
     private var directionalMoveGestureContext: DirectionalMoveGestureContext? = nil
     private var manualTiledDragSession: ManualTiledDragSession? = nil
     private var manualTiledMovePreviewSession: ManualTiledMovePreviewSession? = nil
+    private var manualNonTiledCrossDisplayMoveSession:
+        ManualNonTiledCrossDisplayMoveSession? = nil
+    private var manualCrossDisplayPointerAnchor: ManualCrossDisplayPointerAnchor? = nil
+    private var manualMoveStableFreeformFrames: [WindowKey: WindowFrame] = [:]
     private var manualTiledResizeSession: ManualTiledResizeSession? = nil
     private var ignoredWindowKeys = Set<WindowKey>()
     private var admissionDecisionByWindow: [WindowKey: WindowAdmissionDecision] = [:]
@@ -6778,6 +6824,7 @@ final class WorkspaceEngine {
         queue.async { [weak self] in
             guard let self else { return }
             let previewProcessIdentifier = self.manualTiledMovePreviewSession?.focusedWindow
+                .processIdentifier ?? self.manualNonTiledCrossDisplayMoveSession?.focusedWindow
                 .processIdentifier ?? self.manualTiledResizeSession?.focusedWindow.processIdentifier
             if let previewProcessIdentifier,
                previewProcessIdentifier != processIdentifier {
@@ -7133,6 +7180,142 @@ final class WorkspaceEngine {
         rule: ResolvedAppRule
     ) -> MultiDisplayMode {
         rule.keepsOnAllWorkspaces ? .unified : configuredMode
+    }
+
+    static func manualMoveDestinationWorkspaceID(
+        effectiveMode: MultiDisplayMode,
+        sourceWorkspaceID: UUID,
+        destinationDisplayIdentifier: String,
+        activeWorkspaceIDByDisplay: [String: UUID]
+    ) -> UUID? {
+        effectiveMode == .independent
+            ? activeWorkspaceIDByDisplay[destinationDisplayIdentifier]
+            : sourceWorkspaceID
+    }
+
+    static func manualMoveCrossDisplayPreviewChanged(
+        previousPartition: TiledLayoutPartitionKey?,
+        previousLanding: TiledDragDestination?,
+        previousLandingFrame: WindowFrame?,
+        proposedPartition: TiledLayoutPartitionKey?,
+        proposedLanding: TiledDragDestination?,
+        proposedLandingFrame: WindowFrame?
+    ) -> Bool {
+        previousPartition != proposedPartition ||
+            previousLanding != proposedLanding ||
+            previousLandingFrame != proposedLandingFrame
+    }
+
+    static func manualMoveNonTiledDestinationFrames(
+        layout: WorkspaceLayout,
+        orderedWindowKeys: [WindowKey],
+        movedWindow: WindowKey,
+        observedFrame: WindowFrame,
+        layoutBounds: CGRect,
+        layoutConfiguration: WorkspaceLayoutConfiguration?
+    ) -> [WindowKey: WindowFrame]? {
+        let stationaryKeys = orderedWindowKeys.filter { $0 != movedWindow }
+        switch layout {
+        case .none:
+            guard observedFrame.position.x.isFinite,
+                  observedFrame.position.y.isFinite,
+                  observedFrame.size.width.isFinite,
+                  observedFrame.size.height.isFinite,
+                  observedFrame.size.width > 0,
+                  observedFrame.size.height > 0
+            else { return nil }
+            return [movedWindow: observedFrame]
+        case .accordion:
+            let keys = stationaryKeys + [movedWindow]
+            let frames = layoutFrames(
+                .accordion,
+                count: keys.count,
+                in: layoutBounds,
+                accordionFocusedIndex: keys.count - 1,
+                layoutConfiguration: layoutConfiguration
+            )
+            guard frames.count == keys.count else { return nil }
+            return Dictionary(uniqueKeysWithValues: zip(keys, frames))
+        case .tiled:
+            return nil
+        }
+    }
+
+    static func manualMoveNonTiledSourceFrames(
+        layout: WorkspaceLayout,
+        orderedWindowKeys: [WindowKey],
+        movedWindow: WindowKey,
+        focusedWindowAfterRemoval: WindowKey?,
+        layoutBounds: CGRect,
+        layoutConfiguration: WorkspaceLayoutConfiguration?
+    ) -> [WindowKey: WindowFrame]? {
+        let remainingKeys = orderedWindowKeys.filter { $0 != movedWindow }
+        switch layout {
+        case .none:
+            return [:]
+        case .accordion:
+            guard !remainingKeys.isEmpty else { return [:] }
+            let focusedIndex = focusedWindowAfterRemoval.flatMap { remainingKeys.firstIndex(of: $0) }
+            let frames = layoutFrames(
+                .accordion,
+                count: remainingKeys.count,
+                in: layoutBounds,
+                accordionFocusedIndex: focusedIndex,
+                layoutConfiguration: layoutConfiguration
+            )
+            guard frames.count == remainingKeys.count else { return nil }
+            return Dictionary(uniqueKeysWithValues: zip(remainingKeys, frames))
+        case .tiled:
+            return nil
+        }
+    }
+
+    static func manualMoveNonTiledOriginalFrames(
+        layout: WorkspaceLayout,
+        focusedWindow: WindowKey,
+        anchorFrame: WindowFrame,
+        participantFrames: [WindowKey: WindowFrame]
+    ) -> [WindowKey: WindowFrame]? {
+        switch layout {
+        case .none:
+            return [focusedWindow: anchorFrame]
+        case .accordion:
+            guard participantFrames[focusedWindow] != nil else { return nil }
+            var originalFrames = participantFrames
+            originalFrames[focusedWindow] = anchorFrame
+            return originalFrames
+        case .tiled:
+            return nil
+        }
+    }
+
+    static func manualMoveFallbackAnchorFrame(
+        layout: WorkspaceLayout,
+        orderedWindowKeys: [WindowKey],
+        focusedWindow: WindowKey,
+        storedFrame: WindowFrame,
+        layoutBounds: CGRect,
+        layoutConfiguration: WorkspaceLayoutConfiguration?
+    ) -> WindowFrame? {
+        switch layout {
+        case .none:
+            return storedFrame
+        case .accordion:
+            guard let focusedIndex = orderedWindowKeys.firstIndex(of: focusedWindow) else {
+                return nil
+            }
+            let frames = layoutFrames(
+                .accordion,
+                count: orderedWindowKeys.count,
+                in: layoutBounds,
+                accordionFocusedIndex: focusedIndex,
+                layoutConfiguration: layoutConfiguration
+            )
+            guard frames.indices.contains(focusedIndex) else { return nil }
+            return frames[focusedIndex]
+        case .tiled:
+            return nil
+        }
     }
 
     func moveFocusedWindow(
@@ -7773,9 +7956,9 @@ final class WorkspaceEngine {
         }
     }
 
-    /// Holds a position-only tiled drag in place while the pointer button is down, then swaps the
-    /// focused leaf with the tile under the release point. Returning true tells the refresh loop
-    /// not to run its normal corrective layout pass during the active drag.
+    /// Holds a position-only tiled drag in place while the pointer button is down, then moves the
+    /// focused leaf to the directional destination under the release point. Returning true tells
+    /// the refresh loop not to run its normal corrective layout pass during the active drag.
     private func reconcileManualTiledMove(
         focusedWindow: WindowKey,
         observedFrames: [WindowKey: WindowFrame],
@@ -7819,7 +8002,12 @@ final class WorkspaceEngine {
             workspaceID: tracked.workspaceID,
             displayIdentifier: display.identifier
         )
-        guard participants.count > 1,
+        let previousDestination = manualTiledDragSession.flatMap { prior in
+            prior.focusedWindow == focusedWindow && prior.partition == partition
+                ? prior.candidateDestination
+                : nil
+        }
+        guard !participants.isEmpty,
               participants.contains(focusedWindow),
               let currentTree = TiledLayoutEngine.reconciled(
                   tiledTrees[partition],
@@ -7840,7 +8028,8 @@ final class WorkspaceEngine {
                   focusedWindow: focusedWindow,
                   observedFrame: observedFrame,
                   pointerLocation: pointerLocation,
-                  expectedFrames: expectedFrames
+                  expectedFrames: expectedFrames,
+                  previousDestination: previousDestination
               )
         else {
             if !isLeftMouseButtonPressed {
@@ -7852,7 +8041,7 @@ final class WorkspaceEngine {
         let session = ManualTiledDragSession(
             focusedWindow: focusedWindow,
             partition: partition,
-            candidateTarget: drag.swapTarget
+            candidateDestination: drag.destination
         )
         if isLeftMouseButtonPressed {
             if manualTiledDragSession != session {
@@ -7864,7 +8053,10 @@ final class WorkspaceEngine {
                         "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
                         "display": Self.shortIdentifier(display.identifier),
                         "window": Self.diagnosticWindowKey(focusedWindow),
-                        "target": drag.swapTarget.map(Self.diagnosticWindowKey) ?? "none",
+                        "target": drag.destination.map {
+                            Self.diagnosticWindowKey($0.target)
+                        } ?? "none",
+                        "placement": drag.destination?.placement.rawValue ?? "none",
                     ]
                 )
             }
@@ -7874,22 +8066,28 @@ final class WorkspaceEngine {
 
         let priorSession = manualTiledDragSession
         manualTiledDragSession = nil
-        let target = drag.swapTarget ?? (pointerLocation == nil &&
+        let destination = drag.destination ?? (pointerLocation == nil &&
             priorSession?.focusedWindow == focusedWindow &&
             priorSession?.partition == partition
-                ? priorSession?.candidateTarget
+                ? priorSession?.candidateDestination
                 : nil)
-        guard let target,
-              participants.contains(target),
-              let swappedTree = TiledLayoutEngine.swappingWindows(
+        guard let destination,
+              participants.contains(destination.target),
+              let movedTree = TiledLayoutEngine.movingWindow(
                   focusedWindow,
-                  target,
+                  to: destination,
                   in: currentTree
-              ), let effectiveShares = TiledLayoutEngine.leafShares(swappedTree)
+              ), let movedFrames = try? TiledLayoutEngine.frames(
+                  for: movedTree,
+                  in: managedBounds,
+                  configuration: configuration
+              ), destination.placement == .swap ||
+                TiledLayoutEngine.accommodatesMinimumWindowLength(movedFrames),
+              let effectiveShares = TiledLayoutEngine.leafShares(movedTree)
         else { return .none }
 
-        tiledTrees[partition] = swappedTree
-        for (index, key) in swappedTree.windowKeys.enumerated() {
+        tiledTrees[partition] = movedTree
+        for (index, key) in movedTree.windowKeys.enumerated() {
             windows[key]?.layoutOrder = index
             windows[key]?.layoutWeight = effectiveShares[key] ?? 1
         }
@@ -7900,18 +8098,344 @@ final class WorkspaceEngine {
         lastBackgroundLayoutSignature = nil
         diagnostics.log(
             category: "manual-move",
-            event: "windows-swapped",
+            event: "window-moved",
             correlation: correlationID,
             fields: [
                 "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
                 "display": Self.shortIdentifier(display.identifier),
                 "window": Self.diagnosticWindowKey(focusedWindow),
-                "swapped-with": Self.diagnosticWindowKey(target),
+                "target": Self.diagnosticWindowKey(destination.target),
+                "placement": destination.placement.rawValue,
                 "tree-before": TiledLayoutEngine.fingerprint(currentTree),
-                "tree-after": TiledLayoutEngine.fingerprint(swappedTree),
+                "tree-after": TiledLayoutEngine.fingerprint(movedTree),
             ]
         )
-        return .swapped
+        return .moved
+    }
+
+    func layoutMovePointerPressed(ignoredOverlayWindowKeys: Set<WindowKey> = []) {
+        queue.async { [weak self] in
+            guard let self,
+                  !self.isWindowManagementPaused,
+                  let pointer = CGEvent(source: nil)?.location,
+                  let pointerOrder = AccessibilityWindow.onScreenPointerOrder(),
+                  let key = AccessibilityWindow.pointerTargetWindow(
+                      at: pointer,
+                      in: pointerOrder,
+                      eligibleWindowKeys: Set(self.windows.keys),
+                      ignoredOverlayWindowKeys: ignoredOverlayWindowKeys
+                  ),
+                  let tracked = self.windows[key],
+                  self.isWorkspaceActive(tracked.workspaceID),
+                  let frame = AccessibilityWindow.frame(of: tracked.element),
+                  let display = self.targetDisplay(
+                      for: tracked,
+                      workspaceID: tracked.workspaceID,
+                      displays: Self.activeDisplays(),
+                      correlationID: nil
+                  )
+            else {
+                self?.manualCrossDisplayPointerAnchor = nil
+                return
+            }
+            self.manualCrossDisplayPointerAnchor = ManualCrossDisplayPointerAnchor(
+                focusedWindow: key,
+                frame: frame,
+                workspaceID: tracked.workspaceID,
+                layout: self.workspaceLayout(for: tracked.workspaceID),
+                displayIdentifier: display.identifier,
+                topologySignature: Self.displayTopologySignature(Self.activeDisplays()),
+                profileID: self.currentProfileID
+            )
+            self.diagnostics.log(
+                category: "manual-cross-layout-move",
+                event: "pointer-anchored",
+                fields: [
+                    "source-layout": self.workspaceLayout(for: tracked.workspaceID).rawValue,
+                    "source-workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                    "source-display": Self.shortIdentifier(display.identifier),
+                    "window": Self.diagnosticWindowKey(key),
+                ]
+            )
+        }
+    }
+
+    private func recoverManualNonTiledPointerAnchor(
+        focusedWindow: WindowKey,
+        observedFrames: [WindowKey: WindowFrame],
+        displays: [DisplaySnapshot],
+        pointer: CGPoint?,
+        correlationID: String?
+    ) -> Bool {
+        guard manualCrossDisplayPointerAnchor == nil,
+              manualNonTiledCrossDisplayMoveSession == nil,
+              let pointer,
+              let tracked = windows[focusedWindow],
+              let observedFrame = observedFrames[focusedWindow],
+              isWorkspaceActive(tracked.workspaceID),
+              workspaceLayout(for: tracked.workspaceID) != .tiled,
+              fullscreenSessions[focusedWindow] == nil,
+              !temporarilyDeferredWindowKeys.contains(focusedWindow),
+              Self.shouldIncludeInLayout(
+                  layoutOverride: tracked.layoutOverride,
+                  admissionDecision: tracked.admissionDecision,
+                  rule: resolvedRule(for: tracked.bundleIdentifier)
+              ),
+              let display = targetDisplay(
+                  for: tracked,
+                  workspaceID: tracked.workspaceID,
+                  displays: displays,
+                  correlationID: correlationID
+              )
+        else { return false }
+
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: display.identifier,
+            displays: displays,
+            correlationID: correlationID
+        )
+        let layout = workspaceLayout(for: tracked.workspaceID)
+        let configuration = workspaceLayoutConfiguration(for: tracked.workspaceID)
+        let bounds = managedLayoutBounds(
+            layout == .accordion || configuration != nil ? display.usableBounds : display.bounds
+        )
+        guard participants.contains(focusedWindow),
+              let anchorFrame = Self.manualMoveFallbackAnchorFrame(
+                  layout: layout,
+                  orderedWindowKeys: participants,
+                  focusedWindow: focusedWindow,
+                  storedFrame: layout == .none
+                    ? manualMoveStableFreeformFrames[focusedWindow] ?? tracked.restoreFrame
+                    : tracked.restoreFrame,
+                  layoutBounds: bounds,
+                  layoutConfiguration: configuration
+              ),
+              TiledManualDragClassifier.classify(
+                  expectedFrame: anchorFrame,
+                  observedFrame: observedFrame,
+                  pointer: pointer
+              ) == .move
+        else { return false }
+
+        manualCrossDisplayPointerAnchor = ManualCrossDisplayPointerAnchor(
+            focusedWindow: focusedWindow,
+            frame: anchorFrame,
+            workspaceID: tracked.workspaceID,
+            layout: layout,
+            displayIdentifier: display.identifier,
+            topologySignature: Self.displayTopologySignature(displays),
+            profileID: currentProfileID
+        )
+        diagnostics.log(
+            category: "manual-cross-layout-move",
+            event: "pointer-anchor-recovered",
+            correlation: correlationID,
+            fields: [
+                "source-layout": layout.rawValue,
+                "source-workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                "source-display": Self.shortIdentifier(display.identifier),
+                "window": Self.diagnosticWindowKey(focusedWindow),
+            ]
+        )
+        updateManualNonTiledCrossDisplayMovePreview()
+        return manualNonTiledCrossDisplayMoveSession != nil
+    }
+
+    private func updateManualNonTiledCrossDisplayMovePreview() {
+        if var session = manualNonTiledCrossDisplayMoveSession {
+            let correlationID = "manual-cross-layout-\(session.token.uuidString.prefix(8))"
+            let displays = Self.activeDisplays()
+            guard !isWindowManagementPaused,
+                  !wakeReconciliationState.isSleeping,
+                  !wakeReconciliationState.isPending,
+                  windowServerSessionValidated,
+                  !isQuickAppShelfPresented,
+                  currentProfileID == session.profileID,
+                  Self.displayTopologySignature(displays) == session.topologySignature,
+                  let tracked = windows[session.focusedWindow],
+                  tracked.workspaceID == session.sourceWorkspaceID,
+                  isWorkspaceActive(session.sourceWorkspaceID),
+                  workspaceLayout(for: session.sourceWorkspaceID) == session.sourceLayout,
+                  workspaceLayoutConfiguration(for: session.sourceWorkspaceID) ==
+                    session.sourceConfiguration,
+                  let sourceDisplay = displays.first(where: {
+                      $0.identifier == session.sourceDisplayIdentifier
+                  }),
+                  managedLayoutBounds(sourceDisplay.usableBounds) == session.sourceLayoutBounds,
+                  let pointer = CGEvent(source: nil)?.location
+            else {
+                cancelManualNonTiledCrossDisplayMovePreview(reason: "context-changed")
+                return
+            }
+            let sourceParticipants = orderedLayoutParticipants(
+                workspaceID: session.sourceWorkspaceID,
+                displayIdentifier: session.sourceDisplayIdentifier,
+                displays: displays,
+                correlationID: correlationID
+            )
+            guard Set(sourceParticipants) == session.sourceParticipantKeys else {
+                cancelManualNonTiledCrossDisplayMovePreview(reason: "participants-changed")
+                return
+            }
+
+            let pointerDisplay = displays.first { $0.bounds.contains(pointer) }
+            if pointerDisplay?.identifier == session.sourceDisplayIdentifier {
+                let hadProposal = session.proposal != nil
+                session.proposal = nil
+                manualNonTiledCrossDisplayMoveSession = session
+                if hadProposal {
+                    emitTiledResizePreviewEvent(.dismiss(
+                        token: session.token,
+                        reason: "returned-to-source-display"
+                    ))
+                }
+                return
+            }
+
+            let previous = session.proposal
+            let proposal = pointerDisplay.flatMap {
+                manualNonTiledCrossDisplayMoveProposal(
+                    session: session,
+                    tracked: tracked,
+                    destinationDisplay: $0,
+                    pointer: pointer,
+                    displays: displays,
+                    correlationID: correlationID
+                )
+            }
+            session.proposal = proposal
+            manualNonTiledCrossDisplayMoveSession = session
+            let changed = Self.manualMoveCrossDisplayPreviewChanged(
+                previousPartition: previous?.destinationPartition,
+                previousLanding: previous?.landing,
+                previousLandingFrame: previous?.destinationFrames[session.focusedWindow],
+                proposedPartition: proposal?.destinationPartition,
+                proposedLanding: proposal?.landing,
+                proposedLandingFrame: proposal?.destinationFrames[session.focusedWindow]
+            ) || previous?.destinationLayout != proposal?.destinationLayout
+            guard changed else { return }
+            if let proposal,
+               let landingFrame = proposal.destinationFrames[session.focusedWindow] {
+                emitTiledResizePreviewEvent(.present(TiledResizePreviewPresentation(
+                    token: session.token,
+                    displayIdentifier: proposal.destinationPartition.displayIdentifier,
+                    layoutBounds: WindowFrame(
+                        position: proposal.destinationLayoutBounds.origin,
+                        size: proposal.destinationLayoutBounds.size
+                    ),
+                    frames: [session.focusedWindow: landingFrame],
+                    transition: .animated,
+                    role: .landing
+                )))
+            } else {
+                emitTiledResizePreviewEvent(.dismiss(
+                    token: session.token,
+                    reason: "no-cross-display-target"
+                ))
+            }
+            diagnostics.log(
+                category: "manual-cross-layout-move",
+                event: "target-changed",
+                correlation: correlationID,
+                fields: [
+                    "source-layout": session.sourceLayout.rawValue,
+                    "source-workspace": Self.shortIdentifier(session.sourceWorkspaceID.uuidString),
+                    "source-display": Self.shortIdentifier(session.sourceDisplayIdentifier),
+                    "destination-layout": proposal?.destinationLayout.rawValue ?? "none",
+                    "destination-workspace": proposal.map {
+                        Self.shortIdentifier($0.destinationWorkspaceID.uuidString)
+                    } ?? "none",
+                    "destination-display": pointerDisplay.map {
+                        Self.shortIdentifier($0.identifier)
+                    } ?? "none",
+                    "window": Self.diagnosticWindowKey(session.focusedWindow),
+                ]
+            )
+            return
+        }
+
+        let displays = Self.activeDisplays()
+        guard let anchor = manualCrossDisplayPointerAnchor,
+              anchor.layout != .tiled,
+              currentProfileID == anchor.profileID,
+              Self.displayTopologySignature(displays) == anchor.topologySignature,
+              let tracked = windows[anchor.focusedWindow],
+              tracked.workspaceID == anchor.workspaceID,
+              workspaceLayout(for: tracked.workspaceID) == anchor.layout,
+              isWorkspaceActive(tracked.workspaceID),
+              let observedFrame = AccessibilityWindow.frame(of: tracked.element),
+              let pointer = CGEvent(source: nil)?.location,
+              TiledManualDragClassifier.classify(
+                  expectedFrame: anchor.frame,
+                  observedFrame: observedFrame,
+                  pointer: pointer
+              ) == .move,
+              let sourceDisplay = displays.first(where: {
+                  $0.identifier == anchor.displayIdentifier
+              }),
+              Self.shouldIncludeInLayout(
+                  layoutOverride: tracked.layoutOverride,
+                  admissionDecision: tracked.admissionDecision,
+                  rule: resolvedRule(for: tracked.bundleIdentifier)
+              )
+        else { return }
+        let participants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: sourceDisplay.identifier,
+            displays: displays,
+            correlationID: nil
+        )
+        guard participants.contains(anchor.focusedWindow) else { return }
+        let participantFrames: [WindowKey: WindowFrame] = Dictionary(
+            uniqueKeysWithValues: participants.compactMap { key -> (WindowKey, WindowFrame)? in
+                guard let window = windows[key],
+                      let frame = AccessibilityWindow.frame(of: window.element)
+                else { return nil }
+                return (key, frame)
+            }
+        )
+        guard anchor.layout != .accordion || participantFrames.count == participants.count,
+              let originalFrames = Self.manualMoveNonTiledOriginalFrames(
+                  layout: anchor.layout,
+                  focusedWindow: anchor.focusedWindow,
+                  anchorFrame: anchor.frame,
+                  participantFrames: participantFrames
+              )
+        else { return }
+        let remaining = participants.filter { $0 != anchor.focusedWindow }
+        let sourceFocusAfterRemoval = lastFocusedWindow[tracked.workspaceID].flatMap {
+            remaining.contains($0) ? $0 : nil
+        } ?? remaining.first
+        let token = UUID()
+        manualNonTiledCrossDisplayMoveSession = ManualNonTiledCrossDisplayMoveSession(
+            token: token,
+            focusedWindow: anchor.focusedWindow,
+            sourceWorkspaceID: tracked.workspaceID,
+            sourceLayout: anchor.layout,
+            sourceDisplayIdentifier: sourceDisplay.identifier,
+            sourceParticipantKeys: Set(participants),
+            sourceConfiguration: workspaceLayoutConfiguration(for: tracked.workspaceID),
+            sourceLayoutBounds: managedLayoutBounds(sourceDisplay.usableBounds),
+            originalFrames: originalFrames,
+            sourceFocusAfterRemoval: sourceFocusAfterRemoval,
+            topologySignature: anchor.topologySignature,
+            profileID: anchor.profileID,
+            proposal: nil
+        )
+        diagnostics.log(
+            category: "manual-cross-layout-move",
+            event: "started",
+            correlation: "manual-cross-layout-\(token.uuidString.prefix(8))",
+            fields: [
+                "source-layout": anchor.layout.rawValue,
+                "source-workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                "source-display": Self.shortIdentifier(sourceDisplay.identifier),
+                "window": Self.diagnosticWindowKey(anchor.focusedWindow),
+                "window-count": String(participants.count),
+            ]
+        )
+        updateManualNonTiledCrossDisplayMovePreview()
     }
 
     /// Pointer delivery is intentionally separate from the broad discovery timer. Tiled move and
@@ -7921,13 +8445,33 @@ final class WorkspaceEngine {
         queue.async { [weak self] in
             guard let self else { return }
             if self.manualTiledMovePreviewSession != nil {
-                self.updateConcealedManualTiledMovePreview()
+                self.updateManualTiledMoveLandingPreview()
+            } else if self.manualNonTiledCrossDisplayMoveSession != nil {
+                self.updateManualNonTiledCrossDisplayMovePreview()
             } else if self.manualTiledResizeSession != nil {
                 self.updateManualTiledResizePreview()
             } else {
-                self.updateManualTiledResizePreview()
-                if self.manualTiledResizeSession == nil {
-                    self.updateManualTiledMovePreview()
+                self.updateManualTiledMovePreview()
+                if self.manualTiledMovePreviewSession == nil {
+                    self.updateManualNonTiledCrossDisplayMovePreview()
+                }
+                if self.manualTiledMovePreviewSession == nil,
+                   self.manualNonTiledCrossDisplayMoveSession == nil {
+                    if let focusedWindow = self.focusedWindowKey(),
+                       let tracked = self.windows[focusedWindow],
+                       let observedFrame = AccessibilityWindow.frame(of: tracked.element) {
+                        _ = self.recoverManualNonTiledPointerAnchor(
+                            focusedWindow: focusedWindow,
+                            observedFrames: [focusedWindow: observedFrame],
+                            displays: Self.activeDisplays(),
+                            pointer: CGEvent(source: nil)?.location,
+                            correlationID: nil
+                        )
+                    }
+                }
+                if self.manualTiledMovePreviewSession == nil,
+                   self.manualNonTiledCrossDisplayMoveSession == nil {
+                    self.updateManualTiledResizePreview()
                 }
             }
         }
@@ -7938,9 +8482,12 @@ final class WorkspaceEngine {
             guard let self else { return }
             if self.manualTiledMovePreviewSession != nil {
                 self.commitManualTiledMovePreview()
+            } else if self.manualNonTiledCrossDisplayMoveSession != nil {
+                self.commitManualNonTiledCrossDisplayMovePreview()
             } else if self.manualTiledResizeSession != nil {
                 self.commitManualTiledResizePreview()
             }
+            self.manualCrossDisplayPointerAnchor = nil
         }
     }
 
@@ -8082,7 +8629,7 @@ final class WorkspaceEngine {
             workspaceID: tracked.workspaceID,
             displayIdentifier: display.identifier
         )
-        guard participants.count > 1,
+        guard !participants.isEmpty,
               participants.contains(focused.key),
               let originalTree = TiledLayoutEngine.reconciled(
                   tiledTrees[partition],
@@ -8100,12 +8647,19 @@ final class WorkspaceEngine {
               let expectedFocusedFrame = originalFrames[focused.key],
               let lastSolvedFrame = lastSolvedTiledFrames[focused.key],
               AccessibilityWindow.framesMatch(lastSolvedFrame, expectedFocusedFrame),
+              let pointer = CGEvent(source: nil)?.location,
+              TiledManualDragClassifier.classify(
+                  expectedFrame: expectedFocusedFrame,
+                  observedFrame: observedFrame,
+                  pointer: pointer
+              ) == .move,
               TiledLayoutEngine.observedDrag(
                   in: originalTree,
                   focusedWindow: focused.key,
                   observedFrame: observedFrame,
-                  pointerLocation: CGEvent(source: nil)?.location,
-                  expectedFrames: originalFrames
+                  pointerLocation: pointer,
+                  expectedFrames: originalFrames,
+                  requiresStableSize: false
               ) != nil
         else { return }
 
@@ -8121,28 +8675,14 @@ final class WorkspaceEngine {
             layoutBounds: layoutBounds,
             topologySignature: Self.displayTopologySignature(displays),
             profileID: currentProfileID,
-            candidateTarget: nil,
+            candidateDestination: nil,
             proposedTree: originalTree,
-            proposedFrames: originalFrames
+            proposedFrames: originalFrames,
+            crossDisplayProposal: nil
         )
         manualTiledMovePreviewSession = session
         manualTiledDragSession = nil
-        emitTiledResizePreviewEvent(.present(TiledResizePreviewPresentation(
-            token: token,
-            displayIdentifier: display.identifier,
-            layoutBounds: WindowFrame(position: layoutBounds.origin, size: layoutBounds.size),
-            frames: originalFrames,
-            transition: .immediate
-        )))
         let correlationID = "manual-move-\(token.uuidString.prefix(8))"
-        guard concealManualTiledParticipants(
-            session.participantKeys,
-            diagnosticCategory: "manual-move-preview",
-            correlationID: correlationID
-        ) else {
-            cancelManualTiledMovePreview(reason: "participant-concealment-failed")
-            return
-        }
         diagnostics.log(
             category: "manual-move-preview",
             event: "started",
@@ -8154,10 +8694,10 @@ final class WorkspaceEngine {
                 "window-count": String(participants.count),
             ]
         )
-        updateConcealedManualTiledMovePreview()
+        updateManualTiledMoveLandingPreview()
     }
 
-    private func updateConcealedManualTiledMovePreview() {
+    private func updateManualTiledMoveLandingPreview() {
         guard var session = manualTiledMovePreviewSession else { return }
         let correlationID = "manual-move-\(session.token.uuidString.prefix(8))"
         let displays = Self.activeDisplays()
@@ -8197,15 +8737,94 @@ final class WorkspaceEngine {
             return
         }
 
-        let target = TiledLayoutEngine.swapTarget(
+        let pointerDisplay = displays.first { $0.bounds.contains(pointer) }
+        if pointerDisplay?.identifier != display.identifier {
+            let previousCrossPartition = session.crossDisplayProposal?.destinationPartition
+            let previousLanding = session.crossDisplayProposal?.landing
+            let previousLandingFrame = session.crossDisplayProposal?
+                .destinationFrames[session.focusedWindow]
+            let proposal = pointerDisplay.flatMap {
+                manualTiledCrossDisplayMoveProposal(
+                    session: session,
+                    tracked: tracked,
+                    destinationDisplay: $0,
+                    pointer: pointer,
+                    displays: displays,
+                    correlationID: correlationID
+                )
+            }
+            session.candidateDestination = proposal?.landing
+            session.proposedTree = session.originalTree
+            session.proposedFrames = session.originalFrames
+            session.crossDisplayProposal = proposal
+            manualTiledMovePreviewSession = session
+            let destinationChanged = Self.manualMoveCrossDisplayPreviewChanged(
+                previousPartition: previousCrossPartition,
+                previousLanding: previousLanding,
+                previousLandingFrame: previousLandingFrame,
+                proposedPartition: proposal?.destinationPartition,
+                proposedLanding: proposal?.landing,
+                proposedLandingFrame: proposal?.destinationFrames[session.focusedWindow]
+            )
+            if destinationChanged {
+                if let proposal,
+                   let landingFrame = proposal.destinationFrames[session.focusedWindow] {
+                    emitTiledResizePreviewEvent(.present(TiledResizePreviewPresentation(
+                        token: session.token,
+                        displayIdentifier: proposal.destinationPartition.displayIdentifier,
+                        layoutBounds: WindowFrame(
+                            position: proposal.destinationLayoutBounds.origin,
+                            size: proposal.destinationLayoutBounds.size
+                        ),
+                        frames: [session.focusedWindow: landingFrame],
+                        transition: .animated,
+                        role: .landing
+                    )))
+                } else {
+                    emitTiledResizePreviewEvent(.dismiss(
+                        token: session.token,
+                        reason: "no-cross-display-target"
+                    ))
+                }
+                diagnostics.log(
+                    category: "manual-move-preview",
+                    event: "cross-display-target-changed",
+                    correlation: correlationID,
+                    fields: [
+                        "source-workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                        "source-display": Self.shortIdentifier(display.identifier),
+                        "destination-workspace": proposal.map {
+                            Self.shortIdentifier($0.destinationWorkspaceID.uuidString)
+                        } ?? "none",
+                        "destination-display": pointerDisplay.map {
+                            Self.shortIdentifier($0.identifier)
+                        } ?? "none",
+                        "window": Self.diagnosticWindowKey(session.focusedWindow),
+                        "target": proposal?.landing.map {
+                            Self.diagnosticWindowKey($0.target)
+                        } ?? "append",
+                        "placement": proposal?.landing?.placement.rawValue ?? "append",
+                    ]
+                )
+            }
+            return
+        }
+
+        let candidateDestination = TiledLayoutEngine.dragDestination(
             at: pointer,
             focusedWindow: session.focusedWindow,
-            expectedFrames: session.originalFrames
+            expectedFrames: session.originalFrames,
+            previousDestination: session.candidateDestination
         )
-        let proposedTree = target.flatMap {
-            TiledLayoutEngine.swappingWindows(session.focusedWindow, $0, in: session.originalTree)
+        var destination = candidateDestination
+        var proposedTree = candidateDestination.flatMap {
+            TiledLayoutEngine.movingWindow(
+                session.focusedWindow,
+                to: $0,
+                in: session.originalTree
+            )
         } ?? session.originalTree
-        guard let proposedFrames = try? TiledLayoutEngine.frames(
+        guard var proposedFrames = try? TiledLayoutEngine.frames(
             for: proposedTree,
             in: session.layoutBounds,
             configuration: session.configuration
@@ -8213,23 +8832,39 @@ final class WorkspaceEngine {
             cancelManualTiledMovePreview(reason: "proposal-invalid")
             return
         }
+        if let candidate = destination, candidate.placement != .swap,
+           !TiledLayoutEngine.accommodatesMinimumWindowLength(proposedFrames) {
+            destination = nil
+            proposedTree = session.originalTree
+            proposedFrames = session.originalFrames
+        }
 
-        let targetChanged = target != session.candidateTarget
-        session.candidateTarget = target
+        let destinationChanged = destination != session.candidateDestination ||
+            session.crossDisplayProposal != nil
+        session.candidateDestination = destination
         session.proposedTree = proposedTree
         session.proposedFrames = proposedFrames
+        session.crossDisplayProposal = nil
         manualTiledMovePreviewSession = session
-        if targetChanged {
-            emitTiledResizePreviewEvent(.present(TiledResizePreviewPresentation(
-                token: session.token,
-                displayIdentifier: display.identifier,
-                layoutBounds: WindowFrame(
-                    position: session.layoutBounds.origin,
-                    size: session.layoutBounds.size
-                ),
-                frames: proposedFrames,
-                transition: .animated
-            )))
+        if destinationChanged {
+            if destination != nil, let landingFrame = proposedFrames[session.focusedWindow] {
+                emitTiledResizePreviewEvent(.present(TiledResizePreviewPresentation(
+                    token: session.token,
+                    displayIdentifier: display.identifier,
+                    layoutBounds: WindowFrame(
+                        position: session.layoutBounds.origin,
+                        size: session.layoutBounds.size
+                    ),
+                    frames: [session.focusedWindow: landingFrame],
+                    transition: .animated,
+                    role: .landing
+                )))
+            } else {
+                emitTiledResizePreviewEvent(.dismiss(
+                    token: session.token,
+                    reason: "no-landing-target"
+                ))
+            }
             diagnostics.log(
                 category: "manual-move-preview",
                 event: "target-changed",
@@ -8238,24 +8873,324 @@ final class WorkspaceEngine {
                     "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
                     "display": Self.shortIdentifier(display.identifier),
                     "window": Self.diagnosticWindowKey(session.focusedWindow),
-                    "target": target.map(Self.diagnosticWindowKey) ?? "none",
+                    "target": destination.map {
+                        Self.diagnosticWindowKey($0.target)
+                    } ?? "none",
+                    "placement": destination?.placement.rawValue ?? "none",
                     "tree-proposed": TiledLayoutEngine.fingerprint(proposedTree),
                 ]
             )
         }
-        guard concealManualTiledParticipants(
-            session.participantKeys,
-            diagnosticCategory: "manual-move-preview",
+    }
+
+    private func manualTiledCrossDisplayMoveProposal(
+        session: ManualTiledMovePreviewSession,
+        tracked: TrackedWindow,
+        destinationDisplay: DisplaySnapshot,
+        pointer: CGPoint,
+        displays: [DisplaySnapshot],
+        correlationID: String
+    ) -> ManualTiledCrossDisplayMoveProposal? {
+        let effectiveMode = Self.displayModeForWindowPlacement(
+            configuredMode: displayMode,
+            rule: resolvedRule(for: tracked.bundleIdentifier)
+        )
+        guard let destinationWorkspaceID = Self.manualMoveDestinationWorkspaceID(
+            effectiveMode: effectiveMode,
+            sourceWorkspaceID: tracked.workspaceID,
+            destinationDisplayIdentifier: destinationDisplay.identifier,
+            activeWorkspaceIDByDisplay: activeWorkspaceIDByDisplay
+        ) else { return nil }
+        guard isWorkspaceActive(destinationWorkspaceID) else { return nil }
+
+        let destinationLayout = workspaceLayout(for: destinationWorkspaceID)
+        let destinationConfiguration = workspaceLayoutConfiguration(for: destinationWorkspaceID)
+        let destinationLayoutBounds = managedLayoutBounds(destinationDisplay.usableBounds)
+        let destinationPartition = TiledLayoutPartitionKey(
+            workspaceID: destinationWorkspaceID,
+            displayIdentifier: destinationDisplay.identifier
+        )
+        let destinationParticipants = orderedLayoutParticipants(
+            workspaceID: destinationWorkspaceID,
+            displayIdentifier: destinationDisplay.identifier,
+            displays: displays,
             correlationID: correlationID
-        ) else {
-            cancelManualTiledMovePreview(reason: "participant-concealment-failed")
-            return
+        ).filter { $0 != session.focusedWindow }
+        let destinationCommittedTree = destinationLayout == .tiled
+            ? tiledTrees[destinationPartition]
+            : nil
+        let sourceTree = session.originalTree.removing(session.focusedWindow)
+        let sourceFrames: [WindowKey: WindowFrame]
+        if let sourceTree {
+            guard let frames = try? TiledLayoutEngine.frames(
+                for: sourceTree,
+                in: session.layoutBounds,
+                configuration: session.configuration
+            ) else { return nil }
+            sourceFrames = frames
+        } else {
+            sourceFrames = [:]
         }
+
+        let landing: TiledDragDestination?
+        let destinationTree: TiledNode?
+        let destinationFrames: [WindowKey: WindowFrame]
+        switch destinationLayout {
+        case .tiled:
+            let effectiveConfiguration = destinationConfiguration ?? .aeroSpaceUserDefaults
+            let destinationOriginalTree = TiledLayoutEngine.reconciled(
+                destinationCommittedTree,
+                windowKeys: destinationParticipants,
+                weights: destinationParticipants.map {
+                    CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
+                },
+                orientation: effectiveConfiguration.orientation.resolved(
+                    for: destinationLayoutBounds
+                )
+            )
+            let destinationOriginalFrames: [WindowKey: WindowFrame]
+            if let destinationOriginalTree {
+                guard let frames = try? TiledLayoutEngine.frames(
+                    for: destinationOriginalTree,
+                    in: destinationLayoutBounds,
+                    configuration: effectiveConfiguration
+                ) else { return nil }
+                destinationOriginalFrames = frames
+            } else {
+                destinationOriginalFrames = [:]
+            }
+            var proposedLanding = TiledLayoutEngine.dragDestination(
+                at: pointer,
+                focusedWindow: session.focusedWindow,
+                expectedFrames: destinationOriginalFrames,
+                previousDestination: session.crossDisplayProposal?.destinationPartition == destinationPartition
+                    ? session.crossDisplayProposal?.landing
+                    : nil
+            )
+
+            func transfer(
+                landing: TiledDragDestination?
+            ) -> (TiledNode, [WindowKey: WindowFrame])? {
+                guard let moved = TiledLayoutEngine.transferringWindow(
+                    session.focusedWindow,
+                    from: session.originalTree,
+                    to: destinationOriginalTree,
+                    destinationWindowKeys: destinationParticipants,
+                    destinationWeights: destinationParticipants.map {
+                        CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
+                    },
+                    orientation: effectiveConfiguration.orientation.resolved(
+                        for: destinationLayoutBounds
+                    ),
+                    landing: landing
+                ), moved.sourceTree == sourceTree,
+                    let frames = try? TiledLayoutEngine.frames(
+                        for: moved.destinationTree,
+                        in: destinationLayoutBounds,
+                        configuration: effectiveConfiguration
+                    ), TiledLayoutEngine.accommodatesMinimumWindowLength(frames)
+                else { return nil }
+                return (moved.destinationTree, frames)
+            }
+
+            var transferResult = transfer(landing: proposedLanding)
+            if transferResult == nil, proposedLanding != nil {
+                proposedLanding = nil
+                transferResult = transfer(landing: nil)
+            }
+            guard let (tree, frames) = transferResult else { return nil }
+            landing = proposedLanding
+            destinationTree = tree
+            destinationFrames = frames
+        case .accordion, .none:
+            guard let observedFrame = AccessibilityWindow.frame(of: tracked.element),
+                  let frames = Self.manualMoveNonTiledDestinationFrames(
+                      layout: destinationLayout,
+                      orderedWindowKeys: destinationParticipants,
+                      movedWindow: session.focusedWindow,
+                      observedFrame: observedFrame,
+                      layoutBounds: destinationLayoutBounds,
+                      layoutConfiguration: destinationConfiguration
+                  )
+            else { return nil }
+            landing = nil
+            destinationTree = nil
+            destinationFrames = frames
+        }
+        return ManualTiledCrossDisplayMoveProposal(
+            destinationWorkspaceID: destinationWorkspaceID,
+            destinationLayout: destinationLayout,
+            destinationPartition: destinationPartition,
+            destinationParticipantKeys: Set(destinationParticipants),
+            destinationCommittedTree: destinationCommittedTree,
+            destinationConfiguration: destinationConfiguration,
+            destinationLayoutBounds: destinationLayoutBounds,
+            landing: landing,
+            sourceTree: sourceTree,
+            sourceFrames: sourceFrames,
+            destinationTree: destinationTree,
+            destinationFrames: destinationFrames
+        )
+    }
+
+    private func manualNonTiledCrossDisplayMoveProposal(
+        session: ManualNonTiledCrossDisplayMoveSession,
+        tracked: TrackedWindow,
+        destinationDisplay: DisplaySnapshot,
+        pointer: CGPoint,
+        displays: [DisplaySnapshot],
+        correlationID: String
+    ) -> ManualTiledCrossDisplayMoveProposal? {
+        let effectiveMode = Self.displayModeForWindowPlacement(
+            configuredMode: displayMode,
+            rule: resolvedRule(for: tracked.bundleIdentifier)
+        )
+        guard let destinationWorkspaceID = Self.manualMoveDestinationWorkspaceID(
+            effectiveMode: effectiveMode,
+            sourceWorkspaceID: session.sourceWorkspaceID,
+            destinationDisplayIdentifier: destinationDisplay.identifier,
+            activeWorkspaceIDByDisplay: activeWorkspaceIDByDisplay
+        ), isWorkspaceActive(destinationWorkspaceID)
+        else { return nil }
+
+        let destinationLayout = workspaceLayout(for: destinationWorkspaceID)
+        let destinationConfiguration = workspaceLayoutConfiguration(for: destinationWorkspaceID)
+        let destinationLayoutBounds = managedLayoutBounds(destinationDisplay.usableBounds)
+        let destinationPartition = TiledLayoutPartitionKey(
+            workspaceID: destinationWorkspaceID,
+            displayIdentifier: destinationDisplay.identifier
+        )
+        let destinationParticipants = orderedLayoutParticipants(
+            workspaceID: destinationWorkspaceID,
+            displayIdentifier: destinationDisplay.identifier,
+            displays: displays,
+            correlationID: correlationID
+        ).filter { $0 != session.focusedWindow }
+        let destinationCommittedTree = destinationLayout == .tiled
+            ? tiledTrees[destinationPartition]
+            : nil
+        guard let sourceFrames = Self.manualMoveNonTiledSourceFrames(
+            layout: session.sourceLayout,
+            orderedWindowKeys: Array(session.sourceParticipantKeys).sorted {
+                let leftOrder = windows[$0]?.layoutOrder ?? .max
+                let rightOrder = windows[$1]?.layoutOrder ?? .max
+                if leftOrder != rightOrder { return leftOrder < rightOrder }
+                if $0.processIdentifier != $1.processIdentifier {
+                    return $0.processIdentifier < $1.processIdentifier
+                }
+                return $0.windowIdentifier < $1.windowIdentifier
+            },
+            movedWindow: session.focusedWindow,
+            focusedWindowAfterRemoval: session.sourceFocusAfterRemoval,
+            layoutBounds: session.sourceLayoutBounds,
+            layoutConfiguration: session.sourceConfiguration
+        ) else { return nil }
+
+        let landing: TiledDragDestination?
+        let destinationTree: TiledNode?
+        let destinationFrames: [WindowKey: WindowFrame]
+        switch destinationLayout {
+        case .tiled:
+            let effectiveConfiguration = destinationConfiguration ?? .aeroSpaceUserDefaults
+            let destinationOriginalTree = TiledLayoutEngine.reconciled(
+                destinationCommittedTree,
+                windowKeys: destinationParticipants,
+                weights: destinationParticipants.map {
+                    CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
+                },
+                orientation: effectiveConfiguration.orientation.resolved(
+                    for: destinationLayoutBounds
+                )
+            )
+            let destinationOriginalFrames: [WindowKey: WindowFrame]
+            if let destinationOriginalTree {
+                guard let frames = try? TiledLayoutEngine.frames(
+                    for: destinationOriginalTree,
+                    in: destinationLayoutBounds,
+                    configuration: effectiveConfiguration
+                ) else { return nil }
+                destinationOriginalFrames = frames
+            } else {
+                destinationOriginalFrames = [:]
+            }
+            var proposedLanding = TiledLayoutEngine.dragDestination(
+                at: pointer,
+                focusedWindow: session.focusedWindow,
+                expectedFrames: destinationOriginalFrames,
+                previousDestination: session.proposal?.destinationPartition == destinationPartition
+                    ? session.proposal?.landing
+                    : nil
+            )
+
+            func admission(
+                landing: TiledDragDestination?
+            ) -> (TiledNode, [WindowKey: WindowFrame])? {
+                let weights = destinationParticipants.map {
+                    CGFloat(Self.validLayoutWeight(windows[$0]?.layoutWeight))
+                }
+                guard let proposedTree = TiledLayoutEngine.admittingWindow(
+                    session.focusedWindow,
+                    to: destinationOriginalTree,
+                    destinationWindowKeys: destinationParticipants,
+                    destinationWeights: weights,
+                    orientation: effectiveConfiguration.orientation.resolved(
+                        for: destinationLayoutBounds
+                    ),
+                    landing: landing
+                ) else { return nil }
+                guard let frames = try? TiledLayoutEngine.frames(
+                    for: proposedTree,
+                    in: destinationLayoutBounds,
+                    configuration: effectiveConfiguration
+                ), TiledLayoutEngine.accommodatesMinimumWindowLength(frames)
+                else { return nil }
+                return (proposedTree, frames)
+            }
+
+            var result = admission(landing: proposedLanding)
+            if result == nil, proposedLanding != nil {
+                proposedLanding = nil
+                result = admission(landing: nil)
+            }
+            guard let (tree, frames) = result else { return nil }
+            landing = proposedLanding
+            destinationTree = tree
+            destinationFrames = frames
+        case .accordion, .none:
+            guard let observedFrame = AccessibilityWindow.frame(of: tracked.element),
+                  let frames = Self.manualMoveNonTiledDestinationFrames(
+                      layout: destinationLayout,
+                      orderedWindowKeys: destinationParticipants,
+                      movedWindow: session.focusedWindow,
+                      observedFrame: observedFrame,
+                      layoutBounds: destinationLayoutBounds,
+                      layoutConfiguration: destinationConfiguration
+                  )
+            else { return nil }
+            landing = nil
+            destinationTree = nil
+            destinationFrames = frames
+        }
+
+        return ManualTiledCrossDisplayMoveProposal(
+            destinationWorkspaceID: destinationWorkspaceID,
+            destinationLayout: destinationLayout,
+            destinationPartition: destinationPartition,
+            destinationParticipantKeys: Set(destinationParticipants),
+            destinationCommittedTree: destinationCommittedTree,
+            destinationConfiguration: destinationConfiguration,
+            destinationLayoutBounds: destinationLayoutBounds,
+            landing: landing,
+            sourceTree: nil,
+            sourceFrames: sourceFrames,
+            destinationTree: destinationTree,
+            destinationFrames: destinationFrames
+        )
     }
 
     private func commitManualTiledMovePreview() {
         guard var session = manualTiledMovePreviewSession else { return }
-        updateConcealedManualTiledMovePreview()
+        updateManualTiledMoveLandingPreview()
         guard let updatedSession = manualTiledMovePreviewSession else { return }
         session = updatedSession
         let correlationID = "manual-move-\(session.token.uuidString.prefix(8))"
@@ -8282,6 +9217,17 @@ final class WorkspaceEngine {
             cancelManualTiledMovePreview(reason: "release-validation-failed")
             return
         }
+        if let crossDisplayProposal = session.crossDisplayProposal {
+            commitManualTiledCrossDisplayMove(
+                session: session,
+                proposal: crossDisplayProposal,
+                tracked: tracked,
+                sourceDisplay: display,
+                displays: displays,
+                correlationID: correlationID
+            )
+            return
+        }
         let participants = orderedLayoutParticipants(
             workspaceID: tracked.workspaceID,
             displayIdentifier: display.identifier,
@@ -8289,8 +9235,8 @@ final class WorkspaceEngine {
             correlationID: correlationID
         )
         guard Set(participants) == session.participantKeys,
-              let target = session.candidateTarget,
-              participants.contains(target),
+              let destination = session.candidateDestination,
+              participants.contains(destination.target),
               session.proposedTree != session.originalTree,
               let effectiveShares = TiledLayoutEngine.leafShares(session.proposedTree)
         else {
@@ -8327,10 +9273,370 @@ final class WorkspaceEngine {
                 "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
                 "display": Self.shortIdentifier(display.identifier),
                 "window": Self.diagnosticWindowKey(session.focusedWindow),
-                "swapped-with": Self.diagnosticWindowKey(target),
+                "target": Self.diagnosticWindowKey(destination.target),
+                "placement": destination.placement.rawValue,
                 "window-count": String(participants.count),
                 "tree-before": TiledLayoutEngine.fingerprint(session.originalTree),
                 "tree-after": TiledLayoutEngine.fingerprint(session.proposedTree),
+            ]
+        )
+        emitTiledResizePreviewEvent(.dismiss(token: session.token, reason: "committed"))
+    }
+
+    private func commitManualNonTiledCrossDisplayMovePreview() {
+        guard var session = manualNonTiledCrossDisplayMoveSession else { return }
+        updateManualNonTiledCrossDisplayMovePreview()
+        guard let updatedSession = manualNonTiledCrossDisplayMoveSession else { return }
+        session = updatedSession
+        let correlationID = "manual-cross-layout-\(session.token.uuidString.prefix(8))"
+
+        guard let proposal = session.proposal else {
+            if session.sourceLayout == .none,
+               let tracked = windows[session.focusedWindow],
+               let observedFrame = AccessibilityWindow.frame(of: tracked.element) {
+                manualNonTiledCrossDisplayMoveSession = nil
+                var updated = tracked
+                updated.restoreFrame = observedFrame
+                updated.displayPlacement = Self.displayPlacement(
+                    for: observedFrame,
+                    displays: Self.activeDisplays()
+                )
+                windows[session.focusedWindow] = updated
+                manualMoveStableFreeformFrames[session.focusedWindow] = observedFrame
+                lastBackgroundLayoutSignature = nil
+                persistState(preservingPendingRestores: true)
+                emitState()
+                diagnostics.log(
+                    category: "manual-cross-layout-move",
+                    event: "freeform-position-committed",
+                    correlation: correlationID,
+                    fields: ["window": Self.diagnosticWindowKey(session.focusedWindow)]
+                )
+                emitTiledResizePreviewEvent(.dismiss(
+                    token: session.token,
+                    reason: "freeform-position-committed"
+                ))
+            } else {
+                cancelManualNonTiledCrossDisplayMovePreview(
+                    reason: "released-without-cross-display-target"
+                )
+            }
+            return
+        }
+
+        let displays = Self.activeDisplays()
+        guard !isWindowManagementPaused,
+              !wakeReconciliationState.isSleeping,
+              !wakeReconciliationState.isPending,
+              windowServerSessionValidated,
+              !isQuickAppShelfPresented,
+              currentProfileID == session.profileID,
+              Self.displayTopologySignature(displays) == session.topologySignature,
+              let tracked = windows[session.focusedWindow],
+              tracked.workspaceID == session.sourceWorkspaceID,
+              isWorkspaceActive(session.sourceWorkspaceID),
+              workspaceLayout(for: session.sourceWorkspaceID) == session.sourceLayout,
+              workspaceLayoutConfiguration(for: session.sourceWorkspaceID) ==
+                session.sourceConfiguration,
+              let sourceDisplay = displays.first(where: {
+                  $0.identifier == session.sourceDisplayIdentifier
+              }),
+              managedLayoutBounds(sourceDisplay.usableBounds) == session.sourceLayoutBounds,
+              proposal.destinationPartition.displayIdentifier != session.sourceDisplayIdentifier,
+              let destinationDisplay = displays.first(where: {
+                  $0.identifier == proposal.destinationPartition.displayIdentifier
+              }),
+              isWorkspaceActive(proposal.destinationWorkspaceID),
+              workspaceLayout(for: proposal.destinationWorkspaceID) == proposal.destinationLayout,
+              workspaceLayoutConfiguration(for: proposal.destinationWorkspaceID) ==
+                proposal.destinationConfiguration,
+              managedLayoutBounds(destinationDisplay.usableBounds) ==
+                proposal.destinationLayoutBounds,
+              proposal.destinationLayout != .tiled ||
+                tiledTrees[proposal.destinationPartition] == proposal.destinationCommittedTree
+        else {
+            cancelManualNonTiledCrossDisplayMovePreview(reason: "release-validation-failed")
+            return
+        }
+
+        let sourceParticipants = orderedLayoutParticipants(
+            workspaceID: session.sourceWorkspaceID,
+            displayIdentifier: sourceDisplay.identifier,
+            displays: displays,
+            correlationID: correlationID
+        )
+        let destinationParticipants = orderedLayoutParticipants(
+            workspaceID: proposal.destinationWorkspaceID,
+            displayIdentifier: destinationDisplay.identifier,
+            displays: displays,
+            correlationID: correlationID
+        ).filter { $0 != session.focusedWindow }
+        guard Set(sourceParticipants) == session.sourceParticipantKeys,
+              Set(destinationParticipants) == proposal.destinationParticipantKeys,
+              let focusedFrame = proposal.destinationFrames[session.focusedWindow]
+        else {
+            cancelManualNonTiledCrossDisplayMovePreview(reason: "participants-changed")
+            return
+        }
+
+        let destinationShares: [WindowKey: Double]?
+        if proposal.destinationLayout == .tiled {
+            guard let destinationTree = proposal.destinationTree,
+                  let shares = TiledLayoutEngine.leafShares(destinationTree)
+            else {
+                cancelManualNonTiledCrossDisplayMovePreview(
+                    reason: "destination-tree-invalid"
+                )
+                return
+            }
+            destinationShares = shares
+        } else {
+            destinationShares = nil
+        }
+
+        manualNonTiledCrossDisplayMoveSession = nil
+        if let destinationTree = proposal.destinationTree {
+            tiledTrees[proposal.destinationPartition] = destinationTree
+        }
+
+        var movedWindow = tracked
+        movedWindow.workspaceID = proposal.destinationWorkspaceID
+        movedWindow.workspaceRuleOverrideActive = Self.manualWorkspaceRuleOverrideIsActive(
+            assignedWorkspaceID: resolvedRule(for: tracked.bundleIdentifier).assignedWorkspaceID,
+            requestedWorkspaceID: proposal.destinationWorkspaceID
+        )
+        movedWindow.restoreFrame = focusedFrame
+        movedWindow.displayPlacement = Self.displayPlacement(for: focusedFrame, displays: displays)
+        windows[session.focusedWindow] = movedWindow
+        if proposal.destinationLayout == .none {
+            manualMoveStableFreeformFrames[session.focusedWindow] = focusedFrame
+        } else {
+            manualMoveStableFreeformFrames.removeValue(forKey: session.focusedWindow)
+        }
+
+        let sourceOrder = sourceParticipants.filter { $0 != session.focusedWindow }
+        for (index, key) in sourceOrder.enumerated() {
+            windows[key]?.layoutOrder = index
+        }
+        let destinationOrder = proposal.destinationTree?.windowKeys
+            ?? (destinationParticipants + [session.focusedWindow])
+        for (index, key) in destinationOrder.enumerated() {
+            windows[key]?.layoutOrder = index
+            if let destinationShares {
+                windows[key]?.layoutWeight = destinationShares[key] ?? 1
+            }
+        }
+        if let sourceFocus = session.sourceFocusAfterRemoval {
+            lastFocusedWindow[session.sourceWorkspaceID] = sourceFocus
+        } else {
+            lastFocusedWindow.removeValue(forKey: session.sourceWorkspaceID)
+        }
+        lastFocusedWindow[proposal.destinationWorkspaceID] = session.focusedWindow
+        if displayMode == .independent {
+            currentWorkspaceID = proposal.destinationWorkspaceID
+        }
+        recentInteractionDisplayIdentifier = destinationDisplay.identifier
+        recentInteractionFocusTarget = session.focusedWindow
+        recentInteractionDisplayDeadline = Date().addingTimeInterval(1.75)
+        radialPlacementCommitContext = nil
+        radialFreeformPlacementCommitContext = nil
+        directionalMoveGestureContext = nil
+        manualTiledDragSession = nil
+
+        let allFrames = proposal.sourceFrames.merging(proposal.destinationFrames) {
+            _, destination in destination
+        }
+        let changes = allFrames.compactMap { key, frame -> FrameChange? in
+            guard let window = windows[key] else { return nil }
+            if proposal.destinationLayout == .tiled,
+               proposal.destinationFrames[key] != nil {
+                lastSolvedTiledFrames[key] = frame
+            } else {
+                lastSolvedTiledFrames.removeValue(forKey: key)
+            }
+            return FrameChange(window: window, frame: frame)
+        }
+        applyFrameChanges(changes, correlationID: correlationID)
+        lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
+        persistState(preservingPendingRestores: true)
+        emitState()
+        diagnostics.log(
+            category: "manual-cross-layout-move",
+            event: "cross-display-committed",
+            correlation: correlationID,
+            fields: [
+                "source-workspace": Self.shortIdentifier(session.sourceWorkspaceID.uuidString),
+                "source-display": Self.shortIdentifier(sourceDisplay.identifier),
+                "source-layout": session.sourceLayout.rawValue,
+                "destination-workspace": Self.shortIdentifier(
+                    proposal.destinationWorkspaceID.uuidString
+                ),
+                "destination-display": Self.shortIdentifier(destinationDisplay.identifier),
+                "destination-layout": proposal.destinationLayout.rawValue,
+                "window": Self.diagnosticWindowKey(session.focusedWindow),
+                "target": proposal.landing.map {
+                    Self.diagnosticWindowKey($0.target)
+                } ?? "append",
+                "placement": proposal.landing?.placement.rawValue ?? "append",
+            ]
+        )
+        emitTiledResizePreviewEvent(.dismiss(token: session.token, reason: "committed"))
+    }
+
+    private func commitManualTiledCrossDisplayMove(
+        session: ManualTiledMovePreviewSession,
+        proposal: ManualTiledCrossDisplayMoveProposal,
+        tracked: TrackedWindow,
+        sourceDisplay: DisplaySnapshot,
+        displays: [DisplaySnapshot],
+        correlationID: String
+    ) {
+        guard proposal.destinationPartition != session.partition,
+              let destinationDisplay = displays.first(where: {
+                  $0.identifier == proposal.destinationPartition.displayIdentifier
+              }),
+              isWorkspaceActive(proposal.destinationWorkspaceID),
+              workspaceLayout(for: proposal.destinationWorkspaceID) == proposal.destinationLayout,
+              workspaceLayoutConfiguration(for: proposal.destinationWorkspaceID) ==
+                proposal.destinationConfiguration,
+              (proposal.destinationLayout != .tiled ||
+                tiledTrees[proposal.destinationPartition] == proposal.destinationCommittedTree),
+              managedLayoutBounds(destinationDisplay.usableBounds) ==
+                proposal.destinationLayoutBounds
+        else {
+            cancelManualTiledMovePreview(reason: "cross-display-release-validation-failed")
+            return
+        }
+        let sourceParticipants = orderedLayoutParticipants(
+            workspaceID: tracked.workspaceID,
+            displayIdentifier: sourceDisplay.identifier,
+            displays: displays,
+            correlationID: correlationID
+        )
+        let destinationParticipants = orderedLayoutParticipants(
+            workspaceID: proposal.destinationWorkspaceID,
+            displayIdentifier: destinationDisplay.identifier,
+            displays: displays,
+            correlationID: correlationID
+        ).filter { $0 != session.focusedWindow }
+        guard Set(sourceParticipants) == session.participantKeys,
+              Set(destinationParticipants) == proposal.destinationParticipantKeys,
+              let focusedFrame = proposal.destinationFrames[session.focusedWindow]
+        else {
+            cancelManualTiledMovePreview(reason: "cross-display-participants-changed")
+            return
+        }
+        let destinationShares: [WindowKey: Double]?
+        if proposal.destinationLayout == .tiled {
+            guard let destinationTree = proposal.destinationTree,
+                  let shares = TiledLayoutEngine.leafShares(destinationTree)
+            else {
+                cancelManualTiledMovePreview(reason: "cross-display-destination-tree-invalid")
+                return
+            }
+            destinationShares = shares
+        } else {
+            destinationShares = nil
+        }
+
+        manualTiledMovePreviewSession = nil
+        if let sourceTree = proposal.sourceTree {
+            tiledTrees[session.partition] = sourceTree
+        } else {
+            tiledTrees.removeValue(forKey: session.partition)
+        }
+        if let destinationTree = proposal.destinationTree {
+            tiledTrees[proposal.destinationPartition] = destinationTree
+        }
+
+        var movedWindow = tracked
+        let sourceWorkspaceID = tracked.workspaceID
+        movedWindow.workspaceID = proposal.destinationWorkspaceID
+        movedWindow.workspaceRuleOverrideActive = Self.manualWorkspaceRuleOverrideIsActive(
+            assignedWorkspaceID: resolvedRule(for: tracked.bundleIdentifier).assignedWorkspaceID,
+            requestedWorkspaceID: proposal.destinationWorkspaceID
+        )
+        movedWindow.restoreFrame = focusedFrame
+        movedWindow.displayPlacement = Self.displayPlacement(
+            for: focusedFrame,
+            displays: displays
+        )
+        windows[session.focusedWindow] = movedWindow
+        if proposal.destinationLayout == .none {
+            manualMoveStableFreeformFrames[session.focusedWindow] = focusedFrame
+        } else {
+            manualMoveStableFreeformFrames.removeValue(forKey: session.focusedWindow)
+        }
+
+        if let sourceTree = proposal.sourceTree,
+           let sourceShares = TiledLayoutEngine.leafShares(sourceTree) {
+            for (index, key) in sourceTree.windowKeys.enumerated() {
+                windows[key]?.layoutOrder = index
+                windows[key]?.layoutWeight = sourceShares[key] ?? 1
+            }
+        }
+        let destinationOrder = proposal.destinationTree?.windowKeys
+            ?? (destinationParticipants + [session.focusedWindow])
+        for (index, key) in destinationOrder.enumerated() {
+            windows[key]?.layoutOrder = index
+            if let destinationShares {
+                windows[key]?.layoutWeight = destinationShares[key] ?? 1
+            }
+        }
+        if lastFocusedWindow[sourceWorkspaceID] == session.focusedWindow {
+            lastFocusedWindow.removeValue(forKey: sourceWorkspaceID)
+        }
+        lastFocusedWindow[proposal.destinationWorkspaceID] = session.focusedWindow
+        if displayMode == .independent {
+            currentWorkspaceID = proposal.destinationWorkspaceID
+        }
+        recentInteractionDisplayIdentifier = destinationDisplay.identifier
+        recentInteractionFocusTarget = session.focusedWindow
+        recentInteractionDisplayDeadline = Date().addingTimeInterval(1.75)
+        radialPlacementCommitContext = nil
+        radialFreeformPlacementCommitContext = nil
+        directionalMoveGestureContext = nil
+        manualTiledDragSession = nil
+
+        let allFrames = proposal.sourceFrames.merging(proposal.destinationFrames) { _, destination in
+            destination
+        }
+        let changes = allFrames.compactMap { key, frame -> FrameChange? in
+            guard let window = windows[key] else { return nil }
+            if proposal.sourceFrames[key] != nil || proposal.destinationLayout == .tiled {
+                lastSolvedTiledFrames[key] = frame
+            } else {
+                lastSolvedTiledFrames.removeValue(forKey: key)
+            }
+            return FrameChange(window: window, frame: frame)
+        }
+        applyFrameChanges(changes, correlationID: correlationID)
+        lastBackgroundLayoutSignature = backgroundLayoutSignature(displays: displays)
+        persistState(preservingPendingRestores: true)
+        emitState()
+        diagnostics.log(
+            category: "manual-move-preview",
+            event: "cross-display-committed",
+            correlation: correlationID,
+            fields: [
+                "source-workspace": Self.shortIdentifier(sourceWorkspaceID.uuidString),
+                "source-display": Self.shortIdentifier(sourceDisplay.identifier),
+                "destination-workspace": Self.shortIdentifier(
+                    proposal.destinationWorkspaceID.uuidString
+                ),
+                "destination-display": Self.shortIdentifier(destinationDisplay.identifier),
+                "destination-layout": proposal.destinationLayout.rawValue,
+                "window": Self.diagnosticWindowKey(session.focusedWindow),
+                "target": proposal.landing.map {
+                    Self.diagnosticWindowKey($0.target)
+                } ?? "append",
+                "placement": proposal.landing?.placement.rawValue ?? "append",
+                "source-tree-after": proposal.sourceTree.map {
+                    TiledLayoutEngine.fingerprint($0)
+                } ?? "empty",
+                "destination-tree-after": proposal.destinationTree.map {
+                    TiledLayoutEngine.fingerprint($0)
+                } ?? "not-tiled",
             ]
         )
         emitTiledResizePreviewEvent(.dismiss(token: session.token, reason: "committed"))
@@ -8348,6 +9654,26 @@ final class WorkspaceEngine {
         )
         diagnostics.log(
             category: "manual-move-preview",
+            event: "cancelled",
+            correlation: correlationID,
+            fields: ["reason": reason]
+        )
+        emitTiledResizePreviewEvent(.dismiss(token: session.token, reason: reason))
+    }
+
+    private func cancelManualNonTiledCrossDisplayMovePreview(reason: String) {
+        guard let session = manualNonTiledCrossDisplayMoveSession else { return }
+        manualNonTiledCrossDisplayMoveSession = nil
+        manualCrossDisplayPointerAnchor = nil
+        lastBackgroundLayoutSignature = nil
+        let correlationID = "manual-cross-layout-\(session.token.uuidString.prefix(8))"
+        restoreManualTiledParticipants(
+            Set(session.originalFrames.keys),
+            frames: session.originalFrames,
+            correlationID: correlationID
+        )
+        diagnostics.log(
+            category: "manual-cross-layout-move",
             event: "cancelled",
             correlation: correlationID,
             fields: ["reason": reason]
@@ -8434,11 +9760,11 @@ final class WorkspaceEngine {
         }
 
         guard let pointer = CGEvent(source: nil)?.location else { return }
-        let draggedEdges = TiledResizeDraggedEdges.inferred(
+        guard case let .resize(draggedEdges) = TiledManualDragClassifier.classify(
             expectedFrame: expectedFocusedFrame,
-            observedFrame: observedFrame
-        )
-        guard !draggedEdges.isEmpty else { return }
+            observedFrame: observedFrame,
+            pointer: pointer
+        ) else { return }
 
         let proposedTree = TiledLayoutEngine.resizedToMatchObservedFrame(
             originalTree,
@@ -8481,7 +9807,8 @@ final class WorkspaceEngine {
             displayIdentifier: display.identifier,
             layoutBounds: WindowFrame(position: layoutBounds.origin, size: layoutBounds.size),
             frames: proposedFrames,
-            transition: .immediate
+            transition: .immediate,
+            role: .layout
         )
         emitTiledResizePreviewEvent(.present(presentation))
         guard concealManualTiledResizeParticipants(
@@ -8581,7 +9908,8 @@ final class WorkspaceEngine {
                 size: session.layoutBounds.size
             ),
             frames: proposedFrames,
-            transition: .immediate
+            transition: .immediate,
+            role: .layout
         )
         emitTiledResizePreviewEvent(.present(presentation))
         guard concealManualTiledResizeParticipants(updated, correlationID: correlationID) else {
@@ -8673,8 +10001,10 @@ final class WorkspaceEngine {
     }
 
     private func cancelManualTiledPreviewTransactions(reason: String) {
+        cancelManualNonTiledCrossDisplayMovePreview(reason: reason)
         cancelManualTiledMovePreview(reason: reason)
         cancelManualTiledResizePreview(reason: reason)
+        manualCrossDisplayPointerAnchor = nil
     }
 
     private func cancelManualTiledResizePreview(reason: String) {
@@ -10731,6 +12061,7 @@ final class WorkspaceEngine {
         pendingRestoredDropDownAppSessions.removeAll()
         tiledTrees.removeAll()
         lastSolvedTiledFrames.removeAll()
+        manualMoveStableFreeformFrames.removeAll()
         radialPlacementCommitContext = nil
         radialFreeformPlacementCommitContext = nil
         directionalMoveGestureContext = nil
@@ -11531,9 +12862,18 @@ final class WorkspaceEngine {
                 ? "display-topology-changed"
                 : lifecycleTransitionActive ? "lifecycle-transition" : "participants-changed")
         }
+        if let moveSession = manualNonTiledCrossDisplayMoveSession,
+           isStartup || topologyChanged || lifecycleTransitionActive ||
+            !moveSession.sourceParticipantKeys.isSubset(of: Set(windows.keys)) {
+            cancelManualNonTiledCrossDisplayMovePreview(reason: topologyChanged
+                ? "display-topology-changed"
+                : lifecycleTransitionActive ? "lifecycle-transition" : "participants-changed")
+        }
 
-        var manualTiledDragInProgress = manualTiledMovePreviewSession != nil
+        var manualTiledDragInProgress = manualTiledMovePreviewSession != nil ||
+            manualNonTiledCrossDisplayMoveSession != nil
         if manualTiledResizeSession == nil, manualTiledMovePreviewSession == nil,
+           manualNonTiledCrossDisplayMoveSession == nil,
            performAXWrites, !isStartup, !topologyChanged, !lifecycleTransitionActive, let focused,
            !isDropDownAppWindow(focused),
            let focusedTracked = windows[focused],
@@ -11542,6 +12882,11 @@ final class WorkspaceEngine {
                 .combinedSessionState,
                 button: .left
             )
+            let focusedLayout = workspaceLayout(for: focusedTracked.workspaceID)
+            if !isLeftMouseButtonPressed, focusedLayout == .none,
+               let observedFrame = observedFrames[focused] {
+                manualMoveStableFreeformFrames[focused] = observedFrame
+            }
             let moveReconciliation = reconcileManualTiledMove(
                 focusedWindow: focused,
                 observedFrames: observedFrames,
@@ -11551,7 +12896,18 @@ final class WorkspaceEngine {
                 correlationID: correlationID
             )
             manualTiledDragInProgress = moveReconciliation == .dragInProgress ||
-                (isLeftMouseButtonPressed && workspaceLayout(for: focusedTracked.workspaceID) == .tiled)
+                (isLeftMouseButtonPressed && focusedLayout == .tiled)
+            if moveReconciliation == .none, isLeftMouseButtonPressed,
+               focusedLayout != .tiled {
+                let recovered = recoverManualNonTiledPointerAnchor(
+                    focusedWindow: focused,
+                    observedFrames: observedFrames,
+                    displays: displays,
+                    pointer: CGEvent(source: nil)?.location,
+                    correlationID: correlationID
+                )
+                manualTiledDragInProgress = recovered || focusedLayout == .none
+            }
             if moveReconciliation == .none, !isLeftMouseButtonPressed {
                 reconcileManualTiledResize(
                     focusedWindow: focused,
@@ -11561,12 +12917,14 @@ final class WorkspaceEngine {
                 )
             }
         } else if manualTiledResizeSession == nil, manualTiledMovePreviewSession == nil,
+                    manualNonTiledCrossDisplayMoveSession == nil,
                     (isStartup || topologyChanged || lifecycleTransitionActive || focused == nil) {
             manualTiledDragSession = nil
         }
 
         let manualTiledInteractionInProgress = manualTiledDragInProgress ||
             manualTiledMovePreviewSession != nil ||
+            manualNonTiledCrossDisplayMoveSession != nil ||
             manualTiledResizeSession != nil
 
         let layoutSignatureBeforeApply = backgroundLayoutSignature(
@@ -12085,11 +13443,16 @@ final class WorkspaceEngine {
             directionalMoveGestureContext = nil
         }
         if let dragSession = manualTiledDragSession,
-           dragSession.focusedWindow == key || dragSession.candidateTarget == key {
+           dragSession.focusedWindow == key || dragSession.candidateDestination?.target == key {
             manualTiledDragSession = nil
         }
         if manualTiledMovePreviewSession?.participantKeys.contains(key) == true {
             cancelManualTiledMovePreview(reason: "participant-removed")
+        }
+        if let moveSession = manualNonTiledCrossDisplayMoveSession,
+           moveSession.sourceParticipantKeys.contains(key) ||
+            moveSession.proposal?.destinationParticipantKeys.contains(key) == true {
+            cancelManualNonTiledCrossDisplayMovePreview(reason: "participant-removed")
         }
         if manualTiledResizeSession?.participantKeys.contains(key) == true {
             cancelManualTiledResizePreview(reason: "participant-removed")
@@ -12108,6 +13471,7 @@ final class WorkspaceEngine {
         focusCycleRejectedUntil.removeValue(forKey: key)
         staleParkedFocusSuppression.removeValue(forKey: key)
         lastSolvedTiledFrames.removeValue(forKey: key)
+        manualMoveStableFreeformFrames.removeValue(forKey: key)
         temporarilyDeferredWindowKeys.remove(key)
 
         if removal.changedManagedState {
