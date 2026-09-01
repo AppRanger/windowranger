@@ -202,6 +202,42 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-111 — Stop appearance refreshes from re-entering the status-item renderer
+
+- **Type:** Diagnostic-backed performance regression
+- **Priority:** P0
+- **Status:** Fast-tracked for Stable 1.0.3 build 15. The focused fix is automated-test,
+  signed-Debug, and installed-performance verified. The maintainer explicitly approved publication
+  before broader local and manual release verification, which remains post-release validation.
+- **User-observed:** WindowRanger 1.0.2 build 14 suddenly sustained roughly one full CPU core while
+  otherwise idle on macOS 27.
+- **Diagnostic-backed cause:** The Developer ID build remained at 97–100% CPU, and the equivalent
+  signed Debug build reproduced at 92–98%. A five-second symbolicated sample attributed 926 of
+  2,393 main-thread samples to `scheduleStatusItemAppearanceRefresh()`, its forced status rebuild,
+  and the WR-091 bitmap rasterizer. WR-108's deferred refresh gate was consumed before rendering,
+  so AppKit's appearance callback during the render could schedule the next render. Installed
+  follow-up proved raw identity equality was insufficient because compatible Aqua/vibrant variants
+  alternated around bitmap capture.
+- **Implemented:** The attached observer reduces compatible Aqua/vibrant variants to a Light/Dark
+  family through `bestMatch(from:)`, combines that with the explicit system increase-contrast state,
+  suppresses equivalent notifications, and resets on detach. The controller keeps its coalescing
+  gate pending until the forced render finishes, suppressing synchronous re-entrant callbacks.
+- **Automated evidence:** All 48 focused Menu Bar Presentation tests passed, covering duplicate
+  suppression, actual detach/reattach reset, Aqua/vibrant equivalence, preserved Light/Dark and
+  normal/high-contrast distinctions, attachment behavior, and adaptive raster output.
+- **Installed evidence:** The final signed universal Debug candidate ran from
+  `/Applications/WindowRanger.app`; its executable and Debug dylib matched the built products byte
+  for byte. Fifteen settled readings ranged from 2.3% to 8.5% CPU instead of roughly 100%, and a
+  five-second symbolicated sample contained no appearance-refresh or menu-bar rasterization stack.
+- **Fast-track boundary:** Skip the duplicate broad local suite, exact packaged-artifact replacement
+  install, and pre-publication manual regression at the maintainer's explicit request. Retain central
+  protected checks plus distribution preflight, stable-Xcode Developer ID signing, notarization,
+  stapling, Gatekeeper, checksum, provenance, immutable asset round-trip, and live feed verification.
+  The maintainer will verify the public release after it lands.
+- **Acceptance:** Publish immutable Stable 1.0.3 build 15 through GitHub and Sparkle, verify the live
+  artifacts/feed mechanically, then have the maintainer confirm settled CPU and menu-bar behavior in
+  the installed public update. Keep WR-112's unresponsive-application resilience work separate.
+
 ### WR-110 — Transfer a manually dragged window between displays
 
 - **Type:** Multi-display layout interaction bug
