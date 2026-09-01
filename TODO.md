@@ -4257,6 +4257,26 @@ second copy of that checklist.
   for the ZIP and `565b26134b1315a8529bee8860fa52855d2e694a106164bc8fdd6bbaf23a3247`
   for the DMG. Build 14 is therefore marked `published`; signed-feed, website, and Homebrew
   publication remain separate checkpoints below.
+- **1.0.2 feed and website publication:** Website PR
+  [`#11`](https://github.com/AppRanger/windowranger-site/pull/11) merged the exact generated feed
+  and 1.0.2 download links as `d5fc48d158d66a5f8c719f16d8cd841e66b1985f`. Cloudflare deployment
+  `d8aa36cb-5b92-4ee2-8680-6cba422318f1` serves appcast SHA-256
+  `10eafc531f0a4ce110fbae4dfc2f4bba2cd3a38625bfcf64994d0586a914c884`, retaining builds 11-13
+  and adding build 14 with deltas from each retained build. Both public domains serve byte-identical
+  homepages, appcasts, archives, and deltas; every Sparkle enclosure and delta signature verifies.
+  Desktop and mobile browser checks found no horizontal overflow, broken images, or console
+  warnings. Website PR [`#12`](https://github.com/AppRanger/windowranger-site/pull/12) recorded the
+  deployment as `23d9ff66579f8dfac85af059c95d940aa2a49b96`.
+- **1.0.2 Homebrew publication:** Tap PR
+  [`#1`](https://github.com/AppRanger/homebrew-tap/pull/1) merged as
+  `d776478f2ca9cb978b0d11a4c89d5e3d94f2c0aa` and publishes the generated 1.0.2 Cask for the exact
+  notarized DMG SHA-256
+  `565b26134b1315a8529bee8860fa52855d2e694a106164bc8fdd6bbaf23a3247`. A refreshed public tap,
+  Cask style, Ruby syntax, `brew info`, and Homebrew 6 strict online audit all pass. The accepted
+  release DMG remains installed directly, so the local Homebrew receipt still records 1.0.1; the
+  already-proven Homebrew-forward upgrade path was not repeated by replacing the accepted build.
+  Sparkle-first/Homebrew coexistence, Intel, Settings PATH UI, and privacy-permission retention
+  remain live validation.
 
 ## Done
 
