@@ -6,6 +6,12 @@ struct TiledResizePreviewPresentation: Equatable, Sendable {
     let layoutBounds: WindowFrame
     let frames: [WindowKey: WindowFrame]
     let transition: TiledResizePreviewTransition
+    let role: TiledResizePreviewRole
+}
+
+enum TiledResizePreviewRole: Equatable, Sendable {
+    case layout
+    case landing
 }
 
 enum TiledResizePreviewTransition: Equatable, Sendable {
@@ -95,6 +101,28 @@ struct TiledResizeDraggedEdges: OptionSet, Equatable, Sendable {
         return result
     }
 
+    func containsPointer(
+        _ pointer: CGPoint,
+        on frame: WindowFrame,
+        tolerance: CGFloat
+    ) -> Bool {
+        guard !isEmpty, tolerance.isFinite, tolerance >= 0 else { return false }
+        let rect = CGRect(origin: frame.position, size: frame.size)
+        if contains(.left) || contains(.right),
+           pointer.y < rect.minY - tolerance || pointer.y > rect.maxY + tolerance {
+            return false
+        }
+        if contains(.top) || contains(.bottom),
+           pointer.x < rect.minX - tolerance || pointer.x > rect.maxX + tolerance {
+            return false
+        }
+        if contains(.left), abs(pointer.x - rect.minX) > tolerance { return false }
+        if contains(.right), abs(pointer.x - rect.maxX) > tolerance { return false }
+        if contains(.top), abs(pointer.y - rect.minY) > tolerance { return false }
+        if contains(.bottom), abs(pointer.y - rect.maxY) > tolerance { return false }
+        return true
+    }
+
     func projectedFrame(
         from anchorFrame: WindowFrame,
         anchorPointer: CGPoint,
@@ -124,6 +152,43 @@ struct TiledResizeDraggedEdges: OptionSet, Equatable, Sendable {
               projected.width > 1, projected.height > 1
         else { return nil }
         return WindowFrame(position: projected.origin, size: projected.size)
+    }
+}
+
+enum TiledManualDragIntent: Equatable, Sendable {
+    case move
+    case resize(TiledResizeDraggedEdges)
+}
+
+enum TiledManualDragClassifier {
+    /// AX can briefly report small size changes during an ordinary title-bar move. A resize is
+    /// therefore credible only when the pointer is still on every edge whose geometry changed.
+    /// Left/top resizes remain distinguishable from moves even though both position and size move.
+    static func classify(
+        expectedFrame: WindowFrame,
+        observedFrame: WindowFrame,
+        pointer: CGPoint,
+        positionTolerance: CGFloat = 8,
+        sizeTolerance: CGFloat = 2,
+        edgeTolerance: CGFloat = 8
+    ) -> TiledManualDragIntent? {
+        guard positionTolerance.isFinite, positionTolerance >= 0,
+              sizeTolerance.isFinite, sizeTolerance >= 0,
+              edgeTolerance.isFinite, edgeTolerance >= 0
+        else { return nil }
+
+        let draggedEdges = TiledResizeDraggedEdges.inferred(
+            expectedFrame: expectedFrame,
+            observedFrame: observedFrame,
+            tolerance: sizeTolerance
+        )
+        if draggedEdges.containsPointer(pointer, on: observedFrame, tolerance: edgeTolerance) {
+            return .resize(draggedEdges)
+        }
+
+        let moved = abs(observedFrame.position.x - expectedFrame.position.x) > positionTolerance ||
+            abs(observedFrame.position.y - expectedFrame.position.y) > positionTolerance
+        return moved ? .move : nil
     }
 }
 
@@ -175,7 +240,8 @@ final class TiledResizePreviewController: TiledResizePreviewPresenting {
             frames: presentation.frames,
             panelFrame: panelFrame,
             mainScreenTop: mainScreenTop,
-            animated: presentation.transition.shouldAnimate(isContinuation: isContinuation)
+            animated: presentation.transition.shouldAnimate(isContinuation: isContinuation),
+            role: presentation.role
         )
         let isNewPresentation = !isContinuation
         self.presentation = presentation
@@ -339,8 +405,17 @@ enum TiledResizeGlassSurfaceFactory {
 @MainActor
 final class TiledResizePreviewTileView: NSView {
     private(set) var surface: NSView!
+    private let role: TiledResizePreviewRole
 
     override init(frame frameRect: NSRect) {
+        role = .layout
+        super.init(frame: frameRect)
+        configureSurface()
+        setAccessibilityElement(false)
+    }
+
+    init(frame frameRect: NSRect, role: TiledResizePreviewRole) {
+        self.role = role
         super.init(frame: frameRect)
         configureSurface()
         setAccessibilityElement(false)
@@ -356,6 +431,9 @@ final class TiledResizePreviewTileView: NSView {
             glass.autoresizingMask = [.width, .height]
             glass.style = .clear
             glass.cornerRadius = TiledResizePreviewPolicy.tileCornerRadius
+            if role == .landing {
+                glass.tintColor = NSColor.controlAccentColor.withAlphaComponent(0.22)
+            }
             glass.setAccessibilityElement(false)
 
             let border = NSView(frame: glass.bounds)
@@ -363,8 +441,12 @@ final class TiledResizePreviewTileView: NSView {
             border.wantsLayer = true
             border.layer?.cornerRadius = TiledResizePreviewPolicy.tileCornerRadius
             border.layer?.masksToBounds = true
-            border.layer?.borderWidth = TiledResizePreviewPolicy.nativeBorderWidth
-            border.layer?.borderColor = NSColor.white.withAlphaComponent(0.30).cgColor
+            border.layer?.borderWidth = role == .landing
+                ? 1.5
+                : TiledResizePreviewPolicy.nativeBorderWidth
+            border.layer?.borderColor = (role == .landing
+                ? NSColor.controlAccentColor.withAlphaComponent(0.90)
+                : NSColor.white.withAlphaComponent(0.30)).cgColor
             border.setAccessibilityElement(false)
             glass.contentView = border
 
@@ -378,8 +460,16 @@ final class TiledResizePreviewTileView: NSView {
         material.wantsLayer = true
         material.layer?.cornerRadius = TiledResizePreviewPolicy.tileCornerRadius
         material.layer?.masksToBounds = true
-        material.layer?.borderWidth = 1
-        material.layer?.borderColor = NSColor.white.withAlphaComponent(0.34).cgColor
+        if role == .landing {
+            material.layer?.backgroundColor = NSColor.controlAccentColor
+                .withAlphaComponent(0.20).cgColor
+            material.layer?.borderWidth = 1.5
+            material.layer?.borderColor = NSColor.controlAccentColor
+                .withAlphaComponent(0.90).cgColor
+        } else {
+            material.layer?.borderWidth = 1
+            material.layer?.borderColor = NSColor.white.withAlphaComponent(0.34).cgColor
+        }
         addSubview(material)
         surface = material
     }
@@ -390,6 +480,7 @@ final class TiledResizePreviewCanvas: NSView {
     private var tileViews: [WindowKey: NSView] = [:]
     private var tileHost: NSView!
     private(set) var usesNativeGlassContainer = false
+    private var previewRole: TiledResizePreviewRole?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -406,15 +497,20 @@ final class TiledResizePreviewCanvas: NSView {
         frames: [WindowKey: WindowFrame],
         panelFrame: CGRect,
         mainScreenTop: CGFloat,
-        animated: Bool = false
+        animated: Bool = false,
+        role: TiledResizePreviewRole = .layout
     ) {
+        if let previewRole, previewRole != role {
+            removeTiles()
+        }
+        previewRole = role
         for key in tileViews.keys where frames[key] == nil {
             tileViews.removeValue(forKey: key)?.removeFromSuperview()
         }
         var animatedChanges: [(NSView, CGRect)] = []
         for (key, frame) in frames {
             let existed = tileViews[key] != nil
-            let tile = tileViews[key] ?? makeTile(for: key)
+            let tile = tileViews[key] ?? makeTile(for: key, role: role)
             let targetFrame = TiledResizePreviewPolicy.localTileFrame(
                 frame,
                 panelFrame: panelFrame,
@@ -440,10 +536,11 @@ final class TiledResizePreviewCanvas: NSView {
     func removeTiles() {
         tileViews.values.forEach { $0.removeFromSuperview() }
         tileViews.removeAll()
+        previewRole = nil
     }
 
-    private func makeTile(for key: WindowKey) -> NSView {
-        let tile = TiledResizePreviewTileView(frame: .zero)
+    private func makeTile(for key: WindowKey, role: TiledResizePreviewRole) -> NSView {
+        let tile = TiledResizePreviewTileView(frame: .zero, role: role)
         tile.autoresizingMask = []
         tileHost.addSubview(tile)
         tileViews[key] = tile

@@ -75,6 +75,98 @@ final class TiledResizePreviewTests: XCTestCase {
         )
     }
 
+    func testTitleBarMoveWithTransientSizeNoiseIsNotClaimedAsResize() {
+        let expected = WindowFrame(
+            position: CGPoint(x: 100, y: 200),
+            size: CGSize(width: 500, height: 400)
+        )
+        let observed = WindowFrame(
+            position: CGPoint(x: 180, y: 250),
+            size: CGSize(width: 506, height: 404)
+        )
+
+        XCTAssertEqual(
+            TiledManualDragClassifier.classify(
+                expectedFrame: expected,
+                observedFrame: observed,
+                pointer: CGPoint(x: 430, y: 278)
+            ),
+            .move
+        )
+    }
+
+    func testPointerOnChangedEdgeClassifiesRightAndLeftResize() {
+        let expected = WindowFrame(
+            position: CGPoint(x: 100, y: 200),
+            size: CGSize(width: 500, height: 400)
+        )
+
+        XCTAssertEqual(
+            TiledManualDragClassifier.classify(
+                expectedFrame: expected,
+                observedFrame: WindowFrame(
+                    position: expected.position,
+                    size: CGSize(width: 560, height: 400)
+                ),
+                pointer: CGPoint(x: 660, y: 400)
+            ),
+            .resize(.right)
+        )
+        XCTAssertEqual(
+            TiledManualDragClassifier.classify(
+                expectedFrame: expected,
+                observedFrame: WindowFrame(
+                    position: CGPoint(x: 160, y: 200),
+                    size: CGSize(width: 440, height: 400)
+                ),
+                pointer: CGPoint(x: 160, y: 400)
+            ),
+            .resize(.left)
+        )
+    }
+
+    func testCornerResizeRequiresPointerOnBothChangedEdges() {
+        let expected = WindowFrame(
+            position: CGPoint(x: 100, y: 200),
+            size: CGSize(width: 500, height: 400)
+        )
+        let observed = WindowFrame(
+            position: expected.position,
+            size: CGSize(width: 560, height: 460)
+        )
+
+        XCTAssertEqual(
+            TiledManualDragClassifier.classify(
+                expectedFrame: expected,
+                observedFrame: observed,
+                pointer: CGPoint(x: 660, y: 660)
+            ),
+            .resize([.right, .bottom])
+        )
+        XCTAssertNil(TiledManualDragClassifier.classify(
+            expectedFrame: expected,
+            observedFrame: observed,
+            pointer: CGPoint(x: 660, y: 400)
+        ))
+    }
+
+    func testChangedEdgeDoesNotMatchPointerBeyondItsSpan() {
+        let expected = WindowFrame(
+            position: CGPoint(x: 100, y: 200),
+            size: CGSize(width: 500, height: 400)
+        )
+        let observed = WindowFrame(
+            position: expected.position,
+            size: CGSize(width: 560, height: 400)
+        )
+
+        XCTAssertNil(TiledManualDragClassifier.classify(
+            expectedFrame: expected,
+            observedFrame: observed,
+            pointer: CGPoint(x: 660, y: 1_600)
+        ))
+    }
+
     func testDraggedEdgesProjectFrameFromPointerAfterRealWindowIsParked() throws {
         let edges: TiledResizeDraggedEdges = [.left, .bottom]
         let projected = try XCTUnwrap(
@@ -156,6 +248,26 @@ final class TiledResizePreviewTests: XCTestCase {
     }
 
     @MainActor
+    func testLandingTileUsesAccentTintAndStrongerBorder() throws {
+        let tile = TiledResizePreviewTileView(
+            frame: CGRect(x: 0, y: 0, width: 400, height: 300),
+            role: .landing
+        )
+
+        if #available(macOS 26.0, *) {
+            let glass = try XCTUnwrap(tile.surface as? NSGlassEffectView)
+            XCTAssertNotNil(glass.tintColor)
+            let border = try XCTUnwrap(glass.contentView)
+            XCTAssertGreaterThan(
+                border.layer?.borderWidth ?? 0,
+                TiledResizePreviewPolicy.nativeBorderWidth
+            )
+        } else {
+            XCTAssertGreaterThan(tile.surface.layer?.borderWidth ?? 0, 1)
+        }
+    }
+
+    @MainActor
     func testStaleDismissCannotRemoveNewerPreview() {
         let firstToken = UUID()
         let secondToken = UUID()
@@ -176,7 +288,8 @@ final class TiledResizePreviewTests: XCTestCase {
                         size: CGSize(width: 800, height: 600)
                     ),
                 ],
-                transition: .immediate
+                transition: .immediate,
+                role: .layout
             )
         }
 
@@ -208,7 +321,8 @@ final class TiledResizePreviewTests: XCTestCase {
                     size: CGSize(width: 800, height: 600)
                 ),
             ],
-            transition: .immediate
+            transition: .immediate,
+            role: .layout
         ))
 
         XCTAssertTrue(controller.screenParametersDidChange())
@@ -219,17 +333,19 @@ final class TiledResizePreviewTests: XCTestCase {
 
     @MainActor
     func testOffscreenProductionPreviewRender() throws {
-        guard let outputPath = ProcessInfo.processInfo.environment[
-            "WINDOWRANGER_TILED_RESIZE_PREVIEW_PATH"
-        ], !outputPath.isEmpty else { return }
+        let environment = ProcessInfo.processInfo.environment
+        let resizePath = environment["WINDOWRANGER_TILED_RESIZE_PREVIEW_PATH"]
+        let landingPath = environment["WINDOWRANGER_TILED_LANDING_PREVIEW_PATH"]
+        guard let outputPath = [landingPath, resizePath].compactMap({ $0 }).first,
+              !outputPath.isEmpty
+        else { return }
 
         let size = CGSize(width: 1_200, height: 800)
         let canvas = TiledResizePreviewCanvas(frame: CGRect(origin: .zero, size: size))
         let keys = (1...3).map {
             WindowKey(processIdentifier: 42, windowIdentifier: CGWindowID($0))
         }
-        canvas.update(
-            frames: [
+        let layoutFrames: [WindowKey: WindowFrame] = [
                 keys[0]: WindowFrame(
                     position: CGPoint(x: 0, y: 0),
                     size: CGSize(width: 720, height: 800)
@@ -242,9 +358,18 @@ final class TiledResizePreviewTests: XCTestCase {
                     position: CGPoint(x: 720, y: 460),
                     size: CGSize(width: 480, height: 340)
                 ),
-            ],
+            ]
+        let landingFrames = [
+            keys[0]: WindowFrame(
+                position: CGPoint(x: 720, y: 0),
+                size: CGSize(width: 240, height: 460)
+            ),
+        ]
+        canvas.update(
+            frames: landingPath == nil ? layoutFrames : landingFrames,
             panelFrame: CGRect(origin: .zero, size: size),
-            mainScreenTop: size.height
+            mainScreenTop: size.height,
+            role: landingPath == nil ? .layout : .landing
         )
         canvas.layoutSubtreeIfNeeded()
         let bitmap = try XCTUnwrap(NSBitmapImageRep(

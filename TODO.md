@@ -1094,19 +1094,22 @@ smallest useful outcome and acceptance boundary.
   checkpoint `a249b813213a`, preserving the accepted static-rendering implementation with a clean
   embedded source marker.
 
-### WR-089 — Preview manual Tiled resize and move with glass tiles
+### WR-089 — Preview manual Tiled resize and move with intuitive BSP landing targets
 
 - **Type:** Tiled layout interaction refinement
 - **Priority:** P2
-- **Status:** Live validation — transparent resize was accepted; animated move preview is
-  implemented, automated/build verified, installed, and awaiting maintainer interaction acceptance.
+- **Status:** Done — transparent resize and the redesigned title-bar move interaction are
+  implemented, reviewed, automated-test verified, installed, and maintainer accepted as of
+  1 September 2026.
 - **Requested:** 25 August 2026.
 - **Smallest useful outcome:** When the user begins resizing a managed window in a Tiled workspace,
   visually replace every participating tile with a click-through glass placeholder that follows the
   proposed split geometry. Temporarily park only the participating real windows, commit their new
   frames once on mouse release, then remove the preview. Apply the same transaction to a genuine
-  title-bar move: animate the glass tiles into the swap proposed by the pointer target, and replace
-  them with the real windows only on release.
+  title-bar move: keep the real windows visible, retain the dragged window under the pointer, and
+  show one accent-glass landing region. The centre of a target window proposes the familiar leaf
+  swap; its left, right, top, and bottom regions propose inserting the dragged leaf beside that
+  target while remaining inside the existing BSP model.
 - **Safety boundary:** Do not hide an application, minimise a window, activate WindowRanger, or
   disturb unrelated windows. Capture exact original frames before parking participants, and restore
   them on every cancellation path. The overlay must never intercept the resize gesture. Cancel and
@@ -1118,9 +1121,11 @@ smallest useful outcome and acceptance boundary.
   use the exact proposed final frames and native glass on macOS 26 or later, with the existing HUD
   material fallback on older supported macOS versions. Once the preview begins, only bounded
   concealment writes keep the participating windows parked while pointer movement drives the hints.
-  For a title-bar move, the source layout appears first and changed placeholders slide and resize to
-  each newly targeted tile; moving over the source or a gap previews and restores the original tree.
-  Release validates and commits the latest tree once before revealing the real windows. Focused
+  For a title-bar move, stationary real windows remain visible and only the dragged window's exact
+  proposed landing frame appears as an accent-glass hint. Moving between a target's centre and four
+  edges updates that hint without restructuring the committed tree; moving over the source or a gap
+  removes it. Release validates and commits the latest tree once, while cancellation restores the
+  dragged window to its committed frame. Focused
   deterministic tests, the complete non-hosted suite, an unsigned app build, visual inspection, and
   separately approved installed-app interaction validation are required.
 - **Implemented:** A passive global pointer monitor samples drag updates at a bounded 30 Hz without
@@ -1136,8 +1141,13 @@ smallest useful outcome and acceptance boundary.
   profile changes, display/session lifecycle changes, WindowServer replacement, and quit explicitly
   cancel the preview. A position-only title-bar move now starts the same tokened overlay from the
   committed frames, resolves subsequent targets without consulting the parked AX windows, and
-  animates changed tile frames over 160 ms. Release commits the proposed leaf swap; release over the
-  source or a gap and every cancellation boundary restore the captured frames.
+  originally animated changed tile frames over 160 ms and committed a proposed leaf swap. The
+  1 September redesign replaces that move-only presentation: participants are no longer parked,
+  the real layout remains recognisable, and a single accent landing tile follows the pointer. A
+  centre target still swaps leaves; an edge target removes and collapses the source branch, then
+  inserts the source beside any hovered leaf with a new equal horizontal or vertical split. Release
+  commits that exact proposed tree; release over the source or a gap and every cancellation boundary
+  restore the captured frames. The accepted resize transaction is unchanged.
 - **Review correction:** A display-configuration change now reports whether it directly dismissed an
   active preview and immediately restores the focused-window border before the engine completes its
   tokened cancellation. This prevents the border remaining suppressed after the presenter has
@@ -1148,6 +1158,26 @@ smallest useful outcome and acceptance boundary.
   including concealed move target resolution from immutable committed frames. The complete
   non-hosted suite passes all 754 tests, and the unsigned universal Debug app build succeeds for
   both `arm64` and `x86_64`.
+- **1 September redesign evidence:** All 56 focused Tiled tree and preview tests pass, covering
+  centre swapping, four-direction insertion, nested source collapse and target splitting, invalid
+  targets, centre/edge hysteresis in both live-preview and fallback reconciliation, the 120-point
+  minimum-frame preflight, and the accent landing surface. The complete non-hosted quick checkpoint
+  passes all 870 tests, including project generation, test isolation, release-ledger, Sparkle-feed,
+  and Stable Homebrew workflow checks. A skeptical read-only review found no remaining material
+  issue after its jitter and minimum-frame findings were corrected.
+- **Installed follow-up:** The maintainer found that some attempted title-bar moves still entered
+  the resize presentation. Diagnostics confirmed correlation `manual-resize-95D95A89` concealed
+  three participants and committed changed horizontal split ratios, so this was a real gesture
+  classification fault rather than visual uncertainty. Resize had first refusal and treated any AX
+  size delta over two points as sufficient evidence. Gesture start now prefers an edge-aware move
+  classification: a resize is accepted only while the pointer is on every inferred changing edge;
+  otherwise meaningful position displacement begins a move even when AX reports transient size
+  noise. Once either tokened session begins, its intent remains locked through release. Review also
+  tightened edge matching to the real perpendicular edge span, preventing a distant pointer that
+  merely shares one coordinate from claiming a resize. The updated 61-test Tiled tree and preview
+  domain passes, including noisy title-bar movement, leading and trailing edge resizes, corner-edge
+  agreement, and out-of-span rejection. A replacement installed interaction check is still
+  required.
 - **Visual evidence:** The first installed candidate proved the exact 1+2 split and interaction but
   its nearly opaque backing, tint, wash, mask, and outline visually flattened the native material.
   Those custom layers are removed in the refined candidate; AppKit's live refraction over real
@@ -1165,6 +1195,26 @@ smallest useful outcome and acceptance boundary.
   `startup-state-ready` without a diagnostic error or fault. This installed build contains the
   accepted resize transaction and the new animated move extension; move interaction remains
   unaccepted.
+- **1 September installed candidate:** The signed universal Debug daily for
+  `9f4e673a1fd7-dirty` is running from `/Applications/WindowRanger.app` as PID 46143. Its
+  `dev.appranger.WindowRanger` bundle identity, Team ID `44NAD22AK6`, `x86_64` and `arm64`
+  architectures, embedded revision, running path, and strict deep signature were verified. Fresh
+  diagnostics session `2B1A5BEF-7080-4431-8810-5B10EDD1DFDD` reached `startup-state-ready` without
+  an error or fault in the inspected startup tail. The previous accepted daily remains recoverable
+  at `/Applications/.WindowRanger.previous`; directional move interaction is awaiting maintainer
+  acceptance.
+- **Gesture-classifier replacement candidate:** The edge-aware follow-up was installed as a new
+  Apple Development-signed universal Debug daily at `/Applications/WindowRanger.app`, retaining the
+  preceding candidate at `/Applications/.WindowRanger.previous`. The running process is PID 49730;
+  bundle identity `dev.appranger.WindowRanger`, Team ID `44NAD22AK6`, embedded revision
+  `9f4e673a1fd7-dirty`, `x86_64` and `arm64` architectures, running path, and strict deep signature
+  were verified. Fresh diagnostics session `245C9D7B-DBCB-4613-9432-F7C775807155` reached
+  `startup-state-ready` without an error or fault in the inspected session. The maintainer then
+  exercised the installed interaction and confirmed that the move-versus-resize misclassification
+  was resolved and the resulting feel was accepted.
+- **Final checkpoint:** The complete quick verification passes all 875 non-hosted tests after the
+  accepted classifier correction, together with the release-ledger, Sparkle-feed, Stable Homebrew,
+  project-generation, and test/archive-isolation checks.
 
 ### WR-087 — Copy a workspace layout without creating a preset library
 

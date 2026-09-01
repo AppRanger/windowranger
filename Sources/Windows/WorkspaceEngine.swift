@@ -1884,7 +1884,7 @@ final class WorkspaceEngine {
     private struct ManualTiledDragSession: Equatable {
         let focusedWindow: WindowKey
         let partition: TiledLayoutPartitionKey
-        let candidateTarget: WindowKey?
+        let candidateDestination: TiledDragDestination?
     }
 
     private struct ManualTiledMovePreviewSession {
@@ -1898,7 +1898,7 @@ final class WorkspaceEngine {
         let layoutBounds: CGRect
         let topologySignature: String
         let profileID: UUID?
-        var candidateTarget: WindowKey?
+        var candidateDestination: TiledDragDestination?
         var proposedTree: TiledNode
         var proposedFrames: [WindowKey: WindowFrame]
     }
@@ -1999,7 +1999,7 @@ final class WorkspaceEngine {
     private enum ManualTiledMoveReconciliation: Equatable {
         case none
         case dragInProgress
-        case swapped
+        case moved
     }
 
     private let queue = DispatchQueue(
@@ -7773,9 +7773,9 @@ final class WorkspaceEngine {
         }
     }
 
-    /// Holds a position-only tiled drag in place while the pointer button is down, then swaps the
-    /// focused leaf with the tile under the release point. Returning true tells the refresh loop
-    /// not to run its normal corrective layout pass during the active drag.
+    /// Holds a position-only tiled drag in place while the pointer button is down, then moves the
+    /// focused leaf to the directional destination under the release point. Returning true tells
+    /// the refresh loop not to run its normal corrective layout pass during the active drag.
     private func reconcileManualTiledMove(
         focusedWindow: WindowKey,
         observedFrames: [WindowKey: WindowFrame],
@@ -7819,6 +7819,11 @@ final class WorkspaceEngine {
             workspaceID: tracked.workspaceID,
             displayIdentifier: display.identifier
         )
+        let previousDestination = manualTiledDragSession.flatMap { prior in
+            prior.focusedWindow == focusedWindow && prior.partition == partition
+                ? prior.candidateDestination
+                : nil
+        }
         guard participants.count > 1,
               participants.contains(focusedWindow),
               let currentTree = TiledLayoutEngine.reconciled(
@@ -7840,7 +7845,8 @@ final class WorkspaceEngine {
                   focusedWindow: focusedWindow,
                   observedFrame: observedFrame,
                   pointerLocation: pointerLocation,
-                  expectedFrames: expectedFrames
+                  expectedFrames: expectedFrames,
+                  previousDestination: previousDestination
               )
         else {
             if !isLeftMouseButtonPressed {
@@ -7852,7 +7858,7 @@ final class WorkspaceEngine {
         let session = ManualTiledDragSession(
             focusedWindow: focusedWindow,
             partition: partition,
-            candidateTarget: drag.swapTarget
+            candidateDestination: drag.destination
         )
         if isLeftMouseButtonPressed {
             if manualTiledDragSession != session {
@@ -7864,7 +7870,10 @@ final class WorkspaceEngine {
                         "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
                         "display": Self.shortIdentifier(display.identifier),
                         "window": Self.diagnosticWindowKey(focusedWindow),
-                        "target": drag.swapTarget.map(Self.diagnosticWindowKey) ?? "none",
+                        "target": drag.destination.map {
+                            Self.diagnosticWindowKey($0.target)
+                        } ?? "none",
+                        "placement": drag.destination?.placement.rawValue ?? "none",
                     ]
                 )
             }
@@ -7874,22 +7883,28 @@ final class WorkspaceEngine {
 
         let priorSession = manualTiledDragSession
         manualTiledDragSession = nil
-        let target = drag.swapTarget ?? (pointerLocation == nil &&
+        let destination = drag.destination ?? (pointerLocation == nil &&
             priorSession?.focusedWindow == focusedWindow &&
             priorSession?.partition == partition
-                ? priorSession?.candidateTarget
+                ? priorSession?.candidateDestination
                 : nil)
-        guard let target,
-              participants.contains(target),
-              let swappedTree = TiledLayoutEngine.swappingWindows(
+        guard let destination,
+              participants.contains(destination.target),
+              let movedTree = TiledLayoutEngine.movingWindow(
                   focusedWindow,
-                  target,
+                  to: destination,
                   in: currentTree
-              ), let effectiveShares = TiledLayoutEngine.leafShares(swappedTree)
+              ), let movedFrames = try? TiledLayoutEngine.frames(
+                  for: movedTree,
+                  in: managedBounds,
+                  configuration: configuration
+              ), destination.placement == .swap ||
+                TiledLayoutEngine.accommodatesMinimumWindowLength(movedFrames),
+              let effectiveShares = TiledLayoutEngine.leafShares(movedTree)
         else { return .none }
 
-        tiledTrees[partition] = swappedTree
-        for (index, key) in swappedTree.windowKeys.enumerated() {
+        tiledTrees[partition] = movedTree
+        for (index, key) in movedTree.windowKeys.enumerated() {
             windows[key]?.layoutOrder = index
             windows[key]?.layoutWeight = effectiveShares[key] ?? 1
         }
@@ -7900,18 +7915,19 @@ final class WorkspaceEngine {
         lastBackgroundLayoutSignature = nil
         diagnostics.log(
             category: "manual-move",
-            event: "windows-swapped",
+            event: "window-moved",
             correlation: correlationID,
             fields: [
                 "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
                 "display": Self.shortIdentifier(display.identifier),
                 "window": Self.diagnosticWindowKey(focusedWindow),
-                "swapped-with": Self.diagnosticWindowKey(target),
+                "target": Self.diagnosticWindowKey(destination.target),
+                "placement": destination.placement.rawValue,
                 "tree-before": TiledLayoutEngine.fingerprint(currentTree),
-                "tree-after": TiledLayoutEngine.fingerprint(swappedTree),
+                "tree-after": TiledLayoutEngine.fingerprint(movedTree),
             ]
         )
-        return .swapped
+        return .moved
     }
 
     /// Pointer delivery is intentionally separate from the broad discovery timer. Tiled move and
@@ -7921,13 +7937,13 @@ final class WorkspaceEngine {
         queue.async { [weak self] in
             guard let self else { return }
             if self.manualTiledMovePreviewSession != nil {
-                self.updateConcealedManualTiledMovePreview()
+                self.updateManualTiledMoveLandingPreview()
             } else if self.manualTiledResizeSession != nil {
                 self.updateManualTiledResizePreview()
             } else {
-                self.updateManualTiledResizePreview()
-                if self.manualTiledResizeSession == nil {
-                    self.updateManualTiledMovePreview()
+                self.updateManualTiledMovePreview()
+                if self.manualTiledMovePreviewSession == nil {
+                    self.updateManualTiledResizePreview()
                 }
             }
         }
@@ -8100,12 +8116,19 @@ final class WorkspaceEngine {
               let expectedFocusedFrame = originalFrames[focused.key],
               let lastSolvedFrame = lastSolvedTiledFrames[focused.key],
               AccessibilityWindow.framesMatch(lastSolvedFrame, expectedFocusedFrame),
+              let pointer = CGEvent(source: nil)?.location,
+              TiledManualDragClassifier.classify(
+                  expectedFrame: expectedFocusedFrame,
+                  observedFrame: observedFrame,
+                  pointer: pointer
+              ) == .move,
               TiledLayoutEngine.observedDrag(
                   in: originalTree,
                   focusedWindow: focused.key,
                   observedFrame: observedFrame,
-                  pointerLocation: CGEvent(source: nil)?.location,
-                  expectedFrames: originalFrames
+                  pointerLocation: pointer,
+                  expectedFrames: originalFrames,
+                  requiresStableSize: false
               ) != nil
         else { return }
 
@@ -8121,28 +8144,13 @@ final class WorkspaceEngine {
             layoutBounds: layoutBounds,
             topologySignature: Self.displayTopologySignature(displays),
             profileID: currentProfileID,
-            candidateTarget: nil,
+            candidateDestination: nil,
             proposedTree: originalTree,
             proposedFrames: originalFrames
         )
         manualTiledMovePreviewSession = session
         manualTiledDragSession = nil
-        emitTiledResizePreviewEvent(.present(TiledResizePreviewPresentation(
-            token: token,
-            displayIdentifier: display.identifier,
-            layoutBounds: WindowFrame(position: layoutBounds.origin, size: layoutBounds.size),
-            frames: originalFrames,
-            transition: .immediate
-        )))
         let correlationID = "manual-move-\(token.uuidString.prefix(8))"
-        guard concealManualTiledParticipants(
-            session.participantKeys,
-            diagnosticCategory: "manual-move-preview",
-            correlationID: correlationID
-        ) else {
-            cancelManualTiledMovePreview(reason: "participant-concealment-failed")
-            return
-        }
         diagnostics.log(
             category: "manual-move-preview",
             event: "started",
@@ -8154,10 +8162,10 @@ final class WorkspaceEngine {
                 "window-count": String(participants.count),
             ]
         )
-        updateConcealedManualTiledMovePreview()
+        updateManualTiledMoveLandingPreview()
     }
 
-    private func updateConcealedManualTiledMovePreview() {
+    private func updateManualTiledMoveLandingPreview() {
         guard var session = manualTiledMovePreviewSession else { return }
         let correlationID = "manual-move-\(session.token.uuidString.prefix(8))"
         let displays = Self.activeDisplays()
@@ -8197,15 +8205,21 @@ final class WorkspaceEngine {
             return
         }
 
-        let target = TiledLayoutEngine.swapTarget(
+        let candidateDestination = TiledLayoutEngine.dragDestination(
             at: pointer,
             focusedWindow: session.focusedWindow,
-            expectedFrames: session.originalFrames
+            expectedFrames: session.originalFrames,
+            previousDestination: session.candidateDestination
         )
-        let proposedTree = target.flatMap {
-            TiledLayoutEngine.swappingWindows(session.focusedWindow, $0, in: session.originalTree)
+        var destination = candidateDestination
+        var proposedTree = candidateDestination.flatMap {
+            TiledLayoutEngine.movingWindow(
+                session.focusedWindow,
+                to: $0,
+                in: session.originalTree
+            )
         } ?? session.originalTree
-        guard let proposedFrames = try? TiledLayoutEngine.frames(
+        guard var proposedFrames = try? TiledLayoutEngine.frames(
             for: proposedTree,
             in: session.layoutBounds,
             configuration: session.configuration
@@ -8213,23 +8227,37 @@ final class WorkspaceEngine {
             cancelManualTiledMovePreview(reason: "proposal-invalid")
             return
         }
+        if let candidate = destination, candidate.placement != .swap,
+           !TiledLayoutEngine.accommodatesMinimumWindowLength(proposedFrames) {
+            destination = nil
+            proposedTree = session.originalTree
+            proposedFrames = session.originalFrames
+        }
 
-        let targetChanged = target != session.candidateTarget
-        session.candidateTarget = target
+        let destinationChanged = destination != session.candidateDestination
+        session.candidateDestination = destination
         session.proposedTree = proposedTree
         session.proposedFrames = proposedFrames
         manualTiledMovePreviewSession = session
-        if targetChanged {
-            emitTiledResizePreviewEvent(.present(TiledResizePreviewPresentation(
-                token: session.token,
-                displayIdentifier: display.identifier,
-                layoutBounds: WindowFrame(
-                    position: session.layoutBounds.origin,
-                    size: session.layoutBounds.size
-                ),
-                frames: proposedFrames,
-                transition: .animated
-            )))
+        if destinationChanged {
+            if destination != nil, let landingFrame = proposedFrames[session.focusedWindow] {
+                emitTiledResizePreviewEvent(.present(TiledResizePreviewPresentation(
+                    token: session.token,
+                    displayIdentifier: display.identifier,
+                    layoutBounds: WindowFrame(
+                        position: session.layoutBounds.origin,
+                        size: session.layoutBounds.size
+                    ),
+                    frames: [session.focusedWindow: landingFrame],
+                    transition: .animated,
+                    role: .landing
+                )))
+            } else {
+                emitTiledResizePreviewEvent(.dismiss(
+                    token: session.token,
+                    reason: "no-landing-target"
+                ))
+            }
             diagnostics.log(
                 category: "manual-move-preview",
                 event: "target-changed",
@@ -8238,24 +8266,19 @@ final class WorkspaceEngine {
                     "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
                     "display": Self.shortIdentifier(display.identifier),
                     "window": Self.diagnosticWindowKey(session.focusedWindow),
-                    "target": target.map(Self.diagnosticWindowKey) ?? "none",
+                    "target": destination.map {
+                        Self.diagnosticWindowKey($0.target)
+                    } ?? "none",
+                    "placement": destination?.placement.rawValue ?? "none",
                     "tree-proposed": TiledLayoutEngine.fingerprint(proposedTree),
                 ]
             )
-        }
-        guard concealManualTiledParticipants(
-            session.participantKeys,
-            diagnosticCategory: "manual-move-preview",
-            correlationID: correlationID
-        ) else {
-            cancelManualTiledMovePreview(reason: "participant-concealment-failed")
-            return
         }
     }
 
     private func commitManualTiledMovePreview() {
         guard var session = manualTiledMovePreviewSession else { return }
-        updateConcealedManualTiledMovePreview()
+        updateManualTiledMoveLandingPreview()
         guard let updatedSession = manualTiledMovePreviewSession else { return }
         session = updatedSession
         let correlationID = "manual-move-\(session.token.uuidString.prefix(8))"
@@ -8289,8 +8312,8 @@ final class WorkspaceEngine {
             correlationID: correlationID
         )
         guard Set(participants) == session.participantKeys,
-              let target = session.candidateTarget,
-              participants.contains(target),
+              let destination = session.candidateDestination,
+              participants.contains(destination.target),
               session.proposedTree != session.originalTree,
               let effectiveShares = TiledLayoutEngine.leafShares(session.proposedTree)
         else {
@@ -8327,7 +8350,8 @@ final class WorkspaceEngine {
                 "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
                 "display": Self.shortIdentifier(display.identifier),
                 "window": Self.diagnosticWindowKey(session.focusedWindow),
-                "swapped-with": Self.diagnosticWindowKey(target),
+                "target": Self.diagnosticWindowKey(destination.target),
+                "placement": destination.placement.rawValue,
                 "window-count": String(participants.count),
                 "tree-before": TiledLayoutEngine.fingerprint(session.originalTree),
                 "tree-after": TiledLayoutEngine.fingerprint(session.proposedTree),
@@ -8434,11 +8458,11 @@ final class WorkspaceEngine {
         }
 
         guard let pointer = CGEvent(source: nil)?.location else { return }
-        let draggedEdges = TiledResizeDraggedEdges.inferred(
+        guard case let .resize(draggedEdges) = TiledManualDragClassifier.classify(
             expectedFrame: expectedFocusedFrame,
-            observedFrame: observedFrame
-        )
-        guard !draggedEdges.isEmpty else { return }
+            observedFrame: observedFrame,
+            pointer: pointer
+        ) else { return }
 
         let proposedTree = TiledLayoutEngine.resizedToMatchObservedFrame(
             originalTree,
@@ -8481,7 +8505,8 @@ final class WorkspaceEngine {
             displayIdentifier: display.identifier,
             layoutBounds: WindowFrame(position: layoutBounds.origin, size: layoutBounds.size),
             frames: proposedFrames,
-            transition: .immediate
+            transition: .immediate,
+            role: .layout
         )
         emitTiledResizePreviewEvent(.present(presentation))
         guard concealManualTiledResizeParticipants(
@@ -8581,7 +8606,8 @@ final class WorkspaceEngine {
                 size: session.layoutBounds.size
             ),
             frames: proposedFrames,
-            transition: .immediate
+            transition: .immediate,
+            role: .layout
         )
         emitTiledResizePreviewEvent(.present(presentation))
         guard concealManualTiledResizeParticipants(updated, correlationID: correlationID) else {
@@ -12085,7 +12111,7 @@ final class WorkspaceEngine {
             directionalMoveGestureContext = nil
         }
         if let dragSession = manualTiledDragSession,
-           dragSession.focusedWindow == key || dragSession.candidateTarget == key {
+           dragSession.focusedWindow == key || dragSession.candidateDestination?.target == key {
             manualTiledDragSession = nil
         }
         if manualTiledMovePreviewSession?.participantKeys.contains(key) == true {
