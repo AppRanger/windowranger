@@ -4219,6 +4219,11 @@ second copy of that checklist.
   upgrade direction. Sparkle-first/Homebrew coexistence, Intel, Settings PATH UI, and privacy
   permission retention remain live validation.
 - **Gate:** Each later release still requires explicit maintainer approval.
+- **1.0.2 preparation:** The maintainer explicitly approved committing the accepted fixes and
+  cutting Stable 1.0.2 on 1 September 2026. All nine cross-display layout combinations,
+  representative Unified transfers, same-display behaviour, the menu bar appearance correction,
+  and the first status-menu placement correction were accepted in the installed development build.
+  Build 14 is allocated for the candidate, with release notes at `docs/releases/v1.0.2.md`.
 
 ## Done
 
