@@ -250,9 +250,9 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Diagnostic-backed performance regression
 - **Priority:** P0
-- **Status:** Stable 1.0.3 build 15 is public on GitHub; Sparkle and Homebrew publication are in
-  progress. The maintainer explicitly approved publication before broader local and manual release
-  verification, which remains post-release validation.
+- **Status:** Live validation — Stable 1.0.3 build 15 is public through GitHub, Sparkle, the website,
+  and Homebrew. The maintainer explicitly approved publication before broader local and manual
+  release verification, which remains post-release validation.
 - **User-observed:** WindowRanger 1.0.2 build 14 suddenly sustained roughly one full CPU core while
   otherwise idle on macOS 27.
 - **Diagnostic-backed cause:** The Developer ID build remained at 97–100% CPU, and the equivalent
@@ -285,6 +285,12 @@ smallest useful outcome and acceptance boundary.
   Gatekeeper. The five public GitHub assets round-tripped against tag `v1.0.3`, build 15, provenance,
   archive SHA-256 `f5d95cc97ee6d465daa3d2c0019ac0b3a7d4bfbc51c81912bcc658118f7643dd`,
   and DMG SHA-256 `c691671fc03f1e79c04b648e6f5d9400e7e64f4085293349165e1e97db5e2787`.
+- **Publication evidence:** Cloudflare deployment `48b3795e-077c-4de9-86bd-cac97775d60d`
+  publishes the exact signed build 15 appcast, ZIP, and deltas from retained builds 11–14 on both
+  website domains; every new public payload matched its generated source. Homebrew tap merge
+  `abe6aae7c2287d22ddc40c93cd713f9f37b5eee6` publishes version 1.0.3 with the exact notarized DMG
+  checksum. Installed upgrade and live settled-CPU/menu-bar checks remain deferred to the
+  maintainer's post-release validation.
 - **Acceptance:** Publish immutable Stable 1.0.3 build 15 through GitHub and Sparkle, verify the live
   artifacts/feed mechanically, then have the maintainer confirm settled CPU and menu-bar behavior in
   the installed public update. Keep WR-112's unresponsive-application resilience work separate.
