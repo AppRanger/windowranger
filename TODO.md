@@ -223,9 +223,8 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Diagnostic-backed resilience bug
 - **Priority:** P1
-- **Status:** Public release follow-up — Stable 1.0.4 build 16 is immutable on GitHub. Sparkle,
-  website, and Homebrew publication remain in progress; the maintainer will verify the public update
-  after it lands.
+- **Status:** Live validation — Stable 1.0.4 build 16 is public through GitHub, Sparkle, the website,
+  and Homebrew. The maintainer will verify workspace switching in the public update.
 - **User-observed:** Workspace switching intermittently appeared to lock up in the signed Debug daily
   build. Force-quitting Safari cleared the suspected hung instance.
 - **Diagnostic evidence:** Ordinary switches completed in roughly 0.3–0.6 seconds, while switches to
@@ -261,6 +260,14 @@ smallest useful outcome and acceptance boundary.
   Gatekeeper. The five immutable GitHub assets round-tripped against tag `v1.0.4`, build 16,
   provenance, archive SHA-256 `1766460c508d0cbedcd0ecbb45f48f10af035b29f7d4bbb581e83958992bea1e`,
   and DMG SHA-256 `41af7c05ec1efa3665a245cdb9187822032f07462964afb444a835b85f58af58`.
+- **Publication evidence:** Cloudflare deployment `9dcd280f-bad6-416f-9a31-ac879c7e63af`
+  publishes the exact signed build 16 appcast, ZIP, and deltas from retained builds 11–15 on both
+  website domains; every new public payload matched its generated source. Homebrew tap merge
+  `8bb5b5dd094f39d3999ea81a5a4fa52aec42afd1` publishes version 1.0.4 with the exact notarized DMG
+  checksum and passed style plus strict online audit. The exact DMG installed, passed Gatekeeper and
+  deep signature checks, launched as 1.0.4 build 16, and answered through its bundled CLI. macOS did
+  not carry Accessibility permission from the Development-signed build to the Developer ID build,
+  so the final installed workspace-switch check remains with the maintainer.
 - **Acceptance:** Publish immutable Stable 1.0.4 build 16 through GitHub and Sparkle, verify the live
   artifacts/feed mechanically, then have the maintainer confirm workspace switching in the installed
   public update. Keep a deliberately sustained third-party hang as an optional stress boundary.
