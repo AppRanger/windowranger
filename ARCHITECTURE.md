@@ -553,6 +553,16 @@ tree, and then removes the overlay. Releasing a move over its source or a gap re
 frames. Cancellation also restores those captured frames before dismissing the preview. Pause,
 Shelf presentation, full-screen protection, lifecycle suspension, display change, WindowServer
 replacement and quit all cancel the tokened preview; stale dismissals cannot remove a newer preview.
+Windows excluded from a managed layout never enter that transaction. Their native move or resize
+remains app-owned. The pointer target is captured before application focus changes, then pointer-drag
+and focused-window observation capture the changing real frame before a background layout pass can
+restore it; mouse-up provides a final direct capture. The path requires stable profile, topology,
+lifecycle, layout and non-participation state. Keep-on-all-workspaces windows remain eligible while
+visible away from their saved home workspace, including on a Freeform workspace where their saved
+managed-workspace restore frame would otherwise pull them back. Restoring on a still-connected
+display preserves an exact partially offscreen position while display geometry is unchanged and
+retains the normalized position after a geometry change while the window remains meaningfully
+visible; only effectively lost windows and missing-display fallbacks are clamped back onscreen.
 
 The optional Shortcut Guide separately observes
 paired global and local `flagsChanged` events without consuming them. The exact configured Navigate

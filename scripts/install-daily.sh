@@ -6,7 +6,7 @@ repository_root="${0:A:h:h}"
 script_name="${0:t}"
 project_file="$repository_root/WindowRanger.xcodeproj"
 configuration="${WINDOWRANGER_DAILY_CONFIGURATION:-Debug}"
-daily_app="${WINDOWRANGER_DAILY_APP:-/Applications/WindowRanger.app}"
+daily_app_override="${WINDOWRANGER_DAILY_APP:-}"
 derived_data_directory="${WINDOWRANGER_DAILY_DERIVED_DATA:-$repository_root/.build/DailyDerivedData}"
 launch_after_install=true
 source_revision="$(/usr/bin/git -C "$repository_root" rev-parse --short=12 HEAD)"
@@ -48,6 +48,13 @@ done
     print -u2 "Configuration must be Debug or Release, not: $configuration"
     exit 2
 }
+if [[ -n "$daily_app_override" ]]; then
+    daily_app="$daily_app_override"
+elif [[ "$configuration" == "Debug" ]]; then
+    daily_app="/Applications/WindowRanger Dev.app"
+else
+    daily_app="/Applications/WindowRanger.app"
+fi
 [[ "$daily_app" == /* && "$daily_app" == *.app && "$daily_app" != "/" ]] || {
     print -u2 "WINDOWRANGER_DAILY_APP must be an absolute .app path."
     exit 2
@@ -64,9 +71,17 @@ print "Building the $configuration daily app while the current copy remains avai
     -configuration "$configuration" \
     -destination 'generic/platform=macOS' \
     -derivedDataPath "$derived_data_directory" \
+    -allowProvisioningUpdates \
     WINDOWRANGER_GIT_COMMIT="$source_revision" \
     build
 
+if [[ "$configuration" == "Debug" ]]; then
+    installed_product_name="WindowRanger Dev"
+    expected_bundle_identifier="dev.appranger.WindowRanger.Debug"
+else
+    installed_product_name="WindowRanger"
+    expected_bundle_identifier="dev.appranger.WindowRanger"
+fi
 built_app="$derived_data_directory/Build/Products/$configuration/WindowRanger.app"
 [[ -d "$built_app" ]] || {
     print -u2 "Built app was not found at: $built_app"
@@ -75,7 +90,7 @@ built_app="$derived_data_directory/Build/Products/$configuration/WindowRanger.ap
 
 /usr/bin/codesign --verify --deep --strict "$built_app"
 built_bundle_identifier=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$built_app/Contents/Info.plist")
-[[ "$built_bundle_identifier" == "dev.appranger.WindowRanger" ]] || {
+[[ "$built_bundle_identifier" == "$expected_bundle_identifier" ]] || {
     print -u2 "Unexpected bundle identifier: $built_bundle_identifier"
     exit 1
 }
@@ -83,8 +98,8 @@ built_bundle_identifier=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier'
 destination_parent="${daily_app:h}"
 /bin/mkdir -p "$destination_parent"
 staging_directory=$(/usr/bin/mktemp -d "$destination_parent/.windowranger-install.XXXXXX")
-staged_app="$staging_directory/WindowRanger"
-backup_app="$destination_parent/.WindowRanger.previous"
+staged_app="$staging_directory/$installed_product_name"
+backup_app="$destination_parent/.${installed_product_name}.previous"
 original_moved=false
 
 cleanup() {
@@ -113,5 +128,6 @@ if [[ "$original_moved" == true ]]; then
 fi
 
 if [[ "$launch_after_install" == true ]]; then
-    "$repository_root/scripts/resume-daily.sh" --scheme-action
+    WINDOWRANGER_DAILY_APP="$daily_app" \
+        "$repository_root/scripts/resume-daily.sh" --scheme-action
 fi

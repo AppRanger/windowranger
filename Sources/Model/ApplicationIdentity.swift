@@ -1,7 +1,15 @@
 import Foundation
 
 enum ApplicationIdentity {
-    static let bundleIdentifier = "dev.appranger.WindowRanger"
+    static let publicBundleIdentifier = "dev.appranger.WindowRanger"
+    static let developmentBundleIdentifier = "dev.appranger.WindowRanger.Debug"
+#if WINDOWRANGER_DEVELOPMENT_IDENTITY
+    static let bundleIdentifier = developmentBundleIdentifier
+    static let isDevelopment = true
+#else
+    static let bundleIdentifier = publicBundleIdentifier
+    static let isDevelopment = false
+#endif
     static let testBundleIdentifier = "dev.appranger.WindowRangerTests"
     static let legacyBundleIdentifier = "com.windowranger.WindowRanger"
     static let legacyICloudKeyValueStoreIdentifier =
@@ -32,7 +40,32 @@ enum ApplicationIdentity {
     }
 }
 
+struct RunningApplicationIdentity: Equatable {
+    let processIdentifier: pid_t
+    let bundleIdentifier: String?
+}
+
+enum ApplicationInstancePolicy {
+    static func shouldStart(
+        currentProcessIdentifier: pid_t,
+        runningApplications: [RunningApplicationIdentity]
+    ) -> Bool {
+        let managedBundleIdentifiers = Set([
+            ApplicationIdentity.publicBundleIdentifier,
+            ApplicationIdentity.developmentBundleIdentifier,
+        ])
+        return !runningApplications.contains { application in
+            application.processIdentifier != currentProcessIdentifier &&
+                application.bundleIdentifier.map(managedBundleIdentifiers.contains) == true
+        }
+    }
+}
+
 enum ApplicationIdentityMigration {
+    static func shouldPerform(isDevelopment: Bool) -> Bool {
+        !isDevelopment
+    }
+
     @discardableResult
     static func migratePreferencesIfNeeded(
         defaults: UserDefaults = .standard,
@@ -77,6 +110,9 @@ enum ApplicationIdentityMigration {
     }
 
     static func perform() {
+        // A development identity starts with its own settings. It must never silently import the
+        // retired public domain or the public app's recovery state.
+        guard shouldPerform(isDevelopment: ApplicationIdentity.isDevelopment) else { return }
         migratePreferencesIfNeeded()
         copyFileIfNeeded(
             from: ApplicationIdentity.legacyCacheDirectoryURL

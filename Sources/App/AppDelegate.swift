@@ -9,7 +9,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isEnabled: settingsStore.workspacePreviewThumbnailsEnabled
     )
     lazy var settingsNavigation = SettingsNavigationModel()
-    lazy var updateController = UpdateController()
+    lazy var updateController = UpdateController(
+        configuration: .mainBundle,
+        diagnostics: diagnostics
+    )
     lazy var settingsWindowCoordinator = SettingsWindowCoordinator(diagnostics: diagnostics)
     lazy var settingsCommandRequestRouter = SettingsCommandRequestRouter()
     private let onboardingProgressStore = OnboardingProgressStore()
@@ -123,12 +126,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         },
         setICloudSyncEnabled: { [weak self] enabled in
-            guard let self else { return false }
+            guard let self, !ApplicationIdentity.isDevelopment else { return false }
             self.settingsStore.iCloudSyncEnabled = enabled
             return self.settingsStore.iCloudSyncEnabled == enabled
         },
         replaceICloudWithLocal: { [weak self] in
-            self?.settingsStore.replaceICloudSettingsWithLocalCopy() ?? false
+            guard !ApplicationIdentity.isDevelopment else { return false }
+            return self?.settingsStore.replaceICloudSettingsWithLocalCopy() ?? false
         }
     )
     private lazy var cliRequestRouter = WindowRangerCLIRequestRouter(
@@ -304,6 +308,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let tiledPlacementUndoManager = UndoManager()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let runningApplications = NSWorkspace.shared.runningApplications.map {
+            RunningApplicationIdentity(
+                processIdentifier: $0.processIdentifier,
+                bundleIdentifier: $0.bundleIdentifier
+            )
+        }
+        guard ApplicationInstancePolicy.shouldStart(
+            currentProcessIdentifier: ProcessInfo.processInfo.processIdentifier,
+            runningApplications: runningApplications
+        ) else {
+            NSApp.terminate(nil)
+            return
+        }
         ApplicationIdentityMigration.perform()
         NSApp.setActivationPolicy(.accessory)
         guard settingsStore.workspaces.first != nil else { return }
@@ -1158,7 +1175,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cliLaunchAtLoginController.refresh()
         let applicationConfiguration = WindowRangerCLIApplicationConfiguration(
             settings: settingsStore.cliConfigurationSnapshot(),
-            launchAtLoginEnabled: cliLaunchAtLoginController.isEnabled,
+            launchAtLoginEnabled: ApplicationIdentity.isDevelopment
+                ? false : cliLaunchAtLoginController.isEnabled,
             updates: WindowRangerCLIUpdateConfiguration(
                 betaUpdatesEnabled: updateController.betaUpdatesEnabled,
                 automaticChecksEnabled: updateController.automaticChecksEnabled,
@@ -1216,6 +1234,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard case let .success(decoded) = decodedCLIConfiguration(document),
               case let .success(configuration) = decoded.validated()
         else { return .failure(.invalidRequest) }
+        guard !ApplicationIdentity.isDevelopment || (
+            !configuration.launchAtLoginEnabled && !configuration.settings.iCloudSyncEnabled
+        ) else { return .failure(.invalidRequest) }
         if let preflightError = configuration.applicationPreflightError(
             currentlyICloudSyncEnabled: settingsStore.iCloudSyncEnabled
         ) {

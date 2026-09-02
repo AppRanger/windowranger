@@ -1,6 +1,10 @@
 import Foundation
 import XCTest
 
+#if canImport(Sparkle)
+import Sparkle
+#endif
+
 @MainActor
 final class UpdateControllerTests: XCTestCase {
     func testDevelopmentBuildNeverUsesAnInjectedUpdater() {
@@ -56,7 +60,7 @@ final class UpdateControllerTests: XCTestCase {
         XCTAssertEqual(invalidURL.availability, .invalidFeedURL)
     }
 
-    func testPreferencesAreLocalAndControllerSynchronizesThemWithUpdater() {
+    func testPreferencesAreLocalAndControllerSynchronizesThemWithUpdater() async {
         let (defaults, suite) = isolatedDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = UpdatePreferences(defaults: defaults)
@@ -64,6 +68,8 @@ final class UpdateControllerTests: XCTestCase {
         preferences.automaticChecks = true
         preferences.automaticDownloads = true
         let service = UpdateServiceSpy()
+        let checkCalled = expectation(description: "Updater check dispatched")
+        service.onCheck = { checkCalled.fulfill() }
         let controller = UpdateController(
             configuration: availableConfiguration,
             preferences: preferences,
@@ -80,12 +86,103 @@ final class UpdateControllerTests: XCTestCase {
         controller.betaUpdatesEnabled = false
         controller.checkForUpdates()
 
+        await fulfillment(of: [checkCalled], timeout: 1)
+
         XCTAssertFalse(defaults.bool(forKey: "windowranger.updates.automaticChecks"))
         XCTAssertFalse(defaults.bool(forKey: "windowranger.updates.automaticDownloads"))
         XCTAssertFalse(defaults.bool(forKey: "windowranger.updates.betaOptIn"))
         XCTAssertFalse(service.automaticallyChecksForUpdates)
         XCTAssertFalse(service.automaticallyDownloadsUpdates)
         XCTAssertEqual(service.checkCount, 1)
+    }
+
+    func testManualCheckPublishesProgressAndRejectsDuplicateRequests() async {
+        let service = UpdateServiceSpy()
+        let checkCalled = expectation(description: "Updater check dispatched")
+        service.onCheck = { checkCalled.fulfill() }
+        let controller = UpdateController(
+            configuration: availableConfiguration,
+            updater: service
+        )
+        controller.checkForUpdates()
+        controller.checkForUpdates()
+
+        XCTAssertTrue(controller.isCheckingForUpdates)
+        XCTAssertFalse(controller.canCheckForUpdates)
+        XCTAssertEqual(controller.statusMessage, "Checking for updates…")
+        XCTAssertEqual(service.checkCount, 1)
+        await fulfillment(of: [checkCalled], timeout: 1)
+        XCTAssertEqual(service.checkCount, 1)
+    }
+
+    func testManualCheckPublishesTerminalResults() {
+        let service = UpdateServiceSpy()
+        let controller = UpdateController(
+            configuration: availableConfiguration,
+            updater: service
+        )
+
+        controller.checkForUpdates()
+        controller.finishUpdateCheck(.upToDate)
+        XCTAssertFalse(controller.isCheckingForUpdates)
+        XCTAssertTrue(controller.canCheckForUpdates)
+        XCTAssertEqual(controller.statusMessage, "WindowRanger is up to date.")
+
+        controller.checkForUpdates()
+        controller.finishUpdateCheck(.updateAvailable)
+        XCTAssertEqual(controller.statusMessage, "An update is available.")
+
+        controller.checkForUpdates()
+        controller.finishUpdateCheck(.failed)
+        XCTAssertEqual(
+            controller.statusMessage,
+            "Couldn’t check for updates. Please try again."
+        )
+    }
+
+    func testControllerExposesSparkleManualCheckDelegateCallbacks() {
+        let controller = UpdateController(
+            configuration: availableConfiguration,
+            updater: UpdateServiceSpy()
+        )
+
+        XCTAssertTrue(controller.responds(to: NSSelectorFromString("updater:didFindValidUpdate:")))
+        XCTAssertTrue(controller.responds(to: NSSelectorFromString("updaterMayCheckForUpdates:")))
+        XCTAssertTrue(controller.responds(to: NSSelectorFromString("updater:didFinishLoadingAppcast:")))
+        XCTAssertTrue(controller.responds(to: NSSelectorFromString("updater:didAbortWithError:")))
+        XCTAssertTrue(controller.responds(to: NSSelectorFromString(
+            "updater:didFinishUpdateCycleForUpdateCheck:error:"
+        )))
+    }
+
+    func testManualCheckWaitsForSparkleStartupBeforeDispatching() async {
+        let service = UpdateServiceSpy()
+        service.canCheckForUpdates = false
+        let controller = UpdateController(
+            configuration: availableConfiguration,
+            updater: service
+        )
+
+        controller.checkForUpdates()
+        XCTAssertTrue(controller.isCheckingForUpdates)
+        XCTAssertEqual(service.checkCount, 0)
+
+        service.canCheckForUpdates = true
+        try? await Task.sleep(for: .milliseconds(250))
+
+        XCTAssertEqual(service.checkCount, 1)
+    }
+
+    func testSparkleCycleCompletionDistinguishesNoUpdateFromFailure() {
+        XCTAssertEqual(UpdateController.completedCycleResult(error: nil), .upToDate)
+        XCTAssertEqual(UpdateController.completedCycleResult(error: NSError(
+            domain: SUSparkleErrorDomain,
+            code: 1001
+        )), .upToDate)
+        XCTAssertEqual(UpdateController.completedCycleResult(error: NSError(
+            domain: SUSparkleErrorDomain,
+            code: 1002
+        )), .failed)
     }
 
     func testBetaBuildDefaultsToBetaButHonorsAPersistedOptOut() {
@@ -135,9 +232,12 @@ final class UpdateControllerTests: XCTestCase {
 private final class UpdateServiceSpy: UpdateServicing {
     var automaticallyChecksForUpdates = false
     var automaticallyDownloadsUpdates = false
+    var canCheckForUpdates = true
     private(set) var checkCount = 0
+    var onCheck: (() -> Void)?
 
     func checkForUpdates() {
         checkCount += 1
+        onCheck?()
     }
 }

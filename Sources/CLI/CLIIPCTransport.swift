@@ -6,8 +6,16 @@ enum CLIIPCTransport {
     static let maximumMessageBytes = WindowRangerCLIProtocol.maximumMessageBytes
     static let defaultTimeout: TimeInterval = 3
 
+    static let applicationBundleIdentifier: String = {
+#if WINDOWRANGER_DEVELOPMENT_IDENTITY
+        "dev.appranger.WindowRanger.Debug"
+#else
+        "dev.appranger.WindowRanger"
+#endif
+    }()
+
     static func socketPath(userID: uid_t = getuid()) -> String {
-        "/tmp/dev.appranger.WindowRanger.cli.v1.\(userID).sock"
+        "/tmp/\(applicationBundleIdentifier).cli.v1.\(userID).sock"
     }
 }
 
@@ -65,7 +73,7 @@ struct CLIIPCPeerPolicy: Sendable {
         teamIdentifier: String = Self.teamIdentifier
     ) -> Self {
         Self(
-            codeIdentifier: "dev.appranger.WindowRanger",
+            codeIdentifier: CLIIPCTransport.applicationBundleIdentifier,
             codeLocationURL: bundleURL,
             teamIdentifier: teamIdentifier
         )

@@ -34,9 +34,9 @@ gates.
 All publicly distributed Stable and Beta builds retain the canonical
 `dev.appranger.WindowRanger` bundle identifier and Developer ID application identity. Do not
 create channel-specific public identifiers: doing so would create parallel Accessibility clients
-and make update promotion unreliable. A future development-only Xcode identity is a separate local
-tooling decision; it would not be a public Dev release promise and must be documented in the daily
-development workflow before implementation.
+and make update promotion unreliable. Local Debug builds use the separate
+`dev.appranger.WindowRanger.Debug` identity and **WindowRanger Dev** name. That development identity
+is local tooling, not a public Dev release promise or update target.
 
 Build configuration does not determine the release channel. A local Release-configuration build
 from `develop` remains Dev; only provenance, completed gates, and promotion through the flow below

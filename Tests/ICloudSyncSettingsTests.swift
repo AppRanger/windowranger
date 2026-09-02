@@ -2,6 +2,34 @@ import XCTest
 
 final class ICloudSyncSettingsTests: XCTestCase {
     @MainActor
+    func testUnsupportedBuildClearsStaleSyncAndRejectsEveryEnablePath() {
+        let (defaults, suite) = isolatedDefaults("UnsupportedBuild")
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "iCloudSyncEnabled")
+        let cloud = InspectableUbiquitousStore()
+
+        let store = SettingsStore(
+            defaults: defaults,
+            ubiquitousStore: cloud,
+            connectedDisplaysProvider: { [] },
+            supportsICloudSync: false
+        )
+
+        XCTAssertFalse(store.iCloudSyncEnabled)
+        XCTAssertFalse(defaults.bool(forKey: "iCloudSyncEnabled"))
+        XCTAssertEqual(cloud.readCount, 0)
+        XCTAssertEqual(cloud.writeCount, 0)
+        XCTAssertEqual(cloud.synchronizeCount, 0)
+
+        store.iCloudSyncEnabled = true
+        XCTAssertFalse(store.iCloudSyncEnabled)
+        XCTAssertFalse(defaults.bool(forKey: "iCloudSyncEnabled"))
+        XCTAssertFalse(store.replaceICloudSettingsWithLocalCopy())
+        XCTAssertEqual(cloud.writeCount, 0)
+        XCTAssertEqual(cloud.synchronizeCount, 0)
+    }
+
+    @MainActor
     func testNewInstallationDefaultsToLocalOnlyWithoutCloudContact() {
         let (defaults, suite) = isolatedDefaults("FirstRun")
         defer { defaults.removePersistentDomain(forName: suite) }
