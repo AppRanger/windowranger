@@ -33,7 +33,11 @@ smallest useful outcome and acceptance boundary.
   failing Work-to-workspace-1 switch and recovering about 1.2 seconds later without a visibility
   retry. The focused 144-test workspace suite passed. In the replacement installed Debug build,
   the maintainer observed the expected delay while Mail was unresponsive and confirmed that the
-  window then caught up correctly.
+  window then caught up correctly. Stable 1.0.5 build 18 was subsequently produced from exact
+  `main` commit `30cb68ccb3fae9e7c45276156bd2089e7ab5ec97` after all 911 non-hosted tests,
+  Release static analysis, universal archive/export, notarization, stapling, Gatekeeper, and DMG
+  verification passed. The maintainer accepted the exact DMG-installed build before the immutable
+  GitHub release and its five round-trip-verified assets were published as `v1.0.5`.
 
 ### WR-019 — Separate the local Xcode development identity
 
