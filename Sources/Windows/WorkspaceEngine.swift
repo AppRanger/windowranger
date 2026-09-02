@@ -12433,6 +12433,7 @@ final class WorkspaceEngine {
         let requiredProcessIdentifiers = Set(windows.keys.map(\.processIdentifier))
             .intersection(runningProcessIdentifiers)
         let trackedWindowKeysBeforeEnumeration = Set(windows.keys)
+        let deferredWindowKeysBeforeEnumeration = temporarilyDeferredWindowKeys
         let visibleWindowLayers = AccessibilityWindow.visibleWindowLayers()
         var successfullyEnumeratedProcesses = Set<pid_t>()
         var enumeratedWindowKeys = Set<WindowKey>()
@@ -13131,6 +13132,42 @@ final class WorkspaceEngine {
         }
         temporarilyDeferredWindowKeys = deferredWindowKeys
         updateRetainedLayoutSlots(retainedLayoutSlotReasons, correlationID: correlationID)
+
+        // A workspace switch can coincide with an application's AX timeout. The switch must not
+        // probe that process while it is in backoff, but once a later authoritative enumeration
+        // succeeds we need to finish the skipped visibility write. Otherwise an inactive window
+        // that was on screen at the time of the switch remains visible indefinitely because the
+        // normal background signature contains only active-workspace geometry.
+        if performAXWrites, !isStartup, !lifecycleTransitionActive {
+            let recoveredInactiveWindows = windows.values.filter { tracked in
+                Self.shouldParkAfterAccessibilityRecovery(
+                    wasDeferred: deferredWindowKeysBeforeEnumeration.contains(tracked.key),
+                    isDeferred: temporarilyDeferredWindowKeys.contains(tracked.key),
+                    workspaceID: tracked.workspaceID,
+                    activeWorkspaceIDs: activeWorkspaceIDs,
+                    keepsOnAllWorkspaces: resolvedRule(
+                        for: tracked.bundleIdentifier
+                    ).keepsOnAllWorkspaces
+                ) && !isDropDownAppWindow(tracked.key) &&
+                    !isExcludedFromWorkspaceParticipation(tracked)
+            }
+            if !recoveredInactiveWindows.isEmpty {
+                diagnostics.log(
+                    category: "window-lifecycle",
+                    event: "recovered-inactive-windows-reparked",
+                    correlation: correlationID,
+                    fields: [
+                        "window-count": String(recoveredInactiveWindows.count),
+                    ]
+                )
+                applyPositionChanges(
+                    recoveredInactiveWindows.map {
+                        PositionChange(window: $0, position: parkingPosition(displays: displays))
+                    },
+                    correlationID: correlationID
+                )
+            }
+        }
 
         if isStartup {
             prepareDropDownAppSessionForStartup(
@@ -16623,6 +16660,17 @@ final class WorkspaceEngine {
             .map { PositionChange(window: $0, position: parkingPosition) },
             correlationID: correlationID
         )
+    }
+
+    static func shouldParkAfterAccessibilityRecovery(
+        wasDeferred: Bool,
+        isDeferred: Bool,
+        workspaceID: UUID,
+        activeWorkspaceIDs: Set<UUID>,
+        keepsOnAllWorkspaces: Bool
+    ) -> Bool {
+        wasDeferred && !isDeferred && !keepsOnAllWorkspaces &&
+            !activeWorkspaceIDs.contains(workspaceID)
     }
 
     @discardableResult
