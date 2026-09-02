@@ -11,6 +11,11 @@ final class CLIIPCTransportTests: XCTestCase {
         XCTAssertEqual(policy.teamIdentifier, CLIIPCPeerPolicy.teamIdentifier)
     }
 
+    func testDefaultTransportIdentityMatchesPublicAppInNonHostedTests() {
+        XCTAssertEqual(CLIIPCTransport.applicationBundleIdentifier, "dev.appranger.WindowRanger")
+        XCTAssertTrue(CLIIPCTransport.socketPath(userID: 501).contains("dev.appranger.WindowRanger.cli.v1.501"))
+    }
+
     func testRoundTripUsesBoundedLengthPrefixedMessages() throws {
         let socketPath = temporarySocketPath()
         let server = CLIIPCServer(

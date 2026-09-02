@@ -20,6 +20,20 @@ smallest useful outcome and acceptance boundary.
 
 ## Done
 
+### WR-019 — Separate the local Xcode development identity
+
+- **Type:** Development workflow / signing
+- **Priority:** P2
+- **Status:** Done
+- **Result:** Debug builds install as **WindowRanger Dev** with bundle identifier
+  `dev.appranger.WindowRanger.Debug`, separate settings/cache/log/IPC state, and no iCloud
+  entitlement. Stable, Beta, and Release retain the public WindowRanger identity and continuity.
+  The handoff scripts keep only the selected copy running without removing either installation.
+- **Evidence:** The complete 910-test non-hosted suite and supporting workflow checks passed. Signed
+  universal Debug and Release builds were installed together and inspected. Installed testing found
+  and fixed a Release-optimized startup crash in workspace-preview permission initialization. The
+  maintainer then confirmed both apps, their separate permissions, and two-way switching all work.
+
 ### WR-109 — Keep the first status menu at its final anchored position
 
 - **Type:** Menu-bar popup positioning bug
@@ -4272,30 +4286,6 @@ design notes, but every active candidate must map back to a work item here or be
   adaptive behavior after a window opens/closes; deterministic slot ordering and manual reassignment;
   minimum sizes, aspect-ratio/display changes, Undo, migration, sync/import bounds, and builder
   accessibility.
-
-### WR-019 — Separate the local Xcode development identity
-
-- **Type:** Development workflow / signing
-- **Priority:** P2
-- **Status:** Needs decision
-- **Evidence:** User-observed and signing-requirement backed during the first Beta smoke test.
-- **Current behavior:** Xcode Debug and the installed Developer ID app use the same
-  `dev.appranger.WindowRanger` bundle identifier but different designated requirements. macOS can
-  therefore treat them as separate Accessibility clients while LaunchServices still sees the same
-  bundle identifier, making handoff and permission recovery ambiguous.
-- **Smallest useful outcome:** Decide whether the local Xcode product should use a clearly named
-  development-only bundle identifier and app name while Stable and Beta retain the canonical public
-  identity.
-- **Acceptance:**
-  - the installed public app and Xcode development app are unambiguous in Accessibility settings,
-    LaunchServices, process inspection, and menus;
-  - the required development App ID, provisioning profile, and iCloud capability are configured
-    before changing the project;
-  - Xcode handoff scripts quit and resume only the intended product;
-  - a future development-only identity does not alter the established public identity, migrated
-    preferences and iCloud continuity, update continuity, or release provenance;
-  - migration guidance avoids global TCC or LaunchServices resets and is live-tested on the
-    maintainer's Mac.
 
 ## Pre-release work
 

@@ -4,7 +4,10 @@ set -euo pipefail
 
 repository_root="${0:A:h:h}"
 project_file="$repository_root/WindowRanger.xcodeproj"
-bundle_identifier="dev.appranger.WindowRanger"
+bundle_identifiers=(
+    "dev.appranger.WindowRanger"
+    "dev.appranger.WindowRanger.Debug"
+)
 mode="${1:-interactive}"
 
 case "$mode" in
@@ -23,19 +26,20 @@ case "$mode" in
 esac
 
 running_instances() {
-    /usr/bin/osascript -l JavaScript - "$bundle_identifier" "$1" <<'JXA'
+    /usr/bin/osascript -l JavaScript - "${bundle_identifiers[@]}" -- "$1" <<'JXA'
 ObjC.import("AppKit")
 
 function run(arguments) {
-    const bundleIdentifier = arguments[0]
-    const shouldTerminate = arguments[1] === "terminate"
+    const separator = arguments.indexOf("--")
+    const bundleIdentifiers = new Set(arguments.slice(0, separator))
+    const shouldTerminate = arguments[separator + 1] === "terminate"
     const applications = $.NSWorkspace.sharedWorkspace.runningApplications
     const matches = []
 
     for (let index = 0; index < applications.count; index += 1) {
         const application = applications.objectAtIndex(index)
         const identifier = application.bundleIdentifier
-        if (identifier.isNil() || ObjC.unwrap(identifier) !== bundleIdentifier) {
+        if (identifier.isNil() || !bundleIdentifiers.has(ObjC.unwrap(identifier))) {
             continue
         }
 

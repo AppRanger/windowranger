@@ -497,10 +497,13 @@ final class WorkspacePreviewPermissionMonitor {
     private let provider: WorkspacePreviewPermissionProvider
     private(set) var authorization: WorkspacePreviewScreenRecordingAuthorization
 
-    init(provider: WorkspacePreviewPermissionProvider = WorkspacePreviewPermissionProvider()) {
+    init(
+        provider: WorkspacePreviewPermissionProvider = WorkspacePreviewPermissionProvider(),
+        initialAuthorization: WorkspacePreviewScreenRecordingAuthorization? = nil
+    ) {
         self.provider = provider
         // This is a preflight only; construction must not cause a permission prompt.
-        authorization = provider.currentAuthorization()
+        authorization = initialAuthorization ?? provider.currentAuthorization()
     }
 
     func refresh() {
@@ -564,13 +567,20 @@ final class WorkspacePreviewRepository {
         self.isEnabled = isEnabled
         self.capturer = capturer ?? ScreenCaptureKitWorkspacePreviewCapturer()
         self.wallpaperProvider = wallpaperProvider ?? DesktopWorkspacePreviewWallpaperProvider()
-        permissionMonitor = WorkspacePreviewPermissionMonitor(provider: permissionProvider)
+        // Do not read an @Observable getter while constructing another @Observable object. Under
+        // Release optimization that can enter the nested object's registrar before it is valid.
+        let initialAuthorization = permissionProvider.currentAuthorization()
+        let permissionMonitor = WorkspacePreviewPermissionMonitor(
+            provider: permissionProvider,
+            initialAuthorization: initialAuthorization
+        )
+        self.permissionMonitor = permissionMonitor
         self.maximumEntryCount = max(1, maximumEntryCount)
         self.maximumByteCount = max(0, maximumByteCount)
         self.maximumCapturedItemCountPerWorkspace = max(0, maximumCapturedItemCountPerWorkspace)
         self.thumbnailMaximumSize = thumbnailMaximumSize
         // Preflight is non-prompting. Initialization must never call `request`.
-        authorization = permissionMonitor.authorization
+        authorization = initialAuthorization
     }
 
     func refreshAuthorization() {

@@ -50,10 +50,11 @@ available to the selected team.
 If you also use an installed daily copy on the same Mac, follow the
 [daily development workflow](docs/daily-development-workflow.md) so only one copy runs at a time.
 
-Do not change the bundle identifier or create a parallel Debug identifier for convenience.
-Accessibility trust is attached to the signed app identity, and duplicate or stale products make
-live testing unreliable. Quit AeroSpace or other window managers before testing overlapping global
-shortcuts.
+Debug deliberately builds as **WindowRanger Dev** with the development-only
+`dev.appranger.WindowRanger.Debug` identity. Release retains the public
+`dev.appranger.WindowRanger` identity. Use the handoff scripts rather than launching both copies;
+two running window managers would compete for global shortcuts and window control. Quit AeroSpace
+or other window managers before testing overlapping global shortcuts.
 
 ## Implementation principles
 

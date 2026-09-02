@@ -1,17 +1,19 @@
 # Daily use and development on one Mac
 
-WindowRanger's Debug and Release configurations currently share the
-`dev.appranger.WindowRanger` bundle identifier, but they do not have one interchangeable signed
-identity. Xcode uses Apple Development while public packages use Developer ID; their designated
-requirements differ, so macOS may maintain separate Accessibility trust decisions. Switching
-between them can require removing a stale entry and granting the exact copy being launched. Only
-one copy should run at a time because both copies would compete for global shortcuts and window
-control.
+WindowRanger's Debug configuration has a separate local development identity:
 
-A future development-only bundle identifier may make the two local clients unambiguous, but that is
-a separate product/signing change. Stable and Beta releases continue to use the canonical public
-identifier. Do not change signing, reset TCC globally, or invent another release-channel identity as
-part of ordinary local handoff.
+- **WindowRanger Dev**, `dev.appranger.WindowRanger.Debug`, installed at
+  `/Applications/WindowRanger Dev.app`;
+- **WindowRanger**, `dev.appranger.WindowRanger`, installed at
+  `/Applications/WindowRanger.app` for local Release validation and public Stable/Beta builds.
+
+macOS therefore keeps their Accessibility and Screen Recording grants separate, and their bundle
+identifiers keep preferences, recovery state, diagnostics and command sockets separate. Debug is
+deliberately local-only and has no iCloud entitlement, so it cannot read or change the public app's
+synced profiles. Only one copy should run at a time because both copies would compete for global
+shortcuts and window control. The handoff scripts stop either identity before launching the
+requested one. Debug does not offer Open at Login or PATH installation, avoiding startup and
+command-link conflicts with the public app; its bundled helper remains available for direct tests.
 
 “Daily copy” describes the locally installed app used on this Mac; it is not a release channel. A
 Release-configuration build from `develop` is still a Dev build, not a Stable release. Channel and
@@ -34,25 +36,26 @@ When Release is ready, use:
 ./scripts/install-daily.sh --release
 ```
 
-The installed app is `/Applications/WindowRanger.app`. If it replaces an existing daily build, the
-previous bundle is retained at `/Applications/.WindowRanger.previous` without an `.app` suffix so
-LaunchServices cannot select it as a runnable app.
+The default Debug install is `/Applications/WindowRanger Dev.app`. If it replaces an existing Debug
+build, the previous bundle is retained at `/Applications/.WindowRanger Dev.previous` without an
+`.app` suffix so LaunchServices cannot select it as a runnable app. `--release` intentionally uses
+the canonical `/Applications/WindowRanger.app` identity and path for Release-configuration testing.
 
 The Settings sidebar footer identifies the running version, build, source commit, and Dev
 configuration. A daily build made from uncommitted changes appends `-dirty` to the commit so live
 validation cannot accidentally be attributed to the clean commit alone.
 
-If the installed Developer ID build is already trusted but the Xcode build is not, open **System
-Settings > Privacy & Security > Accessibility**, remove only the stale WindowRanger entry when
-necessary, launch the intended exact build, and grant that copy. Repeat the handoff for the installed
-copy if macOS later asks again. Do not use a global LaunchServices or privacy-database reset.
+Grant **WindowRanger Dev** once in **System Settings > Privacy & Security > Accessibility**. Keep the
+existing **WindowRanger** grant for the public app. If macOS shows a stale entry after this migration,
+remove only that exact stale entry and grant the app at the path above; do not use a global
+LaunchServices or privacy-database reset.
 
 ## Develop in Xcode
 
 The generated `WindowRanger` scheme automates the handoff:
 
-1. Before Xcode runs Debug, it gracefully quits any active WindowRanger.
-2. Xcode launches its exact Debug product.
+1. Before Xcode runs Debug, it gracefully quits either active identity.
+2. Xcode launches its exact **WindowRanger Dev** product.
 3. When the Run action finishes, the scheme reopens the explicit `/Applications/WindowRanger.app`
    daily copy if it exists.
 
@@ -64,6 +67,8 @@ For a manual handoff, use:
 ```
 
 `start-development.sh` opens the generated Xcode project after the active app has quit.
+`resume-daily.sh` resumes `/Applications/WindowRanger Dev.app` by default; the Xcode scheme supplies
+the public app path explicitly for its post-action.
 
 Use WindowRanger's own **Quit WindowRanger** command whenever practical. Xcode's Stop button
 terminates Debug without the app's normal synchronous quit cleanup; continuously saved recovery

@@ -245,14 +245,14 @@ The seven production onboarding stages can likewise be rendered without starting
 
 The current selected-reference review and durable output paths are recorded in `design-qa.md`.
 
-The scheme runs as **Debug** from Xcode and archives as **Release**. Both configurations currently
-use the `dev.appranger.WindowRanger` bundle identifier, but Apple Development and Developer ID
-signatures have different designated requirements. macOS can therefore require separate
-Accessibility approval when switching between the Xcode Debug product and the installed release;
-only one copy should run at a time. A distinct development-only app identity is tracked separately
-and will not change the Stable/Beta identity without an explicit decision. Debug app runs write
-structured JSON Lines diagnostics to
-`~/Library/Logs/dev.appranger.WindowRanger/diagnostics.jsonl`; the file rotates at 1 MB and retains two
+The scheme runs as **WindowRanger Dev** from Xcode with the development-only
+`dev.appranger.WindowRanger.Debug` identity, and archives **WindowRanger** as **Release** with the
+public `dev.appranger.WindowRanger` identity. Their Accessibility grants, preferences, recovery
+state, diagnostics and command sockets are separate; Debug is local-only and cannot access the
+public iCloud store. Only one copy should run at a time; the development handoff scripts enforce
+that boundary. Debug app runs write structured JSON
+Lines diagnostics to
+`~/Library/Logs/dev.appranger.WindowRanger.Debug/diagnostics.jsonl`; the file rotates at 1 MB and retains two
 1 MB backups. Release builds do not create this verbose file. Unit tests use memory or no-op loggers
 and never write there.
 
@@ -564,7 +564,7 @@ unless `--force` is explicit, and symbolic-link destinations are always refused.
 
 ## Current behaviour and limits
 
-Window membership, original positions, per-window floating overrides, and the active workspace are saved locally in `~/Library/Caches/dev.appranger.WindowRanger/workspace-state.json` for the active profile. On a normal quit, the state is saved before every managed window is made visible again. On the next launch, exact window-ID and app-bundle matches are returned only when the saved profile and WindowServer session remain valid; the previously active workspace is shown, and inactive workspaces are parked again.
+Window membership, original positions, per-window floating overrides, and the active workspace are saved locally in `~/Library/Caches/<bundle-identifier>/workspace-state.json` for the active profile, so Debug and Release recovery state remain separate. On a normal quit, the state is saved before every managed window is made visible again. On the next launch, exact window-ID and app-bundle matches are returned only when the saved profile and WindowServer session remain valid; the previously active workspace is shown, and inactive workspaces are parked again.
 
 The AppRanger identity migration copies missing preferences and the current-session recovery cache
 from `com.windowranger.WindowRanger` once, without deleting or overwriting either identity's data.

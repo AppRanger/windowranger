@@ -197,8 +197,14 @@ final class SettingsStore: ObservableObject {
         }
     }
 
+    let supportsICloudSync: Bool
+
     @Published var iCloudSyncEnabled: Bool {
         didSet {
+            if !supportsICloudSync, iCloudSyncEnabled {
+                iCloudSyncEnabled = false
+                return
+            }
             guard !isApplyingRemoteChange else { return }
             defaults.set(iCloudSyncEnabled, forKey: Keys.iCloudSync)
             if iCloudSyncEnabled {
@@ -351,12 +357,14 @@ final class SettingsStore: ObservableObject {
         ubiquitousStore: UbiquitousKeyValueStoring? = NSUbiquitousKeyValueStore.default,
         connectedDisplaysProvider: @escaping () -> [DisplaySnapshot] = WorkspaceEngine.activeDisplays,
         isPortableMacProvider: @escaping () -> Bool = MachineKind.isPortableMac,
+        supportsICloudSync: Bool = !ApplicationIdentity.isDevelopment,
         diagnostics: DiagnosticLogger = .disabled
     ) {
         self.defaults = defaults
         self.ubiquitousStore = ubiquitousStore
         self.connectedDisplaysProvider = connectedDisplaysProvider
         self.isPortableMacProvider = isPortableMacProvider
+        self.supportsICloudSync = supportsICloudSync
         self.diagnostics = diagnostics
 
         let removedInputKeys = [
@@ -408,7 +416,11 @@ final class SettingsStore: ObservableObject {
             displays: initialDisplays
         )
 
-        let initialICloudSyncEnabled = defaults.object(forKey: Keys.iCloudSync) as? Bool ?? false
+        let storedICloudSyncEnabled = defaults.object(forKey: Keys.iCloudSync) as? Bool ?? false
+        let initialICloudSyncEnabled = supportsICloudSync && storedICloudSyncEnabled
+        if !supportsICloudSync, storedICloudSyncEnabled {
+            defaults.set(false, forKey: Keys.iCloudSync)
+        }
         iCloudSyncEnabled = initialICloudSyncEnabled
         iCloudProfileLibraryIssue = nil
         iCloudSyncState = initialICloudSyncEnabled ? .waitingForCloud : .disabled
@@ -508,7 +520,7 @@ final class SettingsStore: ObservableObject {
         logProfileSelection(selection, source: "startup")
         logRoleResolutions(for: active, source: "startup")
 
-        if let ubiquitousStore {
+        if supportsICloudSync, let ubiquitousStore {
             iCloudObserver = NotificationCenter.default.addObserver(
                 forName: NSUbiquitousKeyValueStore.didChangeExternallyNotification,
                 object: ubiquitousStore.notificationObject,
@@ -653,7 +665,8 @@ final class SettingsStore: ObservableObject {
             ? selectedProfile.dropDownApp.map { [$0] } ?? [] : selectedProfile.quickApps)
             .map(selectedProfile.quickAppShelfPresentation.applying)
         dropDownApp = quickApps.first
-        iCloudSyncEnabled = configuration.iCloudSyncEnabled
+        let appliedICloudSyncEnabled = supportsICloudSync && configuration.iCloudSyncEnabled
+        iCloudSyncEnabled = appliedICloudSyncEnabled
         radialMenuEnabled = configuration.radialMenuEnabled
         radialWheelDefinition = configuration.radialWheelDefinition
         hotKeyConfiguration = Self.reconciledHotKeyConfiguration(
@@ -702,9 +715,9 @@ final class SettingsStore: ObservableObject {
         persistFocusFollowsMovedWindow()
         persistAutomaticallyUnhideApplications()
 
-        defaults.set(configuration.iCloudSyncEnabled, forKey: Keys.iCloudSync)
+        defaults.set(appliedICloudSyncEnabled, forKey: Keys.iCloudSync)
         var enabledICloudThisApply = false
-        if configuration.iCloudSyncEnabled {
+        if appliedICloudSyncEnabled {
             // Match the existing explicit enable path. A rejected cloud library is retained as an
             // issue and cannot be silently replaced by this configuration apply.
             if !previousICloudEnabled {
@@ -3056,7 +3069,10 @@ final class SettingsStore: ObservableObject {
     /// while iCloud availability is unresolved or the remote profile library was rejected.
     @discardableResult
     func replaceICloudSettingsWithLocalCopy() -> Bool {
-        guard ubiquitousStore != nil, let data = encodedLocalProfileLibrary() else { return false }
+        guard supportsICloudSync,
+              ubiquitousStore != nil,
+              let data = encodedLocalProfileLibrary()
+        else { return false }
         switch SyncedProfileLibraryPolicy.validate(data) {
         case .accepted:
             break
