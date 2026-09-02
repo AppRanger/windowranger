@@ -353,10 +353,27 @@ private struct UpdateSettingsView: View {
                     }
                     .pickerStyle(.segmented)
 
-                    Button("Check for Updates…", systemImage: "arrow.triangle.2.circlepath") {
+                    Button(
+                        updateController.isCheckingForUpdates
+                            ? "Checking for Updates…"
+                            : "Check for Updates…",
+                        systemImage: "arrow.triangle.2.circlepath"
+                    ) {
                         updateController.checkForUpdates()
                     }
                     .disabled(!updateController.canCheckForUpdates)
+
+                    if updateController.isCheckingForUpdates {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Checking WindowRanger’s update feed…")
+                        }
+                        .foregroundStyle(.secondary)
+                    } else if let statusMessage = updateController.statusMessage {
+                        Text(statusMessage)
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     Label(
                         updateController.statusMessage ?? updateController.availability.message,

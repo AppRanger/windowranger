@@ -1009,6 +1009,26 @@ final class RadialMenuAndSettingsTests: XCTestCase {
         XCTAssertFalse(gate.cancel())
     }
 
+    func testUpdateCheckStatusMenuGateConsumesOnlyAfterPopupReturns() {
+        var gate = UpdateCheckStatusMenuGate()
+
+        XCTAssertFalse(gate.consumeAfterMenuPresentationReturns())
+        gate.requestAfterMenuPresentation()
+        XCTAssertTrue(gate.isPending)
+        XCTAssertTrue(gate.consumeAfterMenuPresentationReturns())
+        XCTAssertFalse(gate.isPending)
+        XCTAssertFalse(gate.consumeAfterMenuPresentationReturns())
+    }
+
+    func testUpdateCheckStatusMenuGateCanBeCancelledBeforePopupReturns() {
+        var gate = UpdateCheckStatusMenuGate()
+
+        gate.requestAfterMenuPresentation()
+        XCTAssertTrue(gate.cancel())
+        XCTAssertFalse(gate.consumeAfterMenuPresentationReturns())
+        XCTAssertFalse(gate.cancel())
+    }
+
     @MainActor
     func testSettingsReopenResetsOldSpaceBeforeApplicationActivation() {
         let displays = settingsDisplays()

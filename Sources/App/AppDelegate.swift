@@ -9,7 +9,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isEnabled: settingsStore.workspacePreviewThumbnailsEnabled
     )
     lazy var settingsNavigation = SettingsNavigationModel()
-    lazy var updateController = UpdateController()
+    lazy var updateController = UpdateController(
+        configuration: .mainBundle,
+        diagnostics: diagnostics
+    )
     lazy var settingsWindowCoordinator = SettingsWindowCoordinator(diagnostics: diagnostics)
     lazy var settingsCommandRequestRouter = SettingsCommandRequestRouter()
     private let onboardingProgressStore = OnboardingProgressStore()

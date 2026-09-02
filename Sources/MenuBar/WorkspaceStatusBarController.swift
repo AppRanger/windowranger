@@ -1143,6 +1143,27 @@ private struct ManagedDisplayGroupStatusItem {
     var hoverTracker: MenuBarDisplayGroupHoverTracker?
 }
 
+struct UpdateCheckStatusMenuGate {
+    private(set) var isPending = false
+
+    mutating func requestAfterMenuPresentation() {
+        isPending = true
+    }
+
+    mutating func consumeAfterMenuPresentationReturns() -> Bool {
+        guard isPending else { return false }
+        isPending = false
+        return true
+    }
+
+    @discardableResult
+    mutating func cancel() -> Bool {
+        let wasPending = isPending
+        isPending = false
+        return wasPending
+    }
+}
+
 @MainActor
 final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     static var verboseDiagnosticsMenuEnabled: Bool {
@@ -1191,7 +1212,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     private var isInvalidated = false
     private var menuPresentationRequestGate = MenuBarMenuPresentationRequestGate()
     private var settingsStatusMenuOpenGate = SettingsStatusMenuOpenGate()
-    private var checkForUpdatesAfterMenuCloses = false
+    private var updateCheckStatusMenuGate = UpdateCheckStatusMenuGate()
     private var shelfGeneration: UInt64 = 0
     private var pendingShelfTarget: MenuBarHitTarget?
     private var pendingShelfAnchorFrame: CGRect?
@@ -1713,6 +1734,7 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         if settingsStatusMenuOpenGate.cancel() {
             settingsCommandRequestRouter.cancelPendingRequest()
         }
+        updateCheckStatusMenuGate.cancel()
         dismissApplicationShelf()
         appMenu.delegate = nil
         removeDisplayGroupStatusItems()
@@ -1802,6 +1824,14 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
                 self?.performPendingSettingsCommandFromStatusMenu()
             }
         }
+        if updateCheckStatusMenuGate.consumeAfterMenuPresentationReturns() {
+            diagnostics.log(category: "updates", event: "status-menu-presentation-ended")
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isInvalidated else { return }
+                self.diagnostics.log(category: "updates", event: "status-menu-check-dispatched")
+                self.updateController?.checkForUpdates()
+            }
+        }
     }
 
     private func prepareMenuForPresentation() {
@@ -1821,12 +1851,6 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         supportSectionVisibleForCurrentOpen = false
         focusedWindowDiagnosticReport = nil
-        if checkForUpdatesAfterMenuCloses {
-            checkForUpdatesAfterMenuCloses = false
-            DispatchQueue.main.async { [weak self] in
-                self?.updateController?.checkForUpdates()
-            }
-        }
     }
 
     private func rebuildMenu() {
@@ -1894,7 +1918,9 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         appMenu.addItem(.separator())
         if let updateController {
             let updates = actionMenuItem(
-                title: "Check for Updates…",
+                title: updateController.isCheckingForUpdates
+                    ? "Checking for Updates…"
+                    : "Check for Updates…",
                 action: #selector(checkForUpdatesFromStatusMenu)
             )
             updates.image = symbol("arrow.triangle.2.circlepath")
@@ -2008,7 +2034,8 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func checkForUpdatesFromStatusMenu() {
-        checkForUpdatesAfterMenuCloses = true
+        diagnostics.log(category: "updates", event: "status-menu-check-selected")
+        updateCheckStatusMenuGate.requestAfterMenuPresentation()
     }
 
     private func performPendingSettingsCommandFromStatusMenu() {

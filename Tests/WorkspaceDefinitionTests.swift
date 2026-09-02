@@ -3102,6 +3102,83 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertEqual(placement?.displayIdentifier, "external")
     }
 
+    func testDisplayPlacementPreservesLoggedPartialOffscreenPosition() {
+        let display = DisplaySnapshot(
+            identifier: "main",
+            bounds: CGRect(x: 0, y: 0, width: 3_840, height: 1_620),
+            isMain: true,
+            name: "Main"
+        )
+        let frame = WindowFrame(
+            position: CGPoint(x: 1_466, y: 700),
+            size: CGSize(width: 740, height: 1_001)
+        )
+        let placement = WorkspaceEngine.displayPlacement(for: frame, displays: [display])
+
+        let resolved = WorkspaceEngine.resolveDisplayFrame(
+            savedFrame: frame,
+            placement: placement,
+            displays: [display]
+        )
+
+        XCTAssertEqual(resolved.frame, frame)
+        XCTAssertFalse(resolved.usedFallbackDisplay)
+    }
+
+    func testDisplayPlacementPreservesMeaningfullyVisiblePartialPositionAfterResolutionChange() {
+        let original = DisplaySnapshot(
+            identifier: "main",
+            bounds: CGRect(x: 0, y: 0, width: 2_000, height: 1_000),
+            isMain: true,
+            name: "Main"
+        )
+        let frame = WindowFrame(
+            position: CGPoint(x: 1_400, y: 600),
+            size: CGSize(width: 800, height: 500)
+        )
+        let placement = WorkspaceEngine.displayPlacement(for: frame, displays: [original])
+        let changed = DisplaySnapshot(
+            identifier: "main",
+            bounds: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+            isMain: true,
+            name: "Main"
+        )
+
+        let resolved = WorkspaceEngine.resolveDisplayFrame(
+            savedFrame: frame,
+            placement: placement,
+            displays: [changed]
+        )
+
+        XCTAssertEqual(resolved.frame.position, CGPoint(x: 700, y: 480))
+        XCTAssertEqual(resolved.frame.size, frame.size)
+        XCTAssertFalse(resolved.usedFallbackDisplay)
+    }
+
+    func testDisplayPlacementClampsPositionWithOnlyInsignificantVisibleArea() {
+        let display = DisplaySnapshot(
+            identifier: "main",
+            bounds: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+            isMain: true,
+            name: "Main"
+        )
+        let frame = WindowFrame(
+            position: CGPoint(x: 999, y: 799),
+            size: CGSize(width: 500, height: 400)
+        )
+        let placement = WorkspaceEngine.displayPlacement(for: frame, displays: [display])
+
+        let resolved = WorkspaceEngine.resolveDisplayFrame(
+            savedFrame: frame,
+            placement: placement,
+            displays: [display]
+        )
+
+        XCTAssertEqual(resolved.frame.position, CGPoint(x: 500, y: 400))
+        XCTAssertEqual(resolved.frame.size, frame.size)
+        XCTAssertFalse(resolved.usedFallbackDisplay)
+    }
+
     func testDisplayPlacementTracksRelativePositionAfterResolutionChange() {
         let original = [
             DisplaySnapshot(identifier: "external", bounds: CGRect(x: 1920, y: 0, width: 2000, height: 1000), isMain: false, name: "External")

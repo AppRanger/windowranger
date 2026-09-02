@@ -2160,6 +2160,8 @@ final class WorkspaceEngine {
     private var manualNonTiledCrossDisplayMoveSession:
         ManualNonTiledCrossDisplayMoveSession? = nil
     private var manualCrossDisplayPointerAnchor: ManualCrossDisplayPointerAnchor? = nil
+    private var manualPointerIgnoredOverlayWindowKeys: Set<WindowKey> = []
+    private var hasCompletedStartupRefresh = false
     private var manualMoveStableFreeformFrames: [WindowKey: WindowFrame] = [:]
     private var manualTiledResizeSession: ManualTiledResizeSession? = nil
     private var ignoredWindowKeys = Set<WindowKey>()
@@ -2340,6 +2342,7 @@ final class WorkspaceEngine {
         queue.async { [weak self] in
             guard let self else { return }
             self.refreshWindows(isStartup: true)
+            self.hasCompletedStartupRefresh = true
             self.diagnostics.log(
                 category: "session",
                 event: "startup-state-ready",
@@ -8165,7 +8168,10 @@ final class WorkspaceEngine {
 
     func layoutMovePointerPressed(ignoredOverlayWindowKeys: Set<WindowKey> = []) {
         queue.async { [weak self] in
-            guard let self,
+            guard let self else { return }
+            self.manualPointerIgnoredOverlayWindowKeys = ignoredOverlayWindowKeys
+            let displays = Self.activeDisplays()
+            guard
                   !self.isWindowManagementPaused,
                   let pointer = CGEvent(source: nil)?.location,
                   let pointerOrder = AccessibilityWindow.onScreenPointerOrder(),
@@ -8176,32 +8182,40 @@ final class WorkspaceEngine {
                       ignoredOverlayWindowKeys: ignoredOverlayWindowKeys
                   ),
                   let tracked = self.windows[key],
-                  self.isWorkspaceActive(tracked.workspaceID),
                   let frame = AccessibilityWindow.frame(of: tracked.element),
-                  let display = self.targetDisplay(
-                      for: tracked,
-                      workspaceID: tracked.workspaceID,
-                      displays: Self.activeDisplays(),
-                      correlationID: nil
-                  )
+                  let placement = Self.displayPlacement(for: frame, displays: displays),
+                  let display = displays.first(where: {
+                      $0.identifier == placement.displayIdentifier
+                  })
             else {
-                self?.manualCrossDisplayPointerAnchor = nil
+                self.manualCrossDisplayPointerAnchor = nil
                 return
             }
+            let rule = self.resolvedRule(for: tracked.bundleIdentifier)
+            let visibleWorkspaceID = rule.keepsOnAllWorkspaces
+                ? (self.displayMode == .independent
+                    ? self.activeWorkspaceIDByDisplay[display.identifier] ?? self.currentWorkspaceID
+                    : self.currentWorkspaceID)
+                : tracked.workspaceID
+            guard self.isWorkspaceActive(visibleWorkspaceID) else {
+                self.manualCrossDisplayPointerAnchor = nil
+                return
+            }
+            let visibleLayout = self.workspaceLayout(for: visibleWorkspaceID)
             self.manualCrossDisplayPointerAnchor = ManualCrossDisplayPointerAnchor(
                 focusedWindow: key,
                 frame: frame,
                 workspaceID: tracked.workspaceID,
-                layout: self.workspaceLayout(for: tracked.workspaceID),
+                layout: visibleLayout,
                 displayIdentifier: display.identifier,
-                topologySignature: Self.displayTopologySignature(Self.activeDisplays()),
+                topologySignature: Self.displayTopologySignature(displays),
                 profileID: self.currentProfileID
             )
             self.diagnostics.log(
                 category: "manual-cross-layout-move",
                 event: "pointer-anchored",
                 fields: [
-                    "source-layout": self.workspaceLayout(for: tracked.workspaceID).rawValue,
+                    "source-layout": visibleLayout.rawValue,
                     "source-workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
                     "source-display": Self.shortIdentifier(display.identifier),
                     "window": Self.diagnosticWindowKey(key),
@@ -8220,12 +8234,22 @@ final class WorkspaceEngine {
         guard manualCrossDisplayPointerAnchor == nil,
               manualNonTiledCrossDisplayMoveSession == nil,
               let pointer,
-              let tracked = windows[focusedWindow],
-              let observedFrame = observedFrames[focusedWindow],
+              let pointerOrder = AccessibilityWindow.onScreenPointerOrder(),
+              let recoveryWindow = ManualPointerRecoveryPolicy.recoveryWindow(
+                  focusedWindow: focusedWindow,
+                  pointerTargetWindow: AccessibilityWindow.pointerTargetWindow(
+                      at: pointer,
+                      in: pointerOrder,
+                      eligibleWindowKeys: Set(windows.keys),
+                      ignoredOverlayWindowKeys: manualPointerIgnoredOverlayWindowKeys
+                  )
+              ),
+              let tracked = windows[recoveryWindow],
+              let observedFrame = observedFrames[recoveryWindow],
               isWorkspaceActive(tracked.workspaceID),
               workspaceLayout(for: tracked.workspaceID) != .tiled,
-              fullscreenSessions[focusedWindow] == nil,
-              !temporarilyDeferredWindowKeys.contains(focusedWindow),
+              fullscreenSessions[recoveryWindow] == nil,
+              !temporarilyDeferredWindowKeys.contains(recoveryWindow),
               Self.shouldIncludeInLayout(
                   layoutOverride: tracked.layoutOverride,
                   admissionDecision: tracked.admissionDecision,
@@ -8250,13 +8274,13 @@ final class WorkspaceEngine {
         let bounds = managedLayoutBounds(
             layout == .accordion || configuration != nil ? display.usableBounds : display.bounds
         )
-        guard participants.contains(focusedWindow),
+        guard participants.contains(recoveryWindow),
               let anchorFrame = Self.manualMoveFallbackAnchorFrame(
                   layout: layout,
                   orderedWindowKeys: participants,
-                  focusedWindow: focusedWindow,
+                  focusedWindow: recoveryWindow,
                   storedFrame: layout == .none
-                    ? manualMoveStableFreeformFrames[focusedWindow] ?? tracked.restoreFrame
+                    ? manualMoveStableFreeformFrames[recoveryWindow] ?? tracked.restoreFrame
                     : tracked.restoreFrame,
                   layoutBounds: bounds,
                   layoutConfiguration: configuration
@@ -8269,7 +8293,7 @@ final class WorkspaceEngine {
         else { return false }
 
         manualCrossDisplayPointerAnchor = ManualCrossDisplayPointerAnchor(
-            focusedWindow: focusedWindow,
+            focusedWindow: recoveryWindow,
             frame: anchorFrame,
             workspaceID: tracked.workspaceID,
             layout: layout,
@@ -8285,7 +8309,7 @@ final class WorkspaceEngine {
                 "source-layout": layout.rawValue,
                 "source-workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
                 "source-display": Self.shortIdentifier(display.identifier),
-                "window": Self.diagnosticWindowKey(focusedWindow),
+                "window": Self.diagnosticWindowKey(recoveryWindow),
             ]
         )
         updateManualNonTiledCrossDisplayMovePreview()
@@ -8494,6 +8518,58 @@ final class WorkspaceEngine {
     func tiledResizePointerDragged() {
         queue.async { [weak self] in
             guard let self else { return }
+            if let anchor = self.manualCrossDisplayPointerAnchor {
+                let displays = Self.activeDisplays()
+                guard self.currentProfileID == anchor.profileID,
+                      Self.displayTopologySignature(displays) == anchor.topologySignature
+                else {
+                    self.manualCrossDisplayPointerAnchor = nil
+                    return
+                }
+                if let tracked = self.windows[anchor.focusedWindow],
+                   let observedFrame = AccessibilityWindow.frame(of: tracked.element),
+                   self.captureStationaryManualMove(
+                       focusedWindow: anchor.focusedWindow,
+                       observedFrame: observedFrame,
+                       displays: displays,
+                       source: "pointer-drag"
+                   ) {
+                    return
+                }
+            }
+            if self.manualCrossDisplayPointerAnchor == nil,
+               self.manualTiledMovePreviewSession == nil,
+               self.manualNonTiledCrossDisplayMoveSession == nil,
+               self.manualTiledResizeSession == nil,
+               let pointer = CGEvent(source: nil)?.location,
+               let pointerOrder = AccessibilityWindow.onScreenPointerOrder(),
+               let pointerTarget = AccessibilityWindow.pointerTargetWindow(
+                   at: pointer,
+                   in: pointerOrder,
+                   eligibleWindowKeys: Set(self.windows.keys),
+                   ignoredOverlayWindowKeys: self.manualPointerIgnoredOverlayWindowKeys
+               ),
+               let tracked = self.windows[pointerTarget],
+               let observedFrame = AccessibilityWindow.frame(of: tracked.element) {
+                let displays = Self.activeDisplays()
+                if self.captureStationaryManualMove(
+                    focusedWindow: pointerTarget,
+                    observedFrame: observedFrame,
+                    displays: displays,
+                    source: "pointer-drag-recovery"
+                ) {
+                    return
+                }
+                if self.recoverManualNonTiledPointerAnchor(
+                    focusedWindow: pointerTarget,
+                    observedFrames: [pointerTarget: observedFrame],
+                    displays: displays,
+                    pointer: pointer,
+                    correlationID: nil
+                ) {
+                    return
+                }
+            }
             if self.manualTiledMovePreviewSession != nil {
                 self.updateManualTiledMoveLandingPreview()
             } else if self.manualNonTiledCrossDisplayMoveSession != nil {
@@ -8536,9 +8612,127 @@ final class WorkspaceEngine {
                 self.commitManualNonTiledCrossDisplayMovePreview()
             } else if self.manualTiledResizeSession != nil {
                 self.commitManualTiledResizePreview()
+            } else {
+                let displays = Self.activeDisplays()
+                let focusedWindow = self.focusedWindowKey()
+                let capturedFocusedWindow = focusedWindow.flatMap { key in
+                    self.windows[key].flatMap { tracked in
+                        AccessibilityWindow.frame(of: tracked.element).map { frame in
+                            self.captureStationaryManualMove(
+                                focusedWindow: key,
+                                observedFrame: frame,
+                                displays: displays,
+                                source: "pointer-release"
+                            )
+                        }
+                    }
+                } ?? false
+                if !capturedFocusedWindow {
+                    self.captureStationaryManualMoveAtPointerRelease()
+                }
             }
             self.manualCrossDisplayPointerAnchor = nil
+            self.manualPointerIgnoredOverlayWindowKeys = []
         }
+    }
+
+    private func captureStationaryManualMoveAtPointerRelease() {
+        guard let anchor = manualCrossDisplayPointerAnchor,
+              let tracked = windows[anchor.focusedWindow],
+              currentProfileID == anchor.profileID,
+              Self.displayTopologySignature(Self.activeDisplays()) == anchor.topologySignature,
+              tracked.workspaceID == anchor.workspaceID,
+              fullscreenSessions[anchor.focusedWindow] == nil,
+              !temporarilyDeferredWindowKeys.contains(anchor.focusedWindow),
+              !isDropDownAppWindow(anchor.focusedWindow),
+              let observedFrame = AccessibilityWindow.frame(of: tracked.element),
+              !AccessibilityWindow.framesMatch(anchor.frame, observedFrame)
+        else { return }
+        _ = captureStationaryManualMove(
+            focusedWindow: anchor.focusedWindow,
+            observedFrame: observedFrame,
+            displays: Self.activeDisplays(),
+            source: "pointer-release"
+        )
+    }
+
+    @discardableResult
+    private func captureStationaryManualMove(
+        focusedWindow: WindowKey,
+        observedFrame: WindowFrame,
+        displays: [DisplaySnapshot],
+        source: String,
+        correlationID: String? = nil
+    ) -> Bool {
+        guard let tracked = windows[focusedWindow] else { return false }
+        let rule = resolvedRule(for: tracked.bundleIdentifier)
+        guard let actualPlacement = Self.displayPlacement(for: observedFrame, displays: displays)
+        else { return false }
+        let visibleWorkspaceID = rule.keepsOnAllWorkspaces
+            ? (displayMode == .independent
+                ? activeWorkspaceIDByDisplay[actualPlacement.displayIdentifier] ?? currentWorkspaceID
+                : currentWorkspaceID)
+            : tracked.workspaceID
+        let layout = workspaceLayout(for: visibleWorkspaceID)
+        let includesInLayout = Self.shouldIncludeInLayout(
+            layoutOverride: tracked.layoutOverride,
+            admissionDecision: tracked.admissionDecision,
+            rule: rule
+        )
+        let contextMatches = hasCompletedStartupRefresh &&
+            !isWindowManagementPaused &&
+            !screenSessionLifecycleState.isSuspended &&
+            !wakeReconciliationState.isSleeping &&
+            !wakeReconciliationState.isPending &&
+            !postSleepWindowRecoveryState.isActive &&
+            windowServerSessionValidated &&
+            fullscreenSessions[focusedWindow] == nil &&
+            !temporarilyDeferredWindowKeys.contains(focusedWindow) &&
+            !isDropDownAppWindow(focusedWindow)
+        guard ManagedWorkspaceStationaryMoveCapturePolicy.shouldCapture(
+            sourceLayout: layout,
+            currentLayout: layout,
+            isWorkspaceActive: isWorkspaceActive(tracked.workspaceID),
+            keepsOnAllWorkspaces: rule.keepsOnAllWorkspaces,
+            isIncludedInLayout: includesInLayout,
+            contextMatches: contextMatches
+        ), !AccessibilityWindow.framesMatch(tracked.restoreFrame, observedFrame),
+           Self.recoveryPosition(for: observedFrame, displayBounds: displays.map(\.bounds)) ==
+            observedFrame.position
+        else { return false }
+
+        let independentHome = displayMode == .independent && !rule.keepsOnAllWorkspaces
+            ? workspaceHomeDisplayIdentifier(for: tracked.workspaceID, displays: displays)
+            : nil
+        guard independentHome == nil || actualPlacement.displayIdentifier == independentHome else {
+            return false
+        }
+
+        var updated = tracked
+        updated.restoreFrame = observedFrame
+        updated.displayPlacement = actualPlacement
+        windows[focusedWindow] = updated
+        lastBackgroundLayoutSignature = nil
+        persistState(preservingPendingRestores: true)
+        diagnostics.log(
+            category: "manual-stationary-move",
+            event: "frame-captured",
+            correlation: correlationID,
+            fields: [
+                "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                "display": Self.shortIdentifier(actualPlacement.displayIdentifier),
+                "layout": layout.rawValue,
+                "layout-decision": Self.layoutDecision(
+                    layoutOverride: tracked.layoutOverride,
+                    admissionDecision: tracked.admissionDecision,
+                    rule: rule
+                ).rawValue,
+                "window": Self.diagnosticWindowKey(focusedWindow),
+                "frame": Self.diagnosticFrame(observedFrame),
+                "source": source,
+            ]
+        )
+        return true
     }
 
     private func commitManualTiledResizePreview() {
@@ -12997,7 +13191,25 @@ final class WorkspaceEngine {
                 : lifecycleTransitionActive ? "lifecycle-transition" : "participants-changed")
         }
 
-        var manualTiledDragInProgress = manualTiledMovePreviewSession != nil ||
+        let isLeftMouseButtonPressed = CGEventSource.buttonState(
+            .combinedSessionState,
+            button: .left
+        )
+        let capturedStationaryMove = performAXWrites && !isStartup && !topologyChanged &&
+            !lifecycleTransitionActive && isLeftMouseButtonPressed && focused.flatMap { key in
+                observedFrames[key].map { frame in
+                    captureStationaryManualMove(
+                        focusedWindow: key,
+                        observedFrame: frame,
+                        displays: displays,
+                        source: "focused-window-poll",
+                        correlationID: correlationID
+                    )
+                }
+            } ?? false
+
+        var manualTiledDragInProgress = capturedStationaryMove ||
+            manualTiledMovePreviewSession != nil ||
             manualNonTiledCrossDisplayMoveSession != nil
         if manualTiledResizeSession == nil, manualTiledMovePreviewSession == nil,
            manualNonTiledCrossDisplayMoveSession == nil,
@@ -13005,10 +13217,6 @@ final class WorkspaceEngine {
            !isDropDownAppWindow(focused),
            let focusedTracked = windows[focused],
            !isExcludedFromWorkspaceParticipation(focusedTracked) {
-            let isLeftMouseButtonPressed = CGEventSource.buttonState(
-                .combinedSessionState,
-                button: .left
-            )
             let focusedLayout = workspaceLayout(for: focusedTracked.workspaceID)
             if !isLeftMouseButtonPressed, focusedLayout == .none,
                let observedFrame = observedFrames[focused] {
@@ -17490,10 +17698,13 @@ final class WorkspaceEngine {
             x: target.bounds.minX + normalizedOrigin.x * target.bounds.width,
             y: target.bounds.minY + normalizedOrigin.y * target.bounds.height
         )
-        let position = CGPoint(
-            x: min(max(proposed.x, target.bounds.minX), target.bounds.maxX - size.width),
-            y: min(max(proposed.y, target.bounds.minY), target.bounds.maxY - size.height)
-        )
+        let proposedFrame = WindowFrame(position: proposed, size: size)
+        let position = !usedFallback && isMeaningfullyVisible(proposedFrame, displays: [target])
+            ? proposed
+            : CGPoint(
+                x: min(max(proposed.x, target.bounds.minX), target.bounds.maxX - size.width),
+                y: min(max(proposed.y, target.bounds.minY), target.bounds.maxY - size.height)
+            )
         return ResolvedDisplayFrame(
             frame: WindowFrame(position: position, size: size),
             usedFallbackDisplay: usedFallback
