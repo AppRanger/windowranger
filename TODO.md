@@ -20,6 +20,21 @@ smallest useful outcome and acceptance boundary.
 
 ## Done
 
+### WR-117 — Re-park escaped inactive windows after Accessibility recovery
+
+- **Type:** Workspace visibility bug
+- **Priority:** P1 release blocker
+- **Status:** Done
+- **Result:** If an application is temporarily unresponsive during a workspace switch, WindowRanger
+  preserves the WR-112 backoff boundary and completes the skipped parking move only after a later
+  authoritative Accessibility enumeration recovers the inactive window. Active workspaces on
+  either display, keep-on-all windows, hidden apps, and Quick Apps remain untouched.
+- **Evidence:** Fresh Debug diagnostics showed Mail entering Accessibility backoff during the
+  failing Work-to-workspace-1 switch and recovering about 1.2 seconds later without a visibility
+  retry. The focused 144-test workspace suite passed. In the replacement installed Debug build,
+  the maintainer observed the expected delay while Mail was unresponsive and confirmed that the
+  window then caught up correctly.
+
 ### WR-019 — Separate the local Xcode development identity
 
 - **Type:** Development workflow / signing

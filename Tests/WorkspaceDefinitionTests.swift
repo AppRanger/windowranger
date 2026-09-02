@@ -3335,6 +3335,56 @@ final class WorkspaceDefinitionTests: XCTestCase {
         ))
     }
 
+    func testRecoveredInactiveWindowIsParkedWithoutDisturbingActiveWorkspaces() {
+        let active = UUID()
+        let activeOnOtherDisplay = UUID()
+        let recoveredInactive = UUID()
+        let activeWorkspaceIDs = Set([active, activeOnOtherDisplay])
+
+        XCTAssertTrue(WorkspaceEngine.shouldParkAfterAccessibilityRecovery(
+            wasDeferred: true,
+            isDeferred: false,
+            workspaceID: recoveredInactive,
+            activeWorkspaceIDs: activeWorkspaceIDs,
+            keepsOnAllWorkspaces: false
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldParkAfterAccessibilityRecovery(
+            wasDeferred: true,
+            isDeferred: false,
+            workspaceID: active,
+            activeWorkspaceIDs: activeWorkspaceIDs,
+            keepsOnAllWorkspaces: false
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldParkAfterAccessibilityRecovery(
+            wasDeferred: true,
+            isDeferred: false,
+            workspaceID: activeOnOtherDisplay,
+            activeWorkspaceIDs: activeWorkspaceIDs,
+            keepsOnAllWorkspaces: false
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldParkAfterAccessibilityRecovery(
+            wasDeferred: true,
+            isDeferred: true,
+            workspaceID: recoveredInactive,
+            activeWorkspaceIDs: activeWorkspaceIDs,
+            keepsOnAllWorkspaces: false
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldParkAfterAccessibilityRecovery(
+            wasDeferred: false,
+            isDeferred: false,
+            workspaceID: recoveredInactive,
+            activeWorkspaceIDs: activeWorkspaceIDs,
+            keepsOnAllWorkspaces: false
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldParkAfterAccessibilityRecovery(
+            wasDeferred: true,
+            isDeferred: false,
+            workspaceID: recoveredInactive,
+            activeWorkspaceIDs: activeWorkspaceIDs,
+            keepsOnAllWorkspaces: true
+        ))
+    }
+
     func testExternalFocusPlansUnifiedWorkspaceSwitch() {
         let current = WorkspaceDefinition.defaults[0].id
         let focused = WorkspaceDefinition.defaults[1].id
