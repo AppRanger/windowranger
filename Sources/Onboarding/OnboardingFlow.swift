@@ -159,6 +159,7 @@ final class OnboardingCoordinator: ObservableObject {
     @Published private(set) var shortcutConflictMessage: String?
 
     let settingsStore: SettingsStore
+    var supportsICloudSync: Bool { settingsStore.supportsICloudSync }
     private let progressStore: OnboardingProgressStore
     private let finishAction: () -> Void
 
@@ -199,7 +200,13 @@ final class OnboardingCoordinator: ObservableObject {
     }
 
     func setICloudSyncEnabled(_ enabled: Bool) {
+        guard supportsICloudSync else { return }
         settingsStore.iCloudSyncEnabled = enabled
+    }
+
+    func replaceICloudSettingsWithLocalCopy() {
+        guard supportsICloudSync else { return }
+        settingsStore.replaceICloudSettingsWithLocalCopy()
     }
 
     func setShortcutFamilyModifiers(_ modifiers: UInt32, for family: ShortcutFamily) {

@@ -62,7 +62,7 @@ struct OnboardingWizardView: View {
             titleVisibility: .visible
         ) {
             Button("Replace iCloud Settings", role: .destructive) {
-                store.replaceICloudSettingsWithLocalCopy()
+                coordinator.replaceICloudSettingsWithLocalCopy()
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -162,59 +162,70 @@ struct OnboardingWizardView: View {
 
     private var iCloudStep: some View {
         VStack(alignment: .leading, spacing: 18) {
-            stepHeading(
-                "Keep your setup in sync",
-                detail: "iCloud can carry reusable profiles and global preferences to your other Macs. Machine-specific permissions and input monitors stay local."
-            )
-
-            onboardingBand(accent: .blue) {
-                Toggle(isOn: Binding(
-                    get: { store.iCloudSyncEnabled },
-                    set: coordinator.setICloudSyncEnabled
-                )) {
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Sync settings with iCloud").font(.headline)
-                            Text("Off by default. Your local setup is kept either way.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 12)
-                    }
-                }
-                .toggleStyle(.switch)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-
-            if store.iCloudSyncState == .disabled,
-               store.iCloudProfileLibraryIssue?.source != .local {
-                Button("Replace iCloud with This Mac’s Settings…") {
-                    showsICloudReplacementConfirmation = true
-                }
-            } else if store.iCloudSyncState == .waitingForCloud {
-                Label(
-                    "Waiting for existing iCloud settings. Nothing from this Mac will be uploaded while WindowRanger waits.",
-                    systemImage: "icloud.and.arrow.down"
+            if !coordinator.supportsICloudSync {
+                stepHeading(
+                    "Keep Debug settings local",
+                    detail: "WindowRanger Dev uses its own local profiles and cannot access the public app's iCloud settings."
                 )
-                .font(.caption)
-                .foregroundStyle(.orange)
-                Button("Use This Mac’s Settings in iCloud…") {
-                    showsICloudReplacementConfirmation = true
+                onboardingBand(accent: .blue) {
+                    Label("Debug preferences stay on this Mac", systemImage: "externaldrive.badge.xmark")
+                        .foregroundStyle(.secondary)
                 }
-            } else if let issue = store.iCloudProfileLibraryIssue {
-                Label(issue.message, systemImage: "exclamationmark.triangle.fill")
+            } else {
+                stepHeading(
+                    "Keep your setup in sync",
+                    detail: "iCloud can carry reusable profiles and global preferences to your other Macs. Machine-specific permissions and input monitors stay local."
+                )
+
+                onboardingBand(accent: .blue) {
+                    Toggle(isOn: Binding(
+                        get: { store.iCloudSyncEnabled },
+                        set: coordinator.setICloudSyncEnabled
+                    )) {
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Sync settings with iCloud").font(.headline)
+                                Text("Off by default. Your local setup is kept either way.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 12)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+
+                if store.iCloudSyncState == .disabled,
+                   store.iCloudProfileLibraryIssue?.source != .local {
+                    Button("Replace iCloud with This Mac’s Settings…") {
+                        showsICloudReplacementConfirmation = true
+                    }
+                } else if store.iCloudSyncState == .waitingForCloud {
+                    Label(
+                        "Waiting for existing iCloud settings. Nothing from this Mac will be uploaded while WindowRanger waits.",
+                        systemImage: "icloud.and.arrow.down"
+                    )
                     .font(.caption)
                     .foregroundStyle(.orange)
-                if issue.canReplaceCloudCopy {
                     Button("Use This Mac’s Settings in iCloud…") {
                         showsICloudReplacementConfirmation = true
                     }
+                } else if let issue = store.iCloudProfileLibraryIssue {
+                    Label(issue.message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    if issue.canReplaceCloudCopy {
+                        Button("Use This Mac’s Settings in iCloud…") {
+                            showsICloudReplacementConfirmation = true
+                        }
+                    }
+                } else {
+                    Label(store.iCloudSyncEnabled ? "iCloud sync is on" : "This Mac will stay local-only",
+                          systemImage: store.iCloudSyncEnabled ? "checkmark.icloud.fill" : "macbook")
+                        .foregroundStyle(store.iCloudSyncEnabled ? .green : .secondary)
                 }
-            } else {
-                Label(store.iCloudSyncEnabled ? "iCloud sync is on" : "This Mac will stay local-only",
-                      systemImage: store.iCloudSyncEnabled ? "checkmark.icloud.fill" : "macbook")
-                    .foregroundStyle(store.iCloudSyncEnabled ? .green : .secondary)
             }
         }
     }

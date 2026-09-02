@@ -12,6 +12,7 @@ settings:
     MARKETING_VERSION: 0.1.0
     WINDOWRANGER_GIT_COMMIT: unknown
     WINDOWRANGER_UPDATE_CHANNEL: dev
+    WINDOWRANGER_DISPLAY_NAME: WindowRanger
     WINDOWRANGER_SPARKLE_FEED_URL: https://windowranger.com/appcast.xml
     WINDOWRANGER_SPARKLE_PUBLIC_ED_KEY: ""
 packages:
@@ -37,6 +38,12 @@ targets:
         ENABLE_APP_SANDBOX: NO
         GENERATE_INFOPLIST_FILE: NO
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: dev.appranger.WindowRanger.Debug
+          WINDOWRANGER_DISPLAY_NAME: WindowRanger Dev
+          CODE_SIGN_ENTITLEMENTS: Sources/App/WindowRangerDebug.entitlements
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) WINDOWRANGER_DEVELOPMENT_IDENTITY"
     dependencies:
       - target: WindowRangerCLI
         link: false
@@ -72,6 +79,9 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_APP_SANDBOX: NO
         GENERATE_INFOPLIST_FILE: YES
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) WINDOWRANGER_DEVELOPMENT_IDENTITY"
     dependencies:
       - sdk: AppKit.framework
       - sdk: Security.framework
@@ -118,7 +128,8 @@ schemes:
         - name: Resume Daily WindowRanger
           settingsTarget: WindowRanger
           script: |
-            "$SRCROOT/scripts/resume-daily.sh" --scheme-action
+            WINDOWRANGER_DAILY_APP=/Applications/WindowRanger.app \
+              "$SRCROOT/scripts/resume-daily.sh" --scheme-action
     test:
       config: Debug
       macroExpansion: WindowRangerTests

@@ -192,6 +192,36 @@ enum TiledManualDragClassifier {
     }
 }
 
+enum ManagedWorkspaceStationaryMoveCapturePolicy {
+    static func shouldCapture(
+        sourceLayout: WorkspaceLayout,
+        currentLayout: WorkspaceLayout,
+        isWorkspaceActive: Bool,
+        keepsOnAllWorkspaces: Bool = false,
+        isIncludedInLayout: Bool,
+        contextMatches: Bool
+    ) -> Bool {
+        (sourceLayout != .none || keepsOnAllWorkspaces) &&
+            currentLayout == sourceLayout &&
+            (isWorkspaceActive || keepsOnAllWorkspaces) &&
+            !isIncludedInLayout &&
+            contextMatches
+    }
+}
+
+enum ManualPointerRecoveryPolicy {
+    static func recoveryWindow(
+        focusedWindow: WindowKey,
+        pointerTargetWindow: WindowKey?
+    ) -> WindowKey? {
+        // Accessibility focus can lag behind a native title-bar drag. The WindowServer hit is the
+        // authoritative candidate; `focusedWindow` is retained in the API to make that divergence
+        // explicit at call sites and in tests.
+        _ = focusedWindow
+        return pointerTargetWindow
+    }
+}
+
 @MainActor
 protocol TiledResizePreviewPresenting: AnyObject {
     var passiveWindowIdentifier: CGWindowID? { get }

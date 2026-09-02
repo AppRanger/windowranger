@@ -15,6 +15,11 @@ preferences.
   entry with a higher `CFBundleVersion`.
 - Automatic checks and automatic downloads are local, off by default, and independent of profiles
   and iCloud sync.
+- A manual check disables duplicate requests while the check is running, queues the request while
+  Sparkle is completing startup or background work, and keeps its progress or terminal result
+  visible in Settings. Sparkle retains ownership of the standard checking, update, up-to-date, and
+  failure presentation. WindowRanger observes Sparkle's current update-cycle completion callback so
+  no-update and failure outcomes always clear the pending state.
 - `SUVerifyUpdateBeforeExtraction` remains enabled. Every update ZIP must carry the EdDSA signature
   produced by Sparkle's official `generate_appcast` tool.
 

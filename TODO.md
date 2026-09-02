@@ -20,6 +20,33 @@ smallest useful outcome and acceptance boundary.
 
 ## Done
 
+### WR-019 — Separate the local Xcode development identity
+
+- **Type:** Development workflow / signing
+- **Priority:** P2
+- **Status:** Done
+- **Result:** Debug builds install as **WindowRanger Dev** with bundle identifier
+  `dev.appranger.WindowRanger.Debug`, separate settings/cache/log/IPC state, and no iCloud
+  entitlement. Stable, Beta, and Release retain the public WindowRanger identity and continuity.
+  The handoff scripts keep only the selected copy running without removing either installation.
+- **Evidence:** The complete 910-test non-hosted suite and supporting workflow checks passed. Signed
+  universal Debug and Release builds were installed together and inspected. Installed testing found
+  and fixed a Release-optimized startup crash in workspace-preview permission initialization. The
+  maintainer then confirmed both apps, their separate permissions, and two-way switching all work.
+
+### WR-116 — Prevent the Release-configuration startup crash on macOS 27
+
+- **Type:** Release blocker
+- **Priority:** P1
+- **Status:** Done
+- **Result:** Workspace-preview initialization now preflights Screen Recording authorization once
+  and passes the value directly into both observable objects, avoiding an optimized access to an
+  observation registrar before initialization is complete.
+- **Evidence:** Three original Release launches produced matching `EXC_BAD_ACCESS` reports in
+  `ObservationRegistrar.access`. The replacement signed universal Release build launched with the
+  existing public settings, produced no new crash report, remained running, and was accepted by the
+  maintainer. The focused initialization test and complete 910-test non-hosted suite pass.
+
 ### WR-109 — Keep the first status menu at its final anchored position
 
 - **Type:** Menu-bar popup positioning bug
@@ -202,6 +229,135 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-114 — Show progress while manually checking for updates
+
+- **Type:** User-observed update experience bug
+- **Priority:** P1
+- **Status:** Live validation — the installed status-menu correction completed promptly through
+  Sparkle's native up-to-date result and the maintainer accepted the no-toast refinement; packaged
+  update-available and network-failure paths remain release validation boundaries.
+- **User-observed:** Choosing **Check for Updates…** takes long enough to feel broken because the
+  status menu closes and WindowRanger provides no acknowledgement while Sparkle is working.
+- **Diagnostic evidence:** The live public appcast returned its first byte and completed in about
+  0.2 seconds during investigation. In the first installed check, feedback presentation was recorded
+  at 22:24:44.154 and Sparkle's window activated roughly two seconds later; the second warmed check
+  felt fast. Sparkle 2.8.1 probes its installer-status service before it opens the checking window or
+  starts the feed request, and its source notes that this probe can take around one second. The next
+  candidate records the synchronous call, completed installer probe, loaded appcast, and terminal
+  result separately so a cold installed check can confirm where this machine spends the delay. The
+  failed installed check produced no update-controller records. Sparkle 2.8.1's source shows that it
+  reports itself unavailable while its startup installer probe or an automatic check is in progress;
+  WindowRanger had not consulted that readiness state, so Sparkle could discard the first request.
+  The latest user attempt again produced no update record at all. Invoking the same controller
+  through WindowRanger's command action immediately recorded the request, returned from Sparkle in
+  1 ms, completed the installer probe in 67 ms, loaded the appcast in 2.654 seconds, and reported
+  up-to-date in 2.669 seconds. The eventual no-update window therefore came from that diagnostic
+  action, proving the remaining delay was the status-menu close callback losing the earlier request,
+  not Sparkle or the feed taking minutes.
+- **Expected:** A manual check acknowledges the request immediately, visibly remains in progress,
+  rejects duplicate checks, and leaves a clear up-to-date, update-available, or retry message when
+  Sparkle reports its result.
+- **Implemented:** The update controller owns a deterministic manual-check state, publishes an
+  immediate message, disables duplicate requests, queues a first request until Sparkle's startup or
+  background work becomes ready, and uses Sparkle 2.8.1's update-cycle completion callback to map
+  no-update and failure outcomes to clear terminal messages. It records readiness waiting, the
+  Sparkle call, installer-probe completion, appcast load, and terminal result with elapsed durations.
+  Settings shows a spinner and persistent status. Sparkle owns the native checking and result UI;
+  the redundant WindowRanger toast was removed after installed validation showed the corrected path
+  is prompt. The status-menu action records selection immediately and holds a pending action until
+  the synchronous status-menu popup has returned, instead of relying on `menuDidClose` or a block
+  that may execute inside AppKit's nested tracking loop.
+- **Installed evidence:** The first candidate was disproven when its cold check never completed or
+  showed an up-to-date result. Its replacement, an Apple Development-signed universal
+  Debug/Stable-config 1.0.4/build 16 candidate `40d7c3defd58-dirty`, was installed and verified. Its
+  bundle identity, Team ID, Stable feed,
+  embedded public key, `x86_64`/`arm64` architectures, running path, IPC status, Accessibility trust,
+  and fresh diagnostics session `F6392593-1DBB-49E9-8CEC-8147C6EE574D` were verified. Cold-check
+  behaviour was disproven by the lost status-menu request; at that point process `89041` still
+  lacked the post-popup handoff correction. The disproven candidate is preserved at
+  `/Applications/.WindowRanger.previous`; the public Developer ID 1.0.4/build 16 is preserved at
+  `/Applications/.WindowRanger.public-1.0.4` for rollback. The post-popup correction is installed as
+  process `91708`; IPC reports WindowRanger running with Accessibility granted, and diagnostics
+  started session `7FAA0519-B2BC-4A00-8A7A-B12501DCD21C`. The preceding working WR-115 candidate is
+  preserved at `/Applications/.WindowRanger.previous.wr114-menu-handoff`. The no-toast refinement is
+  installed as process `92806`, with Accessibility granted and diagnostics session
+  `D44D735E-4540-4F49-B669-99CA7903005D`; its predecessor is preserved at
+  `/Applications/.WindowRanger.previous.wr114-no-toast`.
+- **Acceptance:** Focused tests cover request coalescing and every terminal state. A signed Stable or
+  Beta build must capture a cold first-check trace, identify whether installer probing or appcast
+  loading accounts for the delay, confirm WindowRanger remains interactive, and complete through the
+  normal up-to-date, available-update, and network-failure paths. Any latency workaround must retain
+  Sparkle's installer-recovery safety checks.
+
+### WR-115 — Preserve manual movement for windows excluded from managed layouts
+
+- **Type:** User-observed tiled interaction bug
+- **Priority:** P1
+- **Status:** Done — after installing the stale-focus correction, the maintainer could no longer
+  reproduce the jump despite repeated attempts and accepted the fix while continuing to monitor it.
+- **User-observed:** An application configured as **Do not include in layouts** cannot be manually
+  moved while it is visible on a Tiled workspace.
+- **Diagnostic evidence:** The observed System Settings window was correctly classified
+  `app-rule-excluded` and omitted from the Tiled tree, but managed-layout passes continued resolving
+  its saved stationary position. A short native drag can end before periodic enumeration records the
+  changed floating frame, allowing the next pass to restore the pre-drag position. Installed logs
+  then showed the tested System Settings window belonged to Workspace 2, was kept on all workspaces,
+  and was correctly layout-excluded while being moved on Workspace 1. The original capture rejected
+  it because its saved home workspace was not active, and the mouse-down hook could identify the
+  previously focused window before macOS transferred focus. With the replacement installed,
+  Workspace 1 movement worked, with one uncertain jump, but Remote still snapped back. Its trace
+  identifies Remote as Freeform and shows the drag being incorrectly claimed as a cross-layout move
+  of the previously focused Zoom window; System Settings did not receive focus until after that false
+  session committed.
+  The next installed trace confirmed one intermittent jump after successful capture: the drag saved
+  System Settings at `1466,700`, then the following layout pass restored it to `1466,619`. The window
+  remained meaningfully visible but extended 81 points below the display, exposing disagreement
+  between native-frame capture and the restore resolver's whole-window clamp.
+  After that correction was installed, a rarer jump remained. The trace at sequence 921 shows the
+  mouse-down pointer lookup had produced no anchor, so drag fallback again trusted stale Zoom focus
+  and committed a Freeform Zoom move before System Settings received focus; the following pass
+  restored System Settings to its previous saved position.
+- **Expected:** Excluding an app from Tiled or Accordion layout makes its windows stationary from the
+  layout engine's perspective, not immovable. A native move or resize remains under the user's
+  control and becomes the saved restore frame without altering the managed layout tree.
+- **Implemented:** Periodic focused-window observation now captures a layout-excluded window's real
+  frame throughout a native drag and suppresses the competing layout pass. Mouse-up also resolves
+  the then-focused window directly instead of relying only on the pre-focus mouse-down anchor. The
+  follow-up captures the actual window under the pointer before focus transfers, prevents a stale
+  focused participant from starting a false cross-layout session, and permits keep-on-all excluded
+  windows to save their position while visible on Freeform. Ordinary Freeform participants,
+  topology/lifecycle transitions, fullscreen windows, deferred windows, Quick Apps, and invalid
+  cross-display moves remain excluded from this stationary path. The restore resolver now preserves
+  a partially offscreen frame when it remains meaningfully visible on its connected display, while
+  retaining safe clamping for effectively lost windows and missing-display fallback. Pointer-drag
+  recovery now captures an excluded window directly from the live pointer target and uses that same
+  verified target, rather than potentially stale Accessibility focus, for non-Tiled cross-layout
+  fallback. Passive WindowRanger overlay surfaces remain excluded during recovery.
+- **Installed evidence:** The first candidate was disproven when System Settings still snapped back
+  on Workspace 1. Its replacement, an Apple Development-signed universal Debug/Stable-config
+  1.0.4/build 16 candidate `40d7c3defd58-dirty`, is installed and running from
+  `/Applications/WindowRanger.app` as process `75287`; IPC reported the app running, unpaused, and
+  Accessibility-authorized. The maintainer confirmed movement on Workspace 1 but found Remote still
+  immovable, disproving that candidate for the full acceptance boundary. The Freeform pointer-target
+  follow-up is now installed as process `84211`; its identity, Stable update configuration,
+  `x86_64`/`arm64` architectures, Accessibility-authorized IPC status, and fresh diagnostics session
+  `5CE1E6CF-63BD-469F-B69A-F494E1D1CF52` were verified. The Workspace-1 candidate is preserved at
+  `/Applications/.WindowRanger.previous.wr115-workspace1` and the public build remains preserved at
+  `/Applications/.WindowRanger.public-1.0.4`. The partial-offscreen resolver follow-up is now
+  installed as process `86540`; its identity, Stable update configuration, architectures,
+  Accessibility-authorized IPC status, and fresh diagnostics session
+  `A5B725F9-2F8E-4046-B282-F057932DC861` were verified. The prior Freeform candidate is preserved at
+  `/Applications/.WindowRanger.previous.wr115-freeform`. The subsequent stale-focus correction
+  passed all 19 focused Tiled-resize-preview tests. Its Apple Development-signed, universal
+  Debug/Stable-config 1.0.4/build 16 candidate is installed as process `89041`; IPC reports the app
+  running with Accessibility granted, and diagnostics started session
+  `7B59FB9A-BC24-48BE-9E9D-81D05F5C1431`. The preceding partial-offscreen candidate is preserved at
+  `/Applications/.WindowRanger.previous.wr115-stale-focus`.
+- **Acceptance:** Focused policy tests cover the participation and context boundary. A signed build
+  must confirm an excluded and explicitly floating window can be moved and resized on Tiled,
+  Accordion, and Freeform workspaces without snapping back, changing a managed tree, or regressing
+  participant move/resize previews.
+
 ### WR-111 — Make pre-push validation safe from linked-worktree Git environment
 
 - **Type:** Development workflow bug
@@ -223,9 +379,8 @@ smallest useful outcome and acceptance boundary.
 
 - **Type:** Diagnostic-backed resilience bug
 - **Priority:** P1
-- **Status:** Approved for Stable 1.0.4 build 16 — implementation and all 892 non-hosted tests pass,
-  and the installed signed Debug build remained responsive through real transient Accessibility
-  failures. A deliberately sustained third-party hang remains an optional stress boundary.
+- **Status:** Live validation — Stable 1.0.4 build 16 is public through GitHub, Sparkle, the website,
+  and Homebrew. The maintainer will verify workspace switching in the public update.
 - **User-observed:** Workspace switching intermittently appeared to lock up in the signed Debug daily
   build. Force-quitting Safari cleared the suspected hung instance.
 - **Diagnostic evidence:** Ordinary switches completed in roughly 0.3–0.6 seconds, while switches to
@@ -254,19 +409,32 @@ smallest useful outcome and acceptance boundary.
   interaction path for multi-second AX timeouts. Workspace switching skips or temporarily defers the
   unavailable application's windows, preserves stable membership, and remains usable for healthy
   applications.
-- **Release boundary:** Publish the focused immutable Stable 1.0.4 build 16 through GitHub, Sparkle,
-  the website, and Homebrew after the protected, Developer ID, notarization, packaging, checksum,
-  and public round-trip gates pass. The deterministic responsiveness-policy coverage proves bounded
-  per-process deferral and recovery, while existing stable-slot coverage proves failed enumeration
-  retains layout membership. The maintainer will verify the public update after it lands.
+- **Distribution evidence:** Exact commit `1d5869d0d416ed4701b133c11fd61e8f1fbcfb0d` passed all 892
+  non-hosted tests, static analysis, and protected branch/tag gates. Apple accepted the app
+  notarization `07de93ee-7c77-491f-809c-e5f5544a807f` and DMG notarization
+  `84f9304b-52ef-4624-8c8b-24b7676ecc1c` with zero logged issues; both stapled artifacts passed
+  Gatekeeper. The five immutable GitHub assets round-tripped against tag `v1.0.4`, build 16,
+  provenance, archive SHA-256 `1766460c508d0cbedcd0ecbb45f48f10af035b29f7d4bbb581e83958992bea1e`,
+  and DMG SHA-256 `41af7c05ec1efa3665a245cdb9187822032f07462964afb444a835b85f58af58`.
+- **Publication evidence:** Cloudflare deployment `9dcd280f-bad6-416f-9a31-ac879c7e63af`
+  publishes the exact signed build 16 appcast, ZIP, and deltas from retained builds 11–15 on both
+  website domains; every new public payload matched its generated source. Homebrew tap merge
+  `8bb5b5dd094f39d3999ea81a5a4fa52aec42afd1` publishes version 1.0.4 with the exact notarized DMG
+  checksum and passed style plus strict online audit. The exact DMG installed, passed Gatekeeper and
+  deep signature checks, launched as 1.0.4 build 16, and answered through its bundled CLI. macOS did
+  not carry Accessibility permission from the Development-signed build to the Developer ID build,
+  so the final installed workspace-switch check remains with the maintainer.
+- **Acceptance:** Publish immutable Stable 1.0.4 build 16 through GitHub and Sparkle, verify the live
+  artifacts/feed mechanically, then have the maintainer confirm workspace switching in the installed
+  public update. Keep a deliberately sustained third-party hang as an optional stress boundary.
 
 ### WR-113 — Stop appearance refreshes from re-entering the status-item renderer
 
 - **Type:** Diagnostic-backed performance regression
 - **Priority:** P0
-- **Status:** Fast-tracked for Stable 1.0.3 build 15. The focused fix is automated-test,
-  signed-Debug, and installed-performance verified. The maintainer explicitly approved publication
-  before broader local and manual release verification, which remains post-release validation.
+- **Status:** Live validation — Stable 1.0.3 build 15 is public through GitHub, Sparkle, the website,
+  and Homebrew. The maintainer explicitly approved publication before broader local and manual
+  release verification, which remains post-release validation.
 - **User-observed:** WindowRanger 1.0.2 build 14 suddenly sustained roughly one full CPU core while
   otherwise idle on macOS 27.
 - **Diagnostic-backed cause:** The Developer ID build remained at 97–100% CPU, and the equivalent
@@ -292,6 +460,19 @@ smallest useful outcome and acceptance boundary.
   protected checks plus distribution preflight, stable-Xcode Developer ID signing, notarization,
   stapling, Gatekeeper, checksum, provenance, immutable asset round-trip, and live feed verification.
   The maintainer will verify the public release after it lands.
+- **Distribution evidence:** Exact commit `ba7d47c30a876540f214be12f82f0bfa3c8d4f22` passed 824 local
+  tests, static analysis, and the protected `main` CI Release/DMG gate. Apple accepted the app
+  notarization `26af4ef6-8eb8-427d-8e7a-61738ba2f574` and DMG notarization
+  `ec08bb9e-6321-4af6-8a87-3027fabeddea` with zero logged issues; both stapled artifacts passed
+  Gatekeeper. The five public GitHub assets round-tripped against tag `v1.0.3`, build 15, provenance,
+  archive SHA-256 `f5d95cc97ee6d465daa3d2c0019ac0b3a7d4bfbc51c81912bcc658118f7643dd`,
+  and DMG SHA-256 `c691671fc03f1e79c04b648e6f5d9400e7e64f4085293349165e1e97db5e2787`.
+- **Publication evidence:** Cloudflare deployment `48b3795e-077c-4de9-86bd-cac97775d60d`
+  publishes the exact signed build 15 appcast, ZIP, and deltas from retained builds 11–14 on both
+  website domains; every new public payload matched its generated source. Homebrew tap merge
+  `abe6aae7c2287d22ddc40c93cd713f9f37b5eee6` publishes version 1.0.3 with the exact notarized DMG
+  checksum. Installed upgrade and live settled-CPU/menu-bar checks remain deferred to the
+  maintainer's post-release validation.
 - **Acceptance:** Publish immutable Stable 1.0.3 build 15 through GitHub and Sparkle, verify the live
   artifacts/feed mechanically, then have the maintainer confirm settled CPU and menu-bar behavior in
   the installed public update. Keep WR-112's unresponsive-application resilience work separate.
@@ -4100,30 +4281,6 @@ design notes, but every active candidate must map back to a work item here or be
   minimum sizes, aspect-ratio/display changes, Undo, migration, sync/import bounds, and builder
   accessibility.
 
-### WR-019 — Separate the local Xcode development identity
-
-- **Type:** Development workflow / signing
-- **Priority:** P2
-- **Status:** Needs decision
-- **Evidence:** User-observed and signing-requirement backed during the first Beta smoke test.
-- **Current behavior:** Xcode Debug and the installed Developer ID app use the same
-  `dev.appranger.WindowRanger` bundle identifier but different designated requirements. macOS can
-  therefore treat them as separate Accessibility clients while LaunchServices still sees the same
-  bundle identifier, making handoff and permission recovery ambiguous.
-- **Smallest useful outcome:** Decide whether the local Xcode product should use a clearly named
-  development-only bundle identifier and app name while Stable and Beta retain the canonical public
-  identity.
-- **Acceptance:**
-  - the installed public app and Xcode development app are unambiguous in Accessibility settings,
-    LaunchServices, process inspection, and menus;
-  - the required development App ID, provisioning profile, and iCloud capability are configured
-    before changing the project;
-  - Xcode handoff scripts quit and resume only the intended product;
-  - a future development-only identity does not alter the established public identity, migrated
-    preferences and iCloud continuity, update continuity, or release provenance;
-  - migration guidance avoids global TCC or LaunchServices resets and is live-tested on the
-    maintainer's Mac.
-
 ## Pre-release work
 
 `docs/release-checklist.md` remains the detailed authority. These are queue-level epics, not a
@@ -4318,6 +4475,42 @@ second copy of that checklist.
   representative Unified transfers, same-display behaviour, the menu bar appearance correction,
   and the first status-menu placement correction were accepted in the installed development build.
   Build 14 is allocated for the candidate, with release notes at `docs/releases/v1.0.2.md`.
+- **1.0.2 signed candidate and GitHub publication:** Stable Xcode 26.6 built universal Stable 1.0.2
+  build 14 from exact `main` commit `e72ef29420a32497816c925941a40908241975cb` after all 888
+  non-hosted tests, Release static analysis, unsigned universal Release construction, and both DMG
+  smoke variants passed. Apple accepted the app notarization
+  (`2ea57883-cd4b-4b9a-b8ef-89e2cd775ff3`) and DMG notarization
+  (`731d742d-22b4-4953-bc1a-1a4f7530c11e`) with zero issues; both tickets are stapled and
+  Gatekeeper accepts the app and DMG. The exact DMG-installed Developer ID build passed launch,
+  signed CLI status/capabilities/actions/workspaces/configuration/skill checks, eight concurrent
+  clients, full quit/relaunch recovery, and the maintainer's menu-bar, same-display tiled movement,
+  and bidirectional cross-display drag smoke checks. The protected annotated tag `v1.0.2` resolves
+  to that commit. The public immutable non-prerelease GitHub release contains the expected DMG,
+  ZIP, both checksum files, and provenance manifest; all five downloaded assets round-trip verified
+  at SHA-256 `1f2b586bca059e27f038393ca2f49f80fe254092e575ce4fc7745f6d2bcb33cb`
+  for the ZIP and `565b26134b1315a8529bee8860fa52855d2e694a106164bc8fdd6bbaf23a3247`
+  for the DMG. Build 14 is therefore marked `published`; signed-feed, website, and Homebrew
+  publication remain separate checkpoints below.
+- **1.0.2 feed and website publication:** Website PR
+  [`#11`](https://github.com/AppRanger/windowranger-site/pull/11) merged the exact generated feed
+  and 1.0.2 download links as `d5fc48d158d66a5f8c719f16d8cd841e66b1985f`. Cloudflare deployment
+  `d8aa36cb-5b92-4ee2-8680-6cba422318f1` serves appcast SHA-256
+  `10eafc531f0a4ce110fbae4dfc2f4bba2cd3a38625bfcf64994d0586a914c884`, retaining builds 11-13
+  and adding build 14 with deltas from each retained build. Both public domains serve byte-identical
+  homepages, appcasts, archives, and deltas; every Sparkle enclosure and delta signature verifies.
+  Desktop and mobile browser checks found no horizontal overflow, broken images, or console
+  warnings. Website PR [`#12`](https://github.com/AppRanger/windowranger-site/pull/12) recorded the
+  deployment as `23d9ff66579f8dfac85af059c95d940aa2a49b96`.
+- **1.0.2 Homebrew publication:** Tap PR
+  [`#1`](https://github.com/AppRanger/homebrew-tap/pull/1) merged as
+  `d776478f2ca9cb978b0d11a4c89d5e3d94f2c0aa` and publishes the generated 1.0.2 Cask for the exact
+  notarized DMG SHA-256
+  `565b26134b1315a8529bee8860fa52855d2e694a106164bc8fdd6bbaf23a3247`. A refreshed public tap,
+  Cask style, Ruby syntax, `brew info`, and Homebrew 6 strict online audit all pass. The accepted
+  release DMG remains installed directly, so the local Homebrew receipt still records 1.0.1; the
+  already-proven Homebrew-forward upgrade path was not repeated by replacing the accepted build.
+  Sparkle-first/Homebrew coexistence, Intel, Settings PATH UI, and privacy-permission retention
+  remain live validation.
 
 ## Done
 

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repository_root="${0:A:h:h}"
-daily_app="${WINDOWRANGER_DAILY_APP:-/Applications/WindowRanger.app}"
+daily_app="${WINDOWRANGER_DAILY_APP:-/Applications/WindowRanger Dev.app}"
 mode="${1:-interactive}"
 
 case "$mode" in

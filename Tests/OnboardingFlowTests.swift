@@ -188,6 +188,28 @@ final class OnboardingFlowTests: XCTestCase {
         }
     }
 
+    func testDevelopmentCoordinatorCannotEnableOrReplaceICloudSettings() {
+        withDefaults { defaults in
+            let settings = SettingsStore(
+                defaults: defaults,
+                ubiquitousStore: nil,
+                connectedDisplaysProvider: { [] },
+                supportsICloudSync: false
+            )
+            let coordinator = OnboardingCoordinator(
+                settingsStore: settings,
+                progressStore: OnboardingProgressStore(defaults: defaults),
+                finishAction: {}
+            )
+
+            coordinator.setICloudSyncEnabled(true)
+            coordinator.replaceICloudSettingsWithLocalCopy()
+
+            XCTAssertFalse(settings.iCloudSyncEnabled)
+            XCTAssertFalse(settings.replaceICloudSettingsWithLocalCopy())
+        }
+    }
+
     func testShortcutMenusOnlyOfferChoicesValidAgainstTheOtherFamily() {
         withDefaults { defaults in
             let settings = makeSettingsStore(defaults: defaults)

@@ -3,8 +3,47 @@ import XCTest
 final class ApplicationIdentityTests: XCTestCase {
     func testBundleIdentifiersUseAppRangerDomain() {
         XCTAssertEqual(ApplicationIdentity.bundleIdentifier, "dev.appranger.WindowRanger")
+        XCTAssertEqual(ApplicationIdentity.publicBundleIdentifier, "dev.appranger.WindowRanger")
+        XCTAssertEqual(ApplicationIdentity.developmentBundleIdentifier, "dev.appranger.WindowRanger.Debug")
+        XCTAssertFalse(ApplicationIdentity.isDevelopment)
         XCTAssertEqual(ApplicationIdentity.testBundleIdentifier, "dev.appranger.WindowRangerTests")
         XCTAssertEqual(ApplicationIdentity.legacyBundleIdentifier, "com.windowranger.WindowRanger")
+    }
+
+    func testLegacyMigrationRunsOnlyForThePublicIdentity() {
+        XCTAssertTrue(ApplicationIdentityMigration.shouldPerform(isDevelopment: false))
+        XCTAssertFalse(ApplicationIdentityMigration.shouldPerform(isDevelopment: true))
+    }
+
+    func testInstancePolicyAllowsOnlyTheCurrentManagedApplication() {
+        XCTAssertTrue(ApplicationInstancePolicy.shouldStart(
+            currentProcessIdentifier: 10,
+            runningApplications: [
+                RunningApplicationIdentity(
+                    processIdentifier: 10,
+                    bundleIdentifier: ApplicationIdentity.publicBundleIdentifier
+                ),
+                RunningApplicationIdentity(processIdentifier: 20, bundleIdentifier: "com.apple.Safari"),
+            ]
+        ))
+    }
+
+    func testInstancePolicyRejectsAReleaseAndDevelopmentSibling() {
+        for siblingBundleIdentifier in [
+            ApplicationIdentity.publicBundleIdentifier,
+            ApplicationIdentity.developmentBundleIdentifier,
+        ] {
+            XCTAssertFalse(ApplicationInstancePolicy.shouldStart(
+                currentProcessIdentifier: 10,
+                runningApplications: [
+                    RunningApplicationIdentity(processIdentifier: 10, bundleIdentifier: nil),
+                    RunningApplicationIdentity(
+                        processIdentifier: 20,
+                        bundleIdentifier: siblingBundleIdentifier
+                    ),
+                ]
+            ))
+        }
     }
 
     func testPreferenceMigrationCopiesOnlyMissingValuesOnce() throws {

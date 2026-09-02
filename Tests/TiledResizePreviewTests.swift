@@ -167,6 +167,78 @@ final class TiledResizePreviewTests: XCTestCase {
         ))
     }
 
+    func testManagedWorkspaceCapturesOnlyStationaryWindowMovesInStableContext() {
+        XCTAssertTrue(ManagedWorkspaceStationaryMoveCapturePolicy.shouldCapture(
+            sourceLayout: .tiled,
+            currentLayout: .tiled,
+            isWorkspaceActive: true,
+            isIncludedInLayout: false,
+            contextMatches: true
+        ))
+        XCTAssertFalse(ManagedWorkspaceStationaryMoveCapturePolicy.shouldCapture(
+            sourceLayout: .tiled,
+            currentLayout: .tiled,
+            isWorkspaceActive: true,
+            isIncludedInLayout: true,
+            contextMatches: true
+        ))
+        XCTAssertFalse(ManagedWorkspaceStationaryMoveCapturePolicy.shouldCapture(
+            sourceLayout: .none,
+            currentLayout: .none,
+            isWorkspaceActive: true,
+            isIncludedInLayout: false,
+            contextMatches: true
+        ))
+        XCTAssertTrue(ManagedWorkspaceStationaryMoveCapturePolicy.shouldCapture(
+            sourceLayout: .none,
+            currentLayout: .none,
+            isWorkspaceActive: false,
+            keepsOnAllWorkspaces: true,
+            isIncludedInLayout: false,
+            contextMatches: true
+        ))
+        XCTAssertFalse(ManagedWorkspaceStationaryMoveCapturePolicy.shouldCapture(
+            sourceLayout: .accordion,
+            currentLayout: .tiled,
+            isWorkspaceActive: true,
+            isIncludedInLayout: false,
+            contextMatches: true
+        ))
+        XCTAssertFalse(ManagedWorkspaceStationaryMoveCapturePolicy.shouldCapture(
+            sourceLayout: .tiled,
+            currentLayout: .tiled,
+            isWorkspaceActive: true,
+            isIncludedInLayout: false,
+            contextMatches: false
+        ))
+        XCTAssertTrue(ManagedWorkspaceStationaryMoveCapturePolicy.shouldCapture(
+            sourceLayout: .tiled,
+            currentLayout: .tiled,
+            isWorkspaceActive: false,
+            keepsOnAllWorkspaces: true,
+            isIncludedInLayout: false,
+            contextMatches: true
+        ))
+    }
+
+    func testPointerRecoveryUsesLiveTargetInsteadOfStaleFocusedWindow() {
+        let focused = WindowKey(processIdentifier: 101, windowIdentifier: 1)
+        let pointerTarget = WindowKey(processIdentifier: 202, windowIdentifier: 2)
+
+        XCTAssertEqual(ManualPointerRecoveryPolicy.recoveryWindow(
+            focusedWindow: focused,
+            pointerTargetWindow: pointerTarget
+        ), pointerTarget)
+        XCTAssertNil(ManualPointerRecoveryPolicy.recoveryWindow(
+            focusedWindow: focused,
+            pointerTargetWindow: nil
+        ))
+        XCTAssertEqual(ManualPointerRecoveryPolicy.recoveryWindow(
+            focusedWindow: focused,
+            pointerTargetWindow: focused
+        ), focused)
+    }
+
     func testDraggedEdgesProjectFrameFromPointerAfterRealWindowIsParked() throws {
         let edges: TiledResizeDraggedEdges = [.left, .bottom]
         let projected = try XCTUnwrap(

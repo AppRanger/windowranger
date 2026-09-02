@@ -353,10 +353,27 @@ private struct UpdateSettingsView: View {
                     }
                     .pickerStyle(.segmented)
 
-                    Button("Check for Updates…", systemImage: "arrow.triangle.2.circlepath") {
+                    Button(
+                        updateController.isCheckingForUpdates
+                            ? "Checking for Updates…"
+                            : "Check for Updates…",
+                        systemImage: "arrow.triangle.2.circlepath"
+                    ) {
                         updateController.checkForUpdates()
                     }
                     .disabled(!updateController.canCheckForUpdates)
+
+                    if updateController.isCheckingForUpdates {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Checking WindowRanger’s update feed…")
+                        }
+                        .foregroundStyle(.secondary)
+                    } else if let statusMessage = updateController.statusMessage {
+                        Text(statusMessage)
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     Label(
                         updateController.statusMessage ?? updateController.availability.message,
@@ -726,49 +743,53 @@ private struct GeneralSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section("Startup") {
-                    Toggle("Open at login", isOn: Binding(
-                        get: { launchAtLogin.isEnabled },
-                        set: { launchAtLogin.setEnabled($0) }
-                    ))
-                    if let statusMessage = launchAtLogin.statusMessage {
-                        Text(statusMessage)
-                            .font(.caption)
-                            .foregroundStyle(launchAtLogin.status == .notFound ? .red : .secondary)
-                    }
-                    if launchAtLogin.status == .requiresApproval {
-                        Button("Open Login Items Settings", systemImage: "gear") {
-                            launchAtLogin.openSystemSettings()
+                if !ApplicationIdentity.isDevelopment {
+                    Section("Startup") {
+                        Toggle("Open at login", isOn: Binding(
+                            get: { launchAtLogin.isEnabled },
+                            set: { launchAtLogin.setEnabled($0) }
+                        ))
+                        if let statusMessage = launchAtLogin.statusMessage {
+                            Text(statusMessage)
+                                .font(.caption)
+                                .foregroundStyle(launchAtLogin.status == .notFound ? .red : .secondary)
                         }
-                    }
-                    if let errorMessage = launchAtLogin.errorMessage {
-                        Text(errorMessage).font(.caption).foregroundStyle(.red)
+                        if launchAtLogin.status == .requiresApproval {
+                            Button("Open Login Items Settings", systemImage: "gear") {
+                                launchAtLogin.openSystemSettings()
+                            }
+                        }
+                        if let errorMessage = launchAtLogin.errorMessage {
+                            Text(errorMessage).font(.caption).foregroundStyle(.red)
+                        }
                     }
                 }
 
-                Section("Command Line") {
-                    LabeledContent("windowranger") {
-                        Text(cliPathStatusTitle)
-                            .foregroundStyle(cliPathStatusColor)
-                    }
-                    HStack {
-                        if cliPathCanInstall {
-                            Button(cliPathState == .stale ? "Repair Command" : "Add Command to PATH") {
-                                cliPathState = cliPathManager.install()
+                if !ApplicationIdentity.isDevelopment {
+                    Section("Command Line") {
+                        LabeledContent("windowranger") {
+                            Text(cliPathStatusTitle)
+                                .foregroundStyle(cliPathStatusColor)
+                        }
+                        HStack {
+                            if cliPathCanInstall {
+                                Button(cliPathState == .stale ? "Repair Command" : "Add Command to PATH") {
+                                    cliPathState = cliPathManager.install()
+                                }
+                            }
+                            if cliPathState == .installed || cliPathState == .stale {
+                                Button("Remove from PATH") {
+                                    cliPathState = cliPathManager.remove()
+                                }
                             }
                         }
-                        if cliPathState == .installed || cliPathState == .stale {
-                            Button("Remove from PATH") {
-                                cliPathState = cliPathManager.remove()
-                            }
-                        }
+                        Text(cliPathHelpText)
+                            .font(.caption)
+                            .foregroundStyle(cliPathNeedsAttention ? .orange : .secondary)
+                        Text("The bundled command can query and control the signed app, and can export, validate or explicitly replace its complete configuration. Run `windowranger skill` to create agent instructions. This PATH setting is local to this Mac and never syncs.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    Text(cliPathHelpText)
-                        .font(.caption)
-                        .foregroundStyle(cliPathNeedsAttention ? .orange : .secondary)
-                    Text("The bundled command can query and control the signed app, and can export, validate or explicitly replace its complete configuration. Run `windowranger skill` to create agent instructions. This PATH setting is local to this Mac and never syncs.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
                 Section("Setup") {
@@ -781,7 +802,16 @@ private struct GeneralSettingsView: View {
                 }
             }
 
-            if category == .sync {
+            if category == .sync, ApplicationIdentity.isDevelopment {
+                Section("Local Debug Settings") {
+                    Label("WindowRanger Dev does not access the public app's iCloud settings.", systemImage: "externaldrive.badge.xmark")
+                    Text("Use the installed Release app when you need to inspect or change iCloud sync. Debug preferences, profiles and recovery state stay on this Mac under the separate development identity.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if category == .sync, !ApplicationIdentity.isDevelopment {
                 Section("iCloud") {
                     Toggle("Sync settings with iCloud", isOn: $store.iCloudSyncEnabled)
                     LabeledContent("Status") {
