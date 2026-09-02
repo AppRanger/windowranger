@@ -34,6 +34,19 @@ smallest useful outcome and acceptance boundary.
   and fixed a Release-optimized startup crash in workspace-preview permission initialization. The
   maintainer then confirmed both apps, their separate permissions, and two-way switching all work.
 
+### WR-116 — Prevent the Release-configuration startup crash on macOS 27
+
+- **Type:** Release blocker
+- **Priority:** P1
+- **Status:** Done
+- **Result:** Workspace-preview initialization now preflights Screen Recording authorization once
+  and passes the value directly into both observable objects, avoiding an optimized access to an
+  observation registrar before initialization is complete.
+- **Evidence:** Three original Release launches produced matching `EXC_BAD_ACCESS` reports in
+  `ObservationRegistrar.access`. The replacement signed universal Release build launched with the
+  existing public settings, produced no new crash report, remained running, and was accepted by the
+  maintainer. The focused initialization test and complete 910-test non-hosted suite pass.
+
 ### WR-109 — Keep the first status menu at its final anchored position
 
 - **Type:** Menu-bar popup positioning bug
@@ -344,25 +357,6 @@ smallest useful outcome and acceptance boundary.
   must confirm an excluded and explicitly floating window can be moved and resized on Tiled,
   Accordion, and Freeform workspaces without snapping back, changing a managed tree, or regressing
   participant move/resize previews.
-
-### WR-116 — Release-configuration startup crash on macOS 27
-
-- **Type:** Engineering-observed release blocker
-- **Priority:** P1
-- **Status:** Inbox — reproduced three times while preparing the WR-114/WR-115 installed candidate;
-  no fix attempted.
-- **Observed:** A freshly built Apple Development-signed universal Release configuration exits with
-  `EXC_BAD_ACCESS` during launch on macOS 27.0 build 26A5425a. The equivalent Debug configuration
-  launches normally.
-- **Evidence:** Crash reports at 08:26, 08:27, and 08:28 identify
-  `ObservationRegistrar.access`, `WorkspacePreviewPermissionMonitor.authorization`, and
-  `WorkspacePreviewRepository.init` at the top of the main-thread stack. The failed bundle is
-  preserved at `/Applications/.WindowRanger.failed-wr115-release`; the working prior candidate and
-  public Developer ID rollback were preserved separately.
-- **Acceptance:** Establish whether this is an optimizer-sensitive initialization bug in
-  WindowRanger or a macOS 27/Xcode 27 beta toolchain regression, add a focused regression where
-  possible, and confirm a fresh universal Release configuration launches without crashing before
-  the next distribution build.
 
 ### WR-111 — Make pre-push validation safe from linked-worktree Git environment
 
