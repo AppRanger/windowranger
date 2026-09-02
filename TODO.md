@@ -37,7 +37,11 @@ smallest useful outcome and acceptance boundary.
   `main` commit `30cb68ccb3fae9e7c45276156bd2089e7ab5ec97` after all 911 non-hosted tests,
   Release static analysis, universal archive/export, notarization, stapling, Gatekeeper, and DMG
   verification passed. The maintainer accepted the exact DMG-installed build before the immutable
-  GitHub release and its five round-trip-verified assets were published as `v1.0.5`.
+  GitHub release and its five round-trip-verified assets were published as `v1.0.5`. Cloudflare
+  deployment `78054bb8-aeeb-49a9-af4f-11ae9bc0d0f5` publishes the exact signed build 18 appcast,
+  archive, and deltas from retained builds 12–16 on both website domains; every new live payload
+  matched its generated source. Homebrew tap merge `0394e87a3be02d5168fc2bc8a6dd5baf73c58b05`
+  publishes the same notarized DMG checksum and passes style plus strict online audit.
 
 ### WR-019 — Separate the local Xcode development identity
 
@@ -253,8 +257,9 @@ smallest useful outcome and acceptance boundary.
 - **Type:** User-observed update experience bug
 - **Priority:** P1
 - **Status:** Live validation — the installed status-menu correction completed promptly through
-  Sparkle's native up-to-date result and the maintainer accepted the no-toast refinement; packaged
-  update-available and network-failure paths remain release validation boundaries.
+  Sparkle's native up-to-date result and the maintainer accepted the no-toast refinement. Stable
+  1.0.5 build 18 is public through GitHub, Sparkle, the website, and Homebrew; a genuine packaged
+  update-available check and the network-failure path remain live validation boundaries.
 - **User-observed:** Choosing **Check for Updates…** takes long enough to feel broken because the
   status menu closes and WindowRanger provides no acknowledgement while Sparkle is working.
 - **Diagnostic evidence:** The live public appcast returned its first byte and completed in about
