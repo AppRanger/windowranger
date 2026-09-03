@@ -4589,8 +4589,26 @@ second copy of that checklist.
   (`fb141541-9000-4df4-9a6f-8e941af738cd`) and DMG notarization
   (`da82df55-7b2c-4d44-8db8-e7bc97c510d7`) with zero issues; both tickets are stapled. The
   maintainer accepted the exact DMG-installed build before the immutable latest GitHub Stable
-  release and its five round-trip-verified assets were published as `v1.0.6`. Sparkle and Homebrew
-  publication remain separate channel checkpoints.
+  release and its five round-trip-verified assets were published as `v1.0.6`.
+- **1.0.6 feed and website publication:** Website PR
+  [`#19`](https://github.com/AppRanger/windowranger-site/pull/19) merged the exact signed build 19
+  feed, five deltas from retained builds 13–16 and 18, release ZIP, and 1.0.6 download links as
+  `0a7eda648e16635ce90a642350aa1cc5b7ad9cb0`. Cloudflare deployment
+  `fa7e38ca-d08a-49a0-8845-b2bbad5a99ff` serves appcast SHA-256
+  `17c143d964394b62aadfd737a533a32ecdb197ae7dec008e3368e1218ea41234`. Both public domains serve
+  byte-identical homepages, appcasts, archives, and deltas; every build 19 Sparkle enclosure and
+  delta signature verifies. Website PR
+  [`#20`](https://github.com/AppRanger/windowranger-site/pull/20) recorded the deployment as
+  `54dd7c8814bf056e11143216020ebc8477d13e64`.
+- **1.0.6 Homebrew publication:** Tap PR
+  [`#5`](https://github.com/AppRanger/homebrew-tap/pull/5) merged as
+  `b4accd6dbaba9fa189a3bfcf9d17a23887c06bdb` and publishes the generated 1.0.6 Cask for the exact
+  notarized DMG SHA-256
+  `dab7b8fd8669f222d64c57760edd13f040fb1c36c4995e3c6f9eafc933c3d0d5`. A refreshed public tap,
+  Cask style, Ruby syntax, `brew info`, and Homebrew strict online audit all pass. The accepted
+  release DMG remains installed directly, so the older local Homebrew receipt was not changed and
+  the already-proven Homebrew-forward upgrade path was not repeated. Sparkle-first/Homebrew
+  coexistence, Intel, Settings PATH UI, and privacy-permission retention remain live validation.
 - **1.0.2 preparation:** The maintainer explicitly approved committing the accepted fixes and
   cutting Stable 1.0.2 on 1 September 2026. All nine cross-display layout combinations,
   representative Unified transfers, same-display behaviour, the menu bar appearance correction,
