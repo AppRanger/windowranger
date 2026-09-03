@@ -139,12 +139,36 @@ final class WindowAdmissionFixtureTests: XCTestCase {
             retainedMetadata: attemptedUnsupportedEvidence
         ))
         XCTAssertEqual(
-            AccessibilityWindow.fixedSizeDecisionAfterRejectedResize(attemptedUnsupportedEvidence),
+            AccessibilityWindow.fixedSizeDecisionAfterIneffectiveResize(attemptedUnsupportedEvidence),
             decision(.managedDialog, .fixedSizeStandardWindow)
         )
-        XCTAssertNil(AccessibilityWindow.fixedSizeDecisionAfterRejectedResize(
+        XCTAssertNil(AccessibilityWindow.fixedSizeDecisionAfterIneffectiveResize(
             fixtureMetadata(subrole: kAXDialogSubrole as String)
         ))
+    }
+
+    func testOperationalNoOpResizeCanRecoverMisleadingSettableSupport() {
+        let finderCopyStyleEvidence = fixtureMetadata(
+            bundleIdentifier: "com.apple.finder",
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            modalObservation: .falseValue,
+            fullscreenButton: .absent,
+            minimizeButton: .present,
+            closeButton: .present,
+            zoomButton: .present,
+            positionSettable: .trueValue,
+            sizeSettable: .trueValue
+        )
+
+        XCTAssertEqual(
+            AccessibilityWindow.admissionDecision(for: finderCopyStyleEvidence),
+            decision(.managedNormal, .normalWindow)
+        )
+        XCTAssertEqual(
+            AccessibilityWindow.fixedSizeDecisionAfterIneffectiveResize(finderCopyStyleEvidence),
+            decision(.managedDialog, .fixedSizeStandardWindow)
+        )
     }
 
     func testStandardWindowDialogControlProbeRequiresTheNarrowCloselessShapeAndRunsOnce() {
@@ -609,6 +633,29 @@ private let fixtures: [WindowAdmissionFixture] = [
             .ignoredTransientPopup,
             .verifiedBundleNonNormalLayer,
             compatibilityProfileIdentifier: "codex-transient-non-normal-layer-v1"
+        )
+    ),
+    WindowAdmissionFixture(
+        name: "captured Codex update precursor is ignored",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "com.openai.codex",
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            modalObservation: .falseValue,
+            mainObservation: .trueValue,
+            fullscreenButton: .absent,
+            minimizeButton: .absent,
+            closeButton: .absent,
+            zoomButton: .absent,
+            defaultButton: .absent,
+            cancelButton: .absent,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue
+        ),
+        expected: decision(
+            .ignoredTransientPopup,
+            .verifiedBundleTransientStandardWindow,
+            compatibilityProfileIdentifier: "codex-update-precursor-v1"
         )
     ),
     WindowAdmissionFixture(

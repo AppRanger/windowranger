@@ -131,7 +131,8 @@ dispositions: normal managed window, managed dialog (automatically floating), te
 ineligible, ignored persistent companion surface, or ignored transient/popup. Ignored objects never
 enter membership, layout, persistence, focus cycling or recovery. The explicit companion
 disposition keeps cooperative long-lived surfaces distinct from transient UI; verified
-non-normal-layer Codex pet/panels remain excluded as transient objects rather than patched out later.
+non-normal-layer Codex pet/panels and the verified control-free, fixed-size ChatGPT update precursor
+remain excluded as transient objects rather than patched out later.
 
 Built-in compatibility profiles are versioned, declarative corrections for verified application
 surfaces. A profile matches a normalized bundle identifier plus only the role, subrole, layer,
@@ -169,10 +170,16 @@ capability evidence remains managed conservatively and does not trigger this fal
 negative probe is retained so the ordinary engine refresh does not repeat failed support reads.
 Proven fixed-size windows use position-only writes for visibility, display reconciliation, Quick App
 transitions, and quit recovery; neither an explicit per-window override nor another frame path can
-force a resize-first operation. If the one-time probe was inconclusive but an initial size write
-later rejects, the engine re-probes that exact candidate once, records the fixed-size decision, and
-immediately completes the requested position-only move and re-solves the affected visible layouts.
-Position or final-size failures do not promote a normal window into this safety classification.
+force a resize-first operation. If the one-time probe was inconclusive or misleading but an initial
+size write later rejects twice, or reports success while repeated readbacks across one retry and a
+bounded quarter-second observation window confirm the size remained unchanged, the engine re-probes
+that exact candidate once, records the
+fixed-size decision, and re-solves affected visible layouts. One initial rejection receives a
+bounded retry and remains normal when that retry succeeds. The confirmation runs before any
+position write. A currently visible no-op surface keeps its existing position; a parked surface or
+an explicit Quick App/quit-recovery transition completes with a position-only move. Unavailable,
+delayed, clamped, or partial readback changes do not promote a normal window. Position or final-size
+failures likewise do not promote it into this safety classification.
 An otherwise closeless standard window on an unknown or normal layer receives a separate one-time
 dialog-control probe only when both its Full Screen and Close controls are authoritatively absent.
 Affirmative window-level Default and Cancel button relationships classify that surface as a managed
@@ -222,8 +229,8 @@ An explicit `AXDialog` observed on a known nonzero WindowServer layer is tempora
 admission instead of being placed while its transient layer metadata settles. If the same window
 later reports layer zero with corroborating controls, it enters as an automatically floating dialog;
 an unavailable layer remains conservatively managed. Frame writes also stop before changing
-position when the initial size write is rejected, so a fixed-size surface cannot be displaced toward
-a layout frame it cannot occupy.
+position when the initial size write rejects twice or repeatedly succeeds without changing the
+observed size, so a fixed-size surface cannot be displaced toward a layout frame it cannot occupy.
 User-triggered Refresh
 performs read-only capability queries for already tracked windows, while ignored or unsupported
 surfaces capture the same evidence once before they are discarded. The snapshot contains no window
@@ -461,7 +468,11 @@ only when the WindowServer-bound marker matches the exact owned window identitie
 AppKit still reports that application hidden. Same-bundle candidates from multiple processes remain
 untouched. Newly admitted same-process windows join the exact application group, and an
 authoritatively removed member leaves only that exact ownership set; native-tab state transfer still
-requires the existing exact same-process replacement proof.
+requires the existing exact same-process replacement proof. Because an application recovering from
+an Accessibility timeout or visibility transition can briefly omit an unchanged window from one
+successful snapshot, an exact owned key remains write-deferred until at least two successful absent
+snapshots span 500 milliseconds. Exact recovery resets that suspicion, process termination remains
+authoritative immediately, and an eligible one-for-one native-tab replacement bypasses the grace.
 
 ## UI and focus safety
 
