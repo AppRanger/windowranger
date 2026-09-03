@@ -2957,7 +2957,7 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertEqual(operations, ["size", "position", "size"])
     }
 
-    func testFrameWriteResultPromotesOnlyAnInitialSizeRejection() {
+    func testFrameWriteResultStopsBeforePositionWhenInitialSizeWriteIsIneffective() {
         XCTAssertEqual(
             AccessibilityWindow.applyFrameWriteSequenceResult(
                 writeSize: { false },
@@ -2965,6 +2965,26 @@ final class WorkspaceDefinitionTests: XCTestCase {
             ),
             .initialSizeRejected
         )
+
+        var ignoredWriteOperations: [String] = []
+        XCTAssertEqual(
+            AccessibilityWindow.applyFrameWriteSequenceResult(
+                writeSize: {
+                    ignoredWriteOperations.append("size")
+                    return true
+                },
+                writePosition: {
+                    ignoredWriteOperations.append("position")
+                    return true
+                },
+                initialSizeWriteWasIgnored: {
+                    ignoredWriteOperations.append("verify")
+                    return true
+                }
+            ),
+            .initialSizeWriteIgnored
+        )
+        XCTAssertEqual(ignoredWriteOperations, ["size", "verify"])
 
         var positionFailureSizeWrites = 0
         XCTAssertEqual(
@@ -2991,6 +3011,203 @@ final class WorkspaceDefinitionTests: XCTestCase {
             .finalSizeRejected
         )
         XCTAssertEqual(finalSizeWrites, 2)
+    }
+
+    func testFrameWriteResultRetriesOneTransientInitialSizeRejection() {
+        var operations: [String] = []
+        var sizeWriteCount = 0
+
+        let result = AccessibilityWindow.applyFrameWriteSequenceResult(
+            writeSize: {
+                sizeWriteCount += 1
+                operations.append("size-\(sizeWriteCount)")
+                return sizeWriteCount > 1
+            },
+            writePosition: {
+                operations.append("position")
+                return true
+            },
+            retryInitialSizeWriteAfterRejection: {
+                operations.append("retry")
+                sizeWriteCount += 1
+                return true
+            },
+            initialSizeWriteWasIgnored: {
+                operations.append("verify")
+                return false
+            }
+        )
+
+        XCTAssertEqual(result, .succeededAfterInitialSizeRetry)
+        XCTAssertTrue(result.succeeded)
+        XCTAssertEqual(operations, ["size-1", "retry", "verify", "position", "size-3"])
+    }
+
+    func testFrameWriteResultRequiresTwoRejectedInitialSizeWritesForRecoveryEvidence() {
+        var operations: [String] = []
+
+        let result = AccessibilityWindow.applyFrameWriteSequenceResult(
+            writeSize: {
+                operations.append("size")
+                return false
+            },
+            writePosition: {
+                operations.append("position")
+                return true
+            },
+            retryInitialSizeWriteAfterRejection: {
+                operations.append("retry")
+                return false
+            },
+            initialSizeWriteWasIgnored: {
+                operations.append("verify")
+                return false
+            }
+        )
+
+        XCTAssertEqual(result, .initialSizeRejected)
+        XCTAssertEqual(operations, ["size", "retry"])
+    }
+
+    func testFrameWriteResultMarksOnlyInitialResizeFailuresAsOperationalEvidence() {
+        XCTAssertTrue(WindowFrameWriteResult.initialSizeRejected.provesInitialResizeWasIneffective)
+        XCTAssertTrue(WindowFrameWriteResult.initialSizeWriteIgnored.provesInitialResizeWasIneffective)
+        XCTAssertFalse(WindowFrameWriteResult.succeeded.provesInitialResizeWasIneffective)
+        XCTAssertFalse(
+            WindowFrameWriteResult.succeededAfterInitialSizeRetry.provesInitialResizeWasIneffective
+        )
+        XCTAssertFalse(WindowFrameWriteResult.positionRejected.provesInitialResizeWasIneffective)
+        XCTAssertFalse(WindowFrameWriteResult.finalSizeRejected.provesInitialResizeWasIneffective)
+        XCTAssertTrue(WindowFrameWriteResult.succeeded.succeeded)
+        XCTAssertTrue(WindowFrameWriteResult.succeededAfterInitialSizeRetry.succeeded)
+    }
+
+    func testSuccessfulSizeWriteRequiresRepeatedUnchangedReadbackBeforeItIsIgnored() {
+        let original = CGSize(width: 404, height: 88)
+        let target = CGSize(width: 1_913, height: 1_523)
+        var observations = Array(repeating: original, count: 14)
+        var retryCount = 0
+        var pauseCount = 0
+
+        XCTAssertTrue(AccessibilityWindow.successfulSizeWriteWasIgnored(
+            originalSize: original,
+            targetSize: target,
+            observeSize: { observations.removeFirst() },
+            retrySizeWrite: {
+                retryCount += 1
+                return true
+            },
+            pause: { pauseCount += 1 }
+        ))
+        XCTAssertEqual(retryCount, 1)
+        XCTAssertEqual(pauseCount, 13)
+
+        var rejectedRetryObservations = Array(repeating: original, count: 14)
+        var rejectedRetryPauseCount = 0
+        XCTAssertTrue(AccessibilityWindow.successfulSizeWriteWasIgnored(
+            originalSize: original,
+            targetSize: target,
+            observeSize: { rejectedRetryObservations.removeFirst() },
+            retrySizeWrite: { false },
+            pause: { rejectedRetryPauseCount += 1 }
+        ))
+        XCTAssertEqual(rejectedRetryPauseCount, 13)
+    }
+
+    func testSuccessfulSizeWriteDoesNotTreatDelayedOrPartialChangesAsIgnored() {
+        let original = CGSize(width: 404, height: 88)
+        let target = CGSize(width: 1_913, height: 1_523)
+
+        var delayedObservations = [original, target]
+        XCTAssertFalse(AccessibilityWindow.successfulSizeWriteWasIgnored(
+            originalSize: original,
+            targetSize: target,
+            observeSize: { delayedObservations.removeFirst() },
+            retrySizeWrite: { XCTFail("Delayed write must not be retried"); return true },
+            pause: {}
+        ))
+
+        var delayedAfterRetryObservations = [original, original, original, original, target]
+        var delayedAfterRetryCount = 0
+        var delayedAfterRetryPauseCount = 0
+        XCTAssertFalse(AccessibilityWindow.successfulSizeWriteWasIgnored(
+            originalSize: original,
+            targetSize: target,
+            observeSize: { delayedAfterRetryObservations.removeFirst() },
+            retrySizeWrite: {
+                delayedAfterRetryCount += 1
+                return true
+            },
+            pause: { delayedAfterRetryPauseCount += 1 }
+        ))
+        XCTAssertEqual(delayedAfterRetryCount, 1)
+        XCTAssertEqual(delayedAfterRetryPauseCount, 4)
+
+        let partiallyChanged = CGSize(width: 500, height: 88)
+        XCTAssertFalse(AccessibilityWindow.successfulSizeWriteWasIgnored(
+            originalSize: original,
+            targetSize: target,
+            observeSize: { partiallyChanged },
+            retrySizeWrite: { XCTFail("Partial change must not be retried"); return true },
+            pause: {}
+        ))
+
+        XCTAssertFalse(AccessibilityWindow.successfulSizeWriteWasIgnored(
+            originalSize: nil,
+            targetSize: target,
+            observeSize: { original },
+            retrySizeWrite: { XCTFail("Unavailable baseline must not be retried"); return true },
+            pause: {}
+        ))
+
+        var unavailableReadbackCount = 0
+        XCTAssertFalse(AccessibilityWindow.successfulSizeWriteWasIgnored(
+            originalSize: original,
+            targetSize: target,
+            observeSize: {
+                unavailableReadbackCount += 1
+                return unavailableReadbackCount == 1 ? original : nil
+            },
+            retrySizeWrite: { XCTFail("Unavailable settled readback must not be retried"); return true },
+            pause: {}
+        ))
+    }
+
+    func testNoOpResizePreservesOnlyAnAlreadyVisibleNormalLayoutPosition() {
+        let displays = testDisplays()
+        let visibleFrame = WindowFrame(
+            position: CGPoint(x: 100, y: 100),
+            size: CGSize(width: 404, height: 88)
+        )
+        let parkedFrame = WindowFrame(
+            position: CGPoint(x: 20_000, y: 20_000),
+            size: visibleFrame.size
+        )
+
+        XCTAssertTrue(WorkspaceEngine.shouldPreservePositionAfterIneffectiveResize(
+            resizeResult: .initialSizeWriteIgnored,
+            preserveVisiblePositionAfterIgnoredResize: true,
+            observedFrame: visibleFrame,
+            displays: displays
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldPreservePositionAfterIneffectiveResize(
+            resizeResult: .initialSizeWriteIgnored,
+            preserveVisiblePositionAfterIgnoredResize: true,
+            observedFrame: parkedFrame,
+            displays: displays
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldPreservePositionAfterIneffectiveResize(
+            resizeResult: .initialSizeRejected,
+            preserveVisiblePositionAfterIgnoredResize: true,
+            observedFrame: visibleFrame,
+            displays: displays
+        ))
+        XCTAssertFalse(WorkspaceEngine.shouldPreservePositionAfterIneffectiveResize(
+            resizeResult: .initialSizeWriteIgnored,
+            preserveVisiblePositionAfterIgnoredResize: false,
+            observedFrame: visibleFrame,
+            displays: displays
+        ))
     }
 
     func testTrustedInteractiveLaunchChecksTrustOnceWithoutPrompting() {

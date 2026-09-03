@@ -20,6 +20,25 @@ smallest useful outcome and acceptance boundary.
 
 ## Done
 
+### WR-119 — Do not float ordinary windows after one transient resize rejection
+
+- **Type:** Diagnostic-backed window admission regression
+- **Priority:** P1
+- **Status:** Done
+- **Result:** A rejected initial resize is retried once before fixed-size recovery. All 160 focused
+  tests passed; fresh installed-Dev diagnostics kept Safari and Finder managed, and the maintainer
+  confirmed both participate correctly in workspace P's layouts on 3 September 2026.
+
+### WR-118 — Keep fixed-size Finder operation windows out of managed layouts
+
+- **Type:** Diagnostic-backed window admission and geometry safety bug
+- **Priority:** P1
+- **Status:** Done
+- **Result:** Repeated bounded readback now detects size writes that report success without changing
+  the window, keeping the Finder copy surface out of Tiled and Accordion while ordinary Finder
+  windows remain manageable. All 160 focused tests passed and the maintainer accepted the installed
+  Dev behavior on 3 September 2026.
+
 ### WR-117 — Re-park escaped inactive windows after Accessibility recovery
 
 - **Type:** Workspace visibility bug
@@ -251,6 +270,26 @@ smallest useful outcome and acceptance boundary.
   accepted flow keeps the palette open while the halo expands and returns Escape focus to search.
 
 ## Inbox
+
+### WR-120 — Investigate unexpected workspace hotkeys when an application regains focus
+
+- **Type:** User-observed input-routing bug
+- **Priority:** P1
+- **Status:** Inbox — diagnostic cause narrowed to global hotkey delivery; reproduction and raw-input
+  cause remain unknown.
+- **User-observed:** WindowRanger unexpectedly switched from workspace 2 back to workspace P twice
+  as Safari appeared to regain focus.
+- **Expected:** Returning focus to an application must not activate its workspace unless focus
+  following is enabled or the user intentionally invokes the workspace shortcut.
+- **Diagnostic evidence (3 September 2026):** At 17:05:59 and 17:11:44 local time, the Debug log
+  recorded the Navigate modifier family becoming active, followed by exactly one global-hotkey
+  receipt and command dispatch for workspace P (`000000-000005`). Each workspace switch began before
+  WindowRanger raised Safari, and no focus-follow request or duplicate hotkey was recorded. The
+  configured P binding uses workspace key `p` with Navigate modifiers; the remaining uncertainty is
+  why that key combination was delivered.
+- **Acceptance:** Reproduce or capture enough input state to distinguish an intentional physical key
+  chord, a stale-modifier/key transition, and a third-party synthetic event. WindowRanger must not
+  dispatch P when the configured chord was not actually pressed.
 
 ### WR-114 — Show progress while manually checking for updates
 
