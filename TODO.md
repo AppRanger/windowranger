@@ -4577,6 +4577,13 @@ second copy of that checklist.
   upgrade direction. Sparkle-first/Homebrew coexistence, Intel, Settings PATH UI, and privacy
   permission retention remain live validation.
 - **Gate:** Each later release still requires explicit maintainer approval.
+- **1.0.6 preparation:** The maintainer explicitly approved Stable 1.0.6 on 3 September 2026 after
+  accepting installed Dev behavior for WR-118, WR-119, and WR-122 and an installed normal-use soak
+  for non-deterministic WR-121. The exact source passed all 924 non-hosted tests, Release static
+  analysis, an unsigned universal Release build, both DMG smoke layouts, and protected PR #113.
+  Build 19 is allocated for the candidate, with release notes at `docs/releases/v1.0.6.md`. The
+  signed, notarized packaged artifact still requires exact installation and maintainer acceptance
+  before tagging and public publication.
 - **1.0.2 preparation:** The maintainer explicitly approved committing the accepted fixes and
   cutting Stable 1.0.2 on 1 September 2026. All nine cross-display layout combinations,
   representative Unified transfers, same-display behaviour, the menu bar appearance correction,

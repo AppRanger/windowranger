@@ -24,3 +24,4 @@
 16	1.0.4	published	GitHub Stable release v1.0.4
 17	1.0.5	superseded	Unpublished candidate replaced after WR-117 workspace visibility fix
 18	1.0.5	published	GitHub Stable release v1.0.5
+19	1.0.6	allocated	Stable candidate for WR-118, WR-119, WR-121, and WR-122
