@@ -636,6 +636,29 @@ private let fixtures: [WindowAdmissionFixture] = [
         )
     ),
     WindowAdmissionFixture(
+        name: "captured Codex update precursor is ignored",
+        metadata: fixtureMetadata(
+            bundleIdentifier: "com.openai.codex",
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            modalObservation: .falseValue,
+            mainObservation: .trueValue,
+            fullscreenButton: .absent,
+            minimizeButton: .absent,
+            closeButton: .absent,
+            zoomButton: .absent,
+            defaultButton: .absent,
+            cancelButton: .absent,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue
+        ),
+        expected: decision(
+            .ignoredTransientPopup,
+            .verifiedBundleTransientStandardWindow,
+            compatibilityProfileIdentifier: "codex-update-precursor-v1"
+        )
+    ),
+    WindowAdmissionFixture(
         name: "captured Ghostty non-normal dialog is deferred until its layer settles",
         metadata: fixtureMetadata(
             bundleIdentifier: "com.mitchellh.ghostty",

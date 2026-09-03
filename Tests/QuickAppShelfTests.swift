@@ -215,6 +215,150 @@ final class QuickAppShelfTests: XCTestCase {
         )
     }
 
+    func testQuickAppWindowAbsenceRequiresConfirmationAndElapsedGrace() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        var state = QuickAppWindowAbsenceGraceState()
+
+        let first = state.observe(
+            ownedWindowKeys: [key],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [],
+            at: start
+        )
+        XCTAssertEqual(first.protectedWindowKeys, [key])
+        XCTAssertTrue(first.confirmedMissingWindowKeys.isEmpty)
+
+        let fastConfirmation = state.observe(
+            ownedWindowKeys: [key],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [],
+            at: start.addingTimeInterval(0.1)
+        )
+        XCTAssertEqual(fastConfirmation.protectedWindowKeys, [key])
+        XCTAssertTrue(fastConfirmation.confirmedMissingWindowKeys.isEmpty)
+
+        let elapsedConfirmation = state.observe(
+            ownedWindowKeys: [key],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [],
+            at: start.addingTimeInterval(
+                QuickAppWindowAbsenceGraceState.minimumGraceDuration + 0.001
+            )
+        )
+        XCTAssertTrue(elapsedConfirmation.protectedWindowKeys.isEmpty)
+        XCTAssertEqual(elapsedConfirmation.confirmedMissingWindowKeys, [key])
+    }
+
+    func testQuickAppWindowExactRecoveryResetsAbsenceGrace() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        var state = QuickAppWindowAbsenceGraceState()
+
+        XCTAssertEqual(state.observe(
+            ownedWindowKeys: [key],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [],
+            at: start
+        ).protectedWindowKeys, [key])
+
+        let recovered = state.observe(
+            ownedWindowKeys: [key],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [key],
+            at: start.addingTimeInterval(0.1)
+        )
+        XCTAssertEqual(recovered.recoveredWindowKeys, [key])
+        XCTAssertTrue(recovered.protectedWindowKeys.isEmpty)
+
+        let absentAgain = state.observe(
+            ownedWindowKeys: [key],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [],
+            at: start.addingTimeInterval(10)
+        )
+        XCTAssertEqual(absentAgain.protectedWindowKeys, [key])
+        XCTAssertTrue(absentAgain.confirmedMissingWindowKeys.isEmpty)
+    }
+
+    func testQuickAppAbsenceGraceDoesNotDelayTerminationOrNativeTabHandoff() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        var state = QuickAppWindowAbsenceGraceState()
+
+        XCTAssertTrue(state.observe(
+            ownedWindowKeys: [key],
+            runningProcessIdentifiers: [],
+            successfullyEnumeratedProcessIdentifiers: [],
+            enumeratedWindowKeys: [],
+            at: start
+        ).protectedWindowKeys.isEmpty)
+
+        XCTAssertTrue(state.observe(
+            ownedWindowKeys: [key],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [],
+            immediateHandoffWindowKeys: [key],
+            at: start
+        ).protectedWindowKeys.isEmpty)
+    }
+
+    func testGhosttyStyleTransientAbsencePreservesSessionAndCancelsRemoval() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let ghostty = WindowKey(processIdentifier: 42, windowIdentifier: 138)
+        var state = QuickAppWindowAbsenceGraceState()
+
+        let removalCandidates = WindowEnumerationLifecycle.removedTrackedWindowKeys(
+            trackedWindowKeys: [ghostty],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: []
+        )
+        XCTAssertEqual(removalCandidates, [ghostty])
+
+        let omission = state.observe(
+            ownedWindowKeys: [ghostty],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [],
+            at: start
+        )
+        XCTAssertTrue(omission.removals(from: removalCandidates).isEmpty)
+        XCTAssertTrue(QuickAppWindowAbsenceGraceState.preservesSession(
+            windowKeys: [ghostty],
+            protectedWindowKeys: omission.protectedWindowKeys
+        ))
+
+        let recovered = state.observe(
+            ownedWindowKeys: [ghostty],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [ghostty],
+            at: start.addingTimeInterval(0.064)
+        )
+        XCTAssertEqual(recovered.recoveredWindowKeys, [ghostty])
+        XCTAssertFalse(QuickAppWindowAbsenceGraceState.preservesSession(
+            windowKeys: [ghostty],
+            protectedWindowKeys: recovered.protectedWindowKeys
+        ))
+    }
+
+    func testKnownTerminatedQuickAppReleasesWithoutRestoration() {
+        XCTAssertTrue(DropDownAppLifecyclePolicy.shouldReleaseSessionWithoutRestoration(
+            processIsKnownTerminated: true
+        ))
+        XCTAssertFalse(DropDownAppLifecyclePolicy.shouldReleaseSessionWithoutRestoration(
+            processIsKnownTerminated: false
+        ))
+    }
+
     func testTwoWindowShelfGeometrySupportsReversalAndWrappingWithoutRelayout() {
         let container = WindowFrame(
             position: CGPoint(x: 100, y: 200),

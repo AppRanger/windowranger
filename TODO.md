@@ -271,6 +271,50 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-122 — Ignore ChatGPT's transient update precursor
+
+- **Type:** Diagnostic-backed window-admission regression
+- **Priority:** P1 release blocker
+- **Status:** Live validation — narrow compatibility profile implemented with focused fixture coverage.
+  The installed Dev retry caused no layout reflow and was accepted for release by the maintainer;
+  the warmed check did not recreate the brief precursor, so a live profile match remains unobserved.
+- **User-observed:** Opening ChatGPT's Check for Updates window caused it to enter the active tiled
+  workspace and briefly reflow the main ChatGPT window.
+- **Expected:** The transient updater surface must not enter workspace membership, layout, focus, or
+  geometry management. Ordinary ChatGPT windows must remain managed.
+- **Diagnostic evidence (3 September 2026):** ChatGPT window `39585:16395` appeared as a layer-zero,
+  main, non-modal `AXStandardWindow` with no window or dialog controls, writable position, and
+  read-only size. WindowRanger admitted it as normal, halved the main window, and attempted a resize
+  that rejected. The precursor disappeared 0.8 seconds later when the actual layer-eight modal
+  dialog `39585:16396` appeared; that dialog was already ignored correctly.
+- **Implementation:** A versioned `com.openai.codex` compatibility profile ignores only the exact
+  privacy-safe precursor signature. A captured fixture and negative ordinary-window/control-bearing
+  variants keep the rule from becoming whole-app policy.
+- **Acceptance:** In an installed Dev build, Check for Updates must open without changing ChatGPT's
+  workspace membership or main-window frame, while an ordinary ChatGPT window remains managed.
+
+### WR-121 — Preserve Quick App ownership across brief Accessibility omissions
+
+- **Type:** Diagnostic-backed Quick App ownership regression
+- **Priority:** P1 release blocker
+- **Status:** Live validation — bounded ownership grace implemented and covered by focused automated
+  tests. The exact failure has no known repeatable trigger; the maintainer authorized release after
+  an installed Dev normal-use soak, while continued observation remains appropriate.
+- **User-observed:** Ghostty, configured as a Quick App, unexpectedly added itself to workspace P.
+- **Expected:** A configured Quick App must retain Shelf ownership and must not be admitted into the
+  currently active workspace after a transient Accessibility failure.
+- **Diagnostic evidence (3 September 2026):** Ghostty window `1339:138` recovered from an AX timeout,
+  rejected a Quick App frame write, then disappeared from one successful `AXWindows` snapshot.
+  WindowRanger cleared and unhid its session; the exact same key returned 64 ms later and was routed
+  into P as an ordinary new window.
+- **Implementation:** An exact Quick App-owned key now remains write-deferred until it is absent from
+  at least two successful snapshots for at least 0.5 seconds. Exact recovery resets the grace,
+  process termination remains immediate, and an unambiguous native-tab replacement still takes the
+  existing immediate handoff path.
+- **Acceptance:** In an installed Dev build, Ghostty must remain a Quick App through the observed
+  timeout/recovery pattern and must not acquire active-workspace membership. A genuine closed Quick
+  App window and a native-tab replacement must still be released or rebound promptly.
+
 ### WR-120 — Investigate unexpected workspace hotkeys when an application regains focus
 
 - **Type:** User-observed input-routing bug

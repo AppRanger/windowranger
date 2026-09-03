@@ -432,6 +432,92 @@ enum WindowEnumerationLifecycle {
     }
 }
 
+struct QuickAppWindowAbsenceGraceUpdate: Equatable, Sendable {
+    let protectedWindowKeys: Set<WindowKey>
+    let recoveredWindowKeys: Set<WindowKey>
+    let confirmedMissingWindowKeys: Set<WindowKey>
+
+    func removals(from candidates: Set<WindowKey>) -> Set<WindowKey> {
+        candidates.subtracting(protectedWindowKeys)
+    }
+}
+
+/// Accessibility can briefly omit a still-existing window from an otherwise successful per-app
+/// snapshot while that application recovers from an AX timeout or visibility transition. Quick
+/// App ownership is more costly to discard than ordinary workspace state because a returning
+/// window would be admitted into the active workspace. Require both a confirming successful
+/// absence and a short elapsed grace before releasing an exact owned key. A one-for-one native-tab
+/// replacement bypasses this grace so the existing handoff remains immediate.
+struct QuickAppWindowAbsenceGraceState: Equatable, Sendable {
+    static let minimumGraceDuration = CoordinatedWindowEnumerationCollapseState.graceDuration
+    static let requiredSuccessfulAbsenceCount = 2
+
+    private struct Observation: Equatable, Sendable {
+        let firstObservedAt: Date
+        var successfulAbsenceCount: Int
+    }
+
+    private var observations: [WindowKey: Observation] = [:]
+
+    static func preservesSession(
+        windowKeys: [WindowKey],
+        protectedWindowKeys: Set<WindowKey>
+    ) -> Bool {
+        !protectedWindowKeys.isDisjoint(with: windowKeys)
+    }
+
+    mutating func observe(
+        ownedWindowKeys: Set<WindowKey>,
+        runningProcessIdentifiers: Set<pid_t>,
+        successfullyEnumeratedProcessIdentifiers: Set<pid_t>,
+        enumeratedWindowKeys: Set<WindowKey>,
+        immediateHandoffWindowKeys: Set<WindowKey> = [],
+        at now: Date = Date()
+    ) -> QuickAppWindowAbsenceGraceUpdate {
+        let recoveredWindowKeys = Set(observations.keys).intersection(enumeratedWindowKeys)
+        observations = observations.filter { key, _ in
+            ownedWindowKeys.contains(key) &&
+                runningProcessIdentifiers.contains(key.processIdentifier) &&
+                !enumeratedWindowKeys.contains(key) &&
+                !immediateHandoffWindowKeys.contains(key)
+        }
+
+        var protectedWindowKeys = Set<WindowKey>()
+        var confirmedMissingWindowKeys = Set<WindowKey>()
+        for key in ownedWindowKeys where
+            runningProcessIdentifiers.contains(key.processIdentifier) &&
+            successfullyEnumeratedProcessIdentifiers.contains(key.processIdentifier) &&
+            !enumeratedWindowKeys.contains(key) &&
+            !immediateHandoffWindowKeys.contains(key) {
+            var observation = observations[key] ?? Observation(
+                firstObservedAt: now,
+                successfulAbsenceCount: 0
+            )
+            observation.successfulAbsenceCount += 1
+            let graceElapsed = now.timeIntervalSince(observation.firstObservedAt) >=
+                Self.minimumGraceDuration
+            if observation.successfulAbsenceCount >= Self.requiredSuccessfulAbsenceCount,
+               graceElapsed {
+                observations.removeValue(forKey: key)
+                confirmedMissingWindowKeys.insert(key)
+            } else {
+                observations[key] = observation
+                protectedWindowKeys.insert(key)
+            }
+        }
+
+        return QuickAppWindowAbsenceGraceUpdate(
+            protectedWindowKeys: protectedWindowKeys,
+            recoveredWindowKeys: recoveredWindowKeys,
+            confirmedMissingWindowKeys: confirmedMissingWindowKeys
+        )
+    }
+
+    mutating func clear() {
+        observations.removeAll()
+    }
+}
+
 /// A screen lock or native fullscreen Space can make still-running applications lose their
 /// Accessibility windows in stages. Preserve a coordinated collapse across multiple applications
 /// while that lifecycle boundary is active, with a short grace period around otherwise fully active
@@ -670,6 +756,12 @@ enum DropDownAppLifecyclePolicy {
         deferredGlobalEmptySnapshot: Bool
     ) -> Bool {
         topologyChanged && !isLifecycleTransitionActive && !deferredGlobalEmptySnapshot
+    }
+
+    static func shouldReleaseSessionWithoutRestoration(
+        processIsKnownTerminated: Bool
+    ) -> Bool {
+        processIsKnownTerminated
     }
 }
 
@@ -2219,6 +2311,7 @@ final class WorkspaceEngine {
     private var consecutiveGlobalEmptySnapshots = 0
     private var coordinatedWindowEnumerationCollapseState =
         CoordinatedWindowEnumerationCollapseState()
+    private var quickAppWindowAbsenceGraceState = QuickAppWindowAbsenceGraceState()
     private var postSleepWindowRecoveryState = PostSleepWindowRecoveryState()
     private let stateStore: WorkspaceStateStore
     private let diagnostics: DiagnosticLogger
@@ -3174,12 +3267,19 @@ final class WorkspaceEngine {
     /// windows from the owned process join without disturbing their saved workspace state; closing
     /// one window removes only that exact member while another owned window remains.
     @discardableResult
-    private func reconcileQuickAppSessionWindowSets(correlationID: String?) -> Bool {
+    private func reconcileQuickAppSessionWindowSets(
+        correlationID: String?,
+        protectedWindowKeys: Set<WindowKey> = []
+    ) -> Bool {
         var presentedMembershipChanged = false
         for configuration in quickAppConfigurations {
             let bundleKey = Self.normalizedBundleIdentifier(configuration.bundleIdentifier)
             guard var session = quickAppSessions[bundleKey],
-                  let primary = windows[session.windowKey]
+                  let primary = windows[session.windowKey],
+                  !QuickAppWindowAbsenceGraceState.preservesSession(
+                      windowKeys: session.windowKeys,
+                      protectedWindowKeys: protectedWindowKeys
+                  )
             else { continue }
             let matching = availableDropDownAppWindows(for: configuration)
             guard let owned = orderedQuickAppWindows(
@@ -12301,6 +12401,7 @@ final class WorkspaceEngine {
         focusCycleRejectedUntil.removeAll()
         staleParkedFocusSuppression.removeAll()
         lastAutomaticUnhideAttemptByProcess.removeAll()
+        quickAppWindowAbsenceGraceState.clear()
         postSleepWindowRecoveryState.clear()
         pendingRestoredDropDownAppSessions.removeAll()
         tiledTrees.removeAll()
@@ -12927,20 +13028,80 @@ final class WorkspaceEngine {
         // A single timed-out AXWindows request must not make us forget parked windows: once lost,
         // there would be no element left to restore on quit. A successful per-process snapshot is
         // authoritative, though, including for native tabs: a prior ID absent from that snapshot
-        // must leave every managed collection rather than surviving as a ghost layout slot.
-        let removedTrackedWindowKeys = WindowEnumerationLifecycle.removedTrackedWindowKeys(
+        // must leave every managed collection rather than surviving as a ghost layout slot. Quick
+        // App-owned keys get one bounded confirmation interval because losing ownership would
+        // admit an unchanged returning window into whichever workspace is currently active.
+        let removalCandidates = WindowEnumerationLifecycle.removedTrackedWindowKeys(
             trackedWindowKeys: Set(windows.keys),
             runningProcessIdentifiers: runningProcessIdentifiers,
             successfullyEnumeratedProcessIdentifiers: successfullyEnumeratedProcesses,
             enumeratedWindowKeys: enumeratedWindowKeys
         )
+        let newlyTrackedWindowKeys = Set(windows.keys).subtracting(
+            trackedWindowKeysBeforeEnumeration
+        )
+        var immediateQuickAppHandoffWindowKeys = Set<WindowKey>()
+        for (_, session) in quickAppSessions {
+            let removedOwnedKeys = session.windowKeys.filter(removalCandidates.contains)
+            guard removedOwnedKeys.count == 1 else { continue }
+            let removedKey = removedOwnedKeys[0]
+            let replacement = DropDownAppWindowHandoffPolicy.replacementWindowKey(
+                sessionWindowKey: removedKey,
+                sessionBundleIdentifier: session.bundleIdentifier,
+                removedWindowKeys: removalCandidates,
+                newlyTrackedWindowKeys: newlyTrackedWindowKeys,
+                availableWindows: windows.compactMap { key, tracked in
+                    guard !removalCandidates.contains(key),
+                          !temporarilyDeferredWindowKeys.contains(key),
+                          fullscreenSessions[key] == nil
+                    else { return nil }
+                    return DropDownAppWindowHandoffCandidate(
+                        key: key,
+                        bundleIdentifier: tracked.bundleIdentifier
+                    )
+                }
+            )
+            if replacement != nil {
+                immediateQuickAppHandoffWindowKeys.insert(removedKey)
+            }
+        }
+        let quickAppAbsenceUpdate = quickAppWindowAbsenceGraceState.observe(
+            ownedWindowKeys: Set(quickAppSessions.values.flatMap(\.windowKeys)),
+            runningProcessIdentifiers: runningProcessIdentifiers,
+            successfullyEnumeratedProcessIdentifiers: successfullyEnumeratedProcesses,
+            enumeratedWindowKeys: enumeratedWindowKeys,
+            immediateHandoffWindowKeys: immediateQuickAppHandoffWindowKeys
+        )
+        let removedTrackedWindowKeys = quickAppAbsenceUpdate.removals(from: removalCandidates)
+        deferredWindowKeys.formUnion(quickAppAbsenceUpdate.protectedWindowKeys)
+        writeEligibleWindowKeys.subtract(quickAppAbsenceUpdate.protectedWindowKeys)
+        if !quickAppAbsenceUpdate.protectedWindowKeys.isEmpty ||
+            !quickAppAbsenceUpdate.recoveredWindowKeys.isEmpty ||
+            !quickAppAbsenceUpdate.confirmedMissingWindowKeys.isEmpty {
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "window-absence-grace-progress",
+                correlation: correlationID,
+                fields: [
+                    "protected-window-count": String(
+                        quickAppAbsenceUpdate.protectedWindowKeys.count
+                    ),
+                    "recovered-window-count": String(
+                        quickAppAbsenceUpdate.recoveredWindowKeys.count
+                    ),
+                    "confirmed-missing-window-count": String(
+                        quickAppAbsenceUpdate.confirmedMissingWindowKeys.count
+                    ),
+                    "grace-milliseconds": String(Int(
+                        QuickAppWindowAbsenceGraceState.minimumGraceDuration * 1_000
+                    )),
+                ]
+            )
+        }
         let removedTrackedWindows = windows.filter { removedTrackedWindowKeys.contains($0.key) }
         var presentedQuickAppMembershipRemoved = false
         if !removedTrackedWindowKeys.isEmpty {
             let sessionBundleKeys = Array(quickAppSessions.keys)
-            let newlyTrackedWindowKeys = Set(windows.keys).subtracting(
-                trackedWindowKeysBeforeEnumeration
-            )
             var reboundBundleKeys = Set<String>()
             for bundleKey in sessionBundleKeys {
                 if let session = quickAppSessions[bundleKey] {
@@ -13000,7 +13161,14 @@ final class WorkspaceEngine {
             for (bundleKey, session) in Array(quickAppSessions) where
                 removedTrackedWindowKeys.contains(session.windowKey) &&
                 !reboundBundleKeys.contains(bundleKey) {
-                restoreAndClearQuickAppSession(bundleKey: bundleKey, reason: "window-removed")
+                restoreAndClearQuickAppSession(
+                    bundleKey: bundleKey,
+                    reason: "window-removed",
+                    processIsKnownTerminated: dropDownRunningApplication(
+                        processIdentifier: session.windowKey.processIdentifier,
+                        bundleIdentifier: session.bundleIdentifier
+                    ) == nil
+                )
             }
             windows = windows.filter { !removedTrackedWindowKeys.contains($0.key) }
             lastFocusedWindow = WindowEnumerationLifecycle.pruning(
@@ -13089,7 +13257,8 @@ final class WorkspaceEngine {
             }
         }
         let presentedQuickAppMembershipReconciled = reconcileQuickAppSessionWindowSets(
-            correlationID: correlationID
+            correlationID: correlationID,
+            protectedWindowKeys: quickAppAbsenceUpdate.protectedWindowKeys
         )
         let presentedQuickAppMembershipChanged = presentedQuickAppMembershipRemoved ||
             presentedQuickAppMembershipReconciled
@@ -13100,7 +13269,8 @@ final class WorkspaceEngine {
             )
         }
         let shouldRetainDiscoveryState: (WindowKey) -> Bool = { key in
-            runningProcessIdentifiers.contains(key.processIdentifier) &&
+            quickAppAbsenceUpdate.protectedWindowKeys.contains(key) ||
+                runningProcessIdentifiers.contains(key.processIdentifier) &&
                 (!successfullyEnumeratedProcesses.contains(key.processIdentifier) || enumeratedWindowKeys.contains(key))
         }
         ignoredWindowKeys = ignoredWindowKeys.filter(shouldRetainDiscoveryState)
@@ -15778,6 +15948,7 @@ final class WorkspaceEngine {
         bundleIdentifier: String
     ) -> NSRunningApplication? {
         guard let application = NSRunningApplication(processIdentifier: processIdentifier),
+              !application.isTerminated,
               let observedBundleIdentifier = application.bundleIdentifier,
               observedBundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
         else { return nil }
@@ -16111,7 +16282,8 @@ final class WorkspaceEngine {
     private func restoreAndClearQuickAppSession(
         bundleKey: String,
         reason: String,
-        allowWhilePaused: Bool = false
+        allowWhilePaused: Bool = false,
+        processIsKnownTerminated: Bool = false
     ) {
         guard !isWindowManagementPaused || allowWhilePaused else { return }
         _ = nextQuickAppNeighborVisibilityGeneration(bundleKey: bundleKey)
@@ -16136,6 +16308,24 @@ final class WorkspaceEngine {
         }
         guard let session = quickAppSessions[bundleKey] else { return }
         dropDownAnimationGeneration &+= 1
+        if DropDownAppLifecyclePolicy.shouldReleaseSessionWithoutRestoration(
+            processIsKnownTerminated: processIsKnownTerminated
+        ) {
+            quickAppSessions.removeValue(forKey: bundleKey)
+            quickAppNeighborVisibilityGeneration.removeValue(forKey: bundleKey)
+            diagnostics.log(
+                category: "drop-down-app",
+                event: "session-cleared",
+                fields: [
+                    "reason": reason,
+                    "bundle": bundleKey,
+                    "window-count": String(session.windowKeys.count),
+                    "frame-write": "not-requested",
+                    "application-unhide": "not-running",
+                ]
+            )
+            return
+        }
         var frameWriteSucceeded: Bool?
         var unhideSucceeded: Bool?
         let targets = session.windowKeys.compactMap { windows[$0] }

@@ -1378,6 +1378,90 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertTrue(unknownDialog.disposition.admitsNewWindow)
     }
 
+    func testCodexUpdatePrecursorRequiresItsCompleteCapturedShape() {
+        let coreCandidate = WindowAdmissionMetadata(
+            bundleIdentifier: "com.openai.codex",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            fullscreenButton: .absent,
+            closeButton: .absent
+        )
+        XCTAssertTrue(AccessibilityWindow.shouldCollectSupportMetadataForCompatibility(coreCandidate))
+
+        let captured = WindowAdmissionMetadata(
+            bundleIdentifier: "com.openai.codex",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            modalObservation: .falseValue,
+            mainObservation: .trueValue,
+            fullscreenButton: .absent,
+            minimizeButton: .absent,
+            closeButton: .absent,
+            zoomButton: .absent,
+            defaultButton: .absent,
+            cancelButton: .absent,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue
+        )
+        XCTAssertEqual(
+            AccessibilityWindow.admissionDecision(for: captured),
+            WindowAdmissionDecision(
+                disposition: .ignoredTransientPopup,
+                reason: .verifiedBundleTransientStandardWindow,
+                compatibilityProfileIdentifier: "codex-update-precursor-v1"
+            )
+        )
+
+        let ordinaryMainWindow = WindowAdmissionMetadata(
+            bundleIdentifier: "com.openai.codex",
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            modalObservation: .falseValue,
+            mainObservation: .trueValue,
+            fullscreenButton: .present,
+            minimizeButton: .present,
+            closeButton: .present,
+            zoomButton: .present,
+            defaultButton: .absent,
+            cancelButton: .absent,
+            positionSettable: .trueValue,
+            sizeSettable: .trueValue
+        )
+        XCTAssertEqual(
+            AccessibilityWindow.admissionDecision(for: ordinaryMainWindow),
+            WindowAdmissionDecision(disposition: .managedNormal, reason: .normalWindow)
+        )
+
+        let dialogBearingVariant = WindowAdmissionMetadata(
+            bundleIdentifier: captured.bundleIdentifier,
+            role: captured.role,
+            subrole: captured.subrole,
+            windowLayer: captured.windowLayer,
+            isMinimized: captured.isMinimized,
+            modalObservation: captured.modalObservation,
+            mainObservation: captured.mainObservation,
+            fullscreenButton: captured.fullscreenButton,
+            minimizeButton: captured.minimizeButton,
+            closeButton: captured.closeButton,
+            zoomButton: captured.zoomButton,
+            defaultButton: .present,
+            cancelButton: captured.cancelButton,
+            positionSettable: captured.positionSettable,
+            sizeSettable: captured.sizeSettable
+        )
+        XCTAssertNotEqual(
+            AccessibilityWindow.admissionDecision(for: dialogBearingVariant)
+                .compatibilityProfileIdentifier,
+            "codex-update-precursor-v1"
+        )
+    }
+
     func testFixedSizeSimulatorDeviceWindowFloatsByCapabilityWithoutWholeAppPolicy() {
         let coreMetadata = WindowAdmissionMetadata(
             bundleIdentifier: "com.apple.iphonesimulator",
@@ -1722,6 +1806,8 @@ final class WorkspaceDefinitionTests: XCTestCase {
                     profile.minimizeButton != nil ||
                     profile.closeButton != nil ||
                     profile.zoomButton != nil ||
+                    profile.defaultButton != nil ||
+                    profile.cancelButton != nil ||
                     profile.positionSettable != nil ||
                     profile.sizeSettable != nil,
                 "A compatibility profile must identify a surface, not apply policy to a whole app"

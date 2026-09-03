@@ -70,6 +70,7 @@ enum WindowAdmissionReason: String, Equatable, Sendable {
     case transientDialogNonNormalLayer = "transient-dialog-non-normal-layer"
     case ambiguousDialogMetadata = "ambiguous-dialog-metadata"
     case verifiedBundleNonNormalLayer = "verified-bundle-non-normal-layer"
+    case verifiedBundleTransientStandardWindow = "verified-bundle-transient-standard-window"
     case rangerCompanionSurface = "ranger-companion-surface"
     case rangerCompanionSurfaceIdentifierUnavailable = "ranger-companion-surface-identifier-unavailable"
     case unsupportedRole = "unsupported-role"
@@ -318,6 +319,8 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
     let minimizeButton: AXAttributePresence?
     let closeButton: AXAttributePresence?
     let zoomButton: AXAttributePresence?
+    let defaultButton: AXAttributePresence?
+    let cancelButton: AXAttributePresence?
     let positionSettable: AXBooleanAttributeObservation?
     let sizeSettable: AXBooleanAttributeObservation?
     let disposition: WindowAdmissionDisposition
@@ -337,6 +340,8 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
         minimizeButton: AXAttributePresence? = nil,
         closeButton: AXAttributePresence? = nil,
         zoomButton: AXAttributePresence? = nil,
+        defaultButton: AXAttributePresence? = nil,
+        cancelButton: AXAttributePresence? = nil,
         positionSettable: AXBooleanAttributeObservation? = nil,
         sizeSettable: AXBooleanAttributeObservation? = nil,
         disposition: WindowAdmissionDisposition,
@@ -355,6 +360,8 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
         self.minimizeButton = minimizeButton
         self.closeButton = closeButton
         self.zoomButton = zoomButton
+        self.defaultButton = defaultButton
+        self.cancelButton = cancelButton
         self.positionSettable = positionSettable
         self.sizeSettable = sizeSettable
         self.disposition = disposition
@@ -375,6 +382,8 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
               minimizeButton.map({ $0 == metadata.minimizeButton }) ?? true,
               closeButton.map({ $0 == metadata.closeButton }) ?? true,
               zoomButton.map({ $0 == metadata.zoomButton }) ?? true,
+              defaultButton.map({ $0 == metadata.defaultButton }) ?? true,
+              cancelButton.map({ $0 == metadata.cancelButton }) ?? true,
               positionSettable.map({ $0 == metadata.positionSettable }) ?? true,
               sizeSettable.map({ $0 == metadata.sizeSettable }) ?? true
         else { return false }
@@ -387,6 +396,8 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
             mainObservation != nil ||
             minimizeButton != nil ||
             zoomButton != nil ||
+            defaultButton != nil ||
+            cancelButton != nil ||
             positionSettable != nil ||
             sizeSettable != nil
     }
@@ -442,6 +453,25 @@ enum AccessibilityWindow {
             layer: .nonNormal,
             disposition: .ignoredTransientPopup,
             reason: .verifiedBundleNonNormalLayer
+        ),
+        WindowCompatibilityProfile(
+            identifier: "codex-update-precursor-v1",
+            bundleIdentifiers: ["com.openai.codex"],
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            layer: .exact(0),
+            modalObservation: .falseValue,
+            mainObservation: .trueValue,
+            fullscreenButton: .absent,
+            minimizeButton: .absent,
+            closeButton: .absent,
+            zoomButton: .absent,
+            defaultButton: .absent,
+            cancelButton: .absent,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue,
+            disposition: .ignoredTransientPopup,
+            reason: .verifiedBundleTransientStandardWindow
         ),
     ]
 

@@ -131,7 +131,8 @@ dispositions: normal managed window, managed dialog (automatically floating), te
 ineligible, ignored persistent companion surface, or ignored transient/popup. Ignored objects never
 enter membership, layout, persistence, focus cycling or recovery. The explicit companion
 disposition keeps cooperative long-lived surfaces distinct from transient UI; verified
-non-normal-layer Codex pet/panels remain excluded as transient objects rather than patched out later.
+non-normal-layer Codex pet/panels and the verified control-free, fixed-size ChatGPT update precursor
+remain excluded as transient objects rather than patched out later.
 
 Built-in compatibility profiles are versioned, declarative corrections for verified application
 surfaces. A profile matches a normalized bundle identifier plus only the role, subrole, layer,
@@ -467,7 +468,11 @@ only when the WindowServer-bound marker matches the exact owned window identitie
 AppKit still reports that application hidden. Same-bundle candidates from multiple processes remain
 untouched. Newly admitted same-process windows join the exact application group, and an
 authoritatively removed member leaves only that exact ownership set; native-tab state transfer still
-requires the existing exact same-process replacement proof.
+requires the existing exact same-process replacement proof. Because an application recovering from
+an Accessibility timeout or visibility transition can briefly omit an unchanged window from one
+successful snapshot, an exact owned key remains write-deferred until at least two successful absent
+snapshots span 500 milliseconds. Exact recovery resets that suspicion, process termination remains
+authoritative immediately, and an eligible one-for-one native-tab replacement bypasses the grace.
 
 ## UI and focus safety
 
