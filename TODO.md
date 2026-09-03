@@ -20,6 +20,25 @@ smallest useful outcome and acceptance boundary.
 
 ## Done
 
+### WR-119 — Do not float ordinary windows after one transient resize rejection
+
+- **Type:** Diagnostic-backed window admission regression
+- **Priority:** P1
+- **Status:** Done
+- **Result:** A rejected initial resize is retried once before fixed-size recovery. All 160 focused
+  tests passed; fresh installed-Dev diagnostics kept Safari and Finder managed, and the maintainer
+  confirmed both participate correctly in workspace P's layouts on 3 September 2026.
+
+### WR-118 — Keep fixed-size Finder operation windows out of managed layouts
+
+- **Type:** Diagnostic-backed window admission and geometry safety bug
+- **Priority:** P1
+- **Status:** Done
+- **Result:** Repeated bounded readback now detects size writes that report success without changing
+  the window, keeping the Finder copy surface out of Tiled and Accordion while ordinary Finder
+  windows remain manageable. All 160 focused tests passed and the maintainer accepted the installed
+  Dev behavior on 3 September 2026.
+
 ### WR-117 — Re-park escaped inactive windows after Accessibility recovery
 
 - **Type:** Workspace visibility bug
@@ -33,7 +52,15 @@ smallest useful outcome and acceptance boundary.
   failing Work-to-workspace-1 switch and recovering about 1.2 seconds later without a visibility
   retry. The focused 144-test workspace suite passed. In the replacement installed Debug build,
   the maintainer observed the expected delay while Mail was unresponsive and confirmed that the
-  window then caught up correctly.
+  window then caught up correctly. Stable 1.0.5 build 18 was subsequently produced from exact
+  `main` commit `30cb68ccb3fae9e7c45276156bd2089e7ab5ec97` after all 911 non-hosted tests,
+  Release static analysis, universal archive/export, notarization, stapling, Gatekeeper, and DMG
+  verification passed. The maintainer accepted the exact DMG-installed build before the immutable
+  GitHub release and its five round-trip-verified assets were published as `v1.0.5`. Cloudflare
+  deployment `78054bb8-aeeb-49a9-af4f-11ae9bc0d0f5` publishes the exact signed build 18 appcast,
+  archive, and deltas from retained builds 12–16 on both website domains; every new live payload
+  matched its generated source. Homebrew tap merge `0394e87a3be02d5168fc2bc8a6dd5baf73c58b05`
+  publishes the same notarized DMG checksum and passes style plus strict online audit.
 
 ### WR-019 — Separate the local Xcode development identity
 
@@ -244,13 +271,78 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-122 — Ignore ChatGPT's transient update precursor
+
+- **Type:** Diagnostic-backed window-admission regression
+- **Priority:** P1 release blocker
+- **Status:** Live validation — narrow compatibility profile implemented with focused fixture coverage.
+  The installed Dev retry caused no layout reflow and was accepted for release by the maintainer;
+  the warmed check did not recreate the brief precursor, so a live profile match remains unobserved.
+- **User-observed:** Opening ChatGPT's Check for Updates window caused it to enter the active tiled
+  workspace and briefly reflow the main ChatGPT window.
+- **Expected:** The transient updater surface must not enter workspace membership, layout, focus, or
+  geometry management. Ordinary ChatGPT windows must remain managed.
+- **Diagnostic evidence (3 September 2026):** ChatGPT window `39585:16395` appeared as a layer-zero,
+  main, non-modal `AXStandardWindow` with no window or dialog controls, writable position, and
+  read-only size. WindowRanger admitted it as normal, halved the main window, and attempted a resize
+  that rejected. The precursor disappeared 0.8 seconds later when the actual layer-eight modal
+  dialog `39585:16396` appeared; that dialog was already ignored correctly.
+- **Implementation:** A versioned `com.openai.codex` compatibility profile ignores only the exact
+  privacy-safe precursor signature. A captured fixture and negative ordinary-window/control-bearing
+  variants keep the rule from becoming whole-app policy.
+- **Acceptance:** In an installed Dev build, Check for Updates must open without changing ChatGPT's
+  workspace membership or main-window frame, while an ordinary ChatGPT window remains managed.
+
+### WR-121 — Preserve Quick App ownership across brief Accessibility omissions
+
+- **Type:** Diagnostic-backed Quick App ownership regression
+- **Priority:** P1 release blocker
+- **Status:** Live validation — bounded ownership grace implemented and covered by focused automated
+  tests. The exact failure has no known repeatable trigger; the maintainer authorized release after
+  an installed Dev normal-use soak, while continued observation remains appropriate.
+- **User-observed:** Ghostty, configured as a Quick App, unexpectedly added itself to workspace P.
+- **Expected:** A configured Quick App must retain Shelf ownership and must not be admitted into the
+  currently active workspace after a transient Accessibility failure.
+- **Diagnostic evidence (3 September 2026):** Ghostty window `1339:138` recovered from an AX timeout,
+  rejected a Quick App frame write, then disappeared from one successful `AXWindows` snapshot.
+  WindowRanger cleared and unhid its session; the exact same key returned 64 ms later and was routed
+  into P as an ordinary new window.
+- **Implementation:** An exact Quick App-owned key now remains write-deferred until it is absent from
+  at least two successful snapshots for at least 0.5 seconds. Exact recovery resets the grace,
+  process termination remains immediate, and an unambiguous native-tab replacement still takes the
+  existing immediate handoff path.
+- **Acceptance:** In an installed Dev build, Ghostty must remain a Quick App through the observed
+  timeout/recovery pattern and must not acquire active-workspace membership. A genuine closed Quick
+  App window and a native-tab replacement must still be released or rebound promptly.
+
+### WR-120 — Investigate unexpected workspace hotkeys when an application regains focus
+
+- **Type:** User-observed input-routing bug
+- **Priority:** P1
+- **Status:** Inbox — diagnostic cause narrowed to global hotkey delivery; reproduction and raw-input
+  cause remain unknown.
+- **User-observed:** WindowRanger unexpectedly switched from workspace 2 back to workspace P twice
+  as Safari appeared to regain focus.
+- **Expected:** Returning focus to an application must not activate its workspace unless focus
+  following is enabled or the user intentionally invokes the workspace shortcut.
+- **Diagnostic evidence (3 September 2026):** At 17:05:59 and 17:11:44 local time, the Debug log
+  recorded the Navigate modifier family becoming active, followed by exactly one global-hotkey
+  receipt and command dispatch for workspace P (`000000-000005`). Each workspace switch began before
+  WindowRanger raised Safari, and no focus-follow request or duplicate hotkey was recorded. The
+  configured P binding uses workspace key `p` with Navigate modifiers; the remaining uncertainty is
+  why that key combination was delivered.
+- **Acceptance:** Reproduce or capture enough input state to distinguish an intentional physical key
+  chord, a stale-modifier/key transition, and a third-party synthetic event. WindowRanger must not
+  dispatch P when the configured chord was not actually pressed.
+
 ### WR-114 — Show progress while manually checking for updates
 
 - **Type:** User-observed update experience bug
 - **Priority:** P1
 - **Status:** Live validation — the installed status-menu correction completed promptly through
-  Sparkle's native up-to-date result and the maintainer accepted the no-toast refinement; packaged
-  update-available and network-failure paths remain release validation boundaries.
+  Sparkle's native up-to-date result and the maintainer accepted the no-toast refinement. Stable
+  1.0.5 build 18 is public through GitHub, Sparkle, the website, and Homebrew; a genuine packaged
+  update-available check and the network-failure path remain live validation boundaries.
 - **User-observed:** Choosing **Check for Updates…** takes long enough to feel broken because the
   status menu closes and WindowRanger provides no acknowledgement while Sparkle is working.
 - **Diagnostic evidence:** The live public appcast returned its first byte and completed in about
@@ -4485,6 +4577,13 @@ second copy of that checklist.
   upgrade direction. Sparkle-first/Homebrew coexistence, Intel, Settings PATH UI, and privacy
   permission retention remain live validation.
 - **Gate:** Each later release still requires explicit maintainer approval.
+- **1.0.6 preparation:** The maintainer explicitly approved Stable 1.0.6 on 3 September 2026 after
+  accepting installed Dev behavior for WR-118, WR-119, and WR-122 and an installed normal-use soak
+  for non-deterministic WR-121. The exact source passed all 924 non-hosted tests, Release static
+  analysis, an unsigned universal Release build, both DMG smoke layouts, and protected PR #113.
+  Build 19 is allocated for the candidate, with release notes at `docs/releases/v1.0.6.md`. The
+  signed, notarized packaged artifact still requires exact installation and maintainer acceptance
+  before tagging and public publication.
 - **1.0.2 preparation:** The maintainer explicitly approved committing the accepted fixes and
   cutting Stable 1.0.2 on 1 September 2026. All nine cross-display layout combinations,
   representative Unified transfers, same-display behaviour, the menu bar appearance correction,

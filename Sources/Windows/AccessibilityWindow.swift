@@ -70,6 +70,7 @@ enum WindowAdmissionReason: String, Equatable, Sendable {
     case transientDialogNonNormalLayer = "transient-dialog-non-normal-layer"
     case ambiguousDialogMetadata = "ambiguous-dialog-metadata"
     case verifiedBundleNonNormalLayer = "verified-bundle-non-normal-layer"
+    case verifiedBundleTransientStandardWindow = "verified-bundle-transient-standard-window"
     case rangerCompanionSurface = "ranger-companion-surface"
     case rangerCompanionSurfaceIdentifierUnavailable = "ranger-companion-surface-identifier-unavailable"
     case unsupportedRole = "unsupported-role"
@@ -112,10 +113,32 @@ enum AXBooleanAttributeObservation: String, Equatable, Sendable {
 
 enum WindowFrameWriteResult: Equatable, Sendable {
     case succeeded
+    case succeededAfterInitialSizeRetry
     case valueCreationFailed
     case initialSizeRejected
+    case initialSizeWriteIgnored
     case positionRejected
     case finalSizeRejected
+
+    var provesInitialResizeWasIneffective: Bool {
+        self == .initialSizeRejected || self == .initialSizeWriteIgnored
+    }
+
+    var succeeded: Bool {
+        self == .succeeded || self == .succeededAfterInitialSizeRetry
+    }
+
+    var diagnosticValue: String {
+        switch self {
+        case .succeeded: "succeeded"
+        case .succeededAfterInitialSizeRetry: "initial-size-retry-succeeded"
+        case .valueCreationFailed: "value-creation-failed"
+        case .initialSizeRejected: "initial-size-rejected"
+        case .initialSizeWriteIgnored: "initial-size-write-ignored"
+        case .positionRejected: "position-rejected"
+        case .finalSizeRejected: "final-size-rejected"
+        }
+    }
 }
 
 struct WindowAdmissionMetadata: Equatable, Sendable {
@@ -296,6 +319,8 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
     let minimizeButton: AXAttributePresence?
     let closeButton: AXAttributePresence?
     let zoomButton: AXAttributePresence?
+    let defaultButton: AXAttributePresence?
+    let cancelButton: AXAttributePresence?
     let positionSettable: AXBooleanAttributeObservation?
     let sizeSettable: AXBooleanAttributeObservation?
     let disposition: WindowAdmissionDisposition
@@ -315,6 +340,8 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
         minimizeButton: AXAttributePresence? = nil,
         closeButton: AXAttributePresence? = nil,
         zoomButton: AXAttributePresence? = nil,
+        defaultButton: AXAttributePresence? = nil,
+        cancelButton: AXAttributePresence? = nil,
         positionSettable: AXBooleanAttributeObservation? = nil,
         sizeSettable: AXBooleanAttributeObservation? = nil,
         disposition: WindowAdmissionDisposition,
@@ -333,6 +360,8 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
         self.minimizeButton = minimizeButton
         self.closeButton = closeButton
         self.zoomButton = zoomButton
+        self.defaultButton = defaultButton
+        self.cancelButton = cancelButton
         self.positionSettable = positionSettable
         self.sizeSettable = sizeSettable
         self.disposition = disposition
@@ -353,6 +382,8 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
               minimizeButton.map({ $0 == metadata.minimizeButton }) ?? true,
               closeButton.map({ $0 == metadata.closeButton }) ?? true,
               zoomButton.map({ $0 == metadata.zoomButton }) ?? true,
+              defaultButton.map({ $0 == metadata.defaultButton }) ?? true,
+              cancelButton.map({ $0 == metadata.cancelButton }) ?? true,
               positionSettable.map({ $0 == metadata.positionSettable }) ?? true,
               sizeSettable.map({ $0 == metadata.sizeSettable }) ?? true
         else { return false }
@@ -365,6 +396,8 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
             mainObservation != nil ||
             minimizeButton != nil ||
             zoomButton != nil ||
+            defaultButton != nil ||
+            cancelButton != nil ||
             positionSettable != nil ||
             sizeSettable != nil
     }
@@ -394,6 +427,8 @@ struct WindowCompatibilityProfile: Equatable, Sendable {
 }
 
 enum AccessibilityWindow {
+    private static let ignoredSizeWriteVerificationPollCount = 12
+
     private static let enhancedUserInterfaceAttribute = "AXEnhancedUserInterface" as CFString
     private static let fullScreenAttribute = "AXFullScreen" as CFString
     static let desktopRangerSurfaceAccessibilityIdentifier = "dev.appranger.desktopranger.surface.v1"
@@ -418,6 +453,25 @@ enum AccessibilityWindow {
             layer: .nonNormal,
             disposition: .ignoredTransientPopup,
             reason: .verifiedBundleNonNormalLayer
+        ),
+        WindowCompatibilityProfile(
+            identifier: "codex-update-precursor-v1",
+            bundleIdentifiers: ["com.openai.codex"],
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            layer: .exact(0),
+            modalObservation: .falseValue,
+            mainObservation: .trueValue,
+            fullscreenButton: .absent,
+            minimizeButton: .absent,
+            closeButton: .absent,
+            zoomButton: .absent,
+            defaultButton: .absent,
+            cancelButton: .absent,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue,
+            disposition: .ignoredTransientPopup,
+            reason: .verifiedBundleTransientStandardWindow
         ),
     ]
 
@@ -548,10 +602,11 @@ enum AccessibilityWindow {
             metadata.nativeFilePanelIdentifierObservation == .trueValue
     }
 
-    /// A rejected initial size write is direct operational evidence that this otherwise ordinary
-    /// standard window cannot safely occupy a managed frame, even when the earlier support probe
-    /// was unavailable. The engine uses this only as a bounded failure recovery.
-    static func fixedSizeDecisionAfterRejectedResize(
+    /// A rejected or repeatedly ignored initial size write is direct operational evidence that
+    /// this otherwise ordinary standard window cannot safely occupy a managed frame, even when the
+    /// earlier support probe was unavailable or misleading. The engine uses this only as a bounded
+    /// failure recovery.
+    static func fixedSizeDecisionAfterIneffectiveResize(
         _ metadata: WindowAdmissionMetadata
     ) -> WindowAdmissionDecision? {
         guard shouldCollectFixedSizeStandardWindowEvidence(metadata) else { return nil }
@@ -1093,14 +1148,26 @@ enum AccessibilityWindow {
         return AXValueGetValue(positionValue, .cgPoint, &position) ? position : nil
     }
 
+    static func size(of element: AXUIElement) -> CGSize? {
+        guard let sizeValue = copyAttribute(element, kAXSizeAttribute as CFString, as: AXValue.self) else {
+            return nil
+        }
+        var size = CGSize.zero
+        return AXValueGetValue(sizeValue, .cgSize, &size) ? size : nil
+    }
+
     static func positionsMatch(_ current: CGPoint, _ target: CGPoint, tolerance: CGFloat = 1) -> Bool {
         abs(current.x - target.x) < tolerance && abs(current.y - target.y) < tolerance
     }
 
     static func framesMatch(_ current: WindowFrame, _ target: WindowFrame, tolerance: CGFloat = 1) -> Bool {
         positionsMatch(current.position, target.position, tolerance: tolerance) &&
-            abs(current.size.width - target.size.width) < tolerance &&
-            abs(current.size.height - target.size.height) < tolerance
+            sizesMatch(current.size, target.size, tolerance: tolerance)
+    }
+
+    static func sizesMatch(_ current: CGSize, _ target: CGSize, tolerance: CGFloat = 1) -> Bool {
+        abs(current.width - target.width) < tolerance &&
+            abs(current.height - target.height) < tolerance
     }
 
     /// Workspace visibility never changes a window's size. A position-only write avoids the
@@ -1139,14 +1206,15 @@ enum AccessibilityWindow {
 
     @discardableResult
     static func setFrame(_ frame: WindowFrame, of element: AXUIElement) -> Bool {
-        setFrameResult(frame, of: element) == .succeeded
+        setFrameResult(frame, of: element).succeeded
     }
 
     static func setFrameResult(
         _ frame: WindowFrame,
         of element: AXUIElement
     ) -> WindowFrameWriteResult {
-        if let current = self.frame(of: element), framesMatch(current, frame) {
+        let current = self.frame(of: element)
+        if let current, framesMatch(current, frame) {
             return .succeeded
         }
 
@@ -1156,13 +1224,16 @@ enum AccessibilityWindow {
               let sizeValue = AXValueCreate(.cgSize, &size)
         else { return .valueCreationFailed }
 
+        let writeSize = {
+            AXUIElementSetAttributeValue(
+                element,
+                kAXSizeAttribute as CFString,
+                sizeValue
+            ) == .success
+        }
         return applyFrameWriteSequenceResult(
             writeSize: {
-                AXUIElementSetAttributeValue(
-                    element,
-                    kAXSizeAttribute as CFString,
-                    sizeValue
-                ) == .success
+                writeSize()
             },
             writePosition: {
                 AXUIElementSetAttributeValue(
@@ -1170,13 +1241,27 @@ enum AccessibilityWindow {
                     kAXPositionAttribute as CFString,
                     positionValue
                 ) == .success
+            },
+            retryInitialSizeWriteAfterRejection: {
+                Thread.sleep(forTimeInterval: 0.02)
+                return writeSize()
+            },
+            initialSizeWriteWasIgnored: {
+                successfulSizeWriteWasIgnored(
+                    originalSize: current?.size,
+                    targetSize: frame.size,
+                    observeSize: { self.size(of: element) },
+                    retrySizeWrite: writeSize,
+                    pause: { Thread.sleep(forTimeInterval: 0.02) }
+                )
             }
         )
     }
 
     /// Size-position-size is the most reliable sequence for apps that clamp one dimension after
-    /// the other changes. A rejected first size write must stop before position so a fixed-size
-    /// dialog cannot be moved to a layout target it was unable to occupy.
+    /// the other changes. A transient first rejection gets one bounded retry. Two rejections or a
+    /// confirmed no-op must stop before position so a fixed-size dialog cannot be moved to a layout
+    /// target it was unable to occupy.
     static func applyFrameWriteSequence(
         writeSize: () -> Bool,
         writePosition: () -> Bool
@@ -1184,16 +1269,55 @@ enum AccessibilityWindow {
         applyFrameWriteSequenceResult(
             writeSize: writeSize,
             writePosition: writePosition
-        ) == .succeeded
+        ).succeeded
     }
 
     static func applyFrameWriteSequenceResult(
         writeSize: () -> Bool,
-        writePosition: () -> Bool
+        writePosition: () -> Bool,
+        retryInitialSizeWriteAfterRejection: () -> Bool = { false },
+        initialSizeWriteWasIgnored: () -> Bool = { false }
     ) -> WindowFrameWriteResult {
-        guard writeSize() else { return .initialSizeRejected }
+        let initialSizeWriteSucceeded = writeSize()
+        let recoveredInitialSizeRejection = !initialSizeWriteSucceeded
+        if recoveredInitialSizeRejection {
+            guard retryInitialSizeWriteAfterRejection() else { return .initialSizeRejected }
+        }
+        guard !initialSizeWriteWasIgnored() else { return .initialSizeWriteIgnored }
         guard writePosition() else { return .positionRejected }
-        return writeSize() ? .succeeded : .finalSizeRejected
+        guard writeSize() else { return .finalSizeRejected }
+        return recoveredInitialSizeRejection ? .succeededAfterInitialSizeRetry : .succeeded
+    }
+
+    /// Some Accessibility implementations report a successful size write while leaving the
+    /// window unchanged. Retry once, then confirm that exact no-op throughout a bounded
+    /// quarter-second observation window before allowing a position write, so an application-owned
+    /// fixed-size surface cannot be displaced into a layout slot. Unavailable, delayed, or partially
+    /// applied observations remain conservative and continue normally.
+    static func successfulSizeWriteWasIgnored(
+        originalSize: CGSize?,
+        targetSize: CGSize,
+        observeSize: () -> CGSize?,
+        retrySizeWrite: () -> Bool,
+        pause: () -> Void
+    ) -> Bool {
+        guard let originalSize,
+              !sizesMatch(originalSize, targetSize),
+              let firstObservation = observeSize(),
+              sizesMatch(firstObservation, originalSize)
+        else { return false }
+
+        pause()
+        guard let settledObservation = observeSize() else { return false }
+        guard sizesMatch(settledObservation, originalSize) else { return false }
+        _ = retrySizeWrite()
+
+        for _ in 0..<ignoredSizeWriteVerificationPollCount {
+            pause()
+            guard let retryObservation = observeSize() else { return false }
+            guard sizesMatch(retryObservation, originalSize) else { return false }
+        }
+        return true
     }
 
 }
