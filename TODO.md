@@ -20,6 +20,14 @@ smallest useful outcome and acceptance boundary.
 
 ## Done
 
+### WR-124 — Keep pre-push Git state out of dependency resolution
+
+- **Result:** The hook clears Git's documented repository-local environment overrides before
+  invoking Git/Xcode in its isolated worktree. This prevents dependency Git commands from using
+  WindowRanger's `GIT_DIR`. The repaired branch push and Stable tag push each passed all 931
+  non-hosted tests and the existing quick-verification gates. The shared origin configuration
+  was restored and verified; no dependency cache purge or validation bypass was needed.
+
 ### WR-119 — Do not float ordinary windows after one transient resize rejection
 
 - **Type:** Diagnostic-backed window admission regression
@@ -271,17 +279,17 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
-### WR-124 — Keep pre-push Git state out of dependency resolution
+### WR-125 — Investigate CLI peer-rejection process exit
 
-- **Type:** Release verification blocker
-- **Status:** Implemented; verification pending.
-- **Evidence:** Both beta and Stable Xcode failed to resolve pinned Sparkle in the pre-push
-  temporary worktree, although ordinary builds passed and the remote tag matched. Supplying the
-  WindowRanger `GIT_DIR` to a Git command in the Sparkle checkout resolves the WindowRanger commit
-  instead of Sparkle. Git's hook contract requires clearing repository-local environment variables
-  before invoking Git in a different worktree or repository.
-- **Fix:** Capture the source root, then clear only Git's documented local environment variables
-  before the isolated validation worktree and dependency resolver run. Keep every existing gate.
+- **Type:** CI-observed transport reliability failure
+- **Status:** Investigation pending; unrelated to the WR-123 product changes.
+- **Evidence:** The first post-merge CI run `33962303149` exited unexpectedly during
+  `CLIIPCTransportTests.testPeerRejectionClosesWithoutReturningDetails`; XCTest restarted and
+  the remaining 916 tests passed. The complete rerun passed, as did the two PR checks and local
+  931-test release/tag checkpoints. The pre-existing transport uses `Darwin.write` after a peer
+  may close without `SO_NOSIGPIPE`; SIGPIPE is a source-backed hypothesis, not a captured signal.
+- **Acceptance:** Reproduce the rejection/close race, ensure the caller receives a transport error
+  without process termination, and add deterministic coverage before claiming it fixed.
 
 ### WR-122 — Ignore ChatGPT's transient update precursor
 
@@ -3759,7 +3767,7 @@ smallest useful outcome and acceptance boundary.
 ### WR-123 — Recover tiling when a formerly fixed-size window becomes resizable
 
 - **Type:** User-observed tiling bug; source-backed recovery gap
-- **Status:** Live validation — fix implemented; Codex tiles in signed Dev, but its original
+- **Status:** Live validation — published in Stable 1.0.7; Codex tiles in Dev and Stable, but its original
   trigger and the changed-size recovery path still require a live recurrence.
 - **Observed (5 September 2026):** Codex stayed at `(596,188,3103,1209)` on workspace 2 in
   installed Stable 1.0.6 (19), revision `809b3909d334`. The running app was unpaused and AX trusted;
@@ -3778,17 +3786,23 @@ smallest useful outcome and acceptance boundary.
   checks pass. Independent read-only review has no remaining blocking findings.
 - **Installed evidence:** Signed universal Debug `809b3909d334-dirty`, bundle
   `dev.appranger.WindowRanger.Debug`, Team `44NAD22AK6`, CDHash
-  `01598aa45deda18fdbf101284805d418cb082def`, runs as PID `96443` at
+  `01598aa45deda18fdbf101284805d418cb082def`, ran as PID `96443` at
   `/Applications/WindowRanger Dev.app`. Session `5DC5A48D-C533-4D78-A801-950E66FAFA62` classifies
   Codex `56738:24482` as `managed-normal`; workspace switch correlation
   `cli-7466288d-08ab-4a7a-b682-40012a00ebe0` solves workspace 2 with one participant and applies
   `(4,34,3832,1523)` successfully. Independent Window Server readback and persisted tree agree.
   The layer-3 Codex auxiliary dialog remains ignored. This validates fresh-start tiling, not a
-  live fixed-size-to-normal recovery. The public installation is unchanged; the prior Dev bundle
+  live fixed-size-to-normal recovery. At this Dev checkpoint the public installation was unchanged; the prior Dev bundle
   is retained at `/Applications/.WindowRanger Dev.pre-wr123-20260905-101007`.
+- **Stable evidence (5 September 2026):** Exact notarized 1.0.7/build 20 DMG at source
+  `cfa8ab0b25ab` installed at `/Applications/WindowRanger.app`; its 71 files/links match the ZIP
+  and mounted DMG. Settings shows the correct version/commit; Accessibility remains granted.
+  Codex `56738:24482` appears in workspace 2's tiled tree and Window Server reports its frame
+  filling the available display after initial launch and graceful quit/relaunch. Previous Stable
+  is retained at `/Applications/.WindowRanger.pre-1.0.7-20260905-121120`.
 - **Remaining boundary:** Observe `fixed-size-capability-recovered` after a genuine live recurrence
-  and size change, retaining fixed-size Finder/other operation-window behavior. Public release,
-  notarization, packaging and publication are outside this fix checkpoint.
+  and size change, retaining fixed-size Finder/other operation-window behavior. Existing-account
+  packaged validation does not complete the clean-user/manual matrices.
 
 ### WR-090 — Validate Displays have separate Spaces compatibility
 
@@ -4462,10 +4476,13 @@ second copy of that checklist.
 
 ### WR-014 — Distribution, updates, notarization, and publication
 
-- **1.0.7 release checkpoint (5 September 2026):** The maintainer requested a release of WR-123.
-  Build 20 is reserved for the reviewed recovery fix. All 931 non-hosted tests and signed Dev
-  Codex tiling pass; exact packaged Stable validation, notarization, GitHub publication and
-  Sparkle/website/Homebrew verification remain pending. The original Codex trigger and a live
+- **1.0.7 release checkpoint (5 September 2026):** Published immutable
+  [Stable 1.0.7/build 20](https://github.com/AppRanger/windowranger/releases/tag/v1.0.7) at
+  `cfa8ab0b25abd44b2b87c4c7564166c035c2f759` after all 931 non-hosted tests, static analysis,
+  universal Developer ID export, zero-issue app/DMG notarization, Gatekeeper, exact packaged
+  installation/relaunch, and five-asset GitHub round-trip verification. PRs #118/#119 and the
+  complete post-merge CI rerun passed; the initial unrelated IPC test exit is tracked in WR-125.
+  Sparkle/website/Homebrew publication remains in progress. The original Codex trigger and a live
   fixed-size-to-normal recurrence remain unconfirmed and are not claimed in release notes.
 
 - **Type:** Release epic
