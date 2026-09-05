@@ -271,6 +271,18 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-124 — Keep pre-push Git state out of dependency resolution
+
+- **Type:** Release verification blocker
+- **Status:** Implemented; verification pending.
+- **Evidence:** Both beta and Stable Xcode failed to resolve pinned Sparkle in the pre-push
+  temporary worktree, although ordinary builds passed and the remote tag matched. Supplying the
+  WindowRanger `GIT_DIR` to a Git command in the Sparkle checkout resolves the WindowRanger commit
+  instead of Sparkle. Git's hook contract requires clearing repository-local environment variables
+  before invoking Git in a different worktree or repository.
+- **Fix:** Capture the source root, then clear only Git's documented local environment variables
+  before the isolated validation worktree and dependency resolver run. Keep every existing gate.
+
 ### WR-122 — Ignore ChatGPT's transient update precursor
 
 - **Type:** Diagnostic-backed window-admission regression

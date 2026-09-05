@@ -18,6 +18,10 @@ done
 [[ -n "$commit_to_verify" ]] || exit 0
 
 repository_root="$(git rev-parse --show-toplevel)"
+# Git exports repository-local overrides to hooks. They must not leak into the isolated worktree
+# or SwiftPM's dependency Git commands, which need to resolve their own repositories.
+git_local_environment=("${(@f)$(git rev-parse --local-env-vars)}")
+unset "${git_local_environment[@]}"
 validation_worktree="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/windowranger-pre-push.XXXXXX")"
 
 cleanup() {
