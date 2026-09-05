@@ -271,6 +271,18 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-124 — Keep pre-push Git state out of dependency resolution
+
+- **Type:** Release verification blocker
+- **Status:** Implemented; verification pending.
+- **Evidence:** Both beta and Stable Xcode failed to resolve pinned Sparkle in the pre-push
+  temporary worktree, although ordinary builds passed and the remote tag matched. Supplying the
+  WindowRanger `GIT_DIR` to a Git command in the Sparkle checkout resolves the WindowRanger commit
+  instead of Sparkle. Git's hook contract requires clearing repository-local environment variables
+  before invoking Git in a different worktree or repository.
+- **Fix:** Capture the source root, then clear only Git's documented local environment variables
+  before the isolated validation worktree and dependency resolver run. Keep every existing gate.
+
 ### WR-122 — Ignore ChatGPT's transient update precursor
 
 - **Type:** Diagnostic-backed window-admission regression
@@ -3744,6 +3756,40 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-123 — Recover tiling when a formerly fixed-size window becomes resizable
+
+- **Type:** User-observed tiling bug; source-backed recovery gap
+- **Status:** Live validation — fix implemented; Codex tiles in signed Dev, but its original
+  trigger and the changed-size recovery path still require a live recurrence.
+- **Observed (5 September 2026):** Codex stayed at `(596,188,3103,1209)` on workspace 2 in
+  installed Stable 1.0.6 (19), revision `809b3909d334`. The running app was unpaused and AX trusted;
+  the active profile assigned Codex to Tiled workspace 2 without exclusion. Its main window was
+  visible, standard, movable, resizable, non-minimized and non-fullscreen at Window Server layer 0.
+  Session cache retained automatic layout override but no workspace 2 tiled tree. Release logging
+  did not expose the prior admission decision, so the exact trigger is unconfirmed.
+- **Implemented:** Per-window fixed-size recovery retains a real observed size baseline. Only an
+  actual size change on an eligible visible active window permits fresh move/resize reads. Both
+  capabilities must be affirmatively writable to restore ordinary admission. Missing baselines
+  learn the first readable size without treating it as a resize; failed reads preserve the original
+  baseline and safety classification with a five-second retry bound. Ignored/deferred precedence,
+  WR-118's misleading capability protection, and WR-119's retry behavior remain intact.
+- **Automated evidence:** All 17 Window Admission fixtures and the final complete 931-test
+  non-hosted suite pass. Test/archive isolation, release-ledger validation, and diff whitespace
+  checks pass. Independent read-only review has no remaining blocking findings.
+- **Installed evidence:** Signed universal Debug `809b3909d334-dirty`, bundle
+  `dev.appranger.WindowRanger.Debug`, Team `44NAD22AK6`, CDHash
+  `01598aa45deda18fdbf101284805d418cb082def`, runs as PID `96443` at
+  `/Applications/WindowRanger Dev.app`. Session `5DC5A48D-C533-4D78-A801-950E66FAFA62` classifies
+  Codex `56738:24482` as `managed-normal`; workspace switch correlation
+  `cli-7466288d-08ab-4a7a-b682-40012a00ebe0` solves workspace 2 with one participant and applies
+  `(4,34,3832,1523)` successfully. Independent Window Server readback and persisted tree agree.
+  The layer-3 Codex auxiliary dialog remains ignored. This validates fresh-start tiling, not a
+  live fixed-size-to-normal recovery. The public installation is unchanged; the prior Dev bundle
+  is retained at `/Applications/.WindowRanger Dev.pre-wr123-20260905-101007`.
+- **Remaining boundary:** Observe `fixed-size-capability-recovered` after a genuine live recurrence
+  and size change, retaining fixed-size Finder/other operation-window behavior. Public release,
+  notarization, packaging and publication are outside this fix checkpoint.
+
 ### WR-090 — Validate Displays have separate Spaces compatibility
 
 - **Type:** Multi-display compatibility validation and diagnostics
@@ -4416,6 +4462,12 @@ second copy of that checklist.
 
 ### WR-014 — Distribution, updates, notarization, and publication
 
+- **1.0.7 release checkpoint (5 September 2026):** The maintainer requested a release of WR-123.
+  Build 20 is reserved for the reviewed recovery fix. All 931 non-hosted tests and signed Dev
+  Codex tiling pass; exact packaged Stable validation, notarization, GitHub publication and
+  Sparkle/website/Homebrew verification remain pending. The original Codex trigger and a live
+  fixed-size-to-normal recurrence remain unconfirmed and are not claimed in release notes.
+
 - **Type:** Release epic
 - **Status:** In progress. With explicit maintainer approval on 30 August 2026, the Beta 10 updater
   repair, public 1.0.0 and 1.0.1 Stable releases, combined Stable/Beta feed, and Stable Homebrew tap
@@ -4581,9 +4633,34 @@ second copy of that checklist.
   accepting installed Dev behavior for WR-118, WR-119, and WR-122 and an installed normal-use soak
   for non-deterministic WR-121. The exact source passed all 924 non-hosted tests, Release static
   analysis, an unsigned universal Release build, both DMG smoke layouts, and protected PR #113.
-  Build 19 is allocated for the candidate, with release notes at `docs/releases/v1.0.6.md`. The
-  signed, notarized packaged artifact still requires exact installation and maintainer acceptance
-  before tagging and public publication.
+  Build 19 was allocated for the candidate, with release notes at `docs/releases/v1.0.6.md`.
+- **1.0.6 signed candidate and GitHub publication:** Stable Xcode 26.6 produced universal Stable
+  1.0.6 build 19 from exact `main` commit `809b3909d334341e0fefb68daa2ecb6ac93dd414`
+  after all 924 non-hosted tests, Release static analysis, archive/export, signing, Gatekeeper, and
+  packaging checks passed. Apple accepted the app notarization
+  (`fb141541-9000-4df4-9a6f-8e941af738cd`) and DMG notarization
+  (`da82df55-7b2c-4d44-8db8-e7bc97c510d7`) with zero issues; both tickets are stapled. The
+  maintainer accepted the exact DMG-installed build before the immutable latest GitHub Stable
+  release and its five round-trip-verified assets were published as `v1.0.6`.
+- **1.0.6 feed and website publication:** Website PR
+  [`#19`](https://github.com/AppRanger/windowranger-site/pull/19) merged the exact signed build 19
+  feed, five deltas from retained builds 13–16 and 18, release ZIP, and 1.0.6 download links as
+  `0a7eda648e16635ce90a642350aa1cc5b7ad9cb0`. Cloudflare deployment
+  `fa7e38ca-d08a-49a0-8845-b2bbad5a99ff` serves appcast SHA-256
+  `17c143d964394b62aadfd737a533a32ecdb197ae7dec008e3368e1218ea41234`. Both public domains serve
+  byte-identical homepages, appcasts, archives, and deltas; every build 19 Sparkle enclosure and
+  delta signature verifies. Website PR
+  [`#20`](https://github.com/AppRanger/windowranger-site/pull/20) recorded the deployment as
+  `54dd7c8814bf056e11143216020ebc8477d13e64`.
+- **1.0.6 Homebrew publication:** Tap PR
+  [`#5`](https://github.com/AppRanger/homebrew-tap/pull/5) merged as
+  `b4accd6dbaba9fa189a3bfcf9d17a23887c06bdb` and publishes the generated 1.0.6 Cask for the exact
+  notarized DMG SHA-256
+  `dab7b8fd8669f222d64c57760edd13f040fb1c36c4995e3c6f9eafc933c3d0d5`. A refreshed public tap,
+  Cask style, Ruby syntax, `brew info`, and Homebrew strict online audit all pass. The accepted
+  release DMG remains installed directly, so the older local Homebrew receipt was not changed and
+  the already-proven Homebrew-forward upgrade path was not repeated. Sparkle-first/Homebrew
+  coexistence, Intel, Settings PATH UI, and privacy-permission retention remain live validation.
 - **1.0.2 preparation:** The maintainer explicitly approved committing the accepted fixes and
   cutting Stable 1.0.2 on 1 September 2026. All nine cross-display layout combinations,
   representative Unified transfers, same-display behaviour, the menu bar appearance correction,
