@@ -616,6 +616,28 @@ enum AccessibilityWindow {
         )
     }
 
+    /// Operational fixed-size state may protect an otherwise ordinary managed window, but it must
+    /// never override a current temporary or ignored admission decision.
+    static func effectiveAdmissionDecision(
+        genericDecision: WindowAdmissionDecision,
+        metadata: WindowAdmissionMetadata,
+        hasFixedSizeRecoveryState: Bool
+    ) -> WindowAdmissionDecision {
+        guard hasFixedSizeRecoveryState,
+              genericDecision.disposition == .managedNormal
+        else { return genericDecision }
+        return fixedSizeDecisionAfterIneffectiveResize(metadata) ?? genericDecision
+    }
+
+    /// Both capability-proven and operationally-proven fixed-size windows may recover after an
+    /// externally observed size change. Other current admission states retain their precedence.
+    static func shouldRecheckFixedSizeCapabilities(
+        for genericDecision: WindowAdmissionDecision
+    ) -> Bool {
+        genericDecision.disposition == .managedNormal ||
+            genericDecision.reason == .fixedSizeStandardWindow
+    }
+
     static func requestPermission(
         isTrusted: () -> Bool = { AXIsProcessTrusted() },
         showSystemPrompt: () -> Bool = {
@@ -939,6 +961,53 @@ enum AccessibilityWindow {
                 nativeFilePanelIdentifierObservation(of: element),
             positionSettable: attributeSettableObservation(kAXPositionAttribute as CFString, of: element),
             sizeSettable: attributeSettableObservation(kAXSizeAttribute as CFString, of: element),
+            supportMetadataWasCollected: true
+        )
+    }
+
+    /// Refreshes only the two capability facts that decide whether a previously fixed-size
+    /// standard window may safely return to a resize layout. Broad discovery normally retains
+    /// support evidence, so this deliberately avoids re-reading dialog controls or identifiers.
+    static func admissionMoveResizeCapabilityMetadata(
+        of element: AXUIElement,
+        coreMetadata: WindowAdmissionMetadata,
+        retaining retainedMetadata: WindowAdmissionMetadata
+    ) -> WindowAdmissionMetadata {
+        refreshingMoveResizeCapabilities(
+            coreMetadata: coreMetadata,
+            retaining: retainedMetadata,
+            positionSettable: attributeSettableObservation(kAXPositionAttribute as CFString, of: element),
+            sizeSettable: attributeSettableObservation(kAXSizeAttribute as CFString, of: element)
+        )
+    }
+
+    static func refreshingMoveResizeCapabilities(
+        coreMetadata: WindowAdmissionMetadata,
+        retaining retainedMetadata: WindowAdmissionMetadata,
+        positionSettable: AXBooleanAttributeObservation,
+        sizeSettable: AXBooleanAttributeObservation
+    ) -> WindowAdmissionMetadata {
+        WindowAdmissionMetadata(
+            bundleIdentifier: coreMetadata.bundleIdentifier,
+            accessibilityIdentifierObservation: coreMetadata.accessibilityIdentifierObservation,
+            role: coreMetadata.role,
+            subrole: coreMetadata.subrole,
+            windowLayer: coreMetadata.windowLayer,
+            isMinimized: coreMetadata.isMinimized,
+            isFullscreen: coreMetadata.isFullscreen,
+            fullscreenObservation: coreMetadata.fullscreenObservation,
+            modalObservation: retainedMetadata.modalObservation,
+            focusedObservation: retainedMetadata.focusedObservation,
+            mainObservation: retainedMetadata.mainObservation,
+            fullscreenButton: coreMetadata.fullscreenButton,
+            minimizeButton: retainedMetadata.minimizeButton,
+            closeButton: coreMetadata.closeButton,
+            zoomButton: retainedMetadata.zoomButton,
+            defaultButton: retainedMetadata.defaultButton,
+            cancelButton: retainedMetadata.cancelButton,
+            nativeFilePanelIdentifierObservation: retainedMetadata.nativeFilePanelIdentifierObservation,
+            positionSettable: positionSettable,
+            sizeSettable: sizeSettable,
             supportMetadataWasCollected: true
         )
     }

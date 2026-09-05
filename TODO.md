@@ -3744,6 +3744,40 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-123 — Recover tiling when a formerly fixed-size window becomes resizable
+
+- **Type:** User-observed tiling bug; source-backed recovery gap
+- **Status:** Live validation — fix implemented; Codex tiles in signed Dev, but its original
+  trigger and the changed-size recovery path still require a live recurrence.
+- **Observed (5 September 2026):** Codex stayed at `(596,188,3103,1209)` on workspace 2 in
+  installed Stable 1.0.6 (19), revision `809b3909d334`. The running app was unpaused and AX trusted;
+  the active profile assigned Codex to Tiled workspace 2 without exclusion. Its main window was
+  visible, standard, movable, resizable, non-minimized and non-fullscreen at Window Server layer 0.
+  Session cache retained automatic layout override but no workspace 2 tiled tree. Release logging
+  did not expose the prior admission decision, so the exact trigger is unconfirmed.
+- **Implemented:** Per-window fixed-size recovery retains a real observed size baseline. Only an
+  actual size change on an eligible visible active window permits fresh move/resize reads. Both
+  capabilities must be affirmatively writable to restore ordinary admission. Missing baselines
+  learn the first readable size without treating it as a resize; failed reads preserve the original
+  baseline and safety classification with a five-second retry bound. Ignored/deferred precedence,
+  WR-118's misleading capability protection, and WR-119's retry behavior remain intact.
+- **Automated evidence:** All 17 Window Admission fixtures and the final complete 931-test
+  non-hosted suite pass. Test/archive isolation, release-ledger validation, and diff whitespace
+  checks pass. Independent read-only review has no remaining blocking findings.
+- **Installed evidence:** Signed universal Debug `809b3909d334-dirty`, bundle
+  `dev.appranger.WindowRanger.Debug`, Team `44NAD22AK6`, CDHash
+  `01598aa45deda18fdbf101284805d418cb082def`, runs as PID `96443` at
+  `/Applications/WindowRanger Dev.app`. Session `5DC5A48D-C533-4D78-A801-950E66FAFA62` classifies
+  Codex `56738:24482` as `managed-normal`; workspace switch correlation
+  `cli-7466288d-08ab-4a7a-b682-40012a00ebe0` solves workspace 2 with one participant and applies
+  `(4,34,3832,1523)` successfully. Independent Window Server readback and persisted tree agree.
+  The layer-3 Codex auxiliary dialog remains ignored. This validates fresh-start tiling, not a
+  live fixed-size-to-normal recovery. The public installation is unchanged; the prior Dev bundle
+  is retained at `/Applications/.WindowRanger Dev.pre-wr123-20260905-101007`.
+- **Remaining boundary:** Observe `fixed-size-capability-recovered` after a genuine live recurrence
+  and size change, retaining fixed-size Finder/other operation-window behavior. Public release,
+  notarization, packaging and publication are outside this fix checkpoint.
+
 ### WR-090 — Validate Displays have separate Spaces compatibility
 
 - **Type:** Multi-display compatibility validation and diagnostics

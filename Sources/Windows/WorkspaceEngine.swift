@@ -157,6 +157,69 @@ struct WindowRefreshReport: Equatable, Sendable {
     let managedWindowCount: Int
 }
 
+/// A fixed-size classification is operational safety evidence. Reconsider it only after the exact
+/// surface has demonstrably changed size, then rate-limit failed capability reads without making a
+/// genuinely fixed-size window receive recurring Accessibility traffic.
+struct FixedSizeRecoveryState: Equatable, Sendable {
+    static let capabilityRecheckCooldown: TimeInterval = 5
+
+    private(set) var baselineSize: CGSize?
+    var nextCapabilityRecheckDate: Date
+
+    static func seeded(observedSize: CGSize?, now: Date) -> FixedSizeRecoveryState {
+        FixedSizeRecoveryState(
+            baselineSize: observedSize.flatMap { isValidObservedSize($0) ? $0 : nil },
+            nextCapabilityRecheckDate: now.addingTimeInterval(capabilityRecheckCooldown)
+        )
+    }
+
+    static func isValidObservedSize(_ size: CGSize) -> Bool {
+        size.width.isFinite && size.height.isFinite && size.width > 0 && size.height > 0
+    }
+
+    func shouldRecheck(
+        coreMetadata: WindowAdmissionMetadata,
+        observedSize: CGSize?,
+        isVisibleActive: Bool,
+        isPaused: Bool,
+        now: Date
+    ) -> Bool {
+        guard !isPaused,
+              isVisibleActive,
+              AccessibilityWindow.shouldCollectFixedSizeStandardWindowEvidence(coreMetadata),
+              let baselineSize,
+              let observedSize,
+              Self.isValidObservedSize(baselineSize),
+              Self.isValidObservedSize(observedSize),
+              !AccessibilityWindow.sizesMatch(observedSize, baselineSize),
+              now >= nextCapabilityRecheckDate
+        else { return false }
+        return true
+    }
+
+    /// A resize failure can occur while the frame is unreadable. The first later readable size is
+    /// a baseline only; it must never itself be interpreted as a user or application resize.
+    mutating func recordObservedSizeIfNeeded(_ observedSize: CGSize?) {
+        guard baselineSize == nil,
+              let observedSize,
+              Self.isValidObservedSize(observedSize)
+        else { return }
+        baselineSize = observedSize
+    }
+
+    /// Records the result of the only recovery probe. Failed, unsupported, or unavailable reads
+    /// deliberately keep the original size baseline; a later genuine size change can retry after
+    /// the cooldown instead of requiring a second resize event.
+    mutating func recordCapabilityProbe(
+        positionSettable: AXBooleanAttributeObservation,
+        sizeSettable: AXBooleanAttributeObservation,
+        now: Date
+    ) -> Bool {
+        nextCapabilityRecheckDate = now.addingTimeInterval(Self.capabilityRecheckCooldown)
+        return positionSettable == .trueValue && sizeSettable == .trueValue
+    }
+}
+
 /// Bounds the damage from one application whose Accessibility endpoint stops answering. The OS
 /// timeout caps each individual message; this process-level backoff prevents a periodic refresh or
 /// one workspace switch from immediately issuing another series of messages to the same process.
@@ -2259,7 +2322,7 @@ final class WorkspaceEngine {
     private var ignoredWindowKeys = Set<WindowKey>()
     private var admissionDecisionByWindow: [WindowKey: WindowAdmissionDecision] = [:]
     private var admissionMetadataByWindow: [WindowKey: WindowAdmissionMetadata] = [:]
-    private var ineffectiveResizeRecoveryAttemptedWindowKeys = Set<WindowKey>()
+    private var fixedSizeRecoveryStateByWindow: [WindowKey: FixedSizeRecoveryState] = [:]
     private var resizeRecoveryNeedsImmediateReflow = false
     private var lastKnownWindowLayer: [WindowKey: Int] = [:]
     private var lastFocusedWindow: [UUID: WindowKey] = [:]
@@ -12386,7 +12449,7 @@ final class WorkspaceEngine {
         ignoredWindowKeys.removeAll()
         admissionDecisionByWindow.removeAll()
         admissionMetadataByWindow.removeAll()
-        ineffectiveResizeRecoveryAttemptedWindowKeys.removeAll()
+        fixedSizeRecoveryStateByWindow.removeAll()
         resizeRecoveryNeedsImmediateReflow = false
         lastKnownWindowLayer.removeAll()
         lastFocusedWindow.removeAll()
@@ -12647,17 +12710,89 @@ final class WorkspaceEngine {
                 let collectsSupportMetadata = collectsCompatibilitySupportMetadata ||
                     collectsFixedSizeSupportMetadata ||
                     collectsStandardDialogSupportMetadata
-                let admissionMetadata = collectsSupportMetadata
+                var admissionMetadata = collectsSupportMetadata
                     ? AccessibilityWindow.admissionSupportMetadata(
                         of: element,
                         coreMetadata: coreAdmissionMetadata
                     )
                     : retainedAdmissionMetadata
-                let genericAdmissionDecision = AccessibilityWindow.admissionDecision(for: admissionMetadata)
-                let admissionDecision = ineffectiveResizeRecoveryAttemptedWindowKeys.contains(key)
-                    ? AccessibilityWindow.fixedSizeDecisionAfterIneffectiveResize(admissionMetadata)
-                        ?? genericAdmissionDecision
-                    : genericAdmissionDecision
+                var genericAdmissionDecision = AccessibilityWindow.admissionDecision(for: admissionMetadata)
+                let now = Date()
+                if genericAdmissionDecision.disposition.evictsTrackedWindow {
+                    fixedSizeRecoveryStateByWindow.removeValue(forKey: key)
+                }
+                if var recoveryState = fixedSizeRecoveryStateByWindow[key] {
+                    recoveryState.recordObservedSizeIfNeeded(observedFrame?.size)
+                    fixedSizeRecoveryStateByWindow[key] = recoveryState
+                    if AccessibilityWindow.shouldRecheckFixedSizeCapabilities(
+                        for: genericAdmissionDecision
+                    ),
+                       recoveryState.shouldRecheck(
+                        coreMetadata: coreAdmissionMetadata,
+                        observedSize: observedFrame?.size,
+                        isVisibleActive: windows[key].map {
+                            let rule = resolvedRule(for: $0.bundleIdentifier)
+                            return isWorkspaceActive($0.workspaceID) &&
+                                !isExcludedFromWorkspaceParticipation($0) &&
+                                !isDropDownAppWindow($0.key) &&
+                                !rule.keepsOnAllWorkspaces &&
+                                $0.layoutOverride != .floating &&
+                                !rule.excludesFromLayout &&
+                                !($0.layoutOverride == .automatic &&
+                                    rule.floatsSecondaryWindows &&
+                                    genericAdmissionDecision.isSecondaryWindowCandidate) &&
+                                observedFrame.map { Self.isMeaningfullyVisible($0, displays: displays) } == true
+                        } ?? false,
+                        isPaused: isWindowManagementPaused,
+                        now: now
+                    ) {
+                        let refreshedMetadata = AccessibilityWindow.admissionMoveResizeCapabilityMetadata(
+                            of: element,
+                            coreMetadata: coreAdmissionMetadata,
+                            retaining: admissionMetadata
+                        )
+                        var updatedRecoveryState = recoveryState
+                        if updatedRecoveryState.recordCapabilityProbe(
+                            positionSettable: refreshedMetadata.positionSettable,
+                            sizeSettable: refreshedMetadata.sizeSettable,
+                            now: now
+                        ) {
+                            let previousPositionSettable = admissionMetadata.positionSettable
+                            let previousSizeSettable = admissionMetadata.sizeSettable
+                            fixedSizeRecoveryStateByWindow.removeValue(forKey: key)
+                            admissionMetadata = refreshedMetadata
+                            genericAdmissionDecision = AccessibilityWindow.admissionDecision(for: admissionMetadata)
+                            lastBackgroundLayoutSignature = nil
+                            diagnostics.log(
+                                category: "window-admission",
+                                event: "fixed-size-capability-recovered",
+                                correlation: correlationID,
+                                fields: [
+                                    "window": Self.diagnosticWindowKey(key),
+                                    "previous-position-settable": previousPositionSettable.rawValue,
+                                    "previous-size-settable": previousSizeSettable.rawValue,
+                                    "position-settable": refreshedMetadata.positionSettable.rawValue,
+                                    "size-settable": refreshedMetadata.sizeSettable.rawValue,
+                                    "layout-reentry": "true",
+                                ]
+                            )
+                        } else {
+                            fixedSizeRecoveryStateByWindow[key] = updatedRecoveryState
+                        }
+                    }
+                }
+                if fixedSizeRecoveryStateByWindow[key] == nil,
+                   genericAdmissionDecision.reason == .fixedSizeStandardWindow {
+                    fixedSizeRecoveryStateByWindow[key] = .seeded(
+                        observedSize: observedFrame?.size,
+                        now: now
+                    )
+                }
+                let admissionDecision = AccessibilityWindow.effectiveAdmissionDecision(
+                    genericDecision: genericAdmissionDecision,
+                    metadata: admissionMetadata,
+                    hasFixedSizeRecoveryState: fixedSizeRecoveryStateByWindow[key] != nil
+                )
                 let previousAdmissionDecision = admissionDecisionByWindow[key]
                 var recordedAdmissionMetadata = admissionMetadata
                 if previousAdmissionDecision != admissionDecision,
@@ -13276,9 +13411,9 @@ final class WorkspaceEngine {
         ignoredWindowKeys = ignoredWindowKeys.filter(shouldRetainDiscoveryState)
         admissionDecisionByWindow = admissionDecisionByWindow.filter { shouldRetainDiscoveryState($0.key) }
         admissionMetadataByWindow = admissionMetadataByWindow.filter { shouldRetainDiscoveryState($0.key) }
-        ineffectiveResizeRecoveryAttemptedWindowKeys = ineffectiveResizeRecoveryAttemptedWindowKeys.filter(
-            shouldRetainDiscoveryState
-        )
+        fixedSizeRecoveryStateByWindow = fixedSizeRecoveryStateByWindow.filter {
+            shouldRetainDiscoveryState($0.key)
+        }
         lastKnownWindowLayer = lastKnownWindowLayer.filter { shouldRetainDiscoveryState($0.key) }
         staleParkedFocusSuppression = staleParkedFocusSuppression.filter {
             shouldRetainDiscoveryState($0.key)
@@ -17600,7 +17735,7 @@ final class WorkspaceEngine {
         guard AccessibilityWindow.shouldCollectFixedSizeStandardWindowEvidence(coreMetadata) else {
             return nil
         }
-        guard ineffectiveResizeRecoveryAttemptedWindowKeys.insert(change.window.key).inserted else {
+        guard fixedSizeRecoveryStateByWindow[change.window.key] == nil else {
             return nil
         }
         let supportMetadata = AccessibilityWindow.admissionSupportMetadata(
@@ -17609,6 +17744,12 @@ final class WorkspaceEngine {
         )
         guard let decision = AccessibilityWindow.fixedSizeDecisionAfterIneffectiveResize(supportMetadata)
         else { return nil }
+
+        let observedFrame = AccessibilityWindow.frame(of: change.window.element)
+        fixedSizeRecoveryStateByWindow[change.window.key] = .seeded(
+            observedSize: observedFrame?.size,
+            now: Date()
+        )
 
         recordAdmissionDecision(
             decision,
@@ -17622,7 +17763,6 @@ final class WorkspaceEngine {
             windows[change.window.key] = tracked
         }
         resizeRecoveryNeedsImmediateReflow = true
-        let observedFrame = AccessibilityWindow.frame(of: change.window.element)
         let preservesVisiblePosition = Self.shouldPreservePositionAfterIneffectiveResize(
             resizeResult: resizeResult,
             preserveVisiblePositionAfterIgnoredResize: preserveVisiblePositionAfterIgnoredResize,
