@@ -4482,8 +4482,15 @@ second copy of that checklist.
   universal Developer ID export, zero-issue app/DMG notarization, Gatekeeper, exact packaged
   installation/relaunch, and five-asset GitHub round-trip verification. PRs #118/#119 and the
   complete post-merge CI rerun passed; the initial unrelated IPC test exit is tracked in WR-125.
-  Sparkle/website/Homebrew publication remains in progress. The original Codex trigger and a live
-  fixed-size-to-normal recurrence remain unconfirmed and are not claimed in release notes.
+  Sparkle and both website domains were deployed from merged site commit `c1db0fabddd1` through
+  Cloudflare version `67898a5a-122a-47e3-8630-c91141bcb786`. All 39 live enclosures match local
+  lengths and hashes and pass independent Ed25519 verification against the installed public key;
+  build 20 is the newest default-channel entry and all eight retained items preserve their content.
+  Both domains serve the exact reviewed index, 1.0.7 CTA bundle, and feed. Homebrew tap PR #6 is
+  merged; the named cask `appranger/tap/windowranger` passes style and strict online audit against
+  the public DMG. No new Homebrew upgrade/uninstall or older-to-1.0.7 Sparkle install is claimed.
+  The original Codex trigger and a live fixed-size-to-normal recurrence remain unconfirmed and are
+  not claimed in release notes. Existing clean-user/manual matrices and WR-125 remain follow-ups.
 
 - **Type:** Release epic
 - **Status:** In progress. With explicit maintainer approval on 30 August 2026, the Beta 10 updater
