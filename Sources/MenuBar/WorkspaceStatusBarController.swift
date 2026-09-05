@@ -1959,10 +1959,12 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         if supportSectionVisible {
             appMenu.addItem(.separator())
             appMenu.addItem(disabledMenuItem(title: "WindowRanger Support"))
-            appMenu.addItem(actionMenuItem(
+            let copyReport = actionMenuItem(
                 title: "Copy Focused Window Diagnostic Report",
-                action: #selector(copyFocusedWindowDiagnosticReport)
-            ))
+                action: #selector(copyFocusedWindowDiagnosticReport(_:))
+            )
+            copyReport.representedObject = focusedWindowDiagnosticReport
+            appMenu.addItem(copyReport)
         }
 
         #if DEBUG
@@ -2082,10 +2084,10 @@ final class WorkspaceStatusBarController: NSObject, NSMenuDelegate {
         rebuildMenu()
     }
 
-    @objc private func copyFocusedWindowDiagnosticReport() {
-        guard let focusedWindowDiagnosticReport else { return }
+    @objc private func copyFocusedWindowDiagnosticReport(_ sender: NSMenuItem) {
+        guard let report = sender.representedObject as? String else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(focusedWindowDiagnosticReport, forType: .string)
+        NSPasteboard.general.setString(report, forType: .string)
     }
 
     #if DEBUG

@@ -180,6 +180,10 @@ position write. A currently visible no-op surface keeps its existing position; a
 an explicit Quick App/quit-recovery transition completes with a position-only move. Unavailable,
 delayed, clamped, or partial readback changes do not promote a normal window. Position or final-size
 failures likewise do not promote it into this safety classification.
+An unchanged successful size request must differ from the original size by more than one point
+in at least one dimension before it can prove fixed-size behavior. An app may round or clamp a
+one-point request; that small discrepancy still permits placement and does not evict its layout
+slot. This does not relax an explicit negative capability probe or repeated rejected writes.
 Fixed-size admission retains the observed size at classification as a recovery baseline. If that
 exact window later changes size while visible on an active workspace, discovery can recheck its
 move/resize capabilities. Only fresh affirmative evidence for both capabilities releases the
