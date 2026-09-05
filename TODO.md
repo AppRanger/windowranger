@@ -4450,6 +4450,12 @@ second copy of that checklist.
 
 ### WR-014 — Distribution, updates, notarization, and publication
 
+- **1.0.7 release checkpoint (5 September 2026):** The maintainer requested a release of WR-123.
+  Build 20 is reserved for the reviewed recovery fix. All 931 non-hosted tests and signed Dev
+  Codex tiling pass; exact packaged Stable validation, notarization, GitHub publication and
+  Sparkle/website/Homebrew verification remain pending. The original Codex trigger and a live
+  fixed-size-to-normal recurrence remain unconfirmed and are not claimed in release notes.
+
 - **Type:** Release epic
 - **Status:** In progress. With explicit maintainer approval on 30 August 2026, the Beta 10 updater
   repair, public 1.0.0 and 1.0.1 Stable releases, combined Stable/Beta feed, and Stable Homebrew tap
