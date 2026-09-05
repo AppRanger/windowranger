@@ -3168,6 +3168,34 @@ final class WorkspaceDefinitionTests: XCTestCase {
         XCTAssertTrue(WindowFrameWriteResult.succeededAfterInitialSizeRetry.succeeded)
     }
 
+    func testOnePointSizeRoundingDoesNotClassifyOrdinaryWindowAsFixedSize() {
+        let original = CGSize(width: 3_840, height: 1_530)
+        for target in [
+            CGSize(width: 3_840, height: 1_531),
+            CGSize(width: 3_840, height: 1_529),
+            CGSize(width: 3_841, height: 1_530),
+            CGSize(width: 3_839, height: 1_530),
+        ] {
+            var moved = false
+            let result = AccessibilityWindow.applyFrameWriteSequenceResult(
+                writeSize: { true },
+                writePosition: { moved = true; return true },
+                initialSizeWriteWasIgnored: {
+                    AccessibilityWindow.successfulSizeWriteWasIgnored(
+                        originalSize: original,
+                        targetSize: target,
+                        observeSize: { original },
+                        retrySizeWrite: { true },
+                        pause: {}
+                    )
+                }
+            )
+            XCTAssertEqual(result, .succeeded, "Small size rounding must still allow placement: \(target)")
+            XCTAssertTrue(moved)
+            XCTAssertFalse(result.provesInitialResizeWasIneffective)
+        }
+    }
+
     func testSuccessfulSizeWriteRequiresRepeatedUnchangedReadbackBeforeItIsIgnored() {
         let original = CGSize(width: 404, height: 88)
         let target = CGSize(width: 1_913, height: 1_523)

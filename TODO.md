@@ -20,6 +20,14 @@ smallest useful outcome and acceptance boundary.
 
 ## Done
 
+### WR-124 — Keep pre-push Git state out of dependency resolution
+
+- **Result:** The hook clears Git's documented repository-local environment overrides before
+  invoking Git/Xcode in its isolated worktree. This prevents dependency Git commands from using
+  WindowRanger's `GIT_DIR`. The repaired branch push and Stable tag push each passed all 931
+  non-hosted tests and the existing quick-verification gates. The shared origin configuration
+  was restored and verified; no dependency cache purge or validation bypass was needed.
+
 ### WR-119 — Do not float ordinary windows after one transient resize rejection
 
 - **Type:** Diagnostic-backed window admission regression
@@ -271,17 +279,54 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
-### WR-124 — Keep pre-push Git state out of dependency resolution
+### WR-128 — Publish and time Stable 1.0.8
 
-- **Type:** Release verification blocker
-- **Status:** Implemented; verification pending.
-- **Evidence:** Both beta and Stable Xcode failed to resolve pinned Sparkle in the pre-push
-  temporary worktree, although ordinary builds passed and the remote tag matched. Supplying the
-  WindowRanger `GIT_DIR` to a Git command in the Sparkle checkout resolves the WindowRanger commit
-  instead of Sparkle. Git's hook contract requires clearing repository-local environment variables
-  before invoking Git in a different worktree or repository.
-- **Fix:** Capture the source root, then clear only Git's documented local environment variables
-  before the isolated validation worktree and dependency resolver run. Keep every existing gate.
+- **Status:** Authorized release in progress; build 21 reserved for central develop integration.
+- **Scope:** Publish the WR-123 rounding correction and WR-126 menu-copy fix using the WR-127
+  runner, preserving release gates and recording elapsed time from 5 September 2026 12:34:13 UTC.
+- **Acceptance:** Exact packaged-app verification, immutable GitHub assets, signed feed and
+  website download, Homebrew update, central ledger and truthful stage timings.
+
+### WR-127 — Script repeat-release coordination and verification
+
+- **Type:** Maintainer-requested release tooling
+- **Status:** Implemented; focused checks and retained-artifact rehearsal pass. First credentialed
+  release through the coordinator remains untested.
+- **Scope:** Wrap the existing distribution and verification commands with explicit stages,
+  progress logs and a provenance-bound journal; automate flat feed staging, retained release-note
+  recovery and independent enclosure verification. Preserve all existing release gates.
+- **Acceptance:** Dry runs perform no release mutations; failures stop with useful logs; reruns
+  reject changed provenance or unsafe artifact replacement. Exercise the helpers against retained
+  1.0.7 evidence without publishing or replacing the running app. Record which release operations
+  still require coordination outside the runner.
+- **Evidence (5 September 2026):** The primary agent ran `verify-local`, then resumed into local
+  `verify-feed` against the exact 1.0.7/build-20 artifacts. All five release assets and all 39
+  retained ZIP/delta enclosures passed checksum, signature, length and expected-archive checks.
+  Flat staging preserved the existing feed and includes missing-note recovery coverage. A separate
+  reviewer found no remaining release-safety blocker after provenance and resume corrections.
+  Logs/journal are under `.build/release-runs/1.0.7-20-cfa8ab0b25ab/`; helper evidence is under
+  `.build/release-tooling-validation/`. The existing running app and public channels were untouched.
+  All 24 isolated tooling tests pass (10 runner, 9 appcast, 5 staging), including interrupted-child
+  cleanup and a failed asset preflight stopping feed verification. The primary agent corrected the
+  dry-run test to compare before/after fixture contents, since test setup now intentionally creates
+  a manifest under `.build/`; there is no remaining test failure.
+- **Remaining coordination:** Build allocation, branch/PR promotion, exact packaged-app acceptance,
+  tags, public GitHub publication, website/tap deployment and release records. The runner automates
+  stage execution, not those cross-repository decisions. Stable feed verification is supported;
+  Beta acceptance still follows the Sparkle runbook. Full application tests and credentialed stages
+  remain at the next integration/release checkpoint; this rehearsal is not a new public release.
+
+### WR-125 — Investigate CLI peer-rejection process exit
+
+- **Type:** CI-observed transport reliability failure
+- **Status:** Investigation pending; unrelated to the WR-123 product changes.
+- **Evidence:** The first post-merge CI run `33962303149` exited unexpectedly during
+  `CLIIPCTransportTests.testPeerRejectionClosesWithoutReturningDetails`; XCTest restarted and
+  the remaining 916 tests passed. The complete rerun passed, as did the two PR checks and local
+  931-test release/tag checkpoints. The pre-existing transport uses `Darwin.write` after a peer
+  may close without `SO_NOSIGPIPE`; SIGPIPE is a source-backed hypothesis, not a captured signal.
+- **Acceptance:** Reproduce the rejection/close race, ensure the caller receives a transport error
+  without process termination, and add deterministic coverage before claiming it fixed.
 
 ### WR-122 — Ignore ChatGPT's transient update precursor
 
@@ -3756,11 +3801,43 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-126 — Preserve the focused diagnostic report through menu closure
+
+- **Type:** User-observed support-command failure; source-backed lifetime bug
+- **Status:** Installed in signed Dev; 11 existing diagnostic tests pass, menu-copy live confirmation
+  remains pending. The sender lifetime fix was reviewed without adding a test of AppKit storage itself.
+- **Observed:** Copy Focused Window Diagnostic Report left the previous image on the clipboard
+  while diagnosing the 1.0.7 recurrence. `menuDidClose` clears the controller snapshot before the
+  action reads it. The action now consumes the snapshot attached to its exact menu-item sender.
+- **Acceptance:** Copy a report after closing the support menu without rereading focus or copying
+  a stale report from a different opening; verify in a signed installed app.
+
 ### WR-123 — Recover tiling when a formerly fixed-size window becomes resizable
 
 - **Type:** User-observed tiling bug; source-backed recovery gap
-- **Status:** Live validation — fix implemented; Codex tiles in signed Dev, but its original
-  trigger and the changed-size recovery path still require a live recurrence.
+- **Status:** Live validation — recurrence in Stable 1.0.7 captured; the rounding correction is
+  installed in Dev and its boundary passes live checks. Stable 1.0.7 remains affected.
+- **1.0.7 recurrence:** Before any restart, Codex `56738:24482` was displaced to `(625,30,3840,1530)`
+  on Tiled workspace 2. AX reported standard, movable/resizable, non-fullscreen and non-minimized;
+  management was unpaused, with no rule exclusion. The tiled tree initially still contained it.
+  After a diagnostic pause/resume, it moved to `(47,30,3840,1530)` and disappeared from the tree.
+  macOS reported usable display height 1531. The one-point size discrepancy is a source-backed
+  false-fixed-size hypothesis; the original transition remains absent from Release logging.
+  Evidence is retained under `.build/Logs/wr123/recurrence-1.0.7/` in the isolated debug checkout.
+- **Rounding correction:** A no-op successful resize differing by at most one point per dimension
+  no longer proves fixed-size behavior. The new size-position-size regression failed on 1.0.7's
+  code for all four one-point width/height deltas and passes with the correction. All 180 focused
+  Workspace Definition, Window Admission and Focused Diagnostic tests pass; independent review
+  found no blocker. The correction is now included in the authorized 1.0.8/build-21 release work.
+- **Current Dev evidence:** Signed `467aed84-dirty` is installed at `/Applications/WindowRanger Dev.app`.
+  With the Dev focus border temporarily disabled to match Stable geometry, session
+  `D9EE58F3-D9EA-4BC2-BE72-4F31F52D2BE2` requests `(0,30,3840,1531)` while Window Server confirms
+  Codex remains `(0,30,3840,1530)` and stays in the workspace 2 tiled tree. No further Codex frame
+  writes occur during the following 90-second settled interval. This directly validates the
+  rounding boundary; it does not reconstruct the original lost Release transition. A subsequent
+  pause/resume also preserves the correct frame and tiled tree. The Dev focus-border setting was
+  restored afterward. Full-suite/release checks are deferred to the next PR/release checkpoint;
+  this turn ran the 180 relevant tests only. Continued real-use recurrence validation remains open.
 - **Observed (5 September 2026):** Codex stayed at `(596,188,3103,1209)` on workspace 2 in
   installed Stable 1.0.6 (19), revision `809b3909d334`. The running app was unpaused and AX trusted;
   the active profile assigned Codex to Tiled workspace 2 without exclusion. Its main window was
@@ -3778,17 +3855,23 @@ smallest useful outcome and acceptance boundary.
   checks pass. Independent read-only review has no remaining blocking findings.
 - **Installed evidence:** Signed universal Debug `809b3909d334-dirty`, bundle
   `dev.appranger.WindowRanger.Debug`, Team `44NAD22AK6`, CDHash
-  `01598aa45deda18fdbf101284805d418cb082def`, runs as PID `96443` at
+  `01598aa45deda18fdbf101284805d418cb082def`, ran as PID `96443` at
   `/Applications/WindowRanger Dev.app`. Session `5DC5A48D-C533-4D78-A801-950E66FAFA62` classifies
   Codex `56738:24482` as `managed-normal`; workspace switch correlation
   `cli-7466288d-08ab-4a7a-b682-40012a00ebe0` solves workspace 2 with one participant and applies
   `(4,34,3832,1523)` successfully. Independent Window Server readback and persisted tree agree.
   The layer-3 Codex auxiliary dialog remains ignored. This validates fresh-start tiling, not a
-  live fixed-size-to-normal recovery. The public installation is unchanged; the prior Dev bundle
+  live fixed-size-to-normal recovery. At this Dev checkpoint the public installation was unchanged; the prior Dev bundle
   is retained at `/Applications/.WindowRanger Dev.pre-wr123-20260905-101007`.
+- **Stable evidence (5 September 2026):** Exact notarized 1.0.7/build 20 DMG at source
+  `cfa8ab0b25ab` installed at `/Applications/WindowRanger.app`; its 71 files/links match the ZIP
+  and mounted DMG. Settings shows the correct version/commit; Accessibility remains granted.
+  Codex `56738:24482` appears in workspace 2's tiled tree and Window Server reports its frame
+  filling the available display after initial launch and graceful quit/relaunch. Previous Stable
+  is retained at `/Applications/.WindowRanger.pre-1.0.7-20260905-121120`.
 - **Remaining boundary:** Observe `fixed-size-capability-recovered` after a genuine live recurrence
-  and size change, retaining fixed-size Finder/other operation-window behavior. Public release,
-  notarization, packaging and publication are outside this fix checkpoint.
+  and size change, retaining fixed-size Finder/other operation-window behavior. Existing-account
+  packaged validation does not complete the clean-user/manual matrices.
 
 ### WR-090 — Validate Displays have separate Spaces compatibility
 
@@ -4462,11 +4545,21 @@ second copy of that checklist.
 
 ### WR-014 — Distribution, updates, notarization, and publication
 
-- **1.0.7 release checkpoint (5 September 2026):** The maintainer requested a release of WR-123.
-  Build 20 is reserved for the reviewed recovery fix. All 931 non-hosted tests and signed Dev
-  Codex tiling pass; exact packaged Stable validation, notarization, GitHub publication and
-  Sparkle/website/Homebrew verification remain pending. The original Codex trigger and a live
-  fixed-size-to-normal recurrence remain unconfirmed and are not claimed in release notes.
+- **1.0.7 release checkpoint (5 September 2026):** Published immutable
+  [Stable 1.0.7/build 20](https://github.com/AppRanger/windowranger/releases/tag/v1.0.7) at
+  `cfa8ab0b25abd44b2b87c4c7564166c035c2f759` after all 931 non-hosted tests, static analysis,
+  universal Developer ID export, zero-issue app/DMG notarization, Gatekeeper, exact packaged
+  installation/relaunch, and five-asset GitHub round-trip verification. PRs #118/#119 and the
+  complete post-merge CI rerun passed; the initial unrelated IPC test exit is tracked in WR-125.
+  Sparkle and both website domains were deployed from merged site commit `c1db0fabddd1` through
+  Cloudflare version `67898a5a-122a-47e3-8630-c91141bcb786`. All 39 live enclosures match local
+  lengths and hashes and pass independent Ed25519 verification against the installed public key;
+  build 20 is the newest default-channel entry and all eight retained items preserve their content.
+  Both domains serve the exact reviewed index, 1.0.7 CTA bundle, and feed. Homebrew tap PR #6 is
+  merged; the named cask `appranger/tap/windowranger` passes style and strict online audit against
+  the public DMG. No new Homebrew upgrade/uninstall or older-to-1.0.7 Sparkle install is claimed.
+  The original Codex trigger and a live fixed-size-to-normal recurrence remain unconfirmed and are
+  not claimed in release notes. Existing clean-user/manual matrices and WR-125 remain follow-ups.
 
 - **Type:** Release epic
 - **Status:** In progress. With explicit maintainer approval on 30 August 2026, the Beta 10 updater

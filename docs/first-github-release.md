@@ -21,6 +21,74 @@ The daily installer is not a distribution tool. It deliberately builds a local d
 may use Apple Development signing. `scripts/build-distribution.sh` is the only scripted path for a
 public binary.
 
+## Repeat-release automation
+
+`python3 scripts/release.py --help` exposes the repeat-release coordinator. It wraps the existing
+scripts, reports progress, and retains command output and a provenance-bound journal under
+`.build/release-runs/`. Commands preview by default; `--execute` runs the selected stage. Use the
+same version, build number and exact source commit throughout a release. Read the printed plan
+before execution. A failed stage stops the run; inspect its log before resuming. Existing partial
+distribution output is never silently overwritten or treated as a successful build.
+
+For example, after allocating the version/build and promoting the accepted source to clean
+`main`, preview the build and asset verification together (replace every placeholder):
+
+```sh
+WINDOWRANGER_DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+python3 scripts/release.py --stage prepare \
+  --version X.Y.Z --build-number NUMBER --commit FULL_RELEASE_COMMIT \
+  --notary-profile WindowRanger \
+  --notary-keychain "$HOME/Library/Keychains/login.keychain-db" \
+  --sparkle-public-key PUBLIC_EDDSA_KEY
+```
+
+Add `--execute` to perform that plan. Later stages use the same version/build/commit and
+`--execute --resume`. `draft`, `verify-github`, `stage-feed`, `generate-feed`, `verify-feed` and
+`cask-prepare` expose the remaining scripted checkpoints; their required inputs appear in
+`--help`. The existing shell scripts remain usable directly for diagnosis.
+
+This reduces command assembly and repetitive verification. It does not shorten Xcode compilation,
+Apple notarization or remote uploads, and does not bypass their checks. Build-number allocation,
+reviewed branch promotion, exact packaged-app acceptance, tag publication, GitHub publication,
+website/tap promotion and final release records remain explicit coordination steps. The runner
+does not change the installed app or silently publish a release. A saved successful verification
+is historical evidence; rerun remote verification after publication to check the current channel.
+
+For feed preparation, create a fresh directory from the selected website checkout:
+
+```sh
+python3 scripts/stage-release-feed.py \
+  --public-directory /path/to/website/public \
+  --destination /path/to/new-feed-workdir
+```
+
+The helper copies retained update artifacts into the flat layout expected by Sparkle, requires
+every referenced payload, preserves the existing appcast, and reconstructs missing source release
+notes from embedded descriptions. It rejects an existing destination. Generate the new signed feed
+with the existing `generate-update-appcast.sh` workflow, then run `verify-appcast.py` against both
+the local generated feed and the deployed feed. The independent verifier checks every full ZIP and
+delta signature and length, optionally compares each payload with the local artifact, and writes
+a machine-readable evidence report. Its expected version and build must be explicit; use
+`python3 scripts/verify-appcast.py --help` for the exact arguments.
+
+For local validation, use `verify-feed --local-only --artifact-directory /path/to/new-feed-workdir`
+with the generated XML as `--feed`. After deployment, run `verify-feed` again with the HTTPS feed
+URL and omit `--local-only`; keep the artifact directory to compare all downloaded bytes. This
+stage currently verifies the default Stable channel. Beta generation is supported, but Beta
+channel acceptance still follows the existing Sparkle runbook.
+
+Verify this tooling independently of the macOS app tests:
+
+```sh
+python3 -m unittest discover -s scripts -p 'test_release.py'
+python3 -m unittest discover -s scripts -p 'test_appcast.py'
+python3 -m unittest discover -s scripts -p 'test_stage_release_feed.py'
+```
+
+These checks cover orchestration and verification failure paths, not signing, notarization,
+installed-app acceptance or a complete public release. Existing application and release gates
+still run at their normal integration checkpoints.
+
 ## Why the first release is local
 
 The maintainer's Mac already has the Apple account and local Keychain boundary needed for signing.

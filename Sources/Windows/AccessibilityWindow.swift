@@ -1361,8 +1361,10 @@ enum AccessibilityWindow {
     /// Some Accessibility implementations report a successful size write while leaving the
     /// window unchanged. Retry once, then confirm that exact no-op throughout a bounded
     /// quarter-second observation window before allowing a position write, so an application-owned
-    /// fixed-size surface cannot be displaced into a layout slot. Unavailable, delayed, or partially
-    /// applied observations remain conservative and continue normally.
+    /// fixed-size surface cannot be displaced into a layout slot. A request differing by at most
+    /// one point per dimension may be rounded or clamped by the app; an unchanged response to that
+    /// request does not prove the window is fixed-size. Unavailable, delayed, or partially applied
+    /// observations remain conservative and continue normally.
     static func successfulSizeWriteWasIgnored(
         originalSize: CGSize?,
         targetSize: CGSize,
@@ -1371,7 +1373,8 @@ enum AccessibilityWindow {
         pause: () -> Void
     ) -> Bool {
         guard let originalSize,
-              !sizesMatch(originalSize, targetSize),
+              max(abs(originalSize.width - targetSize.width),
+                  abs(originalSize.height - targetSize.height)) > 1,
               let firstObservation = observeSize(),
               sizesMatch(firstObservation, originalSize)
         else { return false }
