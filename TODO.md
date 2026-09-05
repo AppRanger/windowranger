@@ -281,17 +281,26 @@ smallest useful outcome and acceptance boundary.
 
 ### WR-128 — Publish and time Stable 1.0.8
 
-- **Status:** Authorized release in progress; build 21 reserved for central develop integration.
+- **Status:** Immutable GitHub release published; Sparkle, website and Homebrew completion in progress.
 - **Scope:** Publish the WR-123 rounding correction and WR-126 menu-copy fix using the WR-127
   runner, preserving release gates and recording elapsed time from 5 September 2026 12:34:13 UTC.
 - **Acceptance:** Exact packaged-app verification, immutable GitHub assets, signed feed and
   website download, Homebrew update, central ledger and truthful stage timings.
+- **GitHub evidence:** `v1.0.8`, build 21, source `091330b3a12b32d232f6dc6dbe37c055bb165120`,
+  published at 13:00:44 UTC (26m31s from start). Both PRs and full integration/main CI passed;
+  932 application tests and 24 tooling tests passed. The runner built, signed, notarized and
+  packaged in 5m30s. App and DMG notarization each had zero issues. All five draft assets passed
+  download verification; the public release is immutable. Exact installed Stable, mounted DMG
+  and ZIP match across 71 files/links. Codex remains tiled at `(0,30,3840,1530)` on workspace 2
+  after launch and graceful quit/relaunch; Accessibility is granted. Previous Stable is retained
+  at `/Applications/.WindowRanger.pre-1.0.8-20260905`. Diagnostic-copy live confirmation remains
+  tracked separately in WR-126.
 
 ### WR-127 — Script repeat-release coordination and verification
 
 - **Type:** Maintainer-requested release tooling
-- **Status:** Implemented; focused checks and retained-artifact rehearsal pass. First credentialed
-  release through the coordinator remains untested.
+- **Status:** Implemented; focused checks, retained-artifact rehearsal and the 1.0.8 credentialed
+  build/draft stages pass. Channel stages are being exercised by WR-128.
 - **Scope:** Wrap the existing distribution and verification commands with explicit stages,
   progress logs and a provenance-bound journal; automate flat feed staging, retained release-note
   recovery and independent enclosure verification. Preserve all existing release gates.
