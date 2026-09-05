@@ -20,6 +20,38 @@ smallest useful outcome and acceptance boundary.
 
 ## Done
 
+### WR-128 — Publish and time Stable 1.0.8
+
+- **Result:** Stable 1.0.8/build 21 is immutable on GitHub at source
+  `091330b3a12b32d232f6dc6dbe37c055bb165120`; all five downloaded assets match provenance.
+  The exact DMG-installed app, ZIP and mounted image match across 71 files/links. Codex remains
+  tiled on workspace 2 after launch and graceful relaunch; Accessibility remains granted.
+  Both notarization submissions had zero issues. All 932 application and 24 tooling tests pass.
+- **Channels:** Website commit `0fc7fb1d301807ec4bc622ece6aab2ceb4332942`, deployed through
+  Cloudflare `8003befa-4888-4067-a049-af6750f69d11`, matches both domains' HTML, script and feed.
+  All 45 live full/delta enclosures match local hashes and Ed25519 signatures; nine retained feed
+  items are unchanged. Homebrew merge `97ae682` publishes the same DMG and passes named-tap style
+  and strict online audit. Central develop records build 21 published. WR-126's human copy check
+  and continued recurrence monitoring remain separate live-validation boundaries.
+- **Timing:** Started 5 September 2026 12:34:13 UTC; GitHub public at 13:00:44 (26m31s);
+  all channels verified at 13:11:20 (37m07s). Source preparation/promotion took 17m07s, including
+  the 12m08s integration CI job. Runner build/sign/notarize/package: 5m30s; draft upload and
+  verification: 30s; feed generation: 25s; local verification: 1s; live feed verification: 26s;
+  cask preparation: 5s; Cloudflare upload/deployment approximately 65s. Stages overlap; do not sum
+  them to infer wall time. Final record-PR time follows the all-channel milestone.
+- **Evidence:** `.build/release-timing/1.0.8/` and
+  `.build/release-runs/1.0.8-21-091330b3a12b/` in the isolated debug checkout. Previous Stable
+  is retained at `/Applications/.WindowRanger.pre-1.0.8-20260905`.
+
+### WR-127 — Script repeat-release coordination and verification
+
+- **Result:** The stage runner, feed staging and independent verifier passed 24 isolated tests,
+  the retained 1.0.7 rehearsal, and the complete 1.0.8 build/draft/feed/cask pipeline. Commands
+  retain logs and provenance-bound journals; dry runs, failure stops, resume validation and
+  interruption cleanup have focused coverage. See `docs/first-github-release.md` for usage.
+  Branch promotion, installed acceptance and cross-repository publication remain coordination
+  steps; Beta feed acceptance remains in the existing Sparkle runbook.
+
 ### WR-124 — Keep pre-push Git state out of dependency resolution
 
 - **Result:** The hook clears Git's documented repository-local environment overrides before
@@ -279,51 +311,16 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
-### WR-128 — Publish and time Stable 1.0.8
+### WR-129 — Assess redundant release verification work
 
-- **Status:** Immutable GitHub release published; Sparkle, website and Homebrew completion in progress.
-- **Scope:** Publish the WR-123 rounding correction and WR-126 menu-copy fix using the WR-127
-  runner, preserving release gates and recording elapsed time from 5 September 2026 12:34:13 UTC.
-- **Acceptance:** Exact packaged-app verification, immutable GitHub assets, signed feed and
-  website download, Homebrew update, central ledger and truthful stage timings.
-- **GitHub evidence:** `v1.0.8`, build 21, source `091330b3a12b32d232f6dc6dbe37c055bb165120`,
-  published at 13:00:44 UTC (26m31s from start). Both PRs and full integration/main CI passed;
-  932 application tests and 24 tooling tests passed. The runner built, signed, notarized and
-  packaged in 5m30s. App and DMG notarization each had zero issues. All five draft assets passed
-  download verification; the public release is immutable. Exact installed Stable, mounted DMG
-  and ZIP match across 71 files/links. Codex remains tiled at `(0,30,3840,1530)` on workspace 2
-  after launch and graceful quit/relaunch; Accessibility is granted. Previous Stable is retained
-  at `/Applications/.WindowRanger.pre-1.0.8-20260905`. Diagnostic-copy live confirmation remains
-  tracked separately in WR-126.
+- **Status:** Research follow-up from timed release; no gate changes authorized or implemented.
+- **Evidence:** 1.0.8 took 37m07s to all-channel verification; source promotion alone took 17m07s.
+  Integration CI spent 4m40s in analysis and 4m03s on the unsigned build. Pre-push checks, PR tests,
+  integration checks and the credentialed pipeline repeat portions of verification.
+- **Acceptance:** Propose evidence-based reuse or scheduling changes that retain exact-source
+  coverage, required protection and artifact checks; measure a later release before claiming
+  faster total time. The WR-127 runner currently reduces command handling, not these waits.
 
-### WR-127 — Script repeat-release coordination and verification
-
-- **Type:** Maintainer-requested release tooling
-- **Status:** Implemented; focused checks, retained-artifact rehearsal and the 1.0.8 credentialed
-  build/draft stages pass. Channel stages are being exercised by WR-128.
-- **Scope:** Wrap the existing distribution and verification commands with explicit stages,
-  progress logs and a provenance-bound journal; automate flat feed staging, retained release-note
-  recovery and independent enclosure verification. Preserve all existing release gates.
-- **Acceptance:** Dry runs perform no release mutations; failures stop with useful logs; reruns
-  reject changed provenance or unsafe artifact replacement. Exercise the helpers against retained
-  1.0.7 evidence without publishing or replacing the running app. Record which release operations
-  still require coordination outside the runner.
-- **Evidence (5 September 2026):** The primary agent ran `verify-local`, then resumed into local
-  `verify-feed` against the exact 1.0.7/build-20 artifacts. All five release assets and all 39
-  retained ZIP/delta enclosures passed checksum, signature, length and expected-archive checks.
-  Flat staging preserved the existing feed and includes missing-note recovery coverage. A separate
-  reviewer found no remaining release-safety blocker after provenance and resume corrections.
-  Logs/journal are under `.build/release-runs/1.0.7-20-cfa8ab0b25ab/`; helper evidence is under
-  `.build/release-tooling-validation/`. The existing running app and public channels were untouched.
-  All 24 isolated tooling tests pass (10 runner, 9 appcast, 5 staging), including interrupted-child
-  cleanup and a failed asset preflight stopping feed verification. The primary agent corrected the
-  dry-run test to compare before/after fixture contents, since test setup now intentionally creates
-  a manifest under `.build/`; there is no remaining test failure.
-- **Remaining coordination:** Build allocation, branch/PR promotion, exact packaged-app acceptance,
-  tags, public GitHub publication, website/tap deployment and release records. The runner automates
-  stage execution, not those cross-repository decisions. Stable feed verification is supported;
-  Beta acceptance still follows the Sparkle runbook. Full application tests and credentialed stages
-  remain at the next integration/release checkpoint; this rehearsal is not a new public release.
 
 ### WR-125 — Investigate CLI peer-rejection process exit
 
@@ -3824,8 +3821,8 @@ smallest useful outcome and acceptance boundary.
 ### WR-123 — Recover tiling when a formerly fixed-size window becomes resizable
 
 - **Type:** User-observed tiling bug; source-backed recovery gap
-- **Status:** Live validation — recurrence in Stable 1.0.7 captured; the rounding correction is
-  installed in Dev and its boundary passes live checks. Stable 1.0.7 remains affected.
+- **Status:** Live validation — the rounding correction is released in Stable 1.0.8 and its
+  boundary passes signed installed checks. Continued real-use recurrence monitoring remains open.
 - **1.0.7 recurrence:** Before any restart, Codex `56738:24482` was displaced to `(625,30,3840,1530)`
   on Tiled workspace 2. AX reported standard, movable/resizable, non-fullscreen and non-minimized;
   management was unpaused, with no rule exclusion. The tiled tree initially still contained it.
