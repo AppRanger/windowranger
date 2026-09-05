@@ -4740,6 +4740,8 @@ final class WorkspaceEngine {
             ("cg-window-layer", AccessibilityWindow.windowLayer(for: key.windowIdentifier).map { .value(String($0)) } ?? .unavailable("WindowServer read unavailable")),
             ("ax-focused", Self.diagnosticAttribute(focused.element, kAXFocusedAttribute as CFString, as: Bool.self)),
             ("ax-main", Self.diagnosticAttribute(focused.element, kAXMainAttribute as CFString, as: Bool.self)),
+            ("position-settable", Self.diagnosticSettable(kAXPositionAttribute as CFString, on: focused.element)),
+            ("size-settable", Self.diagnosticSettable(kAXSizeAttribute as CFString, on: focused.element)),
             ("ax-minimized", Self.diagnosticAttribute(focused.element, kAXMinimizedAttribute as CFString, as: Bool.self)),
             ("ax-fullscreen", Self.diagnosticAttribute(focused.element, "AXFullScreen" as CFString, as: Bool.self)),
             ("focused-settable", Self.diagnosticSettable(kAXFocusedAttribute as CFString, on: focused.element)),
@@ -4757,6 +4759,11 @@ final class WorkspaceEngine {
             ("admission-disposition", cachedDecision.map { .value($0.disposition.rawValue) } ?? .unavailable("no cached admission decision")),
             ("admission-reason", cachedDecision.map { .value($0.reason.rawValue) } ?? .unavailable("no cached admission decision")),
             ("temporarily-deferred", .value(String(temporarilyDeferredWindowKeys.contains(key)))),
+            ("fixed-size-recovery-active", .value(String(fixedSizeRecoveryStateByWindow[key] != nil))),
+            ("management-paused", .value(String(isWindowManagementPaused))),
+            ("wake-reconciliation-pending", .value(String(wakeReconciliationState.isPending))),
+            ("manual-tiled-move-preview-active", .value(String(manualTiledMovePreviewSession != nil))),
+            ("manual-tiled-resize-preview-active", .value(String(manualTiledResizeSession != nil))),
         ]
         if let tracked {
             let rule = resolvedRule(for: tracked.bundleIdentifier)

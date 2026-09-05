@@ -279,6 +279,43 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-128 — Publish and time Stable 1.0.8
+
+- **Status:** Authorized release in progress; build 21 reserved for central develop integration.
+- **Scope:** Publish the WR-123 rounding correction and WR-126 menu-copy fix using the WR-127
+  runner, preserving release gates and recording elapsed time from 5 September 2026 12:34:13 UTC.
+- **Acceptance:** Exact packaged-app verification, immutable GitHub assets, signed feed and
+  website download, Homebrew update, central ledger and truthful stage timings.
+
+### WR-127 — Script repeat-release coordination and verification
+
+- **Type:** Maintainer-requested release tooling
+- **Status:** Implemented; focused checks and retained-artifact rehearsal pass. First credentialed
+  release through the coordinator remains untested.
+- **Scope:** Wrap the existing distribution and verification commands with explicit stages,
+  progress logs and a provenance-bound journal; automate flat feed staging, retained release-note
+  recovery and independent enclosure verification. Preserve all existing release gates.
+- **Acceptance:** Dry runs perform no release mutations; failures stop with useful logs; reruns
+  reject changed provenance or unsafe artifact replacement. Exercise the helpers against retained
+  1.0.7 evidence without publishing or replacing the running app. Record which release operations
+  still require coordination outside the runner.
+- **Evidence (5 September 2026):** The primary agent ran `verify-local`, then resumed into local
+  `verify-feed` against the exact 1.0.7/build-20 artifacts. All five release assets and all 39
+  retained ZIP/delta enclosures passed checksum, signature, length and expected-archive checks.
+  Flat staging preserved the existing feed and includes missing-note recovery coverage. A separate
+  reviewer found no remaining release-safety blocker after provenance and resume corrections.
+  Logs/journal are under `.build/release-runs/1.0.7-20-cfa8ab0b25ab/`; helper evidence is under
+  `.build/release-tooling-validation/`. The existing running app and public channels were untouched.
+  All 24 isolated tooling tests pass (10 runner, 9 appcast, 5 staging), including interrupted-child
+  cleanup and a failed asset preflight stopping feed verification. The primary agent corrected the
+  dry-run test to compare before/after fixture contents, since test setup now intentionally creates
+  a manifest under `.build/`; there is no remaining test failure.
+- **Remaining coordination:** Build allocation, branch/PR promotion, exact packaged-app acceptance,
+  tags, public GitHub publication, website/tap deployment and release records. The runner automates
+  stage execution, not those cross-repository decisions. Stable feed verification is supported;
+  Beta acceptance still follows the Sparkle runbook. Full application tests and credentialed stages
+  remain at the next integration/release checkpoint; this rehearsal is not a new public release.
+
 ### WR-125 — Investigate CLI peer-rejection process exit
 
 - **Type:** CI-observed transport reliability failure
@@ -3764,11 +3801,43 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-126 — Preserve the focused diagnostic report through menu closure
+
+- **Type:** User-observed support-command failure; source-backed lifetime bug
+- **Status:** Installed in signed Dev; 11 existing diagnostic tests pass, menu-copy live confirmation
+  remains pending. The sender lifetime fix was reviewed without adding a test of AppKit storage itself.
+- **Observed:** Copy Focused Window Diagnostic Report left the previous image on the clipboard
+  while diagnosing the 1.0.7 recurrence. `menuDidClose` clears the controller snapshot before the
+  action reads it. The action now consumes the snapshot attached to its exact menu-item sender.
+- **Acceptance:** Copy a report after closing the support menu without rereading focus or copying
+  a stale report from a different opening; verify in a signed installed app.
+
 ### WR-123 — Recover tiling when a formerly fixed-size window becomes resizable
 
 - **Type:** User-observed tiling bug; source-backed recovery gap
-- **Status:** Live validation — published in Stable 1.0.7; Codex tiles in Dev and Stable, but its original
-  trigger and the changed-size recovery path still require a live recurrence.
+- **Status:** Live validation — recurrence in Stable 1.0.7 captured; the rounding correction is
+  installed in Dev and its boundary passes live checks. Stable 1.0.7 remains affected.
+- **1.0.7 recurrence:** Before any restart, Codex `56738:24482` was displaced to `(625,30,3840,1530)`
+  on Tiled workspace 2. AX reported standard, movable/resizable, non-fullscreen and non-minimized;
+  management was unpaused, with no rule exclusion. The tiled tree initially still contained it.
+  After a diagnostic pause/resume, it moved to `(47,30,3840,1530)` and disappeared from the tree.
+  macOS reported usable display height 1531. The one-point size discrepancy is a source-backed
+  false-fixed-size hypothesis; the original transition remains absent from Release logging.
+  Evidence is retained under `.build/Logs/wr123/recurrence-1.0.7/` in the isolated debug checkout.
+- **Rounding correction:** A no-op successful resize differing by at most one point per dimension
+  no longer proves fixed-size behavior. The new size-position-size regression failed on 1.0.7's
+  code for all four one-point width/height deltas and passes with the correction. All 180 focused
+  Workspace Definition, Window Admission and Focused Diagnostic tests pass; independent review
+  found no blocker. The correction is now included in the authorized 1.0.8/build-21 release work.
+- **Current Dev evidence:** Signed `467aed84-dirty` is installed at `/Applications/WindowRanger Dev.app`.
+  With the Dev focus border temporarily disabled to match Stable geometry, session
+  `D9EE58F3-D9EA-4BC2-BE72-4F31F52D2BE2` requests `(0,30,3840,1531)` while Window Server confirms
+  Codex remains `(0,30,3840,1530)` and stays in the workspace 2 tiled tree. No further Codex frame
+  writes occur during the following 90-second settled interval. This directly validates the
+  rounding boundary; it does not reconstruct the original lost Release transition. A subsequent
+  pause/resume also preserves the correct frame and tiled tree. The Dev focus-border setting was
+  restored afterward. Full-suite/release checks are deferred to the next PR/release checkpoint;
+  this turn ran the 180 relevant tests only. Continued real-use recurrence validation remains open.
 - **Observed (5 September 2026):** Codex stayed at `(596,188,3103,1209)` on workspace 2 in
   installed Stable 1.0.6 (19), revision `809b3909d334`. The running app was unpaused and AX trusted;
   the active profile assigned Codex to Tiled workspace 2 without exclusion. Its main window was
