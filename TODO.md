@@ -271,6 +271,18 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-124 — Keep pre-push Git state out of dependency resolution
+
+- **Type:** Release verification blocker
+- **Status:** Implemented; verification pending.
+- **Evidence:** Both beta and Stable Xcode failed to resolve pinned Sparkle in the pre-push
+  temporary worktree, although ordinary builds passed and the remote tag matched. Supplying the
+  WindowRanger `GIT_DIR` to a Git command in the Sparkle checkout resolves the WindowRanger commit
+  instead of Sparkle. Git's hook contract requires clearing repository-local environment variables
+  before invoking Git in a different worktree or repository.
+- **Fix:** Capture the source root, then clear only Git's documented local environment variables
+  before the isolated validation worktree and dependency resolver run. Keep every existing gate.
+
 ### WR-122 — Ignore ChatGPT's transient update precursor
 
 - **Type:** Diagnostic-backed window-admission regression
@@ -3744,6 +3756,40 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
+### WR-123 — Recover tiling when a formerly fixed-size window becomes resizable
+
+- **Type:** User-observed tiling bug; source-backed recovery gap
+- **Status:** Live validation — fix implemented; Codex tiles in signed Dev, but its original
+  trigger and the changed-size recovery path still require a live recurrence.
+- **Observed (5 September 2026):** Codex stayed at `(596,188,3103,1209)` on workspace 2 in
+  installed Stable 1.0.6 (19), revision `809b3909d334`. The running app was unpaused and AX trusted;
+  the active profile assigned Codex to Tiled workspace 2 without exclusion. Its main window was
+  visible, standard, movable, resizable, non-minimized and non-fullscreen at Window Server layer 0.
+  Session cache retained automatic layout override but no workspace 2 tiled tree. Release logging
+  did not expose the prior admission decision, so the exact trigger is unconfirmed.
+- **Implemented:** Per-window fixed-size recovery retains a real observed size baseline. Only an
+  actual size change on an eligible visible active window permits fresh move/resize reads. Both
+  capabilities must be affirmatively writable to restore ordinary admission. Missing baselines
+  learn the first readable size without treating it as a resize; failed reads preserve the original
+  baseline and safety classification with a five-second retry bound. Ignored/deferred precedence,
+  WR-118's misleading capability protection, and WR-119's retry behavior remain intact.
+- **Automated evidence:** All 17 Window Admission fixtures and the final complete 931-test
+  non-hosted suite pass. Test/archive isolation, release-ledger validation, and diff whitespace
+  checks pass. Independent read-only review has no remaining blocking findings.
+- **Installed evidence:** Signed universal Debug `809b3909d334-dirty`, bundle
+  `dev.appranger.WindowRanger.Debug`, Team `44NAD22AK6`, CDHash
+  `01598aa45deda18fdbf101284805d418cb082def`, runs as PID `96443` at
+  `/Applications/WindowRanger Dev.app`. Session `5DC5A48D-C533-4D78-A801-950E66FAFA62` classifies
+  Codex `56738:24482` as `managed-normal`; workspace switch correlation
+  `cli-7466288d-08ab-4a7a-b682-40012a00ebe0` solves workspace 2 with one participant and applies
+  `(4,34,3832,1523)` successfully. Independent Window Server readback and persisted tree agree.
+  The layer-3 Codex auxiliary dialog remains ignored. This validates fresh-start tiling, not a
+  live fixed-size-to-normal recovery. The public installation is unchanged; the prior Dev bundle
+  is retained at `/Applications/.WindowRanger Dev.pre-wr123-20260905-101007`.
+- **Remaining boundary:** Observe `fixed-size-capability-recovered` after a genuine live recurrence
+  and size change, retaining fixed-size Finder/other operation-window behavior. Public release,
+  notarization, packaging and publication are outside this fix checkpoint.
+
 ### WR-090 — Validate Displays have separate Spaces compatibility
 
 - **Type:** Multi-display compatibility validation and diagnostics
@@ -4415,6 +4461,12 @@ second copy of that checklist.
   human-reviewed permission/privacy copy.
 
 ### WR-014 — Distribution, updates, notarization, and publication
+
+- **1.0.7 release checkpoint (5 September 2026):** The maintainer requested a release of WR-123.
+  Build 20 is reserved for the reviewed recovery fix. All 931 non-hosted tests and signed Dev
+  Codex tiling pass; exact packaged Stable validation, notarization, GitHub publication and
+  Sparkle/website/Homebrew verification remain pending. The original Codex trigger and a live
+  fixed-size-to-normal recurrence remain unconfirmed and are not claimed in release notes.
 
 - **Type:** Release epic
 - **Status:** In progress. With explicit maintainer approval on 30 August 2026, the Beta 10 updater

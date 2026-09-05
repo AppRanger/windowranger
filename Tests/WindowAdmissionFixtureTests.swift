@@ -171,6 +171,277 @@ final class WindowAdmissionFixtureTests: XCTestCase {
         )
     }
 
+    func testFixedSizeRecoveryRequiresAChangedObservedSizeAfterCooldown() {
+        let start = Date(timeIntervalSinceReferenceDate: 100)
+        let state = FixedSizeRecoveryState.seeded(
+            observedSize: CGSize(width: 400, height: 300),
+            now: start
+        )
+        let core = fixtureMetadata(subrole: kAXStandardWindowSubrole as String)
+
+        XCTAssertFalse(state.shouldRecheck(
+            coreMetadata: core,
+            observedSize: CGSize(width: 400, height: 300),
+            isVisibleActive: true,
+            isPaused: false,
+            now: start.addingTimeInterval(6)
+        ))
+        XCTAssertTrue(state.shouldRecheck(
+            coreMetadata: core,
+            observedSize: CGSize(width: 640, height: 480),
+            isVisibleActive: true,
+            isPaused: false,
+            now: start.addingTimeInterval(6)
+        ))
+    }
+
+    func testFixedSizeRecoveryKeepsBaselineAfterFailedProbeCooldown() {
+        let start = Date(timeIntervalSinceReferenceDate: 100)
+        let baseline = CGSize(width: 400, height: 300)
+        let core = fixtureMetadata(subrole: kAXStandardWindowSubrole as String)
+        let failedObservations: [(AXBooleanAttributeObservation, AXBooleanAttributeObservation)] = [
+            (.trueValue, .falseValue),
+            (.falseValue, .trueValue),
+            (.unsupported, .trueValue),
+            (.trueValue, .unavailable),
+        ]
+
+        for (positionSettable, sizeSettable) in failedObservations {
+            var state = FixedSizeRecoveryState.seeded(observedSize: baseline, now: start)
+            XCTAssertTrue(state.shouldRecheck(
+                coreMetadata: core,
+                observedSize: CGSize(width: 640, height: 480),
+                isVisibleActive: true,
+                isPaused: false,
+                now: start.addingTimeInterval(6)
+            ))
+            XCTAssertFalse(state.recordCapabilityProbe(
+                positionSettable: positionSettable,
+                sizeSettable: sizeSettable,
+                now: start.addingTimeInterval(6)
+            ))
+            XCTAssertEqual(state.baselineSize, baseline)
+            XCTAssertFalse(state.shouldRecheck(
+                coreMetadata: core,
+                observedSize: CGSize(width: 640, height: 480),
+                isVisibleActive: true,
+                isPaused: false,
+                now: start.addingTimeInterval(10)
+            ))
+            XCTAssertTrue(state.shouldRecheck(
+                coreMetadata: core,
+                observedSize: CGSize(width: 640, height: 480),
+                isVisibleActive: true,
+                isPaused: false,
+                now: start.addingTimeInterval(11)
+            ))
+        }
+    }
+
+    func testFixedSizeRecoveryPositiveProbeReadmitsAfterChangedSize() {
+        let start = Date(timeIntervalSinceReferenceDate: 100)
+        var state = FixedSizeRecoveryState.seeded(
+            observedSize: CGSize(width: 400, height: 300),
+            now: start
+        )
+        let core = fixtureMetadata(subrole: kAXStandardWindowSubrole as String)
+
+        XCTAssertTrue(state.shouldRecheck(
+            coreMetadata: core,
+            observedSize: CGSize(width: 640, height: 480),
+            isVisibleActive: true,
+            isPaused: false,
+            now: start.addingTimeInterval(6)
+        ))
+        XCTAssertTrue(state.recordCapabilityProbe(
+            positionSettable: .trueValue,
+            sizeSettable: .trueValue,
+            now: start.addingTimeInterval(6)
+        ))
+    }
+
+    func testFixedSizeRecoveryLearnsFirstReadableSizeAfterUnavailableFailure() {
+        let start = Date(timeIntervalSinceReferenceDate: 100)
+        var state = FixedSizeRecoveryState.seeded(observedSize: nil, now: start)
+        let core = fixtureMetadata(subrole: kAXStandardWindowSubrole as String)
+        let actualSize = CGSize(width: 400, height: 300)
+
+        XCTAssertFalse(state.shouldRecheck(
+            coreMetadata: core,
+            observedSize: actualSize,
+            isVisibleActive: true,
+            isPaused: false,
+            now: start.addingTimeInterval(6)
+        ))
+        state.recordObservedSizeIfNeeded(actualSize)
+        XCTAssertEqual(state.baselineSize, actualSize)
+        XCTAssertFalse(state.shouldRecheck(
+            coreMetadata: core,
+            observedSize: actualSize,
+            isVisibleActive: true,
+            isPaused: false,
+            now: start.addingTimeInterval(6)
+        ))
+        XCTAssertTrue(state.shouldRecheck(
+            coreMetadata: core,
+            observedSize: CGSize(width: 640, height: 480),
+            isVisibleActive: true,
+            isPaused: false,
+            now: start.addingTimeInterval(6)
+        ))
+    }
+
+    func testFixedSizeRecoveryExcludesPausedAndIneligibleShapes() {
+        let start = Date(timeIntervalSinceReferenceDate: 100)
+        let state = FixedSizeRecoveryState.seeded(
+            observedSize: CGSize(width: 400, height: 300),
+            now: start
+        )
+        let changedSize = CGSize(width: 640, height: 480)
+
+        XCTAssertFalse(state.shouldRecheck(
+            coreMetadata: fixtureMetadata(subrole: kAXStandardWindowSubrole as String),
+            observedSize: changedSize,
+            isVisibleActive: false,
+            isPaused: false,
+            now: start.addingTimeInterval(6)
+        ))
+        XCTAssertFalse(state.shouldRecheck(
+            coreMetadata: fixtureMetadata(subrole: kAXStandardWindowSubrole as String),
+            observedSize: changedSize,
+            isVisibleActive: true,
+            isPaused: true,
+            now: start.addingTimeInterval(6)
+        ))
+        XCTAssertFalse(state.shouldRecheck(
+            coreMetadata: fixtureMetadata(subrole: kAXStandardWindowSubrole as String),
+            observedSize: nil,
+            isVisibleActive: true,
+            isPaused: false,
+            now: start.addingTimeInterval(6)
+        ))
+        XCTAssertFalse(state.shouldRecheck(
+            coreMetadata: fixtureMetadata(subrole: kAXStandardWindowSubrole as String),
+            observedSize: .zero,
+            isVisibleActive: true,
+            isPaused: false,
+            now: start.addingTimeInterval(6)
+        ))
+        XCTAssertFalse(state.shouldRecheck(
+            coreMetadata: fixtureMetadata(
+                subrole: kAXStandardWindowSubrole as String,
+                isMinimized: true
+            ),
+            observedSize: changedSize,
+            isVisibleActive: true,
+            isPaused: false,
+            now: start.addingTimeInterval(6)
+        ))
+        XCTAssertFalse(state.shouldRecheck(
+            coreMetadata: fixtureMetadata(
+                subrole: kAXStandardWindowSubrole as String,
+                isFullscreen: true
+            ),
+            observedSize: changedSize,
+            isVisibleActive: true,
+            isPaused: false,
+            now: start.addingTimeInterval(6)
+        ))
+        XCTAssertFalse(state.shouldRecheck(
+            coreMetadata: fixtureMetadata(
+                subrole: kAXStandardWindowSubrole as String,
+                windowLayer: 3
+            ),
+            observedSize: changedSize,
+            isVisibleActive: true,
+            isPaused: false,
+            now: start.addingTimeInterval(6)
+        ))
+    }
+
+    func testFreshWritableCapabilityEvidenceReadmitsFixedSizeWindowToLayout() {
+        let retained = fixtureMetadata(
+            subrole: kAXStandardWindowSubrole as String,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue
+        )
+        let refreshed = AccessibilityWindow.refreshingMoveResizeCapabilities(
+            coreMetadata: retained,
+            retaining: retained,
+            positionSettable: .trueValue,
+            sizeSettable: .trueValue
+        )
+
+        XCTAssertEqual(AccessibilityWindow.admissionDecision(for: refreshed),
+                       decision(.managedNormal, .normalWindow))
+        XCTAssertTrue(WorkspaceEngine.layoutDecision(
+            layoutOverride: .automatic,
+            admissionDecision: AccessibilityWindow.admissionDecision(for: refreshed),
+            rule: .none
+        ).includesInLayout)
+    }
+
+    func testFixedSizeRecoveryPreservesCurrentTemporaryAndIgnoredAdmission() {
+        let ordinary = fixtureMetadata(subrole: kAXStandardWindowSubrole as String)
+        let temporary = WindowAdmissionMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifierObservation: .unavailable,
+            role: kAXWindowRole as String,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0,
+            isMinimized: false,
+            closeButton: .present
+        )
+        let ignored = fixtureMetadata(
+            bundleIdentifier: "dev.appranger.DesktopRanger.SurfaceLab",
+            accessibilityIdentifier: AccessibilityWindow.desktopRangerSurfaceAccessibilityIdentifier,
+            subrole: kAXStandardWindowSubrole as String,
+            windowLayer: 0
+        )
+        let capabilityProvenFixed = fixtureMetadata(
+            subrole: kAXStandardWindowSubrole as String,
+            positionSettable: .trueValue,
+            sizeSettable: .falseValue
+        )
+
+        XCTAssertEqual(
+            AccessibilityWindow.effectiveAdmissionDecision(
+                genericDecision: AccessibilityWindow.admissionDecision(for: temporary),
+                metadata: temporary,
+                hasFixedSizeRecoveryState: true
+            ),
+            AccessibilityWindow.admissionDecision(for: temporary)
+        )
+        XCTAssertEqual(
+            AccessibilityWindow.effectiveAdmissionDecision(
+                genericDecision: AccessibilityWindow.admissionDecision(for: ignored),
+                metadata: ignored,
+                hasFixedSizeRecoveryState: true
+            ),
+            AccessibilityWindow.admissionDecision(for: ignored)
+        )
+        XCTAssertEqual(
+            AccessibilityWindow.effectiveAdmissionDecision(
+                genericDecision: AccessibilityWindow.admissionDecision(for: ordinary),
+                metadata: ordinary,
+                hasFixedSizeRecoveryState: true
+            ),
+            decision(.managedDialog, .fixedSizeStandardWindow)
+        )
+        XCTAssertTrue(AccessibilityWindow.shouldRecheckFixedSizeCapabilities(
+            for: AccessibilityWindow.admissionDecision(for: ordinary)
+        ))
+        XCTAssertTrue(AccessibilityWindow.shouldRecheckFixedSizeCapabilities(
+            for: AccessibilityWindow.admissionDecision(for: capabilityProvenFixed)
+        ))
+        XCTAssertFalse(AccessibilityWindow.shouldRecheckFixedSizeCapabilities(
+            for: AccessibilityWindow.admissionDecision(for: temporary)
+        ))
+        XCTAssertFalse(AccessibilityWindow.shouldRecheckFixedSizeCapabilities(
+            for: AccessibilityWindow.admissionDecision(for: ignored)
+        ))
+    }
+
     func testStandardWindowDialogControlProbeRequiresTheNarrowCloselessShapeAndRunsOnce() {
         let candidate = WindowAdmissionMetadata(
             bundleIdentifier: "com.example.Editor",

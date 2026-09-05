@@ -180,6 +180,14 @@ position write. A currently visible no-op surface keeps its existing position; a
 an explicit Quick App/quit-recovery transition completes with a position-only move. Unavailable,
 delayed, clamped, or partial readback changes do not promote a normal window. Position or final-size
 failures likewise do not promote it into this safety classification.
+Fixed-size admission retains the observed size at classification as a recovery baseline. If that
+exact window later changes size while visible on an active workspace, discovery can recheck its
+move/resize capabilities. Only fresh affirmative evidence for both capabilities releases the
+fixed-size fallback and restores ordinary layout evaluation. An unchanged size never triggers this
+probe, even when cached AX capabilities claim writability; this preserves the ineffective-write
+protection above. Failed or negative probes retain the baseline and safety classification, with
+retries bounded to at most once per five seconds through the existing discovery pass. Hidden,
+inactive, minimized, fullscreen, and non-normal surfaces do not trigger recovery probes.
 An otherwise closeless standard window on an unknown or normal layer receives a separate one-time
 dialog-control probe only when both its Full Screen and Close controls are authoritatively absent.
 Affirmative window-level Default and Cancel button relationships classify that surface as a managed
