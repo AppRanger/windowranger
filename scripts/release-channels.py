@@ -365,7 +365,7 @@ def stage_website_feed(config: dict[str, Any], website: Path, scratch: Path, pub
              "--expected-build", str(config["build_number"]), "--expected-version", config["version"],
              "--expected-archive", str(archive), "--artifact-directory", str(staged), "--local-only",
              "--download-directory", str(scratch / "verification")], website)
-    shutil.copy2(staged / "appcast.xml", appcast)
+    shutil.copy2(staged / "appcast.xml", public / "appcast.xml")
     for artifact in staged.iterdir():
         if artifact.name != "appcast.xml":
             shutil.copy2(artifact, public / "updates" / artifact.name)

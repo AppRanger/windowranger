@@ -20,6 +20,25 @@ smallest useful outcome and acceptance boundary.
 
 ## Done
 
+### WR-131 — Release WindowRanger 1.0.10
+
+- **Status:** Done — Stable 1.0.10/build 24 published on 2026-09-09 at immutable
+  `2a3436d09d01891926f7b26a0d359dc4a96932cc`; build 23 remains superseded and unpublished.
+- **Acceptance:** Maintainer accepted the exact DMG keyboard-resize behavior ("all good").
+  All 71 installed entries matched the ZIP and export; Accessibility and settings were preserved.
+  All 963 local tests, hosted integration tests/analysis/unsigned packaging, Developer ID signing,
+  app/DMG notarization, Gatekeeper and downloaded GitHub asset verification passed.
+- **Channels:** Website PR #27 deployed `e638a0e4021f4a41b06567303428a8bf12f4688a`;
+  both domains' homepage/feed bytes and all 57 feed enclosures per domain verified. Homebrew
+  PR #9 merged `217924d6e90440ef382d35671309ad37b09c6c98`; candidate and final named-tap
+  style/online audits passed. Source ledger PR #137 records build 24 as published.
+- **Tooling:** The initial channel run failed on an undefined appcast copy destination.
+  Corrected tooling `647962cbe6093fcbe1f469e807de534345a27495` passed 28 coordinator tests;
+  the recovered channel run completed in 266 seconds, retaining the original run evidence.
+  This is recovery timing, not uninterrupted release timing or evidence of token savings.
+- **Follow-ups:** Intermittent resume monitoring remains under WR-123; the unrelated CI
+  peer-rejection process exit remains under WR-132. Release acceptance does not close either.
+
 ### WR-130 — Publish and time Stable 1.0.9
 
 - **Result:** Stable 1.0.9/build 22 is public and immutable at source
@@ -332,6 +351,33 @@ smallest useful outcome and acceptance boundary.
   accepted flow keeps the palette open while the halo expands and returns Escape focus to search.
 
 ## Inbox
+
+### WR-133 — Release WindowRanger 1.0.11
+
+- **Status:** Release preparation authorized on 2026-09-22; not published.
+- **Scope:** Port the WR-057 wake monitoring and recent exact-window placement recovery trial onto
+  current develop, preserving the newer minimum-size/resize handling already released in 1.0.10.
+- **Integration evidence:** PR #139 merged the reviewed port after the exact local pre-push gate
+  passed all 974 non-hosted tests and GitHub's required source/unsigned-build and tooling checks
+  passed. Profile/display transitions and global restore invalidate placement before and after
+  internal refresh; workspace-local reset first recovers membership, then invalidates its resolved
+  target so returning windows from other workspaces cannot be pulled into the repair.
+- **Acceptance:** Reviewed current-line integration, complete isolated tests and release checks,
+  immutable Developer ID artifacts, exact packaged-app acceptance, public asset verification,
+  and verified website/update-feed/Homebrew publication. The original 1.0.2 trial checkout and
+  unrelated edits remain untouched.
+
+### WR-132 — Investigate intermittent CLI peer-rejection test exit
+
+- **Status:** CI-observed test-process exit; cause unconfirmed.
+- **Evidence:** PR #134 run `34279133880` initially exited during
+  `CLIIPCTransportTests.testPeerRejectionClosesWithoutReturningDetails`; its failed-job
+  rerun passed. The complete local suite passed 963 tests, and 50 isolated repetitions
+  of the rejection test passed. The hosted log did not identify a signal or backtrace.
+- **Investigation:** Inspect socket-write behavior when the peer closes before the request
+  arrives; SIGPIPE is a source-supported hypothesis, not a reproduced diagnosis.
+- **Acceptance:** Reproduce the exit deterministically, confirm its cause, and verify any
+  correction in client/server disconnect tests without weakening peer rejection.
 
 ### WR-125 — Investigate CLI peer-rejection process exit
 
@@ -3396,6 +3442,25 @@ smallest useful outcome and acceptance boundary.
 
 ### WR-057 — Preserve each window through partial post-login recovery
 
+- **2026-09-22 follow-up:** The maintainer reports two days without the unassigned-app placement
+  loss or Safari peer-closure symptom in the signed local trial. Retained rotating diagnostics
+  cover only 2026-09-21 20:50 through 2026-09-22 07:59 UTC, not the whole two days: the morning
+  wake recovered all 13 windows on its first attempt with no missing targets or frame mismatch;
+  all 91 retained frame/position writes succeeded. Three Ghostty evictions matched native-tab
+  replacement. A brief Mail read failure recovered. No recurrence was observed in that interval.
+- **Trial changes:** Returned pre-sleep windows remain monitored through the grace interval;
+  a later omission re-protects them. Ordinary authoritative removals keep bounded, data-only
+  placement for 120 seconds (512 records), restoring only the same process/window/bundle into
+  a still-valid workspace. Live membership and tiled leaves are still removed immediately.
+  Configuration/reset/session changes invalidate the cache; Quick Apps use their existing policy.
+  Privacy-safe discovery/eviction fields identify recovery versus current-workspace fallback.
+- **Evidence boundary:** The old-line trial passed 903 non-hosted tests and ran as signed Debug
+  CDHash `2a5d8157817d6d1de7a13e141f052e91e20fe16f`. Current-line integration and packaged
+  release checks are pending under WR-133. Changed window identities, ID reuse within retention,
+  app/login restarts and the original laptop remain unproven; this does not close all lifecycle cases.
+- **Current-line integration:** Preserve 1.0.10's managed-normal resize rejection path: refused
+  targets record size constraints and trigger reflow without promoting the window to fixed-size.
+  The old trial's narrower Safari helper change is therefore not copied over the newer behavior.
 - **Type:** Lifecycle recovery bug
 - **Priority:** P1
 - **Status:** Live validation
@@ -3858,42 +3923,6 @@ smallest useful outcome and acceptance boundary.
 
 ## Live validation
 
-### WR-131 — Release WindowRanger 1.0.10
-
-- **Status:** Corrected release explicitly authorized after maintainer live acceptance. Build 23
-  is superseded and remains unpublished; build 24 is allocated for fresh promotion and packaging.
-- **Scope:** Publish the WR-123 minimum-size and inward-growth correction as Stable 1.0.10/build 24,
-  with immutable signed/notarized artifacts, exact-package verification, feed/site and tap updates.
-- **Acceptance evidence:** Maintainer reported the edge-double-click failure fixed in the installed
-  structural candidate. Its exact source passed all 957 non-hosted tests. Broader resume
-  recurrence monitoring remains open under WR-123.
-- **Completed:** PRs #131/#132 promoted source to main `1c0ab4ed4f86`; PR #133 back-merged
-  Stable into develop. All 957 distribution tests, static analysis, signed archive/export,
-  app/DMG notarization, Gatekeeper and local asset verification passed. The exact DMG app
-  was installed as 1.0.10/build 23; all 71 package files matched the export, settings were
-  preserved, and Accessibility permission was restored after switching signing identities.
-- **New evidence:** During final packaged-app testing, the maintainer reported that resizing
-  Chrome with keys becomes confused on Claude. The precise key sequence, visible outcome,
-  are now supported by captured Debug diagnostics. At 20:08:16.830Z (sequence 818),
-  Claude remained at x=2473,width=1367 when requested x=2423,width=1417. The writer
-  returned `initial-size-write-ignored` before attempting position. Chrome accepted its
-  paired shrink. All 49 keyboard commands targeted Chrome; Claude had 27 deferred
-  resize readbacks, retained membership, and no learned minimum. The likely mechanism
-  is size-first growth against the display's right edge: moving left would make room,
-  but the early no-op return prevents that move. Native move-first confirmation and a
-  deterministic regression remain pending; the earlier minimum-share feedback hypothesis
-  does not explain this captured failure.
-  At the maintainer's request, the same source `1c0ab4ed4f86` was installed as the separate
-  signed Debug app. All 71 installed files matched its build; Accessibility was granted and
-  only WindowRanger Dev was running. Current profiles/shortcuts were copied into backed-up
-  Debug settings; semantic comparison preserved profiles and display bindings, with only
-  Debug's expected iCloud/Open-at-Login restrictions. Fresh persistent diagnostics are active
-  under session `CA2A4F16-C382-47B5-B204-16A807B1FCB4`.
-- **Remaining:** Promote the live-accepted WR-123 correction and re-establish exact
-  packaged acceptance before publication. No v1.0.10 tag, GitHub release, feed, site or tap
-  publication has been performed. Any product correction requires a fresh allocated build
-  and newly notarized artifacts; build 23 must not be silently replaced.
-
 ### WR-129 — Reduce repetitive release verification and coordination
 
 - **Status:** Integrated and exercised in the authorized 1.0.9 release. Hosted application,
@@ -3916,8 +3945,14 @@ smallest useful outcome and acceptance boundary.
   focused coordinator tests pass; the website's five rendered-output tests also pass.
   Build and notarization took 5m21s, but the complete release exceeded the previous 43m01s
   because of CI/tooling repairs and channel adaptation. No token-savings claim is supported.
-- **Remaining boundary:** A future authorized release must exercise the corrected coordinator
-  end to end without the manual React fallback. Instructions are in the release runbook.
+- **1.0.10 finding:** The coordinator reached feed generation but failed copying its verified
+  appcast because the extracted helper referenced an undefined destination variable. The copy
+  now uses the explicit public directory; all 28 focused coordinator tests pass, including a
+  real temporary-directory copy regression. Recovery uses separately bound tooling while
+  retaining the original journal, partial worktree and immutable app artifacts.
+- **Recovery evidence:** The 1.0.10 recovery completed every channel checkpoint in 266 seconds,
+  with both domains and Homebrew verified. The original run still required a tooling correction;
+  uninterrupted release timing and token savings remain unproven.
 
 ### WR-126 — Preserve the focused diagnostic report through menu closure
 

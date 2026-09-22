@@ -416,7 +416,23 @@ currently absent fullscreen session cannot prolong this protection indefinitely.
 starts one fresh bounded grace so the returning Space can publish a stable snapshot before any
 retained tree is pruned. Display topology resolves first, fresh AX elements are acquired second, and
 visibility/layout is applied once the snapshot is stable. Bounded retries handle temporarily
-incomplete enumeration.
+incomplete enumeration. Every pre-sleep exact window remains monitored throughout the 15-second
+wake grace even after returning once; another successful omission re-protects it. Returned windows
+remain write-eligible, while missing participants retain their workspace and tiled partition until
+they return or two stable successful snapshots after the grace confirm absence.
+
+Outside that protection, authoritative removal still prunes live membership, focus and tree leaves.
+For ordinary applications it also retains at most 512 data-only placement records for 120 seconds,
+keyed by exact process and window identity. Re-admission in the same WindowServer session requires
+the same bundle and a still-valid workspace. It restores workspace, saved frame/display, explicit
+layout choice, ordering/weight and manual App Rule override, without retaining an AX handle or ghost
+layout participant. These records are not persisted; they expire or clear on process termination,
+profile/configuration changes, explicit reset and WindowServer replacement. Quick Apps retain their
+separate ownership/replacement policy. A changed ordinary window identity receives no speculative
+handoff. Discovery and eviction diagnostics record privacy-safe identity, workspace and placement
+source so those cases can be distinguished from an exact-window recovery. The cache cannot restore
+a pruned split tree's exact topology; intact-tree protection belongs to the wake guard. Matching
+process/window IDs is not proof against an application reusing an ID during the retention interval.
 After the layout solve, expected Tiled and Accordion frames are read back because a successful AX
 write does not prove that the receiving app retained it. Only mismatched, still-eligible split
 windows are retried, for a bounded number of attempts; a newer lifecycle signal supersedes the

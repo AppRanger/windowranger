@@ -35,6 +35,23 @@ class ChannelTests(unittest.TestCase):
 
     def tearDown(self): self.temp.cleanup()
 
+    def test_verified_feed_and_payloads_are_copied_to_public_directory(self):
+        site = self.root / "site"
+        public = site / "public"
+        (public / "updates").mkdir(parents=True)
+        (public / "appcast.xml").write_text("old feed")
+        scratch = self.root / "scratch"
+        staged = scratch / "feed"
+        staged.mkdir(parents=True)
+        (staged / "appcast.xml").write_text("verified feed")
+        (staged / "release.zip").write_bytes(b"archive")
+        notes = self.root / "notes.md"
+        notes.write_text("Release notes")
+        with patch.object(channels, "checked", return_value=""), patch.object(channels, "release_notes_path", return_value=notes):
+            channels.stage_website_feed(self.config, site, scratch, public)
+        self.assertEqual((public / "appcast.xml").read_text(), "verified feed")
+        self.assertEqual((public / "updates" / "release.zip").read_bytes(), b"archive")
+
     def test_logs_keep_both_streams_and_do_not_overwrite_attempts(self):
         logs = self.root / "logs"
         with patch.object(channels, "LOG_DIRECTORY", logs):

@@ -476,11 +476,135 @@ final class WakeReconciliationTests: XCTestCase {
             at: start.addingTimeInterval(10)
         )
         XCTAssertEqual(recovered.newlyRecoveredWindowKeys, [second, quickApp])
-        XCTAssertFalse(state.isActive)
+        XCTAssertTrue(state.isActive)
         XCTAssertEqual(
             recovered.authoritativeSuccessfullyEnumeratedProcessIdentifiers,
             [10, 11, 12]
         )
+    }
+
+    func testReturnedWindowIsReprotectedWhenItDisappearsAgainDuringWakeGrace() {
+        let start = Date(timeIntervalSince1970: 1_500)
+        let returned = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let sibling = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+        var state = PostSleepWindowRecoveryState()
+        state.prepareForSleep(protecting: [returned])
+        state.beginWake(at: start)
+
+        _ = state.observe(
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [returned, sibling],
+            at: start.addingTimeInterval(1)
+        )
+        let absence = state.observe(
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [sibling],
+            at: start.addingTimeInterval(2)
+        )
+
+        XCTAssertEqual(absence.protectedWindowKeys, [returned])
+        XCTAssertEqual(absence.authoritativeSuccessfullyEnumeratedProcessIdentifiers, [])
+        XCTAssertTrue(state.isActive)
+
+        let returnedAgain = state.observe(
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [returned, sibling],
+            at: start.addingTimeInterval(3)
+        )
+        XCTAssertEqual(returnedAgain.newlyRecoveredWindowKeys, [returned])
+        XCTAssertEqual(returnedAgain.protectedWindowKeys, [])
+        XCTAssertEqual(returnedAgain.authoritativeSuccessfullyEnumeratedProcessIdentifiers, [42])
+    }
+
+    func testFailedSnapshotDoesNotDropMonitoringOfReturnedWindowDuringWakeGrace() {
+        let start = Date(timeIntervalSince1970: 1_750)
+        let returned = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        var state = PostSleepWindowRecoveryState()
+        state.prepareForSleep(protecting: [returned])
+        state.beginWake(at: start)
+
+        _ = state.observe(
+            runningProcessIdentifiers: [42], successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [returned], at: start.addingTimeInterval(1)
+        )
+        let failed = state.observe(
+            runningProcessIdentifiers: [42], successfullyEnumeratedProcessIdentifiers: [],
+            enumeratedWindowKeys: [], at: start.addingTimeInterval(2)
+        )
+
+        XCTAssertEqual(failed.protectedWindowKeys, [])
+        XCTAssertTrue(state.isActive)
+    }
+
+    func testReturnedWindowStopsMonitoringAfterWakeGraceExpires() {
+        let start = Date(timeIntervalSince1970: 1_800)
+        let returned = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        var state = PostSleepWindowRecoveryState()
+        state.prepareForSleep(protecting: [returned])
+        state.beginWake(at: start)
+
+        _ = state.observe(
+            runningProcessIdentifiers: [42], successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [returned], at: start.addingTimeInterval(1)
+        )
+        _ = state.observe(
+            runningProcessIdentifiers: [42], successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [returned],
+            at: start.addingTimeInterval(PostSleepWindowRecoveryState.missingWindowGraceInterval)
+        )
+
+        XCTAssertFalse(state.isActive)
+    }
+
+    func testFailedSnapshotAtWakeGraceExpiryKeepsReturnedWindowMonitoredAndReprotects() {
+        let start = Date(timeIntervalSince1970: 1_850)
+        let returned = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        var state = PostSleepWindowRecoveryState()
+        state.prepareForSleep(protecting: [returned])
+        state.beginWake(at: start)
+
+        _ = state.observe(
+            runningProcessIdentifiers: [42], successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [returned], at: start.addingTimeInterval(1)
+        )
+        let failedAtExpiry = state.observe(
+            runningProcessIdentifiers: [42], successfullyEnumeratedProcessIdentifiers: [],
+            enumeratedWindowKeys: [],
+            at: start.addingTimeInterval(PostSleepWindowRecoveryState.missingWindowGraceInterval)
+        )
+        XCTAssertEqual(failedAtExpiry.protectedWindowKeys, [])
+        XCTAssertTrue(state.isActive)
+
+        let firstMissingConfirmation = state.observe(
+            runningProcessIdentifiers: [42], successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [],
+            at: start.addingTimeInterval(PostSleepWindowRecoveryState.missingWindowGraceInterval + 1)
+        )
+        XCTAssertEqual(firstMissingConfirmation.protectedWindowKeys, [returned])
+        XCTAssertEqual(firstMissingConfirmation.confirmedMissingWindowKeys, [])
+    }
+
+    func testTerminationClearsMonitoringOfReturnedWindowDuringWakeGrace() {
+        let start = Date(timeIntervalSince1970: 1_900)
+        let returned = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        var state = PostSleepWindowRecoveryState()
+        state.prepareForSleep(protecting: [returned])
+        state.beginWake(at: start)
+
+        _ = state.observe(
+            runningProcessIdentifiers: [42], successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: [returned], at: start.addingTimeInterval(1)
+        )
+        let terminated = state.observe(
+            runningProcessIdentifiers: [], successfullyEnumeratedProcessIdentifiers: [],
+            enumeratedWindowKeys: [], at: start.addingTimeInterval(2)
+        )
+
+        XCTAssertEqual(terminated.terminatedWindowKeys, [returned])
+        XCTAssertFalse(state.isActive)
     }
 
     func testPartialPostSleepReturnDefersOriginalTiledPartition() {
