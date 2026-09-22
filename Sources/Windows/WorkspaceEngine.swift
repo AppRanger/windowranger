@@ -836,14 +836,20 @@ struct PostSleepWindowRecoveryState: Equatable, Sendable {
     static let requiredStableSnapshotCount = 2
 
     private(set) var protectedWindowKeys = Set<WindowKey>()
+    /// All exact pre-sleep keys remain monitored during the grace interval, even after they first
+    /// return. `protectedWindowKeys` deliberately stays narrower so recovered windows can receive
+    /// normal placement writes while their transient disappearance is still fail-closed.
+    private var monitoredWindowKeys = Set<WindowKey>()
     private var wakeStartedAt: Date?
     private var lastWindowKeysByProcess: [pid_t: Set<WindowKey>] = [:]
     private var stableSnapshotCountByProcess: [pid_t: Int] = [:]
 
-    var isActive: Bool { !protectedWindowKeys.isEmpty }
+    var isActive: Bool { !monitoredWindowKeys.isEmpty }
 
     mutating func prepareForSleep(protecting windowKeys: Set<WindowKey>) {
+        protectedWindowKeys.formUnion(monitoredWindowKeys)
         protectedWindowKeys.formUnion(windowKeys)
+        monitoredWindowKeys.formUnion(windowKeys)
         wakeStartedAt = nil
         lastWindowKeysByProcess.removeAll()
         stableSnapshotCountByProcess.removeAll()
@@ -863,15 +869,28 @@ struct PostSleepWindowRecoveryState: Equatable, Sendable {
         let newlyRecoveredWindowKeys = protectedWindowKeys.intersection(enumeratedWindowKeys)
         protectedWindowKeys.subtract(newlyRecoveredWindowKeys)
 
-        let terminatedWindowKeys = Set(protectedWindowKeys.filter {
+        let terminatedWindowKeys = Set(monitoredWindowKeys.filter {
             !runningProcessIdentifiers.contains($0.processIdentifier)
         })
         protectedWindowKeys.subtract(terminatedWindowKeys)
+        monitoredWindowKeys.subtract(terminatedWindowKeys)
 
         var confirmedMissingWindowKeys = Set<WindowKey>()
         let graceElapsed = wakeStartedAt.map {
             date.timeIntervalSince($0) >= Self.missingWindowGraceInterval
         } ?? false
+
+        // A successful per-process snapshot which no longer contains a previously returned key
+        // is still transient during wake. Re-protect only that process's exact missing key; a
+        // failed AX enumeration is not evidence and must leave its state untouched.
+        let successfullyEnumeratedMonitoredWindowKeys = Set(monitoredWindowKeys.filter { key in
+            successfullyEnumeratedProcessIdentifiers.contains(key.processIdentifier)
+        })
+        // A successful snapshot is the only evidence that can re-protect an absent returned key.
+        // At the grace boundary this also starts the normal two-stable-snapshots confirmation.
+        protectedWindowKeys.formUnion(
+            successfullyEnumeratedMonitoredWindowKeys.subtracting(enumeratedWindowKeys)
+        )
         let protectedProcessIdentifiers = Set(protectedWindowKeys.map(\.processIdentifier))
 
         for processIdentifier in protectedProcessIdentifiers {
@@ -903,6 +922,15 @@ struct PostSleepWindowRecoveryState: Equatable, Sendable {
             protectedWindowKeys.subtract(missingWindowKeys)
         }
 
+        if graceElapsed {
+            // Returned keys that were seen in a successful snapshot have survived the full grace
+            // window. Failed snapshots retain their monitor state; confirmed missing keys do not.
+            monitoredWindowKeys.subtract(
+                successfullyEnumeratedMonitoredWindowKeys.intersection(enumeratedWindowKeys)
+            )
+            monitoredWindowKeys.subtract(confirmedMissingWindowKeys)
+        }
+
         let stillProtectedProcessIdentifiers = Set(protectedWindowKeys.map(\.processIdentifier))
         lastWindowKeysByProcess = lastWindowKeysByProcess.filter {
             stillProtectedProcessIdentifiers.contains($0.key)
@@ -910,7 +938,7 @@ struct PostSleepWindowRecoveryState: Equatable, Sendable {
         stableSnapshotCountByProcess = stableSnapshotCountByProcess.filter {
             stillProtectedProcessIdentifiers.contains($0.key)
         }
-        if protectedWindowKeys.isEmpty {
+        if monitoredWindowKeys.isEmpty {
             wakeStartedAt = nil
             lastWindowKeysByProcess.removeAll()
             stableSnapshotCountByProcess.removeAll()
@@ -930,13 +958,16 @@ struct PostSleepWindowRecoveryState: Equatable, Sendable {
 
     mutating func clear() {
         protectedWindowKeys.removeAll()
+        monitoredWindowKeys.removeAll()
         wakeStartedAt = nil
         lastWindowKeysByProcess.removeAll()
         stableSnapshotCountByProcess.removeAll()
     }
 
     mutating func remove(_ key: WindowKey) {
-        guard protectedWindowKeys.remove(key) != nil else { return }
+        let removedProtectedKey = protectedWindowKeys.remove(key) != nil
+        let removedMonitoredKey = monitoredWindowKeys.remove(key) != nil
+        guard removedProtectedKey || removedMonitoredKey else { return }
         lastWindowKeysByProcess[key.processIdentifier]?.remove(key)
         let protectedProcessIdentifiers = Set(protectedWindowKeys.map(\.processIdentifier))
         lastWindowKeysByProcess = lastWindowKeysByProcess.filter {
@@ -945,7 +976,7 @@ struct PostSleepWindowRecoveryState: Equatable, Sendable {
         stableSnapshotCountByProcess = stableSnapshotCountByProcess.filter {
             protectedProcessIdentifiers.contains($0.key)
         }
-        if protectedWindowKeys.isEmpty {
+        if monitoredWindowKeys.isEmpty {
             wakeStartedAt = nil
         }
     }
@@ -1604,6 +1635,73 @@ struct PersistedWindowAssignment: Codable, Equatable, Sendable {
         // state if a user temporarily runs it during development.
         try container.encode(isFloating, forKey: .isFloating)
     }
+}
+
+/// Short-lived intent for an exact same-process window that AX temporarily stopped enumerating.
+/// This is not live membership: it owns no AX element, layout leaf, focus target, or disk record.
+/// The engine clears it at profile/configuration, reset, and WindowServer session boundaries.
+struct RecentWindowPlacementRecovery {
+    static let retentionInterval: TimeInterval = 120
+    static let maximumEntryCount = 512
+
+    struct Entry: Equatable {
+        let assignment: PersistedWindowAssignment
+        let workspaceRuleOverrideActive: Bool
+        let removedAt: Date
+    }
+
+    private(set) var entries: [WindowKey: Entry] = [:]
+
+    mutating func remember(
+        _ key: WindowKey,
+        assignment: PersistedWindowAssignment,
+        workspaceRuleOverrideActive: Bool,
+        at now: Date = Date()
+    ) {
+        entries = entries.filter { now.timeIntervalSince($0.value.removedAt) < Self.retentionInterval }
+        if entries[key] == nil, entries.count >= Self.maximumEntryCount,
+           let oldest = entries.min(by: { $0.value.removedAt < $1.value.removedAt })?.key {
+            entries.removeValue(forKey: oldest)
+        }
+        entries[key] = Entry(
+            assignment: assignment,
+            workspaceRuleOverrideActive: workspaceRuleOverrideActive,
+            removedAt: now
+        )
+    }
+
+    mutating func take(
+        _ key: WindowKey,
+        bundleIdentifier: String?,
+        validWorkspaceIDs: Set<UUID>,
+        at now: Date = Date()
+    ) -> Entry? {
+        guard let entry = entries.removeValue(forKey: key),
+              now.timeIntervalSince(entry.removedAt) < Self.retentionInterval,
+              let bundleIdentifier,
+              entry.assignment.bundleIdentifier == bundleIdentifier,
+              validWorkspaceIDs.contains(entry.assignment.workspaceID)
+        else { return nil }
+        return entry
+    }
+
+    mutating func prune(
+        runningProcessIdentifiers: Set<pid_t>,
+        validWorkspaceIDs: Set<UUID>,
+        at now: Date = Date()
+    ) {
+        entries = entries.filter {
+            runningProcessIdentifiers.contains($0.key.processIdentifier) &&
+                validWorkspaceIDs.contains($0.value.assignment.workspaceID) &&
+                now.timeIntervalSince($0.value.removedAt) < Self.retentionInterval
+        }
+    }
+
+    mutating func remove(_ key: WindowKey) { entries.removeValue(forKey: key) }
+    mutating func remove(workspaceID: UUID) {
+        entries = entries.filter { $0.value.assignment.workspaceID != workspaceID }
+    }
+    mutating func clear() { entries.removeAll() }
 }
 
 enum FloatingToggleDecision: Equatable, Sendable {
@@ -2582,6 +2680,7 @@ final class WorkspaceEngine {
     private let diagnostics: DiagnosticLogger
     private var windowServerSessionValidated = true
     private var pendingRestoredWindows: [String: PersistedWindowAssignment]
+    private var recentWindowPlacements = RecentWindowPlacementRecovery()
     private var pendingRestoredDropDownAppSessions: [String: PersistedDropDownAppSession]
     private let startupGraceDeadline = Date().addingTimeInterval(30)
     private let ownProcessIdentifier = ProcessInfo.processInfo.processIdentifier
@@ -3077,6 +3176,7 @@ final class WorkspaceEngine {
         let normalizedShelf = QuickAppShelfPolicy.normalized(configurations)
         guard normalizedShelf != quickAppConfigurations
             || presentation != quickAppShelfPresentation else { return }
+        recentWindowPlacements.clear()
         let previousSelected = dropDownAppConfiguration
         let nextSelected = previousSelected.flatMap { previous in
                 normalizedShelf.first(where: {
@@ -4333,6 +4433,7 @@ final class WorkspaceEngine {
         queue.async { [weak self] in
             guard let self else { return }
             self.cancelManualTiledPreviewTransactions(reason: "workspace-configuration-changed")
+            self.recentWindowPlacements.clear()
             let validIDs = Set(definitions.map(\.id))
             let fallbackID = definitions[0].id
             let newLayouts = Dictionary(uniqueKeysWithValues: definitions.map { ($0.id, $0.layout) })
@@ -4401,6 +4502,7 @@ final class WorkspaceEngine {
             self.invalidateFocusWorkForLifecycle()
             self.pendingFocusVerification?.cancel()
             self.pendingFocusVerification = nil
+            self.recentWindowPlacements.clear()
             self.refreshWindows(correlationID: correlationID)
             guard self.isProfileTransitionGenerationCurrent(request.generation) else {
                 self.logSupersededProfileTransition(request, correlationID: correlationID)
@@ -4524,6 +4626,7 @@ final class WorkspaceEngine {
             }
 
             self.pendingRestoredWindows.removeAll()
+            self.recentWindowPlacements.clear()
             if switchingProfile {
                 self.lastFocusedWindow.removeAll()
                 self.tiledTrees.removeAll()
@@ -4666,6 +4769,7 @@ final class WorkspaceEngine {
             guard self.displayMode != mode ||
                     self.workspaceDisplayAssignments != workspaceDisplayAssignments
             else { return }
+            self.recentWindowPlacements.clear()
             self.directionalMoveGestureContext = nil
             if self.wakeReconciliationState.isPending {
                 self.displayMode = mode
@@ -4690,6 +4794,7 @@ final class WorkspaceEngine {
                 return
             }
             self.refreshWindows()
+            self.recentWindowPlacements.clear()
             self.displayMode = mode
             self.activeWorkspaceIDByDisplay = Self.remappedActiveWorkspaceDisplayIdentifiers(
                 self.activeWorkspaceIDByDisplay,
@@ -4769,6 +4874,7 @@ final class WorkspaceEngine {
             }
 
             self.appRulesByBundleIdentifier = nextRules
+            self.recentWindowPlacements.clear()
             self.applyVisibility(displays: displays)
             self.persistState(preservingPendingRestores: true)
             self.emitState()
@@ -11469,6 +11575,7 @@ final class WorkspaceEngine {
         queue.async { [weak self] in
             guard let self else { return }
             self.refreshWindows()
+            self.recentWindowPlacements.clear()
             self.reapplyWorkspaceRules(to: self.windows.keys.filter { !self.isDropDownAppWindow($0) })
             self.applyVisibleWindows(self.windows.values, displays: Self.activeDisplays())
             self.persistState(preservingPendingRestores: true)
@@ -11503,6 +11610,7 @@ final class WorkspaceEngine {
             )
             let workspaceID = workspaceResolution.workspaceID
             guard self.isWorkspaceActive(workspaceID) else { return }
+            self.recentWindowPlacements.remove(workspaceID: workspaceID)
             let initialTargetKeys = self.windows.values
                 .filter { $0.workspaceID == workspaceID && !self.isDropDownAppWindow($0.key) }
                 .map(\.key)
@@ -12715,6 +12823,7 @@ final class WorkspaceEngine {
         cancelManualTiledPreviewTransactions(reason: "window-server-session-changed")
         windows.removeAll()
         pendingRestoredWindows.removeAll()
+        recentWindowPlacements.clear()
         ignoredWindowKeys.removeAll()
         admissionDecisionByWindow.removeAll()
         admissionMetadataByWindow.removeAll()
@@ -12867,6 +12976,10 @@ final class WorkspaceEngine {
             )
         }
         let runningProcessIdentifiers = Set(runningApplications.map(\.processIdentifier))
+        recentWindowPlacements.prune(
+            runningProcessIdentifiers: runningProcessIdentifiers,
+            validWorkspaceIDs: validWorkspaceIDs
+        )
         accessibilityResponsiveness.retainOnly(runningProcessIdentifiers)
         let requiredProcessIdentifiers = Set(windows.keys.map(\.processIdentifier))
             .intersection(runningProcessIdentifiers)
@@ -13207,13 +13320,19 @@ final class WorkspaceEngine {
                     }
                     windows[key] = tracked
                 } else {
-                    let remembered = pendingRestoredWindows[String(key.windowIdentifier)].flatMap { assignment in
+                    let recent = isConfiguredQuickApp ? nil : recentWindowPlacements.take(
+                        key,
+                        bundleIdentifier: app.bundleIdentifier,
+                        validWorkspaceIDs: validWorkspaceIDs
+                    )
+                    let startupAssignment = pendingRestoredWindows[String(key.windowIdentifier)].flatMap { assignment in
                         guard let bundleIdentifier = app.bundleIdentifier,
                               assignment.bundleIdentifier == bundleIdentifier,
                               validWorkspaceIDs.contains(assignment.workspaceID)
                         else { return nil as PersistedWindowAssignment? }
                         return assignment
                     }
+                    let remembered = recent?.assignment ?? startupAssignment
                     if remembered != nil {
                         pendingRestoredWindows.removeValue(forKey: String(key.windowIdentifier))
                     }
@@ -13236,9 +13355,10 @@ final class WorkspaceEngine {
                         activeWorkspaceIDByDisplay: activeWorkspaceIDByDisplay
                     )
                     let rule = resolvedRule(for: app.bundleIdentifier)
-                    let workspaceID = Self.routedWorkspaceID(
-                        fallbackWorkspaceID: fallbackWorkspaceID,
-                        rule: rule
+                    let workspaceID = Self.workspaceIDAfterRuleRefresh(
+                        currentWorkspaceID: fallbackWorkspaceID,
+                        assignedWorkspaceID: rule.assignedWorkspaceID,
+                        manualOverrideActive: recent?.workspaceRuleOverrideActive ?? false
                     )
                     let tracked = TrackedWindow(
                         key: key,
@@ -13249,12 +13369,36 @@ final class WorkspaceEngine {
                         restoreFrame: desiredFrame,
                         displayPlacement: placement,
                         layoutOverride: Self.restoredLayoutOverride(remembered?.layoutOverride),
-                        workspaceRuleOverrideActive: false,
+                        workspaceRuleOverrideActive: recent?.workspaceRuleOverrideActive ?? false,
                         admissionDecision: admissionDecision,
                         layoutOrder: remembered?.layoutOrder ?? self.nextLayoutOrder(in: workspaceID),
                         layoutWeight: Self.validLayoutWeight(remembered?.layoutWeight)
                     )
                     windows[key] = tracked
+
+                    diagnostics.log(
+                        category: "window-lifecycle",
+                        event: "window-placement-discovered",
+                        correlation: correlationID,
+                        fields: [
+                            "window": Self.diagnosticWindowKey(key),
+                            "bundle": app.bundleIdentifier ?? "unknown",
+                            "workspace": Self.shortIdentifier(workspaceID.uuidString),
+                            "fallback-workspace": Self.shortIdentifier(fallbackWorkspaceID.uuidString),
+                            "placement-source": recent != nil ? "recent-exact-window"
+                                : startupAssignment != nil ? "startup-exact-window" : "current-workspace",
+                            "assigned-workspace": rule.assignedWorkspaceID
+                                .map { Self.shortIdentifier($0.uuidString) } ?? "none",
+                            "manual-rule-override": String(tracked.workspaceRuleOverrideActive),
+                            "lifecycle-recovery-active": String(postSleepWindowRecoveryState.isActive),
+                            "recent-absence-ms": recent.map {
+                                String(Int(Date().timeIntervalSince($0.removedAt) * 1_000))
+                            } ?? "none",
+                            "same-process-prior-window-count": String(trackedWindowKeysBeforeEnumeration.filter {
+                                $0.processIdentifier == key.processIdentifier
+                            }.count),
+                        ]
+                    )
 
                     // Shelf ownership is decided after enumeration has established the complete
                     // candidate group. Do not park or place a configured candidate before that
@@ -13519,6 +13663,30 @@ final class WorkspaceEngine {
             )
         }
         let removedTrackedWindows = windows.filter { removedTrackedWindowKeys.contains($0.key) }
+        var rememberedRemovedWindowKeys = Set<WindowKey>()
+        for (key, tracked) in removedTrackedWindows {
+            guard runningProcessIdentifiers.contains(key.processIdentifier),
+                  successfullyEnumeratedProcesses.contains(key.processIdentifier),
+                  let bundleIdentifier = tracked.bundleIdentifier,
+                  !quickAppConfigurations.contains(where: {
+                      $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+                  })
+            else { continue }
+            recentWindowPlacements.remember(
+                key,
+                assignment: PersistedWindowAssignment(
+                    bundleIdentifier: bundleIdentifier,
+                    workspaceID: tracked.workspaceID,
+                    restoreFrame: tracked.restoreFrame,
+                    displayPlacement: tracked.displayPlacement,
+                    layoutOverride: tracked.layoutOverride,
+                    layoutOrder: tracked.layoutOrder,
+                    layoutWeight: tracked.layoutWeight
+                ),
+                workspaceRuleOverrideActive: tracked.workspaceRuleOverrideActive
+            )
+            rememberedRemovedWindowKeys.insert(key)
+        }
         var presentedQuickAppMembershipRemoved = false
         if !removedTrackedWindowKeys.isEmpty {
             let sessionBundleKeys = Array(quickAppSessions.keys)
@@ -13674,6 +13842,9 @@ final class WorkspaceEngine {
                         "window": Self.diagnosticWindowKey(key),
                         "bundle": tracked.bundleIdentifier ?? "unknown",
                         "reason": "absent-from-successful-axwindows-snapshot",
+                        "workspace": Self.shortIdentifier(tracked.workspaceID.uuidString),
+                        "placement-retained": String(rememberedRemovedWindowKeys.contains(key)),
+                        "lifecycle-recovery-active": String(postSleepWindowRecoveryState.isActive),
                         "frame-write": "false",
                     ]
                 )
@@ -14405,6 +14576,7 @@ final class WorkspaceEngine {
         metadata: WindowAdmissionMetadata,
         correlationID: String?
     ) -> IgnoredWindowRemovalResult {
+        recentWindowPlacements.remove(key)
         discardIgnoredQuickAppSessions(for: key, correlationID: correlationID)
         let removal = Self.removeIgnoredWindowState(
             key,

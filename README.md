@@ -713,6 +713,12 @@ Use the primary app menu's **Quit WindowRanger** command when testing quit recov
 
 ## Retesting sleep/wake recovery
 
+Include a profile without workspace assignments in App Rules, and manually spread ordinary app
+windows across visible and inactive workspaces before locking, sleeping and resuming. Recovery
+continues watching returned windows through the wake grace period and remembers an exact recently
+disappeared window's placement for two minutes without keeping it in the live layout. Recreated
+windows with different identities and app/login restarts remain separate cases.
+
 1. Gracefully quit the currently running old build with the primary app menu's **Quit WindowRanger**.
 2. In Xcode, select the normal `WindowRanger` scheme and Debug Run configuration, then click Run.
 3. In Unified mode, put windows from visible and inactive workspaces on both displays, sleep the Mac,
@@ -725,3 +731,7 @@ Use the primary app menu's **Quit WindowRanger** command when testing quit recov
    `lifecycle` records include the wake generation, topology, bounded enumeration and frame-verification
    attempts, deferred windows, expected/observed mismatch geometry, and final active-workspace map
    without window titles or document content.
+   For placement loss, record the approximate time, app, original workspace, and whether you had
+   just unlocked, changed displays, switched a native tab, or restarted the app. The
+   `window-placement-discovered`, `enumeration-evicted`, and
+   `post-sleep-window-recovery-progress` events distinguish placement sources and recovery.

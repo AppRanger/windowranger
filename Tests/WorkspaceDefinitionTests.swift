@@ -327,6 +327,197 @@ final class WorkspaceDefinitionTests: XCTestCase {
         ).isEmpty)
     }
 
+    func testRecentWindowPlacementRecoveryReturnsExactAssignmentOnceWithManualRuleOverride() {
+        let workspaceID = UUID()
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let assignment = recentPlacementAssignment(workspaceID: workspaceID)
+        let removedAt = Date(timeIntervalSinceReferenceDate: 1_000)
+        var recovery = RecentWindowPlacementRecovery()
+
+        recovery.remember(key, assignment: assignment, workspaceRuleOverrideActive: true, at: removedAt)
+
+        XCTAssertEqual(
+            recovery.take(
+                key,
+                bundleIdentifier: assignment.bundleIdentifier,
+                validWorkspaceIDs: [workspaceID],
+                at: removedAt.addingTimeInterval(119)
+            ),
+            .init(
+                assignment: assignment,
+                workspaceRuleOverrideActive: true,
+                removedAt: removedAt
+            )
+        )
+        XCTAssertNil(recovery.take(
+            key,
+            bundleIdentifier: assignment.bundleIdentifier,
+            validWorkspaceIDs: [workspaceID],
+            at: removedAt.addingTimeInterval(119)
+        ))
+    }
+
+    func testRecentWindowPlacementRecoveryRejectsInvalidIdentityAndPrunesOwnership() {
+        let workspaceID = UUID()
+        let removedWorkspaceID = UUID()
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let terminatedKey = WindowKey(processIdentifier: 43, windowIdentifier: 101)
+        let removedWorkspaceKey = WindowKey(processIdentifier: 42, windowIdentifier: 102)
+        let assignment = recentPlacementAssignment(workspaceID: workspaceID)
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+        var recovery = RecentWindowPlacementRecovery()
+
+        recovery.remember(key, assignment: assignment, workspaceRuleOverrideActive: false, at: now)
+        XCTAssertNil(recovery.take(
+            WindowKey(processIdentifier: 42, windowIdentifier: 101),
+            bundleIdentifier: assignment.bundleIdentifier,
+            validWorkspaceIDs: [workspaceID], at: now
+        ))
+        XCTAssertNil(recovery.take(
+            key, bundleIdentifier: "com.example.Other", validWorkspaceIDs: [workspaceID], at: now
+        ))
+
+        recovery.remember(key, assignment: assignment, workspaceRuleOverrideActive: false, at: now)
+        recovery.remember(
+            terminatedKey, assignment: assignment, workspaceRuleOverrideActive: false, at: now
+        )
+        recovery.remember(
+            removedWorkspaceKey,
+            assignment: recentPlacementAssignment(workspaceID: removedWorkspaceID),
+            workspaceRuleOverrideActive: false,
+            at: now
+        )
+        recovery.prune(
+            runningProcessIdentifiers: [42], validWorkspaceIDs: [workspaceID], at: now.addingTimeInterval(1)
+        )
+        XCTAssertEqual(Set(recovery.entries.keys), [key])
+        XCTAssertNil(recovery.take(
+            key,
+            bundleIdentifier: assignment.bundleIdentifier,
+            validWorkspaceIDs: [workspaceID],
+            at: now.addingTimeInterval(RecentWindowPlacementRecovery.retentionInterval)
+        ))
+        XCTAssertTrue(recovery.entries.isEmpty)
+    }
+
+    func testRecentWindowPlacementRecoveryBoundsAndClearsEntries() {
+        let workspaceID = UUID()
+        let assignment = recentPlacementAssignment(workspaceID: workspaceID)
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+        var recovery = RecentWindowPlacementRecovery()
+        let firstKey = WindowKey(processIdentifier: 100, windowIdentifier: 1)
+
+        for index in 0...RecentWindowPlacementRecovery.maximumEntryCount {
+            recovery.remember(
+                WindowKey(processIdentifier: 100, windowIdentifier: CGWindowID(index + 1)),
+                assignment: assignment,
+                workspaceRuleOverrideActive: false,
+                at: now.addingTimeInterval(Double(index) / 1_000)
+            )
+        }
+
+        XCTAssertEqual(recovery.entries.count, RecentWindowPlacementRecovery.maximumEntryCount)
+        XCTAssertNil(recovery.entries[firstKey])
+        recovery.clear()
+        XCTAssertTrue(recovery.entries.isEmpty)
+    }
+
+    func testRecentWindowPlacementRecoveryRoutesWorkspaceThroughManualRuleOverride() throws {
+        let rememberedWorkspaceID = UUID()
+        let assignedWorkspaceID = UUID()
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+        var recovery = RecentWindowPlacementRecovery()
+
+        recovery.remember(
+            key,
+            assignment: recentPlacementAssignment(workspaceID: rememberedWorkspaceID),
+            workspaceRuleOverrideActive: true,
+            at: now
+        )
+        let recovered = try XCTUnwrap(recovery.take(
+            key,
+            bundleIdentifier: "com.example.Editor",
+            validWorkspaceIDs: [rememberedWorkspaceID, assignedWorkspaceID],
+            at: now
+        ))
+
+        XCTAssertEqual(
+            WorkspaceEngine.workspaceIDAfterRuleRefresh(
+                currentWorkspaceID: recovered.assignment.workspaceID,
+                assignedWorkspaceID: assignedWorkspaceID,
+                manualOverrideActive: recovered.workspaceRuleOverrideActive
+            ),
+            rememberedWorkspaceID
+        )
+        XCTAssertEqual(
+            WorkspaceEngine.workspaceIDAfterRuleRefresh(
+                currentWorkspaceID: recovered.assignment.workspaceID,
+                assignedWorkspaceID: assignedWorkspaceID,
+                manualOverrideActive: false
+            ),
+            assignedWorkspaceID
+        )
+    }
+
+    func testRecentWindowPlacementRecoveryRemovesWorkspaceWithoutDisturbingOtherWorkspace() {
+        let workspaceID = UUID()
+        let otherWorkspaceID = UUID()
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let otherKey = WindowKey(processIdentifier: 42, windowIdentifier: 101)
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+        var recovery = RecentWindowPlacementRecovery()
+        recovery.remember(
+            key,
+            assignment: recentPlacementAssignment(workspaceID: workspaceID),
+            workspaceRuleOverrideActive: false,
+            at: now
+        )
+        recovery.remember(
+            otherKey,
+            assignment: recentPlacementAssignment(workspaceID: otherWorkspaceID),
+            workspaceRuleOverrideActive: false,
+            at: now
+        )
+
+        recovery.remove(workspaceID: workspaceID)
+        XCTAssertNil(recovery.entries[key])
+        XCTAssertNotNil(recovery.entries[otherKey])
+    }
+
+    func testSuccessfulDisappearancePrunesLiveLayoutBeforeExactRecoveryRestoresPlacement() throws {
+        let workspaceID = UUID()
+        let key = WindowKey(processIdentifier: 42, windowIdentifier: 100)
+        let partition = TiledLayoutPartitionKey(workspaceID: workspaceID, displayIdentifier: "main")
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+        var recovery = RecentWindowPlacementRecovery()
+
+        let removed = WindowEnumerationLifecycle.removedTrackedWindowKeys(
+            trackedWindowKeys: [key],
+            runningProcessIdentifiers: [42],
+            successfullyEnumeratedProcessIdentifiers: [42],
+            enumeratedWindowKeys: []
+        )
+        let trees = WindowEnumerationLifecycle.pruning(
+            [partition: .window(key)],
+            removedWindowKeys: removed
+        )
+        let assignment = recentPlacementAssignment(workspaceID: workspaceID)
+        recovery.remember(key, assignment: assignment, workspaceRuleOverrideActive: false, at: now)
+
+        XCTAssertEqual(removed, [key])
+        XCTAssertTrue(trees.isEmpty)
+        XCTAssertEqual(
+            try XCTUnwrap(recovery.take(
+                key,
+                bundleIdentifier: assignment.bundleIdentifier,
+                validWorkspaceIDs: [workspaceID],
+                at: now.addingTimeInterval(1)
+            )).assignment,
+            assignment
+        )
+    }
+
     func testAccessibilityBackoffDefersOnlyTheFailedApplicationAndRecovers() {
         let stalledProcess: pid_t = 42
         let healthyProcess: pid_t = 84
@@ -4420,6 +4611,24 @@ final class WorkspaceDefinitionTests: XCTestCase {
             bundleIdentifier: "com.example.Editor",
             validWorkspaceIDs: []
         ))
+    }
+
+    private func recentPlacementAssignment(workspaceID: UUID) -> PersistedWindowAssignment {
+        PersistedWindowAssignment(
+            bundleIdentifier: "com.example.Editor",
+            workspaceID: workspaceID,
+            restoreFrame: WindowFrame(
+                position: CGPoint(x: 120, y: 240),
+                size: CGSize(width: 960, height: 720)
+            ),
+            displayPlacement: PersistedDisplayPlacement(
+                displayIdentifier: "external",
+                normalizedOrigin: CGPoint(x: 0.2, y: 0.3)
+            ),
+            layoutOverride: .managed,
+            layoutOrder: 4,
+            layoutWeight: 0.65
+        )
     }
 
     private func temporaryStateURL() -> URL {
