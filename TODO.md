@@ -352,6 +352,16 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
+### WR-133 — Release WindowRanger 1.0.11
+
+- **Status:** Release preparation authorized on 2026-09-22; not published.
+- **Scope:** Port the WR-057 wake monitoring and recent exact-window placement recovery trial onto
+  current develop, preserving the newer minimum-size/resize handling already released in 1.0.10.
+- **Acceptance:** Reviewed current-line integration, complete isolated tests and release checks,
+  immutable Developer ID artifacts, exact packaged-app acceptance, public asset verification,
+  and verified website/update-feed/Homebrew publication. The original 1.0.2 trial checkout and
+  unrelated edits remain untouched.
+
 ### WR-132 — Investigate intermittent CLI peer-rejection test exit
 
 - **Status:** CI-observed test-process exit; cause unconfirmed.
@@ -3427,6 +3437,25 @@ smallest useful outcome and acceptance boundary.
 
 ### WR-057 — Preserve each window through partial post-login recovery
 
+- **2026-09-22 follow-up:** The maintainer reports two days without the unassigned-app placement
+  loss or Safari peer-closure symptom in the signed local trial. Retained rotating diagnostics
+  cover only 2026-09-21 20:50 through 2026-09-22 07:59 UTC, not the whole two days: the morning
+  wake recovered all 13 windows on its first attempt with no missing targets or frame mismatch;
+  all 91 retained frame/position writes succeeded. Three Ghostty evictions matched native-tab
+  replacement. A brief Mail read failure recovered. No recurrence was observed in that interval.
+- **Trial changes:** Returned pre-sleep windows remain monitored through the grace interval;
+  a later omission re-protects them. Ordinary authoritative removals keep bounded, data-only
+  placement for 120 seconds (512 records), restoring only the same process/window/bundle into
+  a still-valid workspace. Live membership and tiled leaves are still removed immediately.
+  Configuration/reset/session changes invalidate the cache; Quick Apps use their existing policy.
+  Privacy-safe discovery/eviction fields identify recovery versus current-workspace fallback.
+- **Evidence boundary:** The old-line trial passed 903 non-hosted tests and ran as signed Debug
+  CDHash `2a5d8157817d6d1de7a13e141f052e91e20fe16f`. Current-line integration and packaged
+  release checks are pending under WR-133. Changed window identities, ID reuse within retention,
+  app/login restarts and the original laptop remain unproven; this does not close all lifecycle cases.
+- **Current-line integration:** Preserve 1.0.10's managed-normal resize rejection path: refused
+  targets record size constraints and trigger reflow without promoting the window to fixed-size.
+  The old trial's narrower Safari helper change is therefore not copied over the newer behavior.
 - **Type:** Lifecycle recovery bug
 - **Priority:** P1
 - **Status:** Live validation
