@@ -11574,6 +11574,7 @@ final class WorkspaceEngine {
     func restoreAllWindows() {
         queue.async { [weak self] in
             guard let self else { return }
+            self.recentWindowPlacements.clear()
             self.refreshWindows()
             self.recentWindowPlacements.clear()
             self.reapplyWorkspaceRules(to: self.windows.keys.filter { !self.isDropDownAppWindow($0) })
@@ -11591,6 +11592,8 @@ final class WorkspaceEngine {
         queue.async { [weak self] in
             guard let self else { return }
             let rawFocusedBefore = self.focusedWindowSnapshot()
+            // Recover membership before resolving this workspace-local repair. Clearing all
+            // placement first could pull a returning inactive-workspace window into its scope.
             self.refreshWindows(correlationID: correlationID)
             let focusedBefore = self.interactionFocusedWindowSnapshot(rawFocusedBefore)
             let focusContextKey = Self.interactionFocusContext(
