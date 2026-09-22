@@ -357,6 +357,11 @@ smallest useful outcome and acceptance boundary.
 - **Status:** Release preparation authorized on 2026-09-22; not published.
 - **Scope:** Port the WR-057 wake monitoring and recent exact-window placement recovery trial onto
   current develop, preserving the newer minimum-size/resize handling already released in 1.0.10.
+- **Integration evidence:** PR #139 merged the reviewed port after the exact local pre-push gate
+  passed all 974 non-hosted tests and GitHub's required source/unsigned-build and tooling checks
+  passed. Profile/display transitions and global restore invalidate placement before and after
+  internal refresh; workspace-local reset first recovers membership, then invalidates its resolved
+  target so returning windows from other workspaces cannot be pulled into the repair.
 - **Acceptance:** Reviewed current-line integration, complete isolated tests and release checks,
   immutable Developer ID artifacts, exact packaged-app acceptance, public asset verification,
   and verified website/update-feed/Homebrew publication. The original 1.0.2 trial checkout and
