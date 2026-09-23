@@ -356,7 +356,21 @@ smallest useful outcome and acceptance boundary.
 
 - **Status:** Maintainer authorized another release attempt on 2026-09-23 after the diagnostic
   build ran without reported recurrence. Build 25 is superseded; build 26 is allocated for the
-  placement recovery plus direct diagnostic command. Not tagged or published.
+  placement recovery plus direct diagnostic command. Build 26 is installed from its exact DMG;
+  awaiting maintainer packaged-app feedback before tagging or publishing.
+- **Build-26 evidence:** PR #142 passed the complete 977-test local suite, tooling checks and
+  required hosted checks; PR #143 promoted Stable source 9fac03327ac52131d7145023a2a0c56d75b3256d,
+  and PR #144 back-merged it into develop. Clean distribution repeated all 977 tests, static
+  analysis, universal archive/export and Developer ID signing. Apple accepted the app and DMG
+  with zero logged issues; stapling, Gatekeeper and local artifact verification passed.
+  Export, ZIP, DMG and installed app match across all 71 files/links. Settings are semantically
+  unchanged. At 09:17:20 UTC the exact package reports version 1.0.11/build 26, Accessibility trust,
+  normal unpaused operation, and Claude PID 53337/window 10751 tracked with all AX reads successful.
+  The bundled diagnostic returns unavailable without launching a stopped app; its JSON path works.
+  The working diagnostic rollback is `/Applications/.WindowRanger.diagnostic-before-build26`.
+  DMG SHA-256: 5a21e78540413e72c25c1710a3849310c04ce29edc60a09eb4fd0952f6e79df6.
+  Evidence is retained under the build-26 release checkout's `.build/packaged-acceptance` and
+  `.build/release-runs/1.0.11-26-9fac03327ac5`. Exact-main hosted integration is still running.
 - **Current live evidence:** At 09:00:19 UTC on 2026-09-23 the installed diagnostic build has
   Accessibility trust, tracks Claude PID 53337/window 10751, and successfully reads AX windows,
   focused window, exact identity and frame, without active backoff. The prior issue remains
