@@ -20,6 +20,28 @@ smallest useful outcome and acceptance boundary.
 
 ## Done
 
+### WR-133 — Release WindowRanger 1.0.11
+
+- **Status:** Done — Stable 1.0.11/build 26 published on 2026-09-23 at immutable
+  `9fac03327ac52131d7145023a2a0c56d75b3256d`. Build 25 remains superseded and unpublished.
+- **Acceptance:** Maintainer accepted continued use of the exact DMG installation. All 71
+  installed files/links match export, ZIP and DMG; Accessibility and settings were preserved.
+  The complete 977-test suite, hosted integration tests/analysis/unsigned packaging, Developer ID
+  signing, app/DMG notarization, Gatekeeper and all five downloaded GitHub assets passed.
+  The new bundled application diagnostic works in JSON mode and does not launch a stopped app.
+- **Channels:** Source ledger PR #145 records build 26 as published. Website PR #28 deployed
+  `11f3c037794050e91b26aa4d93245551ab3291ba`; both domains' homepage/feed bytes and all 63 feed
+  enclosures per domain verified. Homebrew PR #10 merged `cf6eb642566e095aeafbdd9dfeeab641d5483e09`;
+  candidate and final named-tap style/online audits passed. The channel coordinator completed
+  uninterrupted in 495.3 seconds; this does not measure end-to-end release or token savings.
+- **Provenance:** DMG SHA-256
+  `5a21e78540413e72c25c1710a3849310c04ce29edc60a09eb4fd0952f6e79df6`.
+  Local build-26 artifacts retain packaged acceptance and provenance-bound release/channel
+  journals. The accepted diagnostic rollback remains at
+  `/Applications/.WindowRanger.diagnostic-before-build26`; earlier trial backups remain intact.
+- **Follow-up:** Intermittent Claude discovery loss remains open as WR-134. It cleared after
+  restarting, but its cause was not captured; release acceptance does not claim a Claude fix.
+
 ### WR-131 — Release WindowRanger 1.0.10
 
 - **Status:** Done — Stable 1.0.10/build 24 published on 2026-09-09 at immutable
@@ -352,63 +374,22 @@ smallest useful outcome and acceptance boundary.
 
 ## Inbox
 
-### WR-133 — Release WindowRanger 1.0.11
+### WR-134 — Capture intermittent Claude discovery loss
 
-- **Status:** Maintainer authorized another release attempt on 2026-09-23 after the diagnostic
-  build ran without reported recurrence. Build 25 is superseded; build 26 is allocated for the
-  placement recovery plus direct diagnostic command. Build 26 is installed from its exact DMG;
-  awaiting maintainer packaged-app feedback before tagging or publishing.
-- **Build-26 evidence:** PR #142 passed the complete 977-test local suite, tooling checks and
-  required hosted checks; PR #143 promoted Stable source 9fac03327ac52131d7145023a2a0c56d75b3256d,
-  and PR #144 back-merged it into develop. Clean distribution repeated all 977 tests, static
-  analysis, universal archive/export and Developer ID signing. Apple accepted the app and DMG
-  with zero logged issues; stapling, Gatekeeper and local artifact verification passed.
-  Export, ZIP, DMG and installed app match across all 71 files/links. Settings are semantically
-  unchanged. At 09:17:20 UTC the exact package reports version 1.0.11/build 26, Accessibility trust,
-  normal unpaused operation, and Claude PID 53337/window 10751 tracked with all AX reads successful.
-  The bundled diagnostic returns unavailable without launching a stopped app; its JSON path works.
-  The working diagnostic rollback is `/Applications/.WindowRanger.diagnostic-before-build26`.
-  DMG SHA-256: 5a21e78540413e72c25c1710a3849310c04ce29edc60a09eb4fd0952f6e79df6.
-  Evidence is retained under the build-26 release checkout's `.build/packaged-acceptance` and
-  `.build/release-runs/1.0.11-26-9fac03327ac5`. Exact-main hosted integration is still running.
-- **Current live evidence:** At 09:00:19 UTC on 2026-09-23 the installed diagnostic build has
-  Accessibility trust, tracks Claude PID 53337/window 10751, and successfully reads AX windows,
-  focused window, exact identity and frame, without active backoff. The prior issue remains
-  intermittent and unexplained; this release does not claim to fix Claude discovery.
-- **Diagnostic evidence:** Three supplied focused reports fall back to Codex/Chrome. For the
-  14:23:32 UTC report, the maintainer explicitly confirmed the menu bar said Claude. That report
-  still targets Chrome using last-external-focus. Claude is absent from persisted managed windows;
-  this does not establish whether enumeration, AX identity, or process backoff is responsible.
-- **Investigation:** Implemented a read-only application-targeted CLI diagnostic so the trusted engine
-  reports raw AX errors independently of focused-window capture. All 24 CLI contract/router tests
-  pass, signed Release-configuration builds pass, and read-only review issues were corrected.
-  The complete suite is deferred to the next release integration checkpoint.
-  The local diagnostic build (0.1.0/build 1, source 005d4d9e3d5e-dirty) is installed with Developer ID
-  signing and verified Accessibility trust; this is not a notarized or public release artifact.
-  At 14:36:31 UTC Claude PID 1011/window 128 is tracked, AX enumeration/focus/identity/frame reads
-  all succeed, and correlated history records a successful position write. Restarting WindowRanger
-  cleared the observed absence; intermittent discovery/admission remains unproven.
-  No window-management policy change or Claude fix is claimed.
-  Build 25 is retained at `/Applications/.WindowRanger.build25-before-claude-diagnostics` and the
-  prior successful trial remains at `/Applications/.WindowRanger.previous`. A first development
-  signature lacked trust, was rolled back, then replaced by the locally Developer ID signed build.
-  Superseded build-25 package evidence: source cd17c9d92a2f4573f93fa7cd14de27327d21a5c1
-  passed 974 tests, Release analysis, universal archive/export, app/DMG notarization, stapling,
-  Gatekeeper, and equality of all 71 files/links across export/ZIP/DMG/install. Preferences remained
-  semantically unchanged. Its DMG SHA-256 is
-  365e2ccb330ad8e502c446704b2bd5d60b17541d7dc6dec1397cc4f70a2bc19a.
-  These are historical build-25 checks; build 26 must repeat release gates and exact-package acceptance.
-- **Scope:** Port the WR-057 wake monitoring and recent exact-window placement recovery trial onto
-  current develop, preserving the newer minimum-size/resize handling already released in 1.0.10.
-- **Integration evidence:** PR #139 merged the reviewed port after the exact local pre-push gate
-  passed all 974 non-hosted tests and GitHub's required source/unsigned-build and tooling checks
-  passed. Profile/display transitions and global restore invalidate placement before and after
-  internal refresh; workspace-local reset first recovers membership, then invalidates its resolved
-  target so returning windows from other workspaces cannot be pulled into the repair.
-- **Acceptance:** Reviewed current-line integration, complete isolated tests and release checks,
-  immutable Developer ID artifacts, exact packaged-app acceptance, public asset verification,
-  and verified website/update-feed/Homebrew publication. The original 1.0.2 trial checkout and
-  unrelated edits remain untouched.
+- **Status:** User-observed failure with diagnostic-backed absence; root cause unconfirmed.
+- **Observed:** During 1.0.11/build 25 acceptance, Claude was visible on workspace 1 but absent
+  from managed-window state. Focused reports fell back to Codex/Chrome even when Claude was
+  frontmost. Restarting WindowRanger restored tracking; subsequent diagnostic and build-26
+  packaged trials were accepted without recurrence. Release acceptance does not close this issue.
+- **Expected:** A normal Claude window remains discoverable and managed without restarting
+  WindowRanger. A report must identify its target honestly when focus reads are unavailable.
+- **Next evidence:** Before restarting on recurrence, run
+  `windowranger diagnostics --bundle com.anthropic.claudefordesktop --json` to capture process
+  backoff, tracked-window count and raw AX enumeration/focus/identity/frame errors. The command
+  is implemented, tested and live-validated; it does not change window-management policy.
+- **Acceptance:** Capture a failing state, establish the cause, verify any correction with a
+  matching regression and repeat signed-app behavior. Do not infer a timeout cause or recovery
+  fix from a successful post-restart snapshot.
 
 ### WR-132 — Investigate intermittent CLI peer-rejection test exit
 
