@@ -4956,6 +4956,71 @@ final class WorkspaceEngine {
         }
     }
 
+    /// Explicitly targets an application even when AX focus or window enumeration is unavailable.
+    /// Probes do not update responsiveness, membership, focus, frames, or persisted settings.
+    func applicationDiagnosticReport(bundleIdentifier: String) -> String {
+        queue.sync {
+            var lines = [
+                "WindowRanger application diagnostic report",
+                "schema-version: 1",
+                "privacy: No window titles, document names, URLs, or contents are collected.",
+                "timestamp: \(ISO8601DateFormatter().string(from: Date()))",
+                "windowranger-version: \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown")",
+                "windowranger-build: \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")",
+                "bundle: \(bundleIdentifier)",
+                "accessibility-trusted: \(AXIsProcessTrusted())",
+            ]
+            let applications = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+            lines.append("running-processes: \(applications.count)")
+            let deadline = ProcessInfo.processInfo.systemUptime + 1.5
+            for application in applications.prefix(2) {
+                let pid = application.processIdentifier
+                lines += [
+                    "process: \(pid)",
+                    "activation-policy: \(application.activationPolicy.rawValue)",
+                    "hidden: \(application.isHidden)",
+                    "active: \(application.isActive)",
+                    "engine-backoff-active: \(!shouldAttemptAccessibility(processIdentifier: pid))",
+                    "tracked-windows: \(windows.keys.filter { $0.processIdentifier == pid }.count)",
+                ]
+                guard AXIsProcessTrusted(), ProcessInfo.processInfo.systemUptime < deadline else { continue }
+                let element = AXUIElementCreateApplication(pid)
+                let enumeration = AccessibilityWindow.copyAttributeWithError(
+                    element, kAXWindowsAttribute as CFString, as: [AXUIElement].self
+                )
+                lines.append("AXWindows-error: \(enumeration.error.rawValue)")
+                lines.append("AXWindows-count: \(enumeration.value.map { String($0.count) } ?? "unavailable")")
+                if ProcessInfo.processInfo.systemUptime < deadline {
+                    let focused = AccessibilityWindow.copyAttributeWithError(
+                        element, kAXFocusedWindowAttribute as CFString, as: AXUIElement.self
+                    )
+                    lines.append("AXFocusedWindow-error: \(focused.error.rawValue)")
+                    if let window = focused.value {
+                        let identity = AccessibilityWindow.identifierRead(for: window, processIdentifier: pid)
+                        lines.append("focused-window-ID-error: \(identity.error.rawValue)")
+                        lines.append("focused-window-ID: \(identity.key.map { String($0.windowIdentifier) } ?? "unavailable")")
+                    }
+                }
+                for (index, window) in (enumeration.value ?? []).prefix(8).enumerated() {
+                    guard ProcessInfo.processInfo.systemUptime < deadline else {
+                        lines.append("window-details-truncated: probe time budget reached")
+                        break
+                    }
+                    let identity = AccessibilityWindow.identifierRead(for: window, processIdentifier: pid)
+                    lines.append("window-\(index)-ID-error: \(identity.error.rawValue)")
+                    lines.append("window-\(index)-ID: \(identity.key.map { String($0.windowIdentifier) } ?? "unavailable")")
+                    guard identity.error != .cannotComplete else { break }
+                    let frame = AccessibilityWindow.frameWithError(of: window)
+                    lines.append("window-\(index)-frame-error: \(frame.error.rawValue)")
+                    lines.append("window-\(index)-frame: \(frame.frame.map(Self.diagnosticFrame) ?? "unavailable")")
+                }
+            }
+            lines.append("recent-support-history:")
+            lines.append(diagnostics.recentDiagnosticsText(maxBytes: 32_000))
+            return DiagnosticLogger.sanitizedReport(lines.joined(separator: "\n"))
+        }
+    }
+
     private func makeFocusedWindowDiagnosticReport(now: Date) -> String {
         let buildMode: String
         #if DEBUG

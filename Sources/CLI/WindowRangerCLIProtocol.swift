@@ -16,6 +16,8 @@ enum WindowRangerCLIProtocol {
     static let maximumWorkspaceNameLength = 1_024
     static let maximumWorkspaceCount = 128
     static let maximumActionNameLength = 64
+    static let maximumBundleIdentifierLength = 255
+    static let maximumDiagnosticBytes = 64_000
     static let maximumActionArgumentCount = 16
     static let maximumJSONDepth = 64
     static let maximumJSONNodes = 100_000
@@ -72,6 +74,21 @@ enum WindowRangerCLIProtocol {
         }
     }
 
+    static func isSafeBundleIdentifier(_ identifier: String) -> Bool {
+        guard !identifier.isEmpty,
+              identifier.utf8.count <= maximumBundleIdentifierLength,
+              !identifier.hasPrefix("."),
+              !identifier.hasSuffix("."),
+              !identifier.contains("..")
+        else { return false }
+        return identifier.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57) || // 0-9
+                ($0 >= 65 && $0 <= 90) || // A-Z
+                ($0 >= 97 && $0 <= 122) || // a-z
+                $0 == 45 || $0 == 46 || $0 == 95 // - . _
+        }
+    }
+
     static func isSafeRevision(_ revision: String) -> Bool {
         guard (16...128).contains(revision.utf8.count) else { return false }
         return revision.utf8.allSatisfy {
@@ -88,7 +105,7 @@ enum WindowRangerCLIProtocol {
             try requireOnlyKeys(object, [
                 "workspaceID", "workspaceKey", "includeNames", "layout",
                 "action", "arguments", "configuration", "expectedRevision",
-                "confirmsReplacement",
+                "confirmsReplacement", "bundleIdentifier",
             ])
         }
     }
@@ -147,6 +164,8 @@ enum WindowRangerCLIProtocol {
             }
         case "accepted":
             try requireOnlyKeys(resultObject, ["kind"])
+        case "application_diagnostic":
+            try requireOnlyKeys(resultObject, ["kind", "diagnostic"])
         default:
             throw WindowRangerCLIValidationError.invalidMessageSchema
         }
@@ -277,6 +296,7 @@ enum WindowRangerCLIOperation: String, Codable, CaseIterable, Sendable {
     case listWorkspaces = "list_workspaces"
     case activateWorkspace = "activate_workspace"
     case setLayout = "set_layout"
+    case applicationDiagnostic = "application_diagnostic"
     case pause
     case resume
 }
@@ -302,6 +322,7 @@ struct WindowRangerCLIRequestPayload: Codable, Equatable, Sendable {
     var configuration: WindowRangerCLIJSONValue?
     var expectedRevision: String?
     var confirmsReplacement: Bool?
+    var bundleIdentifier: String?
 
     init(
         workspaceID: UUID? = nil,
@@ -312,7 +333,8 @@ struct WindowRangerCLIRequestPayload: Codable, Equatable, Sendable {
         arguments: [String: WindowRangerCLIJSONValue]? = nil,
         configuration: WindowRangerCLIJSONValue? = nil,
         expectedRevision: String? = nil,
-        confirmsReplacement: Bool? = nil
+        confirmsReplacement: Bool? = nil,
+        bundleIdentifier: String? = nil
     ) {
         self.workspaceID = workspaceID
         self.workspaceKey = workspaceKey
@@ -323,6 +345,7 @@ struct WindowRangerCLIRequestPayload: Codable, Equatable, Sendable {
         self.configuration = configuration
         self.expectedRevision = expectedRevision
         self.confirmsReplacement = confirmsReplacement
+        self.bundleIdentifier = bundleIdentifier
     }
 
     var hasWorkspaceTarget: Bool {
@@ -367,6 +390,10 @@ struct WindowRangerCLIRequestEnvelope: Codable, Equatable, Sendable {
         if let key = value.workspaceKey, !WindowRangerCLIProtocol.isSafeWorkspaceKey(key) {
             throw WindowRangerCLIValidationError.invalidOperationPayload
         }
+        if let bundleIdentifier = value.bundleIdentifier,
+           !WindowRangerCLIProtocol.isSafeBundleIdentifier(bundleIdentifier) {
+            throw WindowRangerCLIValidationError.invalidOperationPayload
+        }
 
         if let arguments = value.arguments {
             guard arguments.count <= WindowRangerCLIProtocol.maximumActionArgumentCount else {
@@ -390,10 +417,18 @@ struct WindowRangerCLIRequestEnvelope: Codable, Equatable, Sendable {
         let hasActionFields = value.action != nil || value.arguments != nil
         let hasLegacyFields = value.workspaceID != nil || value.workspaceKey != nil ||
             value.includeNames != nil || value.layout != nil
+        guard operation == .applicationDiagnostic || value.bundleIdentifier == nil else {
+            throw WindowRangerCLIValidationError.invalidOperationPayload
+        }
 
         switch operation {
         case .status, .capabilities, .listActions, .getConfiguration, .pause, .resume:
             guard payload == nil else { throw WindowRangerCLIValidationError.invalidOperationPayload }
+        case .applicationDiagnostic:
+            guard let bundleIdentifier = value.bundleIdentifier,
+                  WindowRangerCLIProtocol.isSafeBundleIdentifier(bundleIdentifier),
+                  !hasLegacyFields, !hasActionFields, !hasConfigurationFields
+            else { throw WindowRangerCLIValidationError.invalidOperationPayload }
         case .performAction:
             guard let action = value.action,
                   WindowRangerCLIProtocol.isSafeActionName(action),
@@ -547,6 +582,7 @@ enum WindowRangerCLIResponsePayload: Codable, Equatable, Sendable {
     case configuration(WindowRangerCLIConfigurationSnapshot)
     case configurationValidation(WindowRangerCLIConfigurationValidation)
     case workspaces([WindowRangerCLIWorkspaceSummary])
+    case applicationDiagnostic(String)
     case accepted
 
     private enum CodingKeys: String, CodingKey {
@@ -557,6 +593,7 @@ enum WindowRangerCLIResponsePayload: Codable, Equatable, Sendable {
         case configuration
         case configurationValidation
         case workspaces
+        case diagnostic
     }
 
     private enum Kind: String, Codable {
@@ -566,6 +603,7 @@ enum WindowRangerCLIResponsePayload: Codable, Equatable, Sendable {
         case configuration
         case configurationValidation = "configuration_validation"
         case workspaces
+        case applicationDiagnostic = "application_diagnostic"
         case accepted
     }
 
@@ -586,6 +624,8 @@ enum WindowRangerCLIResponsePayload: Codable, Equatable, Sendable {
             )
         case .workspaces:
             self = .workspaces(try container.decode([WindowRangerCLIWorkspaceSummary].self, forKey: .workspaces))
+        case .applicationDiagnostic:
+            self = .applicationDiagnostic(try container.decode(String.self, forKey: .diagnostic))
         case .accepted:
             self = .accepted
         }
@@ -612,6 +652,9 @@ enum WindowRangerCLIResponsePayload: Codable, Equatable, Sendable {
         case let .workspaces(value):
             try container.encode(Kind.workspaces, forKey: .kind)
             try container.encode(value, forKey: .workspaces)
+        case let .applicationDiagnostic(value):
+            try container.encode(Kind.applicationDiagnostic, forKey: .kind)
+            try container.encode(value, forKey: .diagnostic)
         case .accepted:
             try container.encode(Kind.accepted, forKey: .kind)
         }
@@ -640,6 +683,10 @@ enum WindowRangerCLIResponsePayload: Codable, Equatable, Sendable {
                 throw WindowRangerCLIValidationError.invalidResponseEnvelope
             }
             try workspaces.forEach { try $0.validate() }
+        case let .applicationDiagnostic(diagnostic):
+            guard diagnostic.utf8.count <= WindowRangerCLIProtocol.maximumDiagnosticBytes else {
+                throw WindowRangerCLIValidationError.invalidResponseEnvelope
+            }
         case .status, .accepted:
             break
         }

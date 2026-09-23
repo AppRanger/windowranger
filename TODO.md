@@ -354,7 +354,36 @@ smallest useful outcome and acceptance boundary.
 
 ### WR-133 — Release WindowRanger 1.0.11
 
-- **Status:** Release preparation authorized on 2026-09-22; not published.
+- **Status:** Maintainer authorized another release attempt on 2026-09-23 after the diagnostic
+  build ran without reported recurrence. Build 25 is superseded; build 26 is allocated for the
+  placement recovery plus direct diagnostic command. Not tagged or published.
+- **Current live evidence:** At 09:00:19 UTC on 2026-09-23 the installed diagnostic build has
+  Accessibility trust, tracks Claude PID 53337/window 10751, and successfully reads AX windows,
+  focused window, exact identity and frame, without active backoff. The prior issue remains
+  intermittent and unexplained; this release does not claim to fix Claude discovery.
+- **Diagnostic evidence:** Three supplied focused reports fall back to Codex/Chrome. For the
+  14:23:32 UTC report, the maintainer explicitly confirmed the menu bar said Claude. That report
+  still targets Chrome using last-external-focus. Claude is absent from persisted managed windows;
+  this does not establish whether enumeration, AX identity, or process backoff is responsible.
+- **Investigation:** Implemented a read-only application-targeted CLI diagnostic so the trusted engine
+  reports raw AX errors independently of focused-window capture. All 24 CLI contract/router tests
+  pass, signed Release-configuration builds pass, and read-only review issues were corrected.
+  The complete suite is deferred to the next release integration checkpoint.
+  The local diagnostic build (0.1.0/build 1, source 005d4d9e3d5e-dirty) is installed with Developer ID
+  signing and verified Accessibility trust; this is not a notarized or public release artifact.
+  At 14:36:31 UTC Claude PID 1011/window 128 is tracked, AX enumeration/focus/identity/frame reads
+  all succeed, and correlated history records a successful position write. Restarting WindowRanger
+  cleared the observed absence; intermittent discovery/admission remains unproven.
+  No window-management policy change or Claude fix is claimed.
+  Build 25 is retained at `/Applications/.WindowRanger.build25-before-claude-diagnostics` and the
+  prior successful trial remains at `/Applications/.WindowRanger.previous`. A first development
+  signature lacked trust, was rolled back, then replaced by the locally Developer ID signed build.
+  Superseded build-25 package evidence: source cd17c9d92a2f4573f93fa7cd14de27327d21a5c1
+  passed 974 tests, Release analysis, universal archive/export, app/DMG notarization, stapling,
+  Gatekeeper, and equality of all 71 files/links across export/ZIP/DMG/install. Preferences remained
+  semantically unchanged. Its DMG SHA-256 is
+  365e2ccb330ad8e502c446704b2bd5d60b17541d7dc6dec1397cc4f70a2bc19a.
+  These are historical build-25 checks; build 26 must repeat release gates and exact-package acceptance.
 - **Scope:** Port the WR-057 wake monitoring and recent exact-window placement recovery trial onto
   current develop, preserving the newer minimum-size/resize handling already released in 1.0.10.
 - **Integration evidence:** PR #139 merged the reviewed port after the exact local pre-push gate

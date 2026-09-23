@@ -274,6 +274,14 @@ otherwise invisible system context without changing the setting or treating it a
 They do not collect window titles, document names, URLs, typed content,
 full file paths, or window contents.
 
+When a focused report falls back to another application, use
+`windowranger diagnostics --bundle com.anthropic.claudefordesktop` (optionally `--json`) to
+query that application directly. This read-only report includes running processes, engine backoff,
+tracked-window counts, AX enumeration/focus/identity/frame errors, and bounded support history.
+It does not refresh membership, move windows, change focus, or request Accessibility permission.
+WindowRanger must already be running; this diagnostic does not launch it automatically.
+Window details are sampled within a time budget; a missing result is not proof the window closed.
+
 Focused report schema 3 also retains the trigger for an active fixed-size recovery state: the
 classification time and source, resize outcome, available original/requested/observed frames,
 size baseline, last capability probe and current recovery gate. This evidence lasts as long as

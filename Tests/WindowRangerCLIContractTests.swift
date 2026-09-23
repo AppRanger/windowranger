@@ -65,6 +65,51 @@ final class WindowRangerCLIContractTests: XCTestCase {
         )
     }
 
+    func testApplicationDiagnosticRoundTripsThroughStrictSchema() throws {
+        let request = WindowRangerCLIRequestEnvelope(
+            requestID: "diagnostic-001",
+            operation: .applicationDiagnostic,
+            payload: .init(bundleIdentifier: "com.anthropic.claudefordesktop")
+        )
+        XCTAssertEqual(
+            try WindowRangerCLIProtocol.decodeRequest(from: JSONEncoder().encode(request)),
+            request
+        )
+
+        let response = WindowRangerCLIResponseEnvelope(
+            requestID: "diagnostic-001",
+            result: .applicationDiagnostic("state=tracked\n")
+        )
+        XCTAssertEqual(
+            try WindowRangerCLIProtocol.decodeResponse(from: JSONEncoder().encode(response)),
+            response
+        )
+    }
+
+    func testApplicationDiagnosticRequiresAConstrainedBundleIdentifierAndBoundedResponse() {
+        XCTAssertThrowsError(try WindowRangerCLIRequestEnvelope(
+            requestID: "diagnostic-001",
+            operation: .applicationDiagnostic,
+            payload: .init(bundleIdentifier: "com.example app")
+        ).validate())
+        XCTAssertThrowsError(try WindowRangerCLIRequestEnvelope(
+            requestID: "diagnostic-002",
+            operation: .applicationDiagnostic,
+            payload: .init(bundleIdentifier: ".com.example")
+        ).validate())
+        XCTAssertThrowsError(try WindowRangerCLIResponseEnvelope(
+            requestID: "diagnostic-003",
+            result: .applicationDiagnostic(
+                String(repeating: "x", count: WindowRangerCLIProtocol.maximumDiagnosticBytes + 1)
+            )
+        ).validate())
+        XCTAssertThrowsError(try WindowRangerCLIRequestEnvelope(
+            requestID: "diagnostic-004",
+            operation: .listWorkspaces,
+            payload: .init(includeNames: false, bundleIdentifier: "com.anthropic.claudefordesktop")
+        ).validate())
+    }
+
     func testConfigurationApplyRequiresRevisionAndExplicitReplacement() {
         let document = WindowRangerCLIJSONValue.object(["schemaVersion": .number(1)])
         XCTAssertThrowsError(try WindowRangerCLIRequestEnvelope(

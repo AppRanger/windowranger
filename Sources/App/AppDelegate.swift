@@ -175,6 +175,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configurationApplier: { [weak self] document, revision in
             self?.applyCLIConfiguration(document, expectedRevision: revision)
                 ?? .failure(.unavailable)
+        },
+        applicationDiagnostics: { [weak self] bundleIdentifier in
+            self?.engine.applicationDiagnosticReport(bundleIdentifier: bundleIdentifier)
+                ?? "Diagnostic service unavailable."
         }
     )
     private lazy var cliServer: CLIIPCServer? = {
