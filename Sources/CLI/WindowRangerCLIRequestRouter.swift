@@ -23,6 +23,7 @@ final class WindowRangerCLIRequestRouter {
         WindowRangerCLIJSONValue,
         String
     ) -> Result<WindowRangerCLIConfigurationSnapshot, WindowRangerCLIErrorCode>
+    typealias ApplicationDiagnostics = (String) -> String
 
     private struct CachedResponse {
         let request: Data
@@ -41,6 +42,7 @@ final class WindowRangerCLIRequestRouter {
     private let configurationProvider: ConfigurationProvider
     private let configurationValidator: ConfigurationValidator
     private let configurationApplier: ConfigurationApplier
+    private let applicationDiagnostics: ApplicationDiagnostics
     private let uptimeNanoseconds: () -> UInt64
     private var cachedResponses: [String: CachedResponse] = [:]
     private var cachedRequestOrder: [String] = []
@@ -53,6 +55,7 @@ final class WindowRangerCLIRequestRouter {
         configurationProvider: @escaping ConfigurationProvider = { .failure(.unavailable) },
         configurationValidator: @escaping ConfigurationValidator = { _ in .failure(.unavailable) },
         configurationApplier: @escaping ConfigurationApplier = { _, _ in .failure(.unavailable) },
+        applicationDiagnostics: @escaping ApplicationDiagnostics = { _ in "Diagnostic service unavailable." },
         uptimeNanoseconds: @escaping () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
     ) {
         self.snapshotProvider = snapshotProvider
@@ -61,6 +64,7 @@ final class WindowRangerCLIRequestRouter {
         self.configurationProvider = configurationProvider
         self.configurationValidator = configurationValidator
         self.configurationApplier = configurationApplier
+        self.applicationDiagnostics = applicationDiagnostics
         self.uptimeNanoseconds = uptimeNanoseconds
     }
 
@@ -157,6 +161,18 @@ final class WindowRangerCLIRequestRouter {
                     isPaused: snapshot.isPaused,
                     accessibilityGranted: snapshot.accessibilityGranted
                 ))
+            )
+        case .applicationDiagnostic:
+            guard let bundleIdentifier = request.payload?.bundleIdentifier else {
+                return encodedError(requestID: request.requestID, code: .invalidRequest)
+            }
+            let diagnostic = applicationDiagnostics(bundleIdentifier)
+            guard diagnostic.utf8.count <= WindowRangerCLIProtocol.maximumDiagnosticBytes else {
+                return encodedError(requestID: request.requestID, code: .internalError)
+            }
+            return encodedResult(
+                requestID: request.requestID,
+                result: .applicationDiagnostic(diagnostic)
             )
         case .capabilities:
             return encodedResult(

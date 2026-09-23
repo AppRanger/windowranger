@@ -19,6 +19,7 @@ enum WindowRangerCLIAgentSkill {
             "## Safety",
             "",
             "- Start with `windowranger capabilities --json` when compatibility is uncertain.",
+            "- `diagnostics` is read-only and requires an exact bundle identifier. It does not activate, launch, or focus the requested application.",
             "- Treat workspace IDs and keys returned by the app as exact targets. Never infer a target from a name.",
             "- Workspace names are private user text and are omitted by default. Use `windowranger workspaces --names --json` only when the human's request needs them.",
             "- `config get` intentionally returns private profile names, app bundle identifiers, shortcut choices, and local display bindings. Read it only when the task needs configuration, minimize retention, and never publish it.",
@@ -52,6 +53,7 @@ enum WindowRangerCLIAgentSkill {
     private static func commandExample(for operation: WindowRangerCLIOperation) -> String {
         switch operation {
         case .status: "windowranger status --json"
+        case .applicationDiagnostic: "windowranger diagnostics --bundle <bundle-id> --json"
         case .capabilities: "windowranger capabilities --json"
         case .listActions: "windowranger actions --json"
         case .performAction: "windowranger action <name> [--args '<json-object>'] --json"
