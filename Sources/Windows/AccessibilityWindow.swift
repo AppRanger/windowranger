@@ -675,9 +675,16 @@ enum AccessibilityWindow {
     }
 
     static func identifier(for element: AXUIElement, processIdentifier: pid_t) -> WindowKey? {
+        identifierRead(for: element, processIdentifier: processIdentifier).key
+    }
+
+    static func identifierRead(
+        for element: AXUIElement, processIdentifier: pid_t
+    ) -> (key: WindowKey?, error: AXError) {
         var identifier: CGWindowID = 0
-        guard AXUIElementGetWindowID(element, &identifier) == .success, identifier != 0 else { return nil }
-        return WindowKey(processIdentifier: processIdentifier, windowIdentifier: identifier)
+        let error = AXUIElementGetWindowID(element, &identifier)
+        guard error == .success, identifier != 0 else { return (nil, error) }
+        return (WindowKey(processIdentifier: processIdentifier, windowIdentifier: identifier), error)
     }
 
     static func copyAttribute<T>(_ element: AXUIElement, _ attribute: CFString, as type: T.Type) -> T? {

@@ -158,6 +158,11 @@ private enum WindowRangerCommandLine {
         case "status":
             guard values.isEmpty else { throw CommandLineError.usage("status does not accept arguments.") }
             return try request(.status)
+        case "diagnostics":
+            guard values.count == 2, values[0] == "--bundle" else {
+                throw CommandLineError.usage("Usage: windowranger diagnostics --bundle <bundle-id> [--json]")
+            }
+            return try request(.applicationDiagnostic, payload: .init(bundleIdentifier: values[1]))
         case "capabilities":
             guard values.isEmpty else { throw CommandLineError.usage("capabilities does not accept arguments.") }
             return try request(.capabilities)
@@ -311,7 +316,9 @@ private enum WindowRangerCommandLine {
             // identifier, Team ID and dynamic signature checks still bind this exact location to
             // the trusted running WindowRanger app.
             peerPolicy: .windowRangerApp(bundleURL: appURL),
-            timeout: 1
+            // A targeted Accessibility snapshot can take about two seconds while the app reads
+            // the requested process. Other CLI commands retain the shorter interactive timeout.
+            timeout: request.operation == .applicationDiagnostic ? CLIIPCTransport.defaultTimeout : 1
         )
 
         func sendAttempt() throws -> Data {
@@ -329,6 +336,11 @@ private enum WindowRangerCommandLine {
         do {
             return try sendAttempt()
         } catch CLIIPCTransportError.unavailable {
+            // Launching starts window management and may request permission. A diagnostic must
+            // inspect an already-running engine, never activate it as a side effect.
+            guard request.operation != .applicationDiagnostic else {
+                throw CLIIPCTransportError.unavailable
+            }
             launch(appURL)
         }
 
@@ -405,6 +417,9 @@ private enum WindowRangerCommandLine {
         case let .status(status):
             print(status.isPaused ? "WindowRanger is paused." : "WindowRanger is running.")
             print("Accessibility: \(status.accessibilityGranted ? "granted" : "required")")
+        case let .applicationDiagnostic(diagnostic):
+            write(diagnostic, to: .standardOutput)
+            if !diagnostic.hasSuffix("\n") { print() }
         case let .capabilities(capabilities):
             print("Protocol: \(capabilities.protocolVersion)")
             print("Commands: \(capabilities.operations.map(\.rawValue).joined(separator: ", "))")
@@ -550,6 +565,8 @@ private enum WindowRangerCommandLine {
       config validate <file|-> [--json]        Validate a full configuration document
       config apply <file|-> --replace [--json] Replace configuration by snapshot revision
       status [--json]                         Show runtime and permission status
+      diagnostics --bundle <bundle-id> [--json]
+                                                Read a diagnostic report without changing focus
       capabilities [--json]                   Show the versioned command surface
       workspaces [--names] [--json]           List workspace IDs and keys
       workspace <id-or-key> [--json]           Switch to one workspace

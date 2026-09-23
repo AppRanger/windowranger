@@ -93,6 +93,13 @@ enum WindowRangerCLICommandCatalog {
             examplePayload: .init(layout: .tiled)
         ),
         .init(
+            operation: .applicationDiagnostic,
+            kind: .query,
+            synopsis: "Read a bounded diagnostic report for one application bundle identifier.",
+            agentGuidance: "Use the exact bundle identifier supplied by the human. This only reads current diagnostic state and never changes focus.",
+            examplePayload: .init(bundleIdentifier: "com.anthropic.claudefordesktop")
+        ),
+        .init(
             operation: .pause,
             kind: .control,
             synopsis: "Pause WindowRanger window-management writes.",

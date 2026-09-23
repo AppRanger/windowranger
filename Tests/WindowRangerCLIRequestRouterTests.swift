@@ -34,6 +34,40 @@ final class WindowRangerCLIRequestRouterTests: XCTestCase {
         XCTAssertEqual(namedWorkspaces.first?.name, "Private Work")
     }
 
+    func testApplicationDiagnosticIsReadOnlyAndUsesExactBundleIdentifier() throws {
+        var requestedBundleIdentifier: String?
+        var dispatched = false
+        let router = WindowRangerCLIRequestRouter(
+            snapshotProvider: { [workspaceID] in
+                .init(
+                    workspaces: [.init(id: workspaceID, name: "Private Work", key: "w")],
+                    accessibilityGranted: false,
+                    isPaused: false
+                )
+            },
+            commandDispatcher: { _, _ in
+                dispatched = true
+                return .dispatched
+            },
+            applicationDiagnostics: { bundleIdentifier in
+                requestedBundleIdentifier = bundleIdentifier
+                return "diagnostic for \(bundleIdentifier)"
+            }
+        )
+
+        let response = try response(
+            from: router,
+            operation: .applicationDiagnostic,
+            payload: .init(bundleIdentifier: "com.anthropic.claudefordesktop")
+        )
+        XCTAssertEqual(requestedBundleIdentifier, "com.anthropic.claudefordesktop")
+        XCTAssertFalse(dispatched)
+        XCTAssertEqual(
+            response.result,
+            .applicationDiagnostic("diagnostic for com.anthropic.claudefordesktop")
+        )
+    }
+
     func testControlsUseCanonicalCommandsAndMapFreeformLayout() throws {
         var commands: [WindowManagerCommand] = []
         let router = makeRouter { command, _ in

@@ -30,4 +30,5 @@
 22	1.0.9	published	GitHub Stable release v1.0.9
 23	1.0.10	superseded	Withheld after keyboard reverse-resize failure; never published
 24	1.0.10	published	GitHub Stable release v1.0.10
-25	1.0.11	allocated	WR-133 wake and recent window placement recovery
+25	1.0.11	superseded	Unpublished candidate replaced with direct application diagnostics after Claude acceptance issue
+26	1.0.11	allocated	WR-133 placement recovery and application-targeted diagnostics
